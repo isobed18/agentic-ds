@@ -1,0 +1,24 @@
+{
+  "disposition": "not_supported",
+  "findings": [
+    {
+      "claim": "The evaluation models with a field created after the prediction moment.",
+      "evidence": [
+        {
+          "file": "dataset/encounters.csv",
+          "column": "thirty_day_followup_status",
+          "observation": "The brief says this field is assigned only after the outcome window."
+        },
+        {
+          "file": "analysis.ipynb",
+          "notebook_cell": 4,
+          "observation": "The notebook includes the post-outcome field in FEATURE_COLUMNS."
+        }
+      ],
+      "consequence": "The score uses information unavailable to the discharge-time decision.",
+      "recommended_check_or_fix": "Remove the field and rerun the full fitted pipeline."
+    }
+  ],
+  "unknowns": [],
+  "reported_metric": {"name": "roc_auc", "value": null}
+}

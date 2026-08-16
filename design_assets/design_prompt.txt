@@ -1,0 +1,34 @@
+Review **all UI/design assets in the `design_assets` folder** and use them as the design reference for the application.
+
+Do not try to reproduce every screen or every visible detail exactly. Extract the parts that are useful for the real product: the overall layout, workflow/node interaction, progressive disclosure, result cards, visualizations, warnings, planner interaction, and stage-specific functionality.
+
+The final application should follow these principles:
+
+* Keep the main UI simple: **pipeline/workflow at the top, stage workspace in the center, Planner/Orchestrator chat on the right**.
+* Detailed configuration should not permanently occupy the screen. Move configuration into the relevant nodes/components and reveal advanced settings only when needed.
+* Use **progressive disclosure** throughout the product. The cards and detailed result sections shown in the designs should be expandable/collapsible. Users should initially see summaries and open detailed analysis only when they need it.
+* Stage outputs should be rendered directly in the UI as useful cards, charts, tables, summaries, warnings, and notebook-like analytical outputs rather than raw JSON/logs.
+* Preserve workflow branching visually and functionally where the pipeline branches.
+* Important warnings, review requests, approval requirements, retries, and planner decisions should be visible directly on the related node or stage.
+
+Also implement the useful functionality implied by the designs, not only the visuals.
+
+For example:
+
+* dataset/source management
+* experiments
+* trained model artifacts and model saving
+* reports and report saving/export
+* pipeline artifacts
+* stage outputs and provenance
+* planner/orchestrator interaction
+* node configuration
+* human approval/review flows
+* retries and branching
+* warnings and attention items
+
+The **left sidebar must be functional**, not decorative. Pages such as Datasets, Experiments, Models, Reports, and related views should be implemented sufficiently to support the actual workflow—for example saved models should appear under Models and generated reports should appear under Reports.
+
+Use the existing agentic architecture and implement any backend/agent functionality required to support these UI interactions. Do not treat this as a frontend-only redesign.
+
+The screenshots are **design and product-behavior references**, not strict implementation specifications. Inspect all of them, identify the common design system and useful product ideas, and implement the simplest coherent version that supports the real agentic data-science workflow.

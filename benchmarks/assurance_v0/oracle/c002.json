@@ -1,0 +1,45 @@
+{
+  "case_id": "c002",
+  "pair_id": "readmission-p001",
+  "scenario_family": "readmission",
+  "variant": "mutated",
+  "mutation_family": "post_outcome_target_copy",
+  "invalidity_mechanism": "post_outcome_feature",
+  "evidence_mode": "signal_bearing",
+  "seed": 4107,
+  "public_checksums": "cases/c002/checksums.json",
+  "expected_disposition": "not_supported",
+  "expected_locators": [
+    {
+      "file": "dataset/encounters.csv",
+      "column": "thirty_day_followup_status"
+    },
+    {
+      "file": "analysis.ipynb",
+      "notebook_cell": 4
+    }
+  ],
+  "canonical_remediation": [
+    "Remove thirty_day_followup_status from the model feature set and rerun the pipeline."
+  ],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 1,
+    "oracle_metric": 0.6495454545454545,
+    "optimism_gap": 0.35045454545454546,
+    "effect_direction": "positive",
+    "effect_bin": "pending_thresholds",
+    "group_overlap_count": 0,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md"
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "agreed",
+    "basis": "Derived not_supported and the field locator from cases/c002/brief.md."
+  }
+}

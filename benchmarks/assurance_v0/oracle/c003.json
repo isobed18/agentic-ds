@@ -1,0 +1,41 @@
+{
+  "case_id": "c003",
+  "pair_id": "readmission-p001",
+  "scenario_family": "readmission",
+  "variant": "mutated",
+  "mutation_family": "entity_contamination",
+  "invalidity_mechanism": "entity_contamination",
+  "evidence_mode": "signal_bearing",
+  "seed": 4107,
+  "public_checksums": "cases/c003/checksums.json",
+  "expected_disposition": "not_supported",
+  "expected_locators": [
+    {
+      "file": "dataset/encounters.csv",
+      "column": "patient_id"
+    }
+  ],
+  "canonical_remediation": [
+    "Remove or repair the named invalidity and rerun the full evaluation."
+  ],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 0.6495454545454545,
+    "oracle_metric": 0.6495454545454545,
+    "optimism_gap": 0,
+    "effect_direction": "zero",
+    "effect_bin": "zero",
+    "group_overlap_count": 12,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md"
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "pending",
+    "basis": "Review cases/c003/brief.md without generator or oracle access."
+  }
+}

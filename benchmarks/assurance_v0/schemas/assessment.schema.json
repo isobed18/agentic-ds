@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assurance benchmark assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["disposition", "findings", "unknowns"],
+  "properties": {
+    "disposition": {
+      "type": "string",
+      "enum": ["supported", "not_supported", "indeterminate"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "evidence", "consequence", "recommended_check_or_fix"],
+        "properties": {
+          "claim": {"type": "string", "minLength": 1},
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["file", "observation"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1},
+                "column": {"type": "string", "minLength": 1},
+                "notebook_cell": {"type": "integer", "minimum": 0},
+                "observation": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "consequence": {"type": "string", "minLength": 1},
+          "recommended_check_or_fix": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact", "why_material", "needed_source_or_test"],
+        "properties": {
+          "fact": {"type": "string", "minLength": 1},
+          "why_material": {"type": "string", "minLength": 1},
+          "needed_source_or_test": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "reported_metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "value": {"type": ["number", "null"]}
+      }
+    },
+    "corrected_metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value", "method"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "value": {"type": ["number", "null"]},
+        "method": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

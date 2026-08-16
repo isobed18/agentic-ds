@@ -1,0 +1,95 @@
+# Default gate policy.
+#
+# Thresholds and stage risk classes are data so they can be tuned per deployment
+# without a code change. Predicate logic lives in ads/gates/rules.py.
+#
+# Changing anything here changes when the system stops to ask a human, so treat
+# edits as a product decision, not configuration tidying.
+
+thresholds:
+  # Above this correlation with the target, a feature is treated as leakage.
+  leakage_correlation: 0.95
+  # Relative cross-validation spread above which a score is called unstable.
+  cv_coefficient_of_variation: 0.25
+  # Below this agreement across resampled decisions, the choice is ambiguous.
+  self_consistency_agreement: 1.0
+  # A model must beat the naive baseline by more than this.
+  min_baseline_delta: 0.0
+  # Classification needs at least this many minority-class examples.
+  min_minority_class_count: 50
+  min_rows_per_feature: 5.0
+  max_validation_failures: 2
+
+stages:
+  intake:
+    risk_class: low
+    max_attempts: 1
+
+  schema_discovery:
+    risk_class: medium
+    max_attempts: 3
+    mandatory_criteria:
+      - schema.base_grain_declared
+      - schema.fan_out_aggregated
+
+  problem_discovery:
+    # CRITICAL: choosing the wrong target silently invalidates everything
+    # downstream, and no later stage can detect the mistake.
+    risk_class: critical
+    max_attempts: 3
+    mandatory_criteria:
+      - problem.at_least_one_viable_candidate
+      - problem.targets_exist
+
+  integration:
+    risk_class: medium
+    max_attempts: 2
+    mandatory_criteria:
+      - integration.grain_preserved
+
+  validation_strategy:
+    # CRITICAL: the split determines whether every later number is real.
+    risk_class: critical
+    max_attempts: 3
+    mandatory_criteria:
+      - validation.strategy_matches_detected_signals
+
+  eda:
+    risk_class: low
+    max_attempts: 3
+    mandatory_criteria:
+      - eda.target_distribution_reported
+      - eda.all_features_covered
+      - eda.missingness_quantified
+
+  feature_pipeline:
+    risk_class: medium
+    max_attempts: 3
+    mandatory_criteria:
+      - features.pipeline_is_fitted_object
+      - features.no_test_fold_statistics
+
+  leakage_audit:
+    risk_class: high
+    max_attempts: 1
+
+  model_selection:
+    risk_class: low
+    max_attempts: 2
+
+  training:
+    risk_class: low
+    max_attempts: 2
+
+  evaluation:
+    risk_class: high
+    max_attempts: 2
+    mandatory_criteria:
+      - evaluation.holdout_metrics_reported
+      - evaluation.baseline_comparison_present
+
+  report:
+    risk_class: low
+    max_attempts: 2
+    # Producing the final report closes the run; artifacts are handed over.
+    irreversible: true

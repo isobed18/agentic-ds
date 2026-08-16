@@ -1,0 +1,41 @@
+{
+  "case_id": "c005",
+  "pair_id": "readmission-p001",
+  "scenario_family": "readmission",
+  "variant": "mutated",
+  "mutation_family": "unwindowed_history",
+  "invalidity_mechanism": "unwindowed_history",
+  "evidence_mode": "signal_bearing",
+  "seed": 4107,
+  "public_checksums": "cases/c005/checksums.json",
+  "expected_disposition": "not_supported",
+  "expected_locators": [
+    {
+      "file": "dataset/encounters.csv",
+      "column": "prior_admits_180d"
+    }
+  ],
+  "canonical_remediation": [
+    "Remove or repair the named invalidity and rerun the full evaluation."
+  ],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 0.5606818181818182,
+    "oracle_metric": 0.6495454545454545,
+    "optimism_gap": -0.08886363636363637,
+    "effect_direction": "negative",
+    "effect_bin": "pending_thresholds",
+    "group_overlap_count": 0,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md"
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "pending",
+    "basis": "Review cases/c005/brief.md without generator or oracle access."
+  }
+}

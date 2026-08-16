@@ -1,0 +1,218 @@
+"""Deterministic, row-free data-science evidence tools."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from typing import Any
+
+import pandas as pd
+
+from ads.contracts.datacard import DataCard
+from ads.contracts.gates import PermissionTier
+from ads.contracts.problem import TaskType
+from ads.discovery import correlation_strength, detect_validation_signals
+from ads.intake import ProfileOptions, detect_primary_keys, measure_relationship, profile_column
+from ads.tools.models import ToolPayload, ToolRuntime
+from ads.tools.registry import ToolDefinition, ToolRegistry
+
+
+def _table(runtime: ToolRuntime, table: str) -> pd.DataFrame:
+    try:
+        return runtime.frames[table]
+    except KeyError as exc:
+        raise ValueError(f"Unknown table {table!r}; available: {sorted(runtime.frames)}") from exc
+
+
+def _card(runtime: ToolRuntime, table: str) -> DataCard:
+    try:
+        return runtime.cards[table]
+    except KeyError as exc:
+        raise ValueError(f"No DataCard is available for table {table!r}.") from exc
+
+
+def _series(runtime: ToolRuntime, table: str, column: str) -> pd.Series:
+    frame = _table(runtime, table)
+    if column not in frame.columns:
+        raise ValueError(f"Unknown column {column!r} in table {table!r}.")
+    return frame[column]
+
+
+def _profile(runtime: ToolRuntime, table: str, column: str):
+    series = _series(runtime, table, column)
+    return profile_column(
+        column,
+        series,
+        len(series),
+        ProfileOptions(include_samples=False),
+    )
+
+
+def _summary(tool_id: str, data: Mapping[str, Any]) -> str:
+    rendered = json.dumps(data, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{tool_id} measured {rendered}"
+
+
+def column_profile(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table, column = str(arguments["table"]), str(arguments["column"])
+    profile = _profile(runtime, table, column)
+    data = {
+        "table": table,
+        "column": column,
+        "dtype": profile.dtype,
+        "semantic_type": profile.semantic_type.value,
+        "sensitivity": profile.sensitivity.value,
+        "null_count": profile.null_count,
+        "null_rate": profile.null_rate,
+        "n_unique": profile.n_unique,
+        "unique_rate": profile.unique_rate,
+        "is_unique": profile.is_unique,
+        "numeric": profile.numeric.model_dump(mode="json") if profile.numeric else None,
+        "datetime": profile.datetime.model_dump(mode="json") if profile.datetime else None,
+        "notes": profile.notes,
+    }
+    return ToolPayload(summary=_summary("column_profile", data), data=data)
+
+
+def value_counts(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table, column = str(arguments["table"]), str(arguments["column"])
+    profile = _profile(runtime, table, column)
+    redacted = profile.sensitivity.value == "pii"
+    data = {
+        "table": table,
+        "column": column,
+        "redacted": redacted,
+        "n_unique": profile.n_unique,
+        "non_null_count": len(_series(runtime, table, column)) - profile.null_count,
+        "top_values": (
+            []
+            if redacted
+            else [item.model_dump(mode="json") for item in profile.top_values]
+        ),
+    }
+    if redacted:
+        data["redaction_reason"] = "Column classified as PII; values are never returned."
+    return ToolPayload(summary=_summary("value_counts", data), data=data)
+
+
+def correlation(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table = str(arguments["table"])
+    left, right = str(arguments["left_column"]), str(arguments["right_column"])
+    strength = correlation_strength(
+        _series(runtime, table, left),
+        _series(runtime, table, right),
+    )
+    data = {
+        "table": table,
+        "left_column": left,
+        "right_column": right,
+        "max_absolute_pearson_spearman": (
+            round(strength, 6) if strength is not None else None
+        ),
+    }
+    return ToolPayload(summary=_summary("correlation", data), data=data)
+
+
+def cardinality(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table, column = str(arguments["table"]), str(arguments["column"])
+    profile = _profile(runtime, table, column)
+    data = {
+        "table": table,
+        "column": column,
+        "n_unique": profile.n_unique,
+        "unique_rate": profile.unique_rate,
+        "is_unique": profile.is_unique,
+        "semantic_type": profile.semantic_type.value,
+    }
+    return ToolPayload(summary=_summary("cardinality", data), data=data)
+
+
+def null_rate(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table, column = str(arguments["table"]), str(arguments["column"])
+    profile = _profile(runtime, table, column)
+    data = {
+        "table": table,
+        "column": column,
+        "null_count": profile.null_count,
+        "null_rate": profile.null_rate,
+        "row_count": len(_series(runtime, table, column)),
+    }
+    return ToolPayload(summary=_summary("null_rate", data), data=data)
+
+
+def candidate_keys(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    table = str(arguments["table"])
+    candidates = detect_primary_keys(_card(runtime, table), _table(runtime, table))
+    data = {
+        "table": table,
+        "candidates": [candidate.model_dump(mode="json") for candidate in candidates],
+    }
+    return ToolPayload(summary=_summary("candidate_keys", data), data=data)
+
+
+def join_overlap(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    from_table = str(arguments["from_table"])
+    from_column = str(arguments["from_column"])
+    to_table = str(arguments["to_table"])
+    to_column = str(arguments["to_column"])
+    result = measure_relationship(
+        from_table,
+        from_column,
+        _series(runtime, from_table, from_column),
+        to_table,
+        to_column,
+        _series(runtime, to_table, to_column),
+    )
+    data = result.model_dump(mode="json")
+    data["confidence"] = result.confidence
+    return ToolPayload(summary=_summary("join_overlap", data), data=data)
+
+
+def validation_signals(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
+    """Expose the existing split-safety measurements through the same broker."""
+    table = str(arguments["table"])
+    signals = detect_validation_signals(
+        _card(runtime, table),
+        _table(runtime, table),
+        target_column=str(arguments["target_column"]),
+        task_type=TaskType(str(arguments["task_type"])),
+        n_folds=int(arguments.get("n_folds", 3)),
+    )
+    data = signals.model_dump(mode="json")
+    return ToolPayload(summary=_summary("validation_signals", data), data=data)
+
+
+def register_ds_tools(registry: ToolRegistry) -> ToolRegistry:
+    definitions = (
+        ("column_profile", PermissionTier.READ_DATA, column_profile),
+        ("value_counts", PermissionTier.READ_DATA, value_counts),
+        ("correlation", PermissionTier.READ_DATA, correlation),
+        ("cardinality", PermissionTier.READ_DATA, cardinality),
+        ("null_rate", PermissionTier.READ_DATA, null_rate),
+        ("candidate_keys", PermissionTier.READ_DATA, candidate_keys),
+        ("join_overlap", PermissionTier.READ_DATA, join_overlap),
+        ("validation_signals", PermissionTier.READ_DATA, validation_signals),
+    )
+    for tool_id, tier, handler in definitions:
+        registry.register(
+            ToolDefinition(
+                tool_id=tool_id,
+                tier=tier,
+                description=f"Deterministically measure {tool_id.replace('_', ' ')}.",
+                handler=handler,
+            )
+        )
+    return registry
+
+
+__all__ = [
+    "candidate_keys",
+    "cardinality",
+    "column_profile",
+    "correlation",
+    "join_overlap",
+    "null_rate",
+    "register_ds_tools",
+    "validation_signals",
+    "value_counts",
+]

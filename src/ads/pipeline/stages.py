@@ -1,0 +1,408 @@
+"""Deterministic stage adapters for :mod:`ads.orchestration`.
+
+The orchestration protocol persists typed artifacts, while pandas frames remain
+process-local payloads.  This module keeps those frames under private blackboard
+keys and makes every durable decision/report cross the stage boundary as an
+artifact.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import ClassVar, Final
+
+import pandas as pd
+
+from ads.contracts.base import Artifact, ArtifactType
+from ads.contracts.datacard import DataCard
+from ads.contracts.gates import QualitySignals
+from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal
+from ads.contracts.leakage import LeakageReport
+from ads.contracts.problem import ProblemDefinition
+from ads.contracts.reporting import DecisionAuthority, DecisionRecord, EvaluationReport
+from ads.contracts.training import TrainingReport
+from ads.contracts.validation import ValidationStrategy
+from ads.discovery import audit_leakage
+from ads.ds_toolkit import build_preprocessor
+from ads.eda import profile_for_eda
+from ads.intake import LoadedTable, load_directory, profile_table, profile_tables
+from ads.integration import execute_plan
+from ads.orchestration import RunState, StageResult
+from ads.reporting import build_evaluation_report, render_markdown
+from ads.splitting import describe_split
+from ads.store import compute_artifact_id
+from ads.training import default_candidates, train_candidates
+
+SOURCE_PATH_KEY: Final = "pipeline.source_path"
+INTEGRATION_PLAN_KEY: Final = "pipeline.integration_plan"
+PROBLEM_KEY: Final = "pipeline.problem_definition"
+STRATEGY_KEY: Final = "pipeline.validation_strategy"
+CANDIDATE_LIMIT_KEY: Final = "pipeline.candidate_limit"
+VALIDATION_FOLDS_KEY: Final = "pipeline.validation_folds"
+
+LOADED_TABLES_KEY: Final = "pipeline.loaded_tables"
+SOURCE_FRAMES_KEY: Final = "pipeline.source_frames"
+SOURCE_CARDS_KEY: Final = "pipeline.source_cards"
+ABT_FRAME_KEY: Final = "pipeline.abt_frame"
+MODEL_FRAME_KEY: Final = "pipeline.model_frame"
+SPLIT_DIAGNOSTICS_KEY: Final = "pipeline.split_diagnostics"
+INTEGRATION_GRAIN_PRESERVED_KEY: Final = "pipeline.integration_grain_preserved"
+DROPPED_FEATURES_KEY: Final = "pipeline.dropped_features"
+TRAINING_FRAME_COLUMNS_KEY: Final = "pipeline.training_frame_columns"
+FINAL_MARKDOWN_KEY: Final = "pipeline.final_markdown"
+
+_DROP_FEATURE = re.compile(r"^\s*drop_feature\s*:\s*([^#]+)", re.IGNORECASE)
+
+
+class FinalReport(Artifact):
+    """Rendered handoff paired with the exact evaluation artifact it presents."""
+
+    artifact_type: ClassVar[ArtifactType] = ArtifactType.FINAL_REPORT
+    schema_version: ClassVar[str] = "1"
+
+    evaluation_artifact_id: str
+    markdown: str
+
+    def summary(self) -> dict[str, object]:
+        return {
+            "evaluation_artifact_id": self.evaluation_artifact_id,
+            "n_characters": len(self.markdown),
+        }
+
+
+def configure_pipeline_state(
+    state: RunState,
+    *,
+    source_path: str | Path,
+    integration_plan: IntegrationPlan,
+    problem: ProblemDefinition,
+    validation_strategy: ValidationStrategy,
+    candidate_limit: int | None = None,
+) -> None:
+    """Attach approved run inputs and deterministic execution options."""
+    if candidate_limit is not None and candidate_limit < 1:
+        raise ValueError("candidate_limit must be positive when supplied")
+    state.blackboard.update(
+        {
+            SOURCE_PATH_KEY: Path(source_path),
+            INTEGRATION_PLAN_KEY: integration_plan,
+            PROBLEM_KEY: problem,
+            STRATEGY_KEY: validation_strategy,
+            CANDIDATE_LIMIT_KEY: candidate_limit,
+        }
+    )
+
+
+def configure_full_pipeline_state(
+    state: RunState,
+    *,
+    source_path: str | Path,
+    candidate_limit: int | None = None,
+    validation_folds: int = 3,
+) -> None:
+    """Attach source and execution options for the agent-backed workflow."""
+    if candidate_limit is not None and candidate_limit < 1:
+        raise ValueError("candidate_limit must be positive when supplied")
+    if not 2 <= validation_folds <= 20:
+        raise ValueError("validation_folds must be between 2 and 20")
+    state.blackboard.update(
+        {
+            SOURCE_PATH_KEY: Path(source_path),
+            CANDIDATE_LIMIT_KEY: candidate_limit,
+            VALIDATION_FOLDS_KEY: validation_folds,
+        }
+    )
+
+
+def _frame(state: RunState, key: str) -> pd.DataFrame:
+    value = state.blackboard.get(key)
+    if not isinstance(value, pd.DataFrame):
+        raise ValueError(f"RunState.blackboard[{key!r}] does not contain a DataFrame.")
+    return value
+
+
+def intake_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Load/profile source files and persist any pre-approved run decisions."""
+    del correction
+    source_path = state.blackboard.get(SOURCE_PATH_KEY)
+    if not isinstance(source_path, Path):
+        raise ValueError(f"RunState.blackboard[{SOURCE_PATH_KEY!r}] must contain a Path.")
+    loaded = load_directory(source_path)
+    cards = profile_tables(loaded)
+    state.blackboard[LOADED_TABLES_KEY] = loaded
+    state.blackboard[SOURCE_FRAMES_KEY] = {table.name: table.frame for table in loaded}
+    state.blackboard[SOURCE_CARDS_KEY] = cards
+
+    artifacts: list[Artifact] = [*cards]
+    names = {index: card.table_name for index, card in enumerate(cards)}
+    configured = (
+        (INTEGRATION_PLAN_KEY, IntegrationPlan, "approved_integration_plan"),
+        (PROBLEM_KEY, ProblemDefinition, "approved_problem_definition"),
+        (STRATEGY_KEY, ValidationStrategy, "approved_validation_strategy"),
+    )
+    for key, expected, name in configured:
+        value = state.blackboard.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, expected):
+            raise ValueError(
+                f"RunState.blackboard[{key!r}] must contain {expected.__name__}."
+            )
+        names[len(artifacts)] = name
+        artifacts.append(value)
+    return StageResult(
+        artifacts=artifacts,
+        names=names,
+        signals=QualitySignals(n_rows=sum(card.n_rows for card in cards)),
+    )
+
+
+def integration_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Execute the approved plan, verify its grain, and profile the resulting ABT."""
+    del correction
+    frames = state.blackboard.get(SOURCE_FRAMES_KEY)
+    if not isinstance(frames, dict) or not all(
+        isinstance(name, str) and isinstance(frame, pd.DataFrame)
+        for name, frame in frames.items()
+    ):
+        raise ValueError("Intake did not place source frames on the run blackboard.")
+    plan = state.require(ArtifactType.INTEGRATION_PLAN, IntegrationPlan)
+    result = execute_plan(plan, frames)
+    state.blackboard[INTEGRATION_GRAIN_PRESERVED_KEY] = result.grain_preserved
+    state.blackboard[ABT_FRAME_KEY] = result.frame
+    state.blackboard[MODEL_FRAME_KEY] = result.frame.copy()
+    abt_card = profile_table(
+        LoadedTable(name="abt", frame=result.frame, source_uri="derived", source_format="duckdb")
+    )
+    return StageResult(
+        artifacts=[abt_card],
+        names={0: "abt"},
+        signals=QualitySignals(n_rows=len(result.frame)),
+    )
+
+
+def profiling_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Run deterministic EDA over the integrated analytical base table."""
+    del correction
+    frame = _frame(state, ABT_FRAME_KEY)
+    card = state.require(ArtifactType.DATA_CARD, DataCard)
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    report = profile_for_eda(card, frame, problem)
+    n_features = max(len(report.model_eligible_columns), 1)
+    return StageResult(
+        artifacts=[report],
+        names={0: "eda"},
+        signals=QualitySignals(
+            n_rows=len(frame),
+            rows_per_feature=len(frame) / n_features,
+        ),
+    )
+
+
+def _drop_columns_from_correction(
+    correction: list[str] | None,
+    *,
+    frame: pd.DataFrame,
+    target_column: str | None,
+) -> set[str]:
+    drops: set[str] = set()
+    for instruction in correction or ():
+        match = _DROP_FEATURE.match(instruction)
+        if match is None:
+            continue
+        column = match.group(1).strip()
+        if column == target_column:
+            raise ValueError("A leakage correction cannot drop the configured target.")
+        if column not in frame.columns:
+            raise ValueError(f"Leakage correction names unknown feature {column!r}.")
+        drops.add(column)
+    return drops
+
+
+def _current_problem(state: RunState) -> ProblemDefinition:
+    return state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+
+
+def leakage_audit_stage(
+    state: RunState, correction: list[str] | None = None
+) -> StageResult:
+    """Measure leakage and apply mechanical ``drop_feature:`` retry corrections."""
+    abt = _frame(state, ABT_FRAME_KEY)
+    problem = _current_problem(state)
+    strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
+    plan = state.require(ArtifactType.INTEGRATION_PLAN, IntegrationPlan)
+
+    prior_drops = set(state.blackboard.get(DROPPED_FEATURES_KEY, ()))
+    requested_drops = _drop_columns_from_correction(
+        correction,
+        frame=abt,
+        target_column=problem.target_column,
+    )
+    dropped = prior_drops | requested_drops | set(problem.excluded_columns)
+    state.blackboard[DROPPED_FEATURES_KEY] = frozenset(dropped)
+    model_frame = abt.drop(columns=sorted(dropped), errors="ignore").copy()
+    state.blackboard[MODEL_FRAME_KEY] = model_frame
+
+    corrected_problem = problem.model_copy(update={"excluded_columns": sorted(dropped)})
+    card = state.require(ArtifactType.DATA_CARD, DataCard)
+    proposal = IntegrationPlanProposal.model_validate(
+        plan.model_dump(exclude={"created_at", "evidence"})
+    )
+    report = audit_leakage(
+        card,
+        abt,
+        target_column=corrected_problem.target_column,
+        task_type=corrected_problem.task_type,
+        validation_strategy=strategy,
+        integration_plan=proposal,
+        excluded_columns=frozenset(dropped),
+    )
+    return StageResult(
+        artifacts=[report, corrected_problem],
+        names={0: "leakage_current", 1: "problem_current"},
+        signals=report.to_quality_signals(),
+    )
+
+
+def splitting_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Build the configured split and expose its usability measurements to the gate."""
+    del correction
+    frame = _frame(state, MODEL_FRAME_KEY)
+    problem = _current_problem(state)
+    strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
+    if problem.target_column is None:
+        labeled = frame
+    else:
+        labeled = frame.loc[frame[problem.target_column].notna()]
+    diagnostics = describe_split(labeled, strategy)
+    state.blackboard[SPLIT_DIAGNOSTICS_KEY] = diagnostics
+    return StageResult(signals=diagnostics.to_quality_signals())
+
+
+def training_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Fit the fixed candidate menu with fold-local preprocessing."""
+    del correction
+    frame = _frame(state, MODEL_FRAME_KEY)
+    problem = _current_problem(state)
+    strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
+    if problem.target_column is None:
+        raise ValueError("Deterministic training requires a supervised target column.")
+    card = profile_table(
+        LoadedTable(
+            name="model_frame",
+            frame=frame,
+            source_uri="derived",
+            source_format="pandas",
+        )
+    )
+    excluded_present = set(problem.excluded_columns) & set(card.column_names)
+    candidates = default_candidates(problem.task_type)
+    candidate_limit = state.blackboard.get(CANDIDATE_LIMIT_KEY)
+    if candidate_limit is not None:
+        if not isinstance(candidate_limit, int) or candidate_limit < 1:
+            raise ValueError("pipeline.candidate_limit must be a positive integer or None.")
+        candidates = candidates[:candidate_limit]
+    state.blackboard[TRAINING_FRAME_COLUMNS_KEY] = tuple(frame.columns)
+    report = train_candidates(
+        frame,
+        strategy,
+        lambda: build_preprocessor(
+            card,
+            target_column=problem.target_column or "",
+            excluded_columns=excluded_present,
+        ),
+        candidates,
+        target_column=problem.target_column,
+        task_type=problem.task_type,
+        store=state.store,
+        run_id=state.run_id,
+    )
+    return StageResult(
+        artifacts=[report],
+        names={0: "training_report"},
+        signals=report.to_quality_signals(),
+    )
+
+
+def _build_evaluation(state: RunState) -> EvaluationReport:
+    training = state.require(ArtifactType.TRAINED_MODEL, TrainingReport)
+    leakage = state.require(ArtifactType.LEAKAGE_REPORT, LeakageReport)
+    strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
+    problem = _current_problem(state)
+    human_decisions = [
+        DecisionRecord(
+            stage=str(item["stage_id"]),
+            decision=f"Human chose {item['decision']!r} at this gate.",
+            authority=DecisionAuthority.HUMAN,
+            rationale=(
+                "Instructions: " + "; ".join(str(value) for value in item["instructions"])
+                if item.get("instructions")
+                else "The decision carried no free-text instructions."
+            ),
+        )
+        for item in state.blackboard.get("human_decisions", [])
+    ]
+    return build_evaluation_report(
+        training,
+        leakage,
+        strategy,
+        problem,
+        decisions=human_decisions,
+        gate_decisions=[
+            attempt.decision
+            for attempt in state.attempts
+            if attempt.decision is not None
+        ],
+        prior_leakage_reports=state.all_of(ArtifactType.LEAKAGE_REPORT, LeakageReport),
+    )
+
+
+def evaluation_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Assemble measured model, split, leakage, and decision evidence."""
+    del correction
+    report = _build_evaluation(state)
+    training = state.require(ArtifactType.TRAINED_MODEL, TrainingReport)
+    return StageResult(
+        artifacts=[report],
+        names={0: "evaluation_report"},
+        signals=training.to_quality_signals(),
+    )
+
+
+def reporting_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
+    """Refresh complete gate history and render the final Markdown handoff."""
+    del correction
+    evaluation = _build_evaluation(state)
+    markdown = render_markdown(evaluation).rstrip()
+    state.blackboard[FINAL_MARKDOWN_KEY] = markdown
+    final = FinalReport(
+        evaluation_artifact_id=compute_artifact_id(evaluation),
+        markdown=markdown,
+    )
+    return StageResult(
+        artifacts=[evaluation, final],
+        names={0: "evaluation_report_final", 1: "final_report"},
+    )
+
+
+__all__ = [
+    "ABT_FRAME_KEY",
+    "DROPPED_FEATURES_KEY",
+    "FINAL_MARKDOWN_KEY",
+    "INTEGRATION_GRAIN_PRESERVED_KEY",
+    "FinalReport",
+    "MODEL_FRAME_KEY",
+    "SPLIT_DIAGNOSTICS_KEY",
+    "TRAINING_FRAME_COLUMNS_KEY",
+    "configure_pipeline_state",
+    "configure_full_pipeline_state",
+    "evaluation_stage",
+    "intake_stage",
+    "integration_stage",
+    "leakage_audit_stage",
+    "profiling_stage",
+    "reporting_stage",
+    "splitting_stage",
+    "training_stage",
+]

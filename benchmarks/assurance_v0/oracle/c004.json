@@ -1,0 +1,47 @@
+{
+  "case_id": "c004",
+  "pair_id": "readmission-p001",
+  "scenario_family": "readmission",
+  "variant": "mutated",
+  "mutation_family": "temporal_lookahead",
+  "invalidity_mechanism": "temporal_lookahead",
+  "evidence_mode": "signal_bearing",
+  "seed": 4107,
+  "public_checksums": "cases/c004/checksums.json",
+  "expected_disposition": "not_supported",
+  "expected_locators": [
+    {
+      "file": "analysis.ipynb",
+      "notebook_cell": 3
+    }
+  ],
+  "canonical_remediation": [
+    "Remove or repair the named invalidity and rerun the full evaluation."
+  ],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 0.6615942028985508,
+    "oracle_metric": 0.6495454545454545,
+    "optimism_gap": 0.012048748353096217,
+    "effect_direction": "positive",
+    "effect_bin": "pending_thresholds",
+    "group_overlap_count": 0,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md",
+    "cross_scenario_contrast": {
+      "mutation_family": "temporal_lookahead",
+      "paired_case_id": "c014",
+      "paired_optimism_gap": -0.12225487641334964,
+      "property": "opposite_sign"
+    }
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "pending",
+    "basis": "Review cases/c004/brief.md without generator or oracle access."
+  }
+}

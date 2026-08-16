@@ -1,0 +1,8 @@
+{
+  "case_id": "c002",
+  "sha256": {
+    "analysis.ipynb": "0d505ec56d26b079957530fb35d2e8605f8a1d31154b9c714362389c13363448",
+    "brief.md": "1bc6551bbc5ceb5fa21b560328fc1bd5873d9dbacb8863c26615a3a65f2ee85b",
+    "dataset/encounters.csv": "7856ec7964579390c2401192e452f76451c43599aec826383e42ac77ade34eda"
+  }
+}

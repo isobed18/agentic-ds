@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Generated data — everything under data/ is reproducible output.
+# scripts/make_sample_data.py regenerates fixtures; runs regenerate the rest.
+data/
+*.sqlite
+
+# Local editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+web/node_modules/
+web/dist/
+
+# NOTE: data/ above already covers downloaded evaluation datasets. Worth knowing
+# why that matters: Olist (data/olist) is CC-BY-NC-SA-4.0 — non-commercial and
+# share-alike. Usable as a local development fixture; must never be
+# redistributed with this repository or bundled into the product.

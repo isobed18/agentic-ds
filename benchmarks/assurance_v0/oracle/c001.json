@@ -1,0 +1,34 @@
+{
+  "case_id": "c001",
+  "pair_id": "readmission-p001",
+  "scenario_family": "readmission",
+  "variant": "safe",
+  "mutation_family": null,
+  "invalidity_mechanism": null,
+  "evidence_mode": null,
+  "seed": 4107,
+  "public_checksums": "cases/c001/checksums.json",
+  "expected_disposition": "supported",
+  "expected_locators": [],
+  "canonical_remediation": [],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 0.6495454545454545,
+    "oracle_metric": 0.6495454545454545,
+    "optimism_gap": 0,
+    "effect_direction": "zero",
+    "effect_bin": "zero",
+    "group_overlap_count": 0,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md"
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "agreed",
+    "basis": "Derived supported from cases/c001/brief.md without generator or oracle access."
+  }
+}

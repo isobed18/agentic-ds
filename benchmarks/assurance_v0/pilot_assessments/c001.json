@@ -1,0 +1,6 @@
+{
+  "disposition": "supported",
+  "findings": [],
+  "unknowns": [],
+  "reported_metric": {"name": "roc_auc", "value": null}
+}

@@ -1,0 +1,41 @@
+{
+  "case_id": "c017",
+  "pair_id": "lending-p001",
+  "scenario_family": "lending",
+  "variant": "mutated",
+  "mutation_family": "cross_fold_duplicate",
+  "invalidity_mechanism": "cross_fold_duplicate",
+  "evidence_mode": "signal_bearing",
+  "seed": 7319,
+  "public_checksums": "cases/c017/checksums.json",
+  "expected_disposition": "not_supported",
+  "expected_locators": [
+    {
+      "file": "dataset/applications.csv",
+      "column": "application_id"
+    }
+  ],
+  "canonical_remediation": [
+    "Remove or repair the named invalidity and rerun the full evaluation."
+  ],
+  "measurements": {
+    "metric": "roc_auc",
+    "supplied_metric": 0.6416256157635468,
+    "oracle_metric": 0.6353161009031455,
+    "optimism_gap": 0.006309514860401322,
+    "effect_direction": "positive",
+    "effect_bin": "pending_thresholds",
+    "group_overlap_count": 0,
+    "status": "measured",
+    "source": "proxy execution recorded in docs/AGENT_DIALOGUE.md"
+  },
+  "oracle_author": {
+    "name": "CODEX",
+    "status": "authored"
+  },
+  "second_review": {
+    "name": "CLAUDE",
+    "status": "pending",
+    "basis": "Review cases/c017/brief.md without generator or oracle access."
+  }
+}
