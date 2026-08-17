@@ -1,7 +1,7 @@
 ---
 skill_id: fe.high_cardinality_categoricals
-trigger: any categorical column with n_unique > 20
-applies_to: [feature_pipeline]
+trigger: has_high_cardinality_categorical
+applies_to: [feature_investigation, model_investigation]
 source: adapted from business-science/ai-data-science-team (MIT)
 ---
 
@@ -12,28 +12,20 @@ that overfits and slows training. Bucket first, then encode.
 
 ## Rules
 
-1. Compute each category's frequency. Bucket every category whose frequency is
-   **below 5%** into a single `Other` level, then one-hot encode what remains.
-2. If cardinality is still above ~50 after bucketing, prefer **target encoding**
-   over one-hot — but only inside a cross-validation fold (see below).
-3. Drop any string column whose `n_unique` equals the row count: it is an
-   identifier, not a feature.
-4. Drop constant columns (`n_unique == 1`); they carry no signal.
+1. Compute category frequency on training rows. Bucket categories below a chosen
+   threshold into an `Other` level, then one-hot encode what remains.
+2. If cardinality remains high, target encoding is an option only when it is fit
+   independently inside every cross-validation fold.
+3. Drop row identifiers and constant columns; they carry no generalisable signal.
+4. Treat threshold values as experiment parameters, not universal domain facts.
 
 ## Leakage warning
 
 Target encoding fit on the full dataset leaks the target into training features.
-It must be fit inside each CV fold. Implement it as a transformer inside the
-sklearn `Pipeline`, never as a precomputed column on the dataframe.
+It must be a transformer inside the fitted pipeline, never a precomputed column.
 
 ## Implementation
 
-Use `ads.ds_toolkit.preprocessing.RareCategoryBucketer`, or
-`ads.ds_toolkit.preprocessing.build_categorical_pipeline(...)` which already
-chains imputation, bucketing and one-hot encoding.
-
-Both return **unfitted** transformers. Do not emit a transformed DataFrame — the
-stage contract requires a `Pipeline` object so that every statistic is fit inside
-the training fold. Returning a DataFrame means the bucketing thresholds were
-learned from the test fold too, which is exactly the leakage this skill exists to
-prevent.
+Use an unfitted scikit-learn transformer inside a `Pipeline`, so learned
+statistics come only from training rows. The current repository does not provide
+a custom rare-category transformer; do not import one by name.

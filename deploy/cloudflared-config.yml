@@ -1,0 +1,42 @@
+# Cloudflare tunnel for the control plane.
+#
+# Copy to ~/.cloudflared/config.yml after `cloudflared tunnel create agentic-ds`,
+# substituting the UUID that command prints. Kept in the repository so the
+# deployment is reviewable and reproducible rather than living only in one
+# machine's home directory.
+#
+# The security argument for this file, stated so it can be checked:
+#
+#  * The origin is 127.0.0.1. cloudflared runs on the same host as uvicorn, so
+#    nothing is ever bound to a routable address and the app is not on the LAN.
+#  * There is exactly one ingress hostname. The catch-all returns 404 rather
+#    than falling through to the service, so a request arriving with any other
+#    Host header reaches nothing.
+#  * TLS terminates at Cloudflare. The session cookie is set Secure, so it is
+#    never transmitted over the plain-HTTP hop -- which is loopback only.
+#  * Authentication is NOT handled here. It is the application's password gate
+#    (src/ads/api/auth.py). This file assumes the origin is already gated;
+#    scripts/serve_public.py is what enforces that.
+
+tunnel: agentic-ds
+credentials-file: C:\Users\ishak\.cloudflared\<TUNNEL-UUID>.json
+
+# Do not compress; the payloads are JSON and Cloudflare already gzips at the edge.
+originRequest:
+  connectTimeout: 30s
+  # The pipeline can hold a request open while a stage runs. The default 30s
+  # would sever those, so the read side is deliberately long.
+  tcpKeepAlive: 30s
+  noHappyEyeballs: true
+
+ingress:
+  - hostname: api.altspacelabs.com
+    service: http://127.0.0.1:8077
+    originRequest:
+      # uvicorn is told to trust forwarded headers only from 127.0.0.1, which
+      # is this process. Keep the origin Host so FastAPI builds correct URLs.
+      httpHostHeader: api.altspacelabs.com
+
+  # Anything else that reaches this tunnel is not ours. Refuse rather than
+  # serve the app under an unexpected hostname.
+  - service: http_status:404

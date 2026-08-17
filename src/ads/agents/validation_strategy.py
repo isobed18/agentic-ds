@@ -26,6 +26,7 @@ from ads.discovery.validation_signals import (
 )
 from ads.intake.profiler import datacard_digest
 from ads.llm.client import LARGE
+from ads.skills import render_skills, select_skills
 
 SYSTEM_PROMPT = """\
 You are a senior data scientist designing an honest evaluation split for an \
@@ -46,7 +47,8 @@ that prevents every leak the measurements show:
   `grouped` is NOT a safer version of `temporal`. It provides no temporal protection at \
 all, and vice versa.
 - Repeating identifier domains plus a multi-period datetime span require grouped_temporal.
-- Repeating identifier domains require grouped, so the same candidate entity cannot enter train and test.
+- Repeating identifier domains require grouped, so the same candidate entity cannot enter \
+train and test.
 - A multi-period datetime span requires temporal, holding out the most recent period.
 - Imbalanced classification without entity/time constraints requires stratified.
 - Use exact ABT column names for group_column and time_column.
@@ -90,12 +92,16 @@ def build_context(abt_card: DataCard, signals: ValidationSignals) -> AgentContex
     repeated = {item.column: item for item in signals.repeated_entity_keys}
     safe_groups = full_coverage_group_columns(signals)
     temporal = {item.column: item for item in signals.temporal_spans}
-    return AgentContext(
-        sections={
+    skills = select_skills("validation_strategy", [abt_card])
+    sections = {
             "Analytical base table": datacard_digest(abt_card),
             "Validation signals": validation_signals_digest(signals),
             "Task": "Choose the validation strategy and justify its business consequence.",
-        },
+        }
+    if skills:
+        sections["Applicable skills"] = render_skills(skills)
+    return AgentContext(
+        sections=sections,
         facts={
             "known_columns": abt_card.column_names,
             "semantic_by_column": {
@@ -108,6 +114,7 @@ def build_context(abt_card: DataCard, signals: ValidationSignals) -> AgentContex
             "full_coverage_group_columns": safe_groups,
             "temporal_spans_by_column": temporal,
             "recommended_strategy": recommend_strategy(signals),
+            "skill_ids": [skill.skill_id for skill in skills],
         },
     )
 

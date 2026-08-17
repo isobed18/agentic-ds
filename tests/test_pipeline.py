@@ -133,6 +133,7 @@ def test_default_pipeline_runs_end_to_end_on_real_sample_data(
         "integration",
         "eda",
         "leakage_audit",
+        "feature_pipeline",
         "splitting",
         "training",
         "evaluation",

@@ -19,10 +19,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from ads.api.auth import config_from_env, install_auth
 from ads.api.panels import (
     eda_panels,
     evaluation_panels,
+    exploratory_panel,
     leakage_panels,
+    model_experiment_panel,
     schema_graph,
     source_panels,
     training_panels,
@@ -46,7 +49,7 @@ from ads.pipeline import (
     configure_full_pipeline_state,
     configure_pipeline_state,
 )
-from ads.sandbox import SandboxConfig
+from ads.sandbox import SandboxConfig, SandboxManager
 from ads.store import ArtifactStore
 
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
@@ -655,11 +658,22 @@ class ControlPlane:
                     "Start Ollama or choose Manual plan."
                 )
             spec, registry = build_full_spec(llm, panel_size=agent_panel_size)
+            sandbox_root = self.store.root.parent / "sandbox" / run_id
+            sandbox_data = sandbox_root / "data"
+            sandbox_outputs = sandbox_root / "artifacts"
+            sandbox_data.mkdir(parents=True, exist_ok=True)
+            sandbox_outputs.mkdir(parents=True, exist_ok=True)
             configure_full_pipeline_state(
                 state,
                 source_path=source_path,
                 candidate_limit=candidate_limit,
                 validation_folds=validation_strategy.n_folds,
+                execution_backend=SandboxManager(
+                    SandboxConfig(
+                        data_dir=sandbox_data,
+                        artifacts_dir=sandbox_outputs,
+                    )
+                ),
             )
         else:
             spec, registry = build_default_spec(), build_default_registry()
@@ -1103,6 +1117,17 @@ class ControlPlane:
                 ("Joins", "n_joins"),
                 ("Aggregations", "n_aggregations"),
             ]
+        elif artifact_type == "integration_trial":
+            title = "Integration plan trial"
+            description = (
+                "Measured result of executing the proposed joins and aggregations on a copy."
+            )
+            preferred = [
+                ("Base rows", "base_rows"),
+                ("Result rows", "result_rows"),
+                ("Grain preserved", "grain_preserved"),
+                ("Result columns", "n_columns"),
+            ]
         elif artifact_type == "problem_candidates":
             title = "Candidate analysis problems"
             description = "Problems proposed by the planner and checked against measured support."
@@ -1147,6 +1172,18 @@ class ControlPlane:
                 ("Holdout score", "winner_holdout_score"),
                 ("Training rows", "training_row_count"),
             ]
+        elif artifact_type == "model_experiment":
+            title = str(summary.get("title") or "Agent-authored model experiment")
+            description = (
+                "An isolated development experiment scored by the host on withheld labels."
+            )
+            preferred = [
+                ("Model family", "model_family"),
+                ("Metric", "metric"),
+                ("Score", "score"),
+                ("Baseline", "baseline_score"),
+                ("Evaluation rows", "evaluation_rows"),
+            ]
         elif artifact_type == "evaluation_report":
             title = "Evaluation result"
             description = (
@@ -1178,6 +1215,7 @@ class ControlPlane:
                 ("Agreement", "agreement"),
                 ("Pydantic", "pydantic_validated"),
                 ("Tools", "tool_count"),
+                ("Skills", "skill_count"),
             ]
         elif artifact_type == "eda_report":
             title = "Exploratory data findings"
@@ -1185,6 +1223,14 @@ class ControlPlane:
                 "Measured distributions, missingness, and relationships relevant to the problem."
             )
             preferred = [(key.replace("_", " ").title(), key) for key in summary][:4]
+        elif artifact_type == "exploratory_analysis":
+            title = str(summary.get("title") or "Agent-authored exploratory analysis")
+            description = "Validated exploratory output produced by locally executed code."
+            preferred = [
+                ("Evidence class", "evidence_class"),
+                ("Chart", "chart_kind"),
+                ("Tool calls", "tool_calls"),
+            ]
         facts = [
             {"label": label, "value": summary[key]}
             for label, key in preferred
@@ -1192,7 +1238,12 @@ class ControlPlane:
         ]
         return {"title": title, "description": description, "facts": facts}
 
-    def _artifact_story(self, artifact: dict[str, Any]) -> dict[str, Any]:
+    def _artifact_story(
+        self,
+        artifact: dict[str, Any],
+        *,
+        linked_interpretations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """A selective, row-free narrative projection for one artifact card."""
         artifact_type = artifact["type"]
         story: dict[str, Any] = {
@@ -1213,6 +1264,12 @@ class ControlPlane:
             # The join plan as a picture. The brief asks that the schema not be
             # something only the agent understands.
             story["schema_graph"] = schema_graph(payload)
+        elif artifact_type == "integration_trial":
+            story["suggestion"] = (
+                "The proposed plan was executed by the deterministic integration engine "
+                "before it was accepted."
+            )
+            story["warnings"] = payload.get("warnings", [])
         elif artifact_type == "problem_candidates":
             story["suggestion"] = "The planner ranked these analysis problems."
             story["choices"] = [
@@ -1347,6 +1404,13 @@ class ControlPlane:
                     "treat these as leakage candidates until audited."
                 )
             story["warnings"] = warnings
+        elif artifact_type == "exploratory_analysis":
+            story["panels"] = [
+                exploratory_panel(payload, linked_interpretations or [])
+            ]
+            story["suggestion"] = (
+                "Treat this as a proposed extension to the mandatory EDA, not as gate evidence."
+            )
         elif artifact_type == "trained_model":
             story["panels"] = training_panels(payload)
             story["suggestion"] = (
@@ -1385,6 +1449,14 @@ class ControlPlane:
                 }
                 for item in payload.get("results", [])
             ]
+        elif artifact_type == "model_experiment":
+            story["panels"] = [
+                model_experiment_panel(payload, linked_interpretations or [])
+            ]
+            story["suggestion"] = (
+                "Review this as a proposed development experiment; it did not use the "
+                "final holdout and cannot change the selected model."
+            )
         elif artifact_type == "evaluation_report":
             story["panels"] = evaluation_panels(payload)
             story["suggestion"] = (
@@ -1430,6 +1502,10 @@ class ControlPlane:
                 "Review panel agreement and validation evidence before trusting this "
                 "agent-authored contract."
             )
+            row_access = bool(payload.get("raw_rows_shared", False))
+            row_access_authorized = (
+                not row_access or payload.get("agent_id") == "eda_investigator"
+            )
             story["quality_checks"] = [
                 {
                     "label": "Pydantic output contract",
@@ -1437,9 +1513,13 @@ class ControlPlane:
                     "detail": payload.get("output_contract"),
                 },
                 {
-                    "label": "No raw rows in model context",
-                    "passed": not payload.get("raw_rows_shared", True),
-                    "detail": "Only schema, aggregate measurements, and instructions.",
+                    "label": "Row access matches the agent role",
+                    "passed": row_access_authorized,
+                    "detail": (
+                        "Local investigator may read a read-only copy; output remains typed."
+                        if row_access
+                        else "Planner context contains schema and aggregate measurements only."
+                    ),
                 },
                 {
                     "label": "Evidence tools were allowlisted",
@@ -1502,8 +1582,34 @@ class ControlPlane:
             if item["type"] != "gate_decision"
             and (item["stage"] == stage_id or item["artifact_id"] in attempted_ids)
         ]
+        interpretations_by_source: dict[str, list[dict[str, Any]]] = {}
+        for item in artifacts:
+            if item["type"] != ArtifactType.COMPREHENSION_BRIEF.value:
+                continue
+            brief = self.artifact_payload(item["artifact_id"])
+            for interpretation in brief.get("items", []):
+                for citation in interpretation.get("citations", []):
+                    source_id = citation.get("source_artifact_id")
+                    if isinstance(source_id, str):
+                        interpretations_by_source.setdefault(source_id, []).append(
+                            {
+                                "interpretation": interpretation.get("interpretation"),
+                                "why_it_matters": interpretation.get("why_it_matters"),
+                                "verification_question": (
+                                    interpretation.get("verification") or {}
+                                ).get("question"),
+                                "confidence": interpretation.get("confidence"),
+                                "epistemic_state": interpretation.get("epistemic_state"),
+                                "measurement_id": citation.get("measurement_id"),
+                            }
+                        )
         for artifact in artifacts:
-            artifact["story"] = self._artifact_story(artifact)
+            artifact["story"] = self._artifact_story(
+                artifact,
+                linked_interpretations=interpretations_by_source.get(
+                    artifact["artifact_id"], []
+                ),
+            )
         decisions = [item for item in self.gate_decisions(run_id) if item["stage_id"] == stage_id]
         questions = [decision["human_prompt"] for decision in decisions if decision["human_prompt"]]
         primary_outputs = next(
@@ -1699,7 +1805,10 @@ class ControlPlane:
                 "semantic_validators": True,
                 "deterministic_auto_repair": True,
                 "tool_allowlists": True,
-                "raw_rows_shared": False,
+                "raw_rows_shared": True,
+                "raw_row_access_scope": (
+                    "Read-only ABT copy, on demand, local EDA investigator only"
+                ),
             },
             "orchestration": {
                 "attempt_input_pinning": True,
@@ -1764,6 +1873,18 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
     store = ArtifactStore(artifacts_dir)
     plane = plane or ControlPlane(store=store)
     app = FastAPI(title="Agentic DS workflow", version="0.2.0")
+
+    # Password gate. Installed only when a credential is configured, so the
+    # loopback launcher and the test suite are unaffected; the public launcher
+    # refuses to start without one. See ads/api/auth.py.
+    auth_config = config_from_env()
+    if auth_config is not None and auth_config.enabled:
+        install_auth(app, auth_config)
+
+    @app.get("/api/health", include_in_schema=False)
+    def health() -> dict[str, Any]:
+        """Unauthenticated liveness probe. Reports no run or artifact data."""
+        return {"status": "ok", "auth": auth_config is not None}
 
     static_dir = Path(__file__).with_name("static")
     if static_dir.is_dir():

@@ -23,10 +23,24 @@ from ads.contracts.evidence import (
     MeasurementRecord,
     SubjectRef,
 )
-from ads.discovery.measurements import datacard_measurements
+from ads.discovery.measurements import datacard_measurements, measurement_digest
 from ads.intake import LoadedTable, profile_table
 
 ARTIFACT_ID = "a" * 64
+
+
+def test_measurement_digest_accepts_every_declared_measurement_kind() -> None:
+    bundle = MeasurementBundle(
+        scope="enum-coverage",
+        records=[
+            _measurement(kind, [SubjectRef(table="events")], path=f"/{kind.value}")
+            for kind in MeasurementKind
+        ],
+    )
+
+    _rendered, visible = measurement_digest(bundle)
+
+    assert {record.kind for record in visible.values()} == set(MeasurementKind)
 
 
 def _measurement(

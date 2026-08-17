@@ -31,6 +31,7 @@ stages:
     mandatory_criteria:
       - schema.base_grain_declared
       - schema.fan_out_aggregated
+      - schema.plan_trial_passed
 
   problem_discovery:
     # CRITICAL: choosing the wrong target silently invalidates everything
@@ -53,6 +54,7 @@ stages:
     max_attempts: 3
     mandatory_criteria:
       - validation.strategy_matches_detected_signals
+      - validation.strategy_trial_passed
 
   eda:
     risk_class: low
@@ -62,24 +64,28 @@ stages:
       - eda.all_features_covered
       - eda.missingness_quantified
 
-  feature_pipeline:
-    risk_class: medium
-    max_attempts: 3
-    mandatory_criteria:
-      - features.pipeline_is_fitted_object
-      - features.no_test_fold_statistics
-
   leakage_audit:
     risk_class: high
     max_attempts: 1
 
-  model_selection:
-    risk_class: low
+  feature_pipeline:
+    risk_class: medium
     max_attempts: 2
+    mandatory_criteria:
+      - features.columns_accounted_for
+      - features.preprocessing_is_fold_local
+
+  splitting:
+    risk_class: medium
+    max_attempts: 3
 
   training:
-    risk_class: low
+    risk_class: medium
     max_attempts: 2
+    mandatory_criteria:
+      - features.pipeline_is_fitted_object
+      - features.no_test_fold_statistics
+      - model_selection.baseline_included
 
   evaluation:
     risk_class: high

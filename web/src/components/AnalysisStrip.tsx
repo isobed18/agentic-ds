@@ -26,6 +26,15 @@ export interface AnalysisPanel {
   chart: ChartSpec;
   insights?: string[];
   table?: { columns: string[]; rows: (string | number)[][] } | null;
+  origin?: "agent_authored" | string;
+  proposed_interpretations?: {
+    interpretation?: string;
+    why_it_matters?: string;
+    verification_question?: string;
+    confidence?: string;
+    epistemic_state?: string;
+    measurement_id?: string;
+  }[];
 }
 
 const SEVERITY: Record<string, { tone: "neutral" | "ok" | "warn" | "stop" | "brand"; label: string }> = {
@@ -85,6 +94,11 @@ export function AnalysisStrip({ panels }: { panels: AnalysisPanel[] }) {
                   )}
                 </div>
                 <Badge tone={meta.tone}>{meta.label}</Badge>
+                {panel.origin === "agent_authored" && (
+                  <span className="ml-1 text-[9px] font-semibold uppercase tracking-wide text-brand-700">
+                    Agent-authored
+                  </span>
+                )}
                 <div className="my-2 h-[76px] w-full text-ink">
                   <Chart spec={panel.chart} compact />
                 </div>
@@ -139,6 +153,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
       <header className="flex flex-wrap items-center gap-2.5">
         <h3 className="text-sm font-semibold text-ink">{panel.title}</h3>
         <Badge tone={meta.tone}>{meta.label}</Badge>
+        {panel.origin === "agent_authored" && <Badge tone="brand">Agent-authored</Badge>}
         <button
           onClick={() => setOpen((o) => !o)}
           className="btn-ghost ml-auto !py-1 text-[11px]"
@@ -164,6 +179,39 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
           </div>
 
           <div className="min-w-0 space-y-4">
+            {panel.proposed_interpretations?.map((item, index) => (
+              <div
+                key={item.measurement_id ?? index}
+                className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-xs font-semibold text-brand-800">Proposed interpretation</h4>
+                  <Badge tone="brand">{item.epistemic_state ?? "proposed"}</Badge>
+                  {item.confidence && (
+                    <span className="text-[10px] text-brand-700">
+                      model self-assessment: {item.confidence}
+                    </span>
+                  )}
+                </div>
+                {item.interpretation && (
+                  <p className="mt-1.5 text-xs leading-relaxed text-ink-soft">
+                    {item.interpretation}
+                  </p>
+                )}
+                {item.why_it_matters && (
+                  <p className="mt-1 text-xs leading-relaxed text-ink-mute">
+                    <span className="font-semibold text-ink-soft">Why it matters: </span>
+                    {item.why_it_matters}
+                  </p>
+                )}
+                {item.verification_question && (
+                  <p className="mt-2 border-t border-brand-200 pt-2 text-xs leading-relaxed text-brand-800">
+                    <span className="font-semibold">Verify: </span>
+                    {item.verification_question}
+                  </p>
+                )}
+              </div>
+            ))}
             {panel.insights && panel.insights.length > 0 && (
               <div>
                 <h4 className="mb-1.5 text-xs font-semibold text-ink">Key insights</h4>

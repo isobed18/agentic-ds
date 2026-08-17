@@ -12,10 +12,14 @@ from ads.pipeline.agent_stages import (
 )
 from ads.pipeline.comprehension_stages import (
     augment_eda_stage,
+    augment_feature_pipeline_stage,
+    augment_leakage_stage,
     augment_schema_discovery_stage,
+    augment_training_stage,
 )
 from ads.pipeline.stages import (
     evaluation_stage,
+    feature_pipeline_stage,
     intake_stage,
     integration_stage,
     leakage_audit_stage,
@@ -33,6 +37,7 @@ _COMPONENTS = {
     "pipeline.splitting": splitting_stage,
     "pipeline.training": training_stage,
     "pipeline.evaluation": evaluation_stage,
+    "pipeline.feature_pipeline": feature_pipeline_stage,
     "pipeline.reporting": reporting_stage,
 }
 
@@ -86,6 +91,17 @@ def build_default_spec() -> WorkflowSpec:
             description="Detect leakage and apply mechanical feature-drop corrections.",
         ),
         StageDefinition(
+            id="feature_pipeline",
+            component="pipeline.feature_pipeline",
+            consumes=(
+                ArtifactType.DATA_CARD,
+                ArtifactType.PROBLEM_DEFINITION,
+                ArtifactType.LEAKAGE_REPORT,
+            ),
+            produces=(ArtifactType.FEATURE_SPEC,),
+            description="Declare executor-owned feature routing for fold-local fitting.",
+        ),
+        StageDefinition(
             id="splitting",
             component="pipeline.splitting",
             consumes=(
@@ -93,6 +109,7 @@ def build_default_spec() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
+                ArtifactType.FEATURE_SPEC,
             ),
             description="Build the configured split and measure its retained support.",
         ),
@@ -104,6 +121,7 @@ def build_default_spec() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
+                ArtifactType.FEATURE_SPEC,
             ),
             produces=(ArtifactType.TRAINED_MODEL,),
             description="Fit and compare the fixed deterministic model menu.",
@@ -167,6 +185,15 @@ def build_full_registry(llm: StructuredLLM, *, panel_size: int = 1) -> Component
         make_validation_strategy_stage(llm, panel_size=panel_size),
     )
     registry.components["pipeline.profiling"] = augment_eda_stage(profiling_stage, llm)
+    registry.components["pipeline.leakage_audit"] = augment_leakage_stage(
+        leakage_audit_stage, llm
+    )
+    registry.components["pipeline.feature_pipeline"] = augment_feature_pipeline_stage(
+        feature_pipeline_stage, llm
+    )
+    registry.components["pipeline.training"] = augment_training_stage(
+        training_stage, llm
+    )
     return registry
 
 
@@ -189,6 +216,7 @@ def build_full_spec_definition() -> WorkflowSpec:
             consumes=(ArtifactType.DATA_CARD,),
             produces=(
                 ArtifactType.INTEGRATION_PLAN,
+                ArtifactType.INTEGRATION_TRIAL,
                 ArtifactType.MEASUREMENT_BUNDLE,
                 ArtifactType.COMPREHENSION_BRIEF,
                 ArtifactType.AGENT_AUDIT,
@@ -214,14 +242,24 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.AGENT_AUDIT,
             ),
-            description="Planner agent proposes problems with measured feasibility support.",
+            description=(
+                "An active scout chooses measurements or read-only code, then the planner "
+                "proposes problems with host-measured feasibility support."
+            ),
         ),
         StageDefinition(
             id="validation_strategy",
             component="pipeline.validation_strategy",
             consumes=(ArtifactType.DATA_CARD, ArtifactType.PROBLEM_DEFINITION),
-            produces=(ArtifactType.VALIDATION_STRATEGY, ArtifactType.AGENT_AUDIT),
-            description="Planner agent chooses a validation strategy from measured signals.",
+            produces=(
+                ArtifactType.VALIDATION_STRATEGY,
+                ArtifactType.VALIDATION_TRIAL,
+                ArtifactType.AGENT_AUDIT,
+            ),
+            description=(
+                "An active scout trials candidate splits; the exact final strategy is "
+                "re-executed and fingerprint-bound to executor-owned diagnostics."
+            ),
         ),
         StageDefinition(
             id="eda",
@@ -229,6 +267,7 @@ def build_full_spec_definition() -> WorkflowSpec:
             consumes=(ArtifactType.DATA_CARD, ArtifactType.PROBLEM_DEFINITION),
             produces=(
                 ArtifactType.EDA_REPORT,
+                ArtifactType.EXPLORATORY_ANALYSIS,
                 ArtifactType.MEASUREMENT_BUNDLE,
                 ArtifactType.COMPREHENSION_BRIEF,
                 ArtifactType.AGENT_AUDIT,
@@ -247,8 +286,35 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.VALIDATION_STRATEGY,
             ),
-            produces=(ArtifactType.LEAKAGE_REPORT, ArtifactType.PROBLEM_DEFINITION),
-            description="Detect leakage and apply mechanical feature-drop corrections.",
+            produces=(
+                ArtifactType.LEAKAGE_REPORT,
+                ArtifactType.PROBLEM_DEFINITION,
+                ArtifactType.AGENT_AUDIT,
+            ),
+            description=(
+                "Run the mandatory leakage floor, then let an agent request a "
+                "registered falsifiable challenge without clearing the gate itself."
+            ),
+        ),
+        StageDefinition(
+            id="feature_pipeline",
+            component="pipeline.feature_pipeline",
+            consumes=(
+                ArtifactType.DATA_CARD,
+                ArtifactType.PROBLEM_DEFINITION,
+                ArtifactType.LEAKAGE_REPORT,
+            ),
+            produces=(
+                ArtifactType.FEATURE_SPEC,
+                ArtifactType.FEATURE_EXPERIMENT,
+                ArtifactType.MEASUREMENT_BUNDLE,
+                ArtifactType.COMPREHENSION_BRIEF,
+                ArtifactType.AGENT_AUDIT,
+            ),
+            description=(
+                "Persist the mandatory fold-local feature floor, then optionally run one "
+                "isolated, host-scored authored feature experiment."
+            ),
         ),
         StageDefinition(
             id="splitting",
@@ -258,6 +324,8 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
+                ArtifactType.FEATURE_SPEC,
+                ArtifactType.VALIDATION_TRIAL,
             ),
             description="Build the selected split and measure retained support.",
         ),
@@ -269,9 +337,19 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.PROBLEM_DEFINITION,
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
+                ArtifactType.FEATURE_SPEC,
             ),
-            produces=(ArtifactType.TRAINED_MODEL,),
-            description="Fit and compare the deterministic candidate model menu.",
+            produces=(
+                ArtifactType.TRAINED_MODEL,
+                ArtifactType.MODEL_EXPERIMENT,
+                ArtifactType.MEASUREMENT_BUNDLE,
+                ArtifactType.COMPREHENSION_BRIEF,
+                ArtifactType.AGENT_AUDIT,
+            ),
+            description=(
+                "Fit the deterministic candidate menu, then optionally run one isolated, "
+                "host-scored agent-authored development experiment."
+            ),
         ),
         StageDefinition(
             id="evaluation",
@@ -310,6 +388,7 @@ def build_full_spec_definition() -> WorkflowSpec:
             "validation_strategy",
             "eda",
             "leakage_audit",
+            "feature_pipeline",
             "splitting",
             "training",
             "evaluation",

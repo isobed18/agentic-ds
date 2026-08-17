@@ -92,29 +92,77 @@ class Rule:
 
 def _leakage(ctx: RuleContext) -> RuleOutcome | None:
     correlation = ctx.signals.max_target_correlation
-    if correlation is None or correlation <= ctx.policy.thresholds.leakage_correlation:
+    correlation_active = (
+        correlation is not None
+        and correlation > ctx.policy.thresholds.leakage_correlation
+    )
+    correlation_columns = (
+        ctx.signals.target_relationship_suspect_columns
+        if correlation_active
+        else []
+    )
+    columns = sorted(
+        set(correlation_columns) | set(ctx.signals.structural_leakage_suspect_columns)
+    )
+    # Compatibility for pre-v2 signal producers that only populated the original
+    # aggregate field. A measured above-threshold correlation remains enforceable.
+    if not columns and correlation_active:
+        columns = ctx.signals.leakage_suspect_columns
+    if not columns and not correlation_active:
         return None
+    review = sorted(set(columns) & set(ctx.signals.leakage_challenge_review_columns))
+    unresolved = sorted(set(columns) - set(review))
+    if review and not unresolved:
+        return RuleOutcome(
+            verdict=GateVerdict.ESCALATE,
+            reason_code="leakage_challenge_needs_confirmation",
+            message=(
+                f"A registered timestamp test produced reviewable evidence for {review}, "
+                "but it cannot establish that the supplied recording timestamp truly "
+                "belongs to the feature. A human must confirm that semantic link before "
+                "the blocking leakage finding can be accepted as legitimate."
+            ),
+        )
 
-    columns = ctx.signals.leakage_suspect_columns
     # Retry with a machine-generated instruction while budget remains; the fix is
     # mechanical (drop the column), so a human is only needed if it recurs.
     if ctx.history.attempts < ctx.stage.max_attempts:
+        measured = (
+            f"Feature correlates with the target at {correlation:.3f}, above the "
+            f"{ctx.policy.thresholds.leakage_correlation} limit."
+            if correlation is not None
+            and correlation > ctx.policy.thresholds.leakage_correlation
+            else "The deterministic audit found blocking leakage."
+        )
+        correction_columns = unresolved or columns
         return RuleOutcome(
             verdict=GateVerdict.RETRY,
             reason_code="leakage_detected",
             message=(
-                f"Feature correlates with the target at {correlation:.3f}, above the "
-                f"{ctx.policy.thresholds.leakage_correlation} limit. Suspects: "
-                f"{columns or 'unidentified'}."
+                f"{measured} Suspects requiring correction: "
+                f"{correction_columns or 'unidentified'}."
             ),
-            instructions=tuple(f"drop_feature: {c}  # target leakage" for c in columns)
+            instructions=tuple(
+                f"drop_feature: {column}  # "
+                + (
+                    "target leakage"
+                    if column in correlation_columns
+                    else "blocking leakage"
+                )
+                for column in correction_columns
+            )
             or ("Remove the leaking feature(s) identified in the leakage report.",),
         )
+    measured = (
+        f"Leakage at correlation {correlation:.3f}"
+        if correlation is not None
+        else "Blocking leakage"
+    )
     return RuleOutcome(
         verdict=GateVerdict.ESCALATE,
         reason_code="leakage_unresolved",
         message=(
-            f"Leakage at correlation {correlation:.3f} persists after "
+            f"{measured} persists after "
             f"{ctx.history.attempts} attempts. Human review required."
         ),
     )

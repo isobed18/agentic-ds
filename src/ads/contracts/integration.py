@@ -12,10 +12,12 @@ Split deliberately along the LLM/deterministic boundary from the report:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 
@@ -26,6 +28,12 @@ class Cardinality(StrEnum):
     ONE_TO_MANY = "1:N"
     MANY_TO_MANY = "N:N"
     UNKNOWN = "unknown"
+
+
+class SchemaActionKind(StrEnum):
+    CALL_TOOL = "call_tool"
+    SUBMIT_PLAN = "submit_plan"
+    ABANDON = "abandon"
 
 
 class KeyCandidate(FrozenModel):
@@ -238,6 +246,105 @@ class IntegrationPlanProposal(FrozenModel):
         return tables
 
 
+class SchemaInvestigationAction(FrozenModel):
+    """One constrained turn in active schema discovery."""
+
+    action: SchemaActionKind
+    tool_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    plan: IntegrationPlanProposal | None = None
+    reason: str = Field(min_length=5, max_length=500)
+
+    @model_validator(mode="after")
+    def _shape(self) -> SchemaInvestigationAction:
+        if self.action is SchemaActionKind.CALL_TOOL:
+            if self.tool_id is None:
+                raise ValueError("call_tool requires tool_id.")
+            if self.plan is not None:
+                raise ValueError("call_tool cannot carry a plan.")
+            if self.tool_id == "execute_python":
+                code = self.arguments.get("code")
+                if not isinstance(code, str) or not code.strip():
+                    raise ValueError("execute_python requires non-empty code.")
+                if len(code) > 30_000:
+                    raise ValueError("execute_python code exceeds 30,000 characters.")
+        else:
+            if self.tool_id is not None or self.arguments:
+                raise ValueError(f"{self.action.value} cannot carry a tool call.")
+            if self.action is SchemaActionKind.SUBMIT_PLAN and self.plan is None:
+                raise ValueError("submit_plan requires plan.")
+            if self.action is SchemaActionKind.ABANDON and self.plan is not None:
+                raise ValueError("abandon cannot carry a plan.")
+        return self
+
+
+def integration_plan_fingerprint(plan: IntegrationPlanProposal) -> str:
+    """Hash only executable plan semantics, excluding agent-authored narration."""
+    payload = {
+        "base_table": plan.base_table,
+        "base_grain": plan.base_grain,
+        "aggregations": [
+            {
+                "source_table": item.source_table,
+                "output_name": item.output_name,
+                "group_by": item.group_by,
+                "aggregations": item.aggregations,
+            }
+            for item in plan.aggregations
+        ],
+        "joins": [
+            {
+                "left_table": item.left_table,
+                "right_table": item.right_table,
+                "left_columns": item.left_columns,
+                "right_columns": item.right_columns,
+                "how": item.how,
+            }
+            for item in plan.joins
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+class IntegrationTrial(Artifact):
+    """Executor-owned measurements from running one proposed integration plan.
+
+    The agent supplies the plan parameters but cannot author these values. The
+    deterministic DuckDB executor measures them from the source copies. This is
+    gate-eligible evidence; arbitrary code executed during investigation is not.
+    """
+
+    artifact_type: ClassVar[ArtifactType] = ArtifactType.INTEGRATION_TRIAL
+    schema_version: ClassVar[str] = "1"
+
+    evidence_class: Literal["deterministic"] = "deterministic"
+    plan_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    execution_engine: Literal["duckdb"] = "duckdb"
+    base_table: str
+    base_grain: list[str] = Field(min_length=1)
+    base_rows: int = Field(ge=0)
+    result_rows: int = Field(ge=0)
+    base_duplicate_grain_rows: int = Field(ge=0)
+    result_duplicate_grain_rows: int = Field(ge=0)
+    base_null_grain_rows: int = Field(ge=0)
+    result_null_grain_rows: int = Field(ge=0)
+    grain_preserved: bool
+    result_columns: list[str]
+    step_row_counts: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    sql_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "base_table": self.base_table,
+            "base_rows": self.base_rows,
+            "result_rows": self.result_rows,
+            "grain_preserved": self.grain_preserved,
+            "n_columns": len(self.result_columns),
+        }
+
+
 class IntegrationPlan(Artifact):
     """The persisted plan: the agent's proposal plus the evidence behind it."""
 
@@ -253,10 +360,15 @@ class IntegrationPlan(Artifact):
 
     evidence: list[RelationshipCandidate] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    trial_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
     def from_proposal(
-        cls, proposal: IntegrationPlanProposal, evidence: list[RelationshipCandidate]
+        cls,
+        proposal: IntegrationPlanProposal,
+        evidence: list[RelationshipCandidate],
+        *,
+        trial_artifact_id: str | None = None,
     ) -> IntegrationPlan:
         """Attach measured evidence to an agent proposal."""
         return cls(
@@ -267,6 +379,7 @@ class IntegrationPlan(Artifact):
             joins=proposal.joins,
             evidence=evidence,
             warnings=proposal.warnings,
+            trial_artifact_id=trial_artifact_id,
         )
 
     def tables_used(self) -> set[str]:
@@ -277,6 +390,17 @@ class IntegrationPlan(Artifact):
             tables.add(a.source_table)
         return tables
 
+    def to_proposal(self) -> IntegrationPlanProposal:
+        """Project persisted plan fields back to the agent-authored contract."""
+        return IntegrationPlanProposal(
+            base_table=self.base_table,
+            base_grain=self.base_grain,
+            grain_description=self.grain_description,
+            aggregations=self.aggregations,
+            joins=self.joins,
+            warnings=self.warnings,
+        )
+
     def summary(self) -> dict[str, Any]:
         return {
             "base_table": self.base_table,
@@ -284,4 +408,5 @@ class IntegrationPlan(Artifact):
             "n_joins": len(self.joins),
             "n_aggregations": len(self.aggregations),
             "tables_used": sorted(self.tables_used()),
+            "trial_artifact_id": self.trial_artifact_id,
         }

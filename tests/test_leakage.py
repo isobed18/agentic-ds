@@ -657,7 +657,7 @@ class TestPerfectSeparator:
             card, frame, target_column="target", task_type=TaskType.BINARY_CLASSIFICATION
         )
         decision = evaluate_gate(
-            stage=GatePolicy.load().stage("feature_pipeline"),
+            stage=GatePolicy.load().stage("leakage_audit"),
             signals=report.to_quality_signals(),
             profile=BUILTIN_PROFILES["checkpointed"],
             policy=GatePolicy.load(),
@@ -813,6 +813,27 @@ class TestMissingnessSeparator:
         kinds = {f.column: f.kind for f in report.findings}
         assert kinds.get("followup_score") is LeakageKind.MISSINGNESS_SEPARATOR
         assert "followup_score" in report.suspect_columns
+
+    def test_missingness_alone_reaches_the_hard_gate(self) -> None:
+        frame = self._frame()
+        card = profile_table(
+            LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
+        )
+        report = audit_leakage(
+            card, frame, target_column="target", task_type=TaskType.BINARY_CLASSIFICATION
+        )
+        assert report.max_target_correlation is None
+
+        policy = GatePolicy.load()
+        decision = evaluate_gate(
+            stage=policy.stage("feature_pipeline"),
+            signals=report.to_quality_signals(),
+            profile=BUILTIN_PROFILES["full_auto"],
+            policy=policy,
+        )
+
+        assert decision.verdict is GateVerdict.RETRY
+        assert decision.reason_code == "leakage_detected"
 
     def test_ordinary_missingness_is_not_flagged(self) -> None:
         """11% missing at random, as in the real data, must stay clean."""

@@ -1,9 +1,13 @@
 """Orchestrated adapters for the deterministic ADS pipeline."""
 
+from ads.contracts.feature_experiment import FeatureExperiment
+from ads.contracts.features import FeatureSpec
+from ads.contracts.validation import ValidationTrial
 from ads.pipeline.rubrics import build_pipeline_rubrics
 from ads.pipeline.stages import (
     ABT_FRAME_KEY,
     DROPPED_FEATURES_KEY,
+    FEATURE_SPEC_KEY,
     FINAL_MARKDOWN_KEY,
     INTEGRATION_GRAIN_PRESERVED_KEY,
     MODEL_FRAME_KEY,
@@ -23,11 +27,15 @@ from ads.pipeline.workflow import (
 from ads.store import register_artifact_type
 
 register_artifact_type(FinalReport)
+register_artifact_type(FeatureSpec)
+register_artifact_type(FeatureExperiment)
+register_artifact_type(ValidationTrial)
 
 __all__ = [
     "ABT_FRAME_KEY",
     "DROPPED_FEATURES_KEY",
     "FINAL_MARKDOWN_KEY",
+    "FEATURE_SPEC_KEY",
     "MODEL_FRAME_KEY",
     "SPLIT_DIAGNOSTICS_KEY",
     "TRAINING_FRAME_COLUMNS_KEY",

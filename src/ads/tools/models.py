@@ -12,7 +12,7 @@ import pandas as pd
 
 from ads.contracts.datacard import DataCard
 from ads.contracts.gates import PermissionTier
-from ads.sandbox import SandboxManager, SandboxSession
+from ads.sandbox import ExecutionBackend, SandboxManager, SandboxSession
 
 
 class AgentPermissions(Protocol):
@@ -64,7 +64,12 @@ class ToolRuntime:
 
     frames: dict[str, pd.DataFrame] = field(default_factory=dict)
     cards: dict[str, DataCard] = field(default_factory=dict)
+    # Host-owned evidence catalogs are unavailable for agent authorship.
+    resources: dict[str, Any] = field(default_factory=dict, repr=False)
     run_id: str = "tool-run"
+    execution_backend: ExecutionBackend | None = None
+    execution_session: Any | None = None
+    # Compatibility aliases for callers created before the backend interface.
     sandbox_manager: SandboxManager | None = None
     sandbox_session: SandboxSession | None = None
     artifacts_dir: Path | None = None
@@ -84,9 +89,48 @@ class ToolRuntime:
 
     def close(self) -> None:
         """Destroy a lazily-created sandbox session, if this runtime owns one."""
-        if self.sandbox_manager is not None and self.sandbox_session is not None:
-            self.sandbox_manager.destroy(self.sandbox_session)
+        backend = self.execution_backend or self.sandbox_manager
+        session = self.execution_session or self.sandbox_session
+        if backend is not None and session is not None:
+            backend.destroy(session)
+            self.execution_session = None
             self.sandbox_session = None
+
+    def backend(self) -> ExecutionBackend | None:
+        """Return the configured isolation backend, including the legacy alias."""
+        return self.execution_backend or self.sandbox_manager
+
+    def execution_available(self) -> bool:
+        """Probe the configured backend without weakening the no-host-fallback rule."""
+        backend = self.backend()
+        if backend is None:
+            return False
+        probe = getattr(backend, "available", None)
+        if callable(probe):
+            return bool(probe())
+        # Compatibility for pre-interface sandbox managers. Both checks must
+        # pass; an unavailable backend never falls through to host execution.
+        return bool(backend.docker_available() and backend.image_available())
+
+    def execution_artifacts_dir(self) -> Path:
+        """Resolve the derived-output directory for either backend generation."""
+        if self.artifacts_dir is not None:
+            return self.artifacts_dir
+        backend = self.backend()
+        if backend is None:
+            raise RuntimeError("No execution backend is configured.")
+        root = getattr(backend, "artifacts_dir", None)
+        if root is None:
+            root = backend.config.artifacts_dir
+        return Path(root)
+
+    def session(self) -> Any | None:
+        return self.execution_session or self.sandbox_session
+
+    def set_session(self, session: Any) -> None:
+        self.execution_session = session
+        if self.execution_backend is None:
+            self.sandbox_session = session
 
 
 class ToolError(RuntimeError):

@@ -8,6 +8,7 @@ retry loops.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import Any
 
@@ -29,12 +30,21 @@ from ads.agents.problem_discovery import (
 from ads.agents.problem_discovery import (
     build_spec as build_problem_spec,
 )
+from ads.agents.problem_investigator import investigate_problem_context
 from ads.agents.schema_discovery import (
     build_context_with_evidence,
 )
 from ads.agents.schema_discovery import (
     build_spec as build_schema_spec,
 )
+from ads.agents.schema_investigator import (
+    SchemaMemberResult,
+    investigate_schema,
+)
+from ads.agents.schema_investigator import (
+    build_action_spec as build_schema_action_spec,
+)
+from ads.agents.validation_investigator import investigate_validation_context
 from ads.agents.validation_strategy import (
     build_context as build_validation_context,
 )
@@ -45,7 +55,7 @@ from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.base import ArtifactType
 from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import QualitySignals
-from ads.contracts.integration import IntegrationPlan
+from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal
 from ads.contracts.problem import (
     ProblemDefinition,
     ProblemDiscoveryProposal,
@@ -60,10 +70,14 @@ from ads.llm import StructuredLLM
 from ads.orchestration import RunState, StageResult
 from ads.pipeline.stages import (
     ABT_FRAME_KEY,
+    EXECUTION_BACKEND_KEY,
     SOURCE_CARDS_KEY,
     SOURCE_FRAMES_KEY,
     VALIDATION_FOLDS_KEY,
 )
+from ads.sandbox import ExecutionBackend, materialize_frame_copies
+from ads.splitting import execute_validation_trial
+from ads.store import compute_artifact_id
 from ads.tools import PermissionBroker, ToolRuntime, build_tool_registry
 
 
@@ -134,6 +148,7 @@ def _agent_audit(
         ),
         allowed_tools=sorted(spec.allowed_tools),
         evidence_tools=sorted({item.tool_id for item in context.evidence_tools}),
+        skills_used=list(context.facts.get("skill_ids", [])),
         validator_count=len(spec.validators),
         members=members,
     )
@@ -166,53 +181,150 @@ def _source_inputs(state: RunState) -> tuple[list[DataCard], dict[str, pd.DataFr
 
 
 def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
-    """Create a schema-discovery stage bound to an injected LLM backend."""
-    spec = _single_call(_require_evidence(build_schema_spec(), "candidate_keys"))
+    """Create active schema discovery with tool-driven deterministic plan trials."""
+    if panel_size < 1:
+        raise ValueError("panel_size must be at least 1")
+
+    def _audit(members: list[SchemaMemberResult], *, allow_code: bool) -> AgentAudit:
+        valid = [member for member in members if member.succeeded]
+        decisions = Counter(
+            member.decision_fingerprint
+            for member in valid
+            if member.decision_fingerprint is not None
+        )
+        verbatim = Counter(
+            member.verbatim_fingerprint
+            for member in valid
+            if member.verbatim_fingerprint is not None
+        )
+        return AgentAudit(
+            stage_id="schema_discovery",
+            agent_id="schema_discovery",
+            output_contract=IntegrationPlanProposal.__name__,
+            panel_size=len(members),
+            valid_members=len(valid),
+            agreement=(
+                max(decisions.values(), default=0) / len(members)
+                if len(members) > 1
+                else None
+            ),
+            verbatim_agreement=(
+                max(verbatim.values(), default=0) / len(members)
+                if len(members) > 1
+                else None
+            ),
+            allowed_tools=sorted(
+                build_schema_action_spec(allow_code=allow_code).allowed_tools
+            ),
+            evidence_tools=sorted(
+                {tool for member in members for tool in member.tool_calls}
+            ),
+            validator_count=len(build_schema_spec().validators) + 2,
+            raw_rows_shared=any(member.raw_rows_shared for member in members),
+            members=[
+                AgentMemberAudit(
+                    member=index,
+                    model=member.model,
+                    attempts=member.attempts,
+                    accepted=member.succeeded,
+                    validation_failures=[
+                        failure.code for failure in member.failures
+                    ],
+                    repairs=[],
+                    latency_s=round(member.latency_s, 3),
+                )
+                for index, member in enumerate(members, start=1)
+            ],
+        )
 
     def stage(state: RunState, correction: list[str] | None = None) -> StageResult:
         cards, frames = _source_inputs(state)
         relationships = detect_relationships(cards, frames)
-        context = build_context_with_evidence(cards, relationships)
-        runtime = ToolRuntime.from_sources(cards, frames, run_id=state.run_id)
-        broker = PermissionBroker(build_tool_registry())
-        for card in cards:
-            _admit_tool(context, broker, spec, runtime, "candidate_keys", table=card.table_name)
-        for relationship in relationships:
-            _admit_tool(
-                context,
-                broker,
-                spec,
-                runtime,
-                "join_overlap",
-                from_table=relationship.from_table,
-                from_column=relationship.from_columns[0],
-                to_table=relationship.to_table,
-                to_column=relationship.to_columns[0],
-            )
-        if state.user_intent:
-            context.sections["User planning preferences"] = state.user_intent
-        context = _with_correction(context, correction)
-        result = run_agent_panel(spec, context, llm, panel_size=panel_size)
-        audit = _agent_audit("schema_discovery", spec, context, result)
-        if not result.succeeded:
-            return _failed_result(result, audit)
+        backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
+        if backend is not None and not isinstance(backend, ExecutionBackend):
+            raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
+        data_paths = materialize_frame_copies(backend, frames) if backend else {}
+        allow_code = False
+        if backend is not None:
+            probe = ToolRuntime(execution_backend=backend)
+            allow_code = probe.execution_available()
 
-        proposal = result.require()
-        plan = IntegrationPlan.from_proposal(proposal, relationships)
+        members: list[SchemaMemberResult] = []
+        for member_index in range(panel_size):
+            context = build_context_with_evidence(cards, relationships)
+            if state.user_intent:
+                context.sections["User planning preferences"] = state.user_intent
+            context = _with_correction(context, correction)
+            runtime = ToolRuntime.from_sources(
+                cards,
+                frames,
+                run_id=f"{state.run_id}-schema-{member_index + 1}",
+                execution_backend=backend,
+                artifacts_dir=backend.artifacts_dir if backend else None,
+            )
+            members.append(
+                investigate_schema(
+                    context=context,
+                    llm=llm,
+                    runtime=runtime,
+                    data_paths=data_paths,
+                )
+            )
+
+        audit = _audit(members, allow_code=allow_code)
+        valid = [member for member in members if member.succeeded]
+        if not valid:
+            failures = [failure for member in members for failure in member.failures]
+            detail = "; ".join(
+                f"{failure.code}: {failure.detail}" for failure in failures
+            ) or "The schema investigators returned no tested plan."
+            return StageResult(
+                artifacts=[audit],
+                names={0: "agent_audit"},
+                signals=QualitySignals(validation_failures=len(failures)),
+                digest=detail[:1500],
+            )
+
+        counts = Counter(member.decision_fingerprint for member in valid)
+        selected_fingerprint = counts.most_common(1)[0][0]
+        selected = next(
+            member
+            for member in valid
+            if member.decision_fingerprint == selected_fingerprint
+        )
+        assert selected.proposal is not None
+        assert selected.trial is not None
+        trial = selected.trial
+        trial_id = compute_artifact_id(trial)
+        plan = IntegrationPlan.from_proposal(
+            selected.proposal,
+            relationships,
+            trial_artifact_id=trial_id,
+        )
         return StageResult(
-            artifacts=[plan, audit],
-            names={0: "integration_plan", 1: "agent_audit"},
+            artifacts=[plan, trial, audit],
+            names={
+                0: "integration_plan",
+                1: "integration_trial",
+                2: "agent_audit",
+            },
             signals=QualitySignals(
-                validation_failures=_validation_failure_count(result),
+                # Rejected exploratory actions remain in the audit, but a member that
+                # recovered and submitted a fully validated, exactly trialled plan has
+                # no outstanding contract failure. Treating investigation history as
+                # final invalidity would make the new correction loop self-defeating.
+                validation_failures=0,
                 self_consistency_agreement=(
-                    result.agreement if panel_size > 1 else None
+                    audit.agreement if panel_size > 1 else None
                 ),
                 panel_size=panel_size if panel_size > 1 else None,
                 panel_valid_members=(
-                    sum(m.succeeded for m in result.members) if panel_size > 1 else None
+                    len(valid) if panel_size > 1 else None
                 ),
             ),
-            digest=str(plan.summary()),
+            digest=(
+                f"{plan.summary()}; deterministic trial: {trial.summary()}"
+            ),
         )
 
     return stage
@@ -237,6 +349,30 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         context = _with_correction(
             build_problem_context(card, user_intent=state.user_intent), correction
         )
+        investigation_audit: AgentAudit | None = None
+        backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
+        if backend is not None:
+            if not isinstance(backend, ExecutionBackend):
+                raise TypeError(
+                    "Configured execution backend does not satisfy ExecutionBackend."
+                )
+            materialize_frame_copies(
+                backend,
+                {card.table_name: frame},
+                replace_existing=True,
+            )
+            investigation = investigate_problem_context(
+                context=context,
+                llm=llm,
+                runtime=ToolRuntime.from_sources(
+                    [card],
+                    {card.table_name: frame},
+                    run_id=f"{state.run_id}-problem-investigation",
+                    execution_backend=backend,
+                    artifacts_dir=backend.artifacts_dir,
+                ),
+            )
+            investigation_audit = investigation.audit
         runtime = ToolRuntime.from_sources([card], {card.table_name: frame}, run_id=state.run_id)
         broker = PermissionBroker(build_tool_registry())
         for column in card.candidate_targets()[:12]:
@@ -255,7 +391,16 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         )
         audit = _agent_audit("problem_discovery", spec, context, result)
         if not result.succeeded:
-            return _failed_result(result, audit)
+            failed = _failed_result(result, audit)
+            if investigation_audit is None:
+                return failed
+            return StageResult(
+                artifacts=[*failed.artifacts, investigation_audit],
+                names={**failed.names, len(failed.artifacts): "problem_investigation_audit"},
+                signals=failed.signals,
+                critique=failed.critique,
+                digest=failed.digest,
+            )
 
         candidates = attach_support(
             result.require(),
@@ -275,12 +420,19 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
             source_candidate_id=selected.candidate_id,
         )
         support = selected.support
+        artifacts = [candidates, problem, audit]
+        names = {
+            0: "problem_candidates",
+            1: "problem_definition",
+            2: "agent_audit",
+        }
+        if investigation_audit is not None:
+            names[len(artifacts)] = "problem_investigation_audit"
+            artifacts.append(investigation_audit)
         return StageResult(
-            artifacts=[candidates, problem, audit],
+            artifacts=artifacts,
             names={
-                0: "problem_candidates",
-                1: "problem_definition",
-                2: "agent_audit",
+                **names,
             },
             signals=QualitySignals(
                 validation_failures=_validation_failure_count(result),
@@ -332,6 +484,30 @@ def make_validation_strategy_stage(llm: StructuredLLM, *, panel_size: int = 1):
         if state.user_intent:
             context.sections["User planning preferences"] = state.user_intent
         context = _with_correction(context, correction)
+        investigation_audit: AgentAudit | None = None
+        backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
+        if backend is not None:
+            if not isinstance(backend, ExecutionBackend):
+                raise TypeError(
+                    "Configured execution backend does not satisfy ExecutionBackend."
+                )
+            materialize_frame_copies(
+                backend,
+                {card.table_name: frame},
+                replace_existing=True,
+            )
+            investigation_audit = investigate_validation_context(
+                context=context,
+                llm=llm,
+                runtime=ToolRuntime.from_sources(
+                    [card],
+                    {card.table_name: frame},
+                    run_id=f"{state.run_id}-validation-investigation",
+                    execution_backend=backend,
+                    artifacts_dir=backend.artifacts_dir,
+                    resources={"validation_signals": signals},
+                ),
+            )
         result: AgentPanelResult[ValidationStrategyProposal] = run_agent_panel(
             spec, context, llm, panel_size=panel_size
         )
@@ -339,10 +515,21 @@ def make_validation_strategy_stage(llm: StructuredLLM, *, panel_size: int = 1):
         if not result.succeeded:
             return _failed_result(result, audit)
 
-        strategy = ValidationStrategy.from_proposal(result.require(), signals)
+        proposal = result.require()
+        trial = execute_validation_trial(frame, proposal, signals)
+        strategy = ValidationStrategy.from_proposal(
+            proposal,
+            signals,
+            trial_artifact_id=compute_artifact_id(trial),
+        )
+        artifacts = [strategy, trial, audit]
+        names = {0: "validation_strategy", 1: "validation_trial", 2: "agent_audit"}
+        if investigation_audit is not None:
+            names[len(artifacts)] = "validation_investigation_audit"
+            artifacts.append(investigation_audit)
         return StageResult(
-            artifacts=[strategy, audit],
-            names={0: "validation_strategy", 1: "agent_audit"},
+            artifacts=artifacts,
+            names=names,
             signals=QualitySignals(
                 validation_failures=_validation_failure_count(result),
                 n_rows=signals.n_usable_rows,

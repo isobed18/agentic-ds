@@ -300,9 +300,14 @@ def _make_splitter(
     raise SplitError(f"Unsupported split strategy: {kind!r}")
 
 
-def make_splitter(strategy: ValidationStrategy, frame: pd.DataFrame) -> Splitter:
+def make_splitter(
+    strategy: ValidationStrategy,
+    frame: pd.DataFrame,
+    *,
+    target_column: str | None = None,
+) -> Splitter:
     """Build the concrete inner-CV splitter for an outer-training frame."""
-    return _make_splitter(strategy, frame)
+    return _make_splitter(strategy, frame, target_column=target_column)
 
 
 def _split_holdout(
@@ -374,10 +379,13 @@ def _split_holdout(
 
 
 def split_holdout(
-    frame: pd.DataFrame, strategy: ValidationStrategy
+    frame: pd.DataFrame,
+    strategy: ValidationStrategy,
+    *,
+    target_column: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Create the one-time outer train/holdout split before estimator construction."""
-    return _split_holdout(frame, strategy)
+    return _split_holdout(frame, strategy, target_column=target_column)
 
 
 __all__ = ["SplitError", "Splitter", "make_splitter", "split_holdout"]

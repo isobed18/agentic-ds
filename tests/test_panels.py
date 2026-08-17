@@ -14,10 +14,45 @@ from ads.api.panels import (
     HIGH_OUTLIER_RATE,
     STRONG_CORRELATION,
     eda_panels,
+    exploratory_panel,
+    leakage_panels,
+    model_experiment_panel,
     schema_graph,
     source_panels,
     validation_panels,
 )
+
+
+def test_leakage_challenge_renders_as_proposed_inside_existing_panel() -> None:
+    panels = leakage_panels(
+        {
+            "n_features_checked": 1,
+            "findings": [
+                {
+                    "column": "legitimate_rule",
+                    "kind": "target_correlation",
+                    "score": 0.99,
+                    "threshold": 0.95,
+                    "blocking": True,
+                }
+            ],
+            "challenges": [
+                {
+                    "finding_fingerprint": "a" * 64,
+                    "result_summary": "All 100 timestamped rows precede prediction.",
+                    "interpretation": "This may be a legitimate business rule.",
+                    "why_it_matters": "Dropping it may discard useful signal.",
+                    "verification_question": "Does this timestamp belong to the feature?",
+                }
+            ],
+        }
+    )
+
+    assert len(panels) == 1
+    item = panels[0]["proposed_interpretations"][0]
+    assert item["epistemic_state"] == "proposed"
+    assert item["verification_question"]
+    assert "timestamped rows" in panels[0]["insights"][-1]
 
 
 def _eda_payload(**overrides) -> dict:
@@ -213,6 +248,76 @@ def test_thresholds_are_named_not_inline() -> None:
     assert 0 < HIGH_MISSING_RATE < 1
     assert 0 < HIGH_OUTLIER_RATE < 1
     assert 0 < STRONG_CORRELATION <= 1
+
+
+def test_exploratory_panel_renders_only_validated_slots_and_marks_authorship() -> None:
+    payload = {
+        "code_hash": "a" * 64,
+        "manifest": {
+            "title": "Median compensation by tenure cohort",
+            "description": "Agent-authored description is not rendered as an insight.",
+            "chart": {
+                "kind": "hbar",
+                "x_label": "Median annual compensation",
+                "y_label": "Tenure cohort",
+                "unit": "value",
+                "series": [{"label": "0-9 years", "value": 89_000, "count": 10}],
+                # An arbitrary renderer shape is ignored even if present in a
+                # hand-built API payload; the contract rejects it earlier too.
+                "points": [{"x": "free", "y": "form"}],
+            },
+            "table": None,
+        },
+    }
+    proposed = [
+        {
+            "interpretation": "The measured cohorts suggest a tenure relationship.",
+            "why_it_matters": "An overall distribution hides cohort differences.",
+            "verification_question": "Does policy explicitly use tenure bands?",
+            "confidence": "medium",
+            "epistemic_state": "proposed",
+        }
+    ]
+
+    panel = exploratory_panel(payload, proposed)
+
+    assert panel["origin"] == "agent_authored"
+    assert panel["severity"] == "review"
+    assert panel["proposed_interpretations"] == proposed
+    assert panel["chart"]["series"][0]["value"] == 89_000
+    assert "points" not in panel["chart"]
+    assert payload["manifest"]["description"] not in panel["insights"]
+
+
+def test_model_experiment_panel_separates_authored_and_measured_fields() -> None:
+    proposed = [
+        {
+            "interpretation": "The development result suggests a useful candidate.",
+            "verification_question": "Does it remain stable across all inner folds?",
+            "epistemic_state": "proposed",
+        }
+    ]
+    panel = model_experiment_panel(
+        {
+            "metric": "rmse",
+            "score": 12.5,
+            "baseline_score": 20.0,
+            "evaluation_row_count": 80,
+            "final_holdout_used": False,
+            "manifest": {
+                "title": "Gradient boosting with temporal features",
+                "model_family": "gradient boosting",
+                "hypothesis": "Agent-authored hypothesis is not a measurement.",
+            },
+        },
+        proposed,
+    )
+
+    assert panel["caption"] == "Agent-authored · host-scored · exploratory"
+    assert panel["proposed_interpretations"] == proposed
+    assert panel["chart"]["series"][0]["value"] == 12.5
+    assert "final holdout was not used" in panel["insights"][0]
+    assert "hypothesis" not in " ".join(panel["insights"])
 
 
 class TestSplitProtectionIsVisible:

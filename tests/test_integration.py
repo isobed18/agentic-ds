@@ -106,6 +106,33 @@ class TestExecution:
 
 
 class TestGrainProtection:
+    def test_equal_row_count_does_not_launder_a_duplicated_base_grain(
+        self, toy_frames
+    ) -> None:
+        toy_frames["physicians"] = pd.DataFrame(
+            {
+                "physician_id": [1, 1, 2],
+                "specialty": ["cardio", "cardio", "onco"],
+            }
+        )
+        result = execute_plan(_plan(aggregations=[], joins=[]), toy_frames)
+
+        assert result.base_rows == result.result_rows == 3
+        assert result.base_duplicate_grain_rows == 2
+        assert result.result_duplicate_grain_rows == 2
+        assert not result.grain_preserved
+
+    def test_equal_row_count_does_not_launder_a_null_base_grain(
+        self, toy_frames
+    ) -> None:
+        toy_frames["physicians"].loc[1, "physician_id"] = None
+        result = execute_plan(_plan(aggregations=[], joins=[]), toy_frames)
+
+        assert result.base_rows == result.result_rows == 3
+        assert result.base_null_grain_rows == 1
+        assert result.result_null_grain_rows == 1
+        assert not result.grain_preserved
+
     def test_raw_fan_out_join_raises(self, toy_frames) -> None:
         """The executor independently verifies what the agent was told to do."""
         plan = _plan(

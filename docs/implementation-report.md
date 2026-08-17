@@ -34,7 +34,7 @@ holdout metric exactly (`25898.5376005` against a recorded `-25898.5376004928`).
 
 The most valuable output of this period is not the code. It is **18 defects found by
 adversarial review between the two agents**, 17 of them real, documented with reproductions
-during development. Section 8 analyses them, because their
+in [AGENT_DIALOGUE.md](AGENT_DIALOGUE.md). Section 8 analyses them, because their
 distribution says something about how this codebase should be maintained.
 
 ---
@@ -357,7 +357,7 @@ failed loudly; every other test kept passing.
 **Zero defects were caught by tests written alongside the code they test.** Tests written
 from the same assumptions as the implementation cannot catch assumption errors. This is the
 single most important operational finding of the period and it is recorded as a standing
-instruction recorded during development.
+instruction in `AI_HANDOFF.md`.
 
 ---
 

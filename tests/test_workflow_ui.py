@@ -98,6 +98,7 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
         "validation_strategy",
         "eda",
         "leakage_audit",
+        "feature_pipeline",
         "splitting",
         "training",
         "evaluation",
@@ -117,12 +118,12 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
     )
 
 
-def test_manual_mode_graph_matches_the_eight_executed_stages(tmp_path: Path) -> None:
+def test_manual_mode_graph_matches_the_nine_executed_stages(tmp_path: Path) -> None:
     client = TestClient(create_app(plane=_plane(tmp_path)))
     graph = client.get("/api/workflow", params={"mode": "manual"}).json()
 
     assert graph["workflow"] == "deterministic-default"
-    assert len(graph["nodes"]) == 8
+    assert len(graph["nodes"]) == 9
     assert not any(node["kind"] == "planner_agent" for node in graph["nodes"])
 
 

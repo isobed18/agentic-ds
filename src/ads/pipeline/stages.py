@@ -16,13 +16,22 @@ import pandas as pd
 
 from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.datacard import DataCard
+from ads.contracts.features import FeatureSpec
 from ads.contracts.gates import QualitySignals
-from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal
+from ads.contracts.integration import (
+    IntegrationPlan,
+    IntegrationTrial,
+    integration_plan_fingerprint,
+)
 from ads.contracts.leakage import LeakageReport
 from ads.contracts.problem import ProblemDefinition
 from ads.contracts.reporting import DecisionAuthority, DecisionRecord, EvaluationReport
 from ads.contracts.training import TrainingReport
-from ads.contracts.validation import ValidationStrategy
+from ads.contracts.validation import (
+    ValidationStrategy,
+    ValidationTrial,
+    validation_strategy_fingerprint,
+)
 from ads.discovery import audit_leakage
 from ads.ds_toolkit import build_preprocessor
 from ads.eda import profile_for_eda
@@ -30,6 +39,7 @@ from ads.intake import LoadedTable, load_directory, profile_table, profile_table
 from ads.integration import execute_plan
 from ads.orchestration import RunState, StageResult
 from ads.reporting import build_evaluation_report, render_markdown
+from ads.sandbox import ExecutionBackend
 from ads.splitting import describe_split
 from ads.store import compute_artifact_id
 from ads.training import default_candidates, train_candidates
@@ -40,6 +50,7 @@ PROBLEM_KEY: Final = "pipeline.problem_definition"
 STRATEGY_KEY: Final = "pipeline.validation_strategy"
 CANDIDATE_LIMIT_KEY: Final = "pipeline.candidate_limit"
 VALIDATION_FOLDS_KEY: Final = "pipeline.validation_folds"
+EXECUTION_BACKEND_KEY: Final = "pipeline.execution_backend"
 
 LOADED_TABLES_KEY: Final = "pipeline.loaded_tables"
 SOURCE_FRAMES_KEY: Final = "pipeline.source_frames"
@@ -50,6 +61,7 @@ SPLIT_DIAGNOSTICS_KEY: Final = "pipeline.split_diagnostics"
 INTEGRATION_GRAIN_PRESERVED_KEY: Final = "pipeline.integration_grain_preserved"
 DROPPED_FEATURES_KEY: Final = "pipeline.dropped_features"
 TRAINING_FRAME_COLUMNS_KEY: Final = "pipeline.training_frame_columns"
+FEATURE_SPEC_KEY: Final = "pipeline.feature_spec"
 FINAL_MARKDOWN_KEY: Final = "pipeline.final_markdown"
 
 _DROP_FEATURE = re.compile(r"^\s*drop_feature\s*:\s*([^#]+)", re.IGNORECASE)
@@ -100,6 +112,7 @@ def configure_full_pipeline_state(
     source_path: str | Path,
     candidate_limit: int | None = None,
     validation_folds: int = 3,
+    execution_backend: ExecutionBackend | None = None,
 ) -> None:
     """Attach source and execution options for the agent-backed workflow."""
     if candidate_limit is not None and candidate_limit < 1:
@@ -113,6 +126,8 @@ def configure_full_pipeline_state(
             VALIDATION_FOLDS_KEY: validation_folds,
         }
     )
+    if execution_backend is not None:
+        state.blackboard[EXECUTION_BACKEND_KEY] = execution_backend
 
 
 def _frame(state: RunState, key: str) -> pd.DataFrame:
@@ -168,6 +183,15 @@ def integration_stage(state: RunState, correction: list[str] | None = None) -> S
     ):
         raise ValueError("Intake did not place source frames on the run blackboard.")
     plan = state.require(ArtifactType.INTEGRATION_PLAN, IntegrationPlan)
+    if plan.trial_artifact_id is not None:
+        trial = state.require(ArtifactType.INTEGRATION_TRIAL, IntegrationTrial)
+        proposal = plan.to_proposal()
+        if compute_artifact_id(trial) != plan.trial_artifact_id:
+            raise ValueError("Integration plan points to a different trial artifact.")
+        if trial.plan_fingerprint != integration_plan_fingerprint(proposal):
+            raise ValueError("Integration plan semantics changed after its deterministic trial.")
+        if not trial.grain_preserved:
+            raise ValueError("Integration plan references a failed deterministic grain trial.")
     result = execute_plan(plan, frames)
     state.blackboard[INTEGRATION_GRAIN_PRESERVED_KEY] = result.grain_preserved
     state.blackboard[ABT_FRAME_KEY] = result.frame
@@ -246,9 +270,7 @@ def leakage_audit_stage(
 
     corrected_problem = problem.model_copy(update={"excluded_columns": sorted(dropped)})
     card = state.require(ArtifactType.DATA_CARD, DataCard)
-    proposal = IntegrationPlanProposal.model_validate(
-        plan.model_dump(exclude={"created_at", "evidence"})
-    )
+    proposal = plan.to_proposal()
     report = audit_leakage(
         card,
         abt,
@@ -271,6 +293,16 @@ def splitting_stage(state: RunState, correction: list[str] | None = None) -> Sta
     frame = _frame(state, MODEL_FRAME_KEY)
     problem = _current_problem(state)
     strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
+    if strategy.trial_artifact_id is not None:
+        trial = state.require(ArtifactType.VALIDATION_TRIAL, ValidationTrial)
+        if compute_artifact_id(trial) != strategy.trial_artifact_id:
+            raise ValueError("ValidationStrategy points to a different trial artifact.")
+        if trial.proposal_fingerprint != validation_strategy_fingerprint(
+            strategy.to_proposal()
+        ):
+            raise ValueError("ValidationStrategy semantics changed after its trial.")
+        if not trial.passed:
+            raise ValueError("ValidationStrategy references a failed split trial.")
     if problem.target_column is None:
         labeled = frame
     else:
@@ -278,6 +310,48 @@ def splitting_stage(state: RunState, correction: list[str] | None = None) -> Sta
     diagnostics = describe_split(labeled, strategy)
     state.blackboard[SPLIT_DIAGNOSTICS_KEY] = diagnostics
     return StageResult(signals=diagnostics.to_quality_signals())
+
+
+def feature_pipeline_stage(
+    state: RunState, correction: list[str] | None = None
+) -> StageResult:
+    """Declare the mandatory preprocessing floor without fitting global statistics."""
+    del correction
+    frame = _frame(state, MODEL_FRAME_KEY)
+    problem = _current_problem(state)
+    if problem.target_column is None:
+        raise ValueError("Feature preparation requires a supervised target column.")
+    card = profile_table(
+        LoadedTable(
+            name="model_frame",
+            frame=frame,
+            source_uri="derived",
+            source_format="pandas",
+        )
+    )
+    excluded = set(problem.excluded_columns) & set(card.column_names)
+    spec = FeatureSpec.from_card(
+        card,
+        target_column=problem.target_column,
+        excluded_columns=excluded,
+    )
+    state.blackboard[FEATURE_SPEC_KEY] = spec
+    return StageResult(
+        artifacts=[spec],
+        names={0: "feature_spec"},
+        signals=QualitySignals(
+            n_rows=len(frame),
+            rows_per_feature=(
+                len(frame)
+                / max(
+                    len(spec.numeric_columns)
+                    + len(spec.categorical_columns)
+                    + len(spec.datetime_columns),
+                    1,
+                )
+            ),
+        ),
+    )
 
 
 def training_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
@@ -296,6 +370,17 @@ def training_stage(state: RunState, correction: list[str] | None = None) -> Stag
             source_format="pandas",
         )
     )
+    feature_spec = state.require(ArtifactType.FEATURE_SPEC, FeatureSpec)
+    expected_spec = FeatureSpec.from_card(
+        card,
+        target_column=problem.target_column,
+        excluded_columns=set(problem.excluded_columns) & set(card.column_names),
+    )
+    if (
+        feature_spec.model_dump(exclude={"created_at"})
+        != expected_spec.model_dump(exclude={"created_at"})
+    ):
+        raise ValueError("FeatureSpec does not match the current model-frame schema.")
     excluded_present = set(problem.excluded_columns) & set(card.column_names)
     candidates = default_candidates(problem.task_type)
     candidate_limit = state.blackboard.get(CANDIDATE_LIMIT_KEY)
@@ -389,6 +474,8 @@ def reporting_stage(state: RunState, correction: list[str] | None = None) -> Sta
 __all__ = [
     "ABT_FRAME_KEY",
     "DROPPED_FEATURES_KEY",
+    "EXECUTION_BACKEND_KEY",
+    "FEATURE_SPEC_KEY",
     "FINAL_MARKDOWN_KEY",
     "INTEGRATION_GRAIN_PRESERVED_KEY",
     "FinalReport",
@@ -398,6 +485,7 @@ __all__ = [
     "configure_pipeline_state",
     "configure_full_pipeline_state",
     "evaluation_stage",
+    "feature_pipeline_stage",
     "intake_stage",
     "integration_stage",
     "leakage_audit_stage",

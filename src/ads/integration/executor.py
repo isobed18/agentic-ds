@@ -52,13 +52,34 @@ class IntegrationResult:
     sql: str
     base_rows: int
     result_rows: int
+    base_duplicate_grain_rows: int = 0
+    result_duplicate_grain_rows: int = 0
+    base_null_grain_rows: int = 0
+    result_null_grain_rows: int = 0
     warnings: list[str] = field(default_factory=list)
     step_row_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def grain_preserved(self) -> bool:
-        """Whether the ABT still has exactly one row per base row."""
-        return self.result_rows == self.base_rows
+        """Whether declared grain is non-null, unique, and row-preserving."""
+        return (
+            self.result_rows == self.base_rows
+            and self.base_duplicate_grain_rows == 0
+            and self.result_duplicate_grain_rows == 0
+            and self.base_null_grain_rows == 0
+            and self.result_null_grain_rows == 0
+        )
+
+
+def _grain_counts(frame: pd.DataFrame, columns: list[str], *, table: str) -> tuple[int, int]:
+    missing = sorted(set(columns) - set(frame.columns))
+    if missing:
+        raise IntegrationError(
+            f"Declared grain for {table!r} references unknown column(s) {missing}."
+        )
+    null_rows = int(frame[columns].isna().any(axis=1).sum())
+    duplicate_rows = int(frame.duplicated(subset=columns, keep=False).sum())
+    return duplicate_rows, null_rows
 
 
 def _quote(identifier: str) -> str:
@@ -214,6 +235,16 @@ def execute_plan(
 
     base_rows = int(len(frames[plan.base_table]))
     result_rows = int(len(result))
+    base_duplicates, base_nulls = _grain_counts(
+        frames[plan.base_table],
+        plan.base_grain,
+        table=plan.base_table,
+    )
+    result_duplicates, result_nulls = _grain_counts(
+        result,
+        plan.base_grain,
+        table="integration result",
+    )
 
     warnings: list[str] = []
     if result_rows > base_rows:
@@ -229,12 +260,28 @@ def execute_plan(
             f"ABT has {result_rows:,} rows against a {base_rows:,}-row base table; "
             f"{base_rows - result_rows:,} base rows were dropped by an inner join."
         )
+    if base_duplicates or base_nulls:
+        warnings.append(
+            f"Declared base grain {plan.base_grain!r} is not a clean key: "
+            f"{base_duplicates:,} duplicate-participating row(s), "
+            f"{base_nulls:,} row(s) with a null grain value."
+        )
+    if result_duplicates or result_nulls:
+        warnings.append(
+            f"Result grain {plan.base_grain!r} is not clean: "
+            f"{result_duplicates:,} duplicate-participating row(s), "
+            f"{result_nulls:,} row(s) with a null grain value."
+        )
 
     return IntegrationResult(
         frame=result,
         sql=sql,
         base_rows=base_rows,
         result_rows=result_rows,
+        base_duplicate_grain_rows=base_duplicates,
+        result_duplicate_grain_rows=result_duplicates,
+        base_null_grain_rows=base_nulls,
+        result_null_grain_rows=result_nulls,
         warnings=warnings,
         step_row_counts=step_counts,
     )

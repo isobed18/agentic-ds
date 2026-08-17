@@ -42,14 +42,12 @@ def execute_python(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPa
     returns real rows past the display suppression. stdout is therefore capped
     below, but a cap only bounds the volume.
 
-    The property that actually holds the two-plane separation is the permission
-    tier: this tool is ``EXECUTE``, every planner agent is capped at
-    ``READ_DATA``, and ``test_planner_agents_cannot_reach_execute_tier`` fails
-    if that stops being true. Granting ``EXECUTE`` to an agent that also sees
-    DataCards is what would breach the invariant, not calling this function.
+    Row access is permitted for this local exploratory agent. The load-bearing
+    boundary is mutation: source data is mounted read-only, execution has no
+    host fallback, and only derived artifacts may be written.
     """
-    manager = runtime.sandbox_manager
-    if manager is None or not manager.docker_available() or not manager.image_available():
+    backend = runtime.backend()
+    if backend is None or not runtime.execution_available():
         raise SandboxUnavailableError(
             "Isolated Python execution is unavailable; refusing to execute on the host."
         )
@@ -61,12 +59,14 @@ def execute_python(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPa
     if timeout <= 0 or timeout > 120:
         raise ValueError("execute_python timeout must be in (0, 120] seconds.")
 
-    artifacts_dir = runtime.artifacts_dir or manager.config.artifacts_dir
+    artifacts_dir = runtime.execution_artifacts_dir()
     before = _artifact_snapshot(artifacts_dir)
-    if runtime.sandbox_session is None:
-        runtime.sandbox_session = manager.create_session(runtime.run_id)
+    session = runtime.session()
+    if session is None:
+        session = backend.create_session(runtime.run_id)
+        runtime.set_session(session)
 
-    result = manager.execute(runtime.sandbox_session, code, timeout=timeout)
+    result = backend.execute(session, code, timeout=timeout)
     after = _artifact_snapshot(artifacts_dir)
     changed = sorted(name for name, fingerprint in after.items() if before.get(name) != fingerprint)
     artifact_refs = tuple(f"artifact://{name}" for name in changed)

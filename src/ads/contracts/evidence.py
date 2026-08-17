@@ -40,6 +40,9 @@ class MeasurementKind(StrEnum):
     PERIOD_DISTRIBUTION = "period_distribution"
     MISSINGNESS = "missingness"
     TARGET_RELATIONSHIP = "target_relationship"
+    EXPLORATORY_ANALYSIS = "exploratory_analysis"
+    MODEL_EXPERIMENT = "model_experiment"
+    FEATURE_EXPERIMENT = "feature_experiment"
 
 
 def measurement_record_id(

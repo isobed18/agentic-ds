@@ -266,6 +266,9 @@ _KIND_PRIORITY = {
     MeasurementKind.NUMERIC_PROFILE: 9,
     MeasurementKind.MISSINGNESS: 10,
     MeasurementKind.TARGET_RELATIONSHIP: 11,
+    MeasurementKind.EXPLORATORY_ANALYSIS: 12,
+    MeasurementKind.MODEL_EXPERIMENT: 13,
+    MeasurementKind.FEATURE_EXPERIMENT: 14,
 }
 
 

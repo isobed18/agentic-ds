@@ -71,6 +71,18 @@ class SandboxManager:
         self.config = config
         self._run = command_runner
 
+    @property
+    def data_dir(self) -> Path:
+        return self.config.data_dir
+
+    @property
+    def artifacts_dir(self) -> Path:
+        return self.config.artifacts_dir
+
+    def available(self) -> bool:
+        """Whether this backend can create a session without a host fallback."""
+        return self.docker_available() and self.image_available()
+
     def build_create_command(self, run_id: str) -> list[str]:
         """Assemble the security boundary without contacting a Docker daemon."""
         data = self._mount_source(self.config.data_dir, "data_dir")

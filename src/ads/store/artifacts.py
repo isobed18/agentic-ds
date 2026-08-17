@@ -32,9 +32,11 @@ from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard
 from ads.contracts.evidence import MeasurementBundle
+from ads.contracts.exploration import ExploratoryAnalysis
 from ads.contracts.gates import CritiqueResult, GateDecision
-from ads.contracts.integration import IntegrationPlan
+from ads.contracts.integration import IntegrationPlan, IntegrationTrial
 from ads.contracts.leakage import LeakageReport
+from ads.contracts.model_experiment import ModelExperiment
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
 from ads.contracts.training import TrainingReport
 from ads.contracts.validation import ValidationStrategy
@@ -68,16 +70,19 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_name ON artifacts(run_id, name);
 _TYPE_REGISTRY: dict[ArtifactType, type[Artifact]] = {
     ArtifactType.DATA_CARD: DataCard,
     ArtifactType.INTEGRATION_PLAN: IntegrationPlan,
+    ArtifactType.INTEGRATION_TRIAL: IntegrationTrial,
     ArtifactType.PROBLEM_CANDIDATES: ProblemCandidateSet,
     ArtifactType.PROBLEM_DEFINITION: ProblemDefinition,
     ArtifactType.VALIDATION_STRATEGY: ValidationStrategy,
     ArtifactType.LEAKAGE_REPORT: LeakageReport,
     ArtifactType.TRAINED_MODEL: TrainingReport,
+    ArtifactType.MODEL_EXPERIMENT: ModelExperiment,
     ArtifactType.CRITIQUE: CritiqueResult,
     ArtifactType.GATE_DECISION: GateDecision,
     ArtifactType.AGENT_AUDIT: AgentAudit,
     ArtifactType.MEASUREMENT_BUNDLE: MeasurementBundle,
     ArtifactType.COMPREHENSION_BRIEF: ComprehensionBrief,
+    ArtifactType.EXPLORATORY_ANALYSIS: ExploratoryAnalysis,
 }
 
 

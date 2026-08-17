@@ -1,9 +1,10 @@
 """DataCard — the compact, deterministic description of a table.
 
-This is the single most important contract in the system. Per the two-plane
-separation in the architecture report, **agents see DataCards, never raw rows**.
-A 4M-row ledger becomes ~2KB of schema and statistics, which solves token
-economics, arithmetic accuracy, and PII exposure at the same time.
+Planner agents use this compact view instead of spending context on rows. A
+4M-row ledger becomes ~2KB of schema and statistics, which improves token
+economics and arithmetic accuracy. Local exploratory agents may additionally
+read a source-preserving copy through the isolated execution boundary; that
+does not weaken the DataCard's role as the shared planning contract.
 
 Everything here is computed deterministically by ``ads.intake.profiler``. No LLM
 is involved in producing a DataCard.

@@ -129,6 +129,15 @@ export interface AnalysisPanelSpec {
   chart: Record<string, unknown> & { kind: string };
   insights?: string[];
   table?: { columns: string[]; rows: (string | number)[][] } | null;
+  origin?: string;
+  proposed_interpretations?: {
+    interpretation?: string;
+    why_it_matters?: string;
+    verification_question?: string;
+    confidence?: string;
+    epistemic_state?: string;
+    measurement_id?: string;
+  }[];
 }
 
 export interface Story {
@@ -294,11 +303,28 @@ export interface Hardening {
   [group: string]: Record<string, unknown>;
 }
 
+/**
+ * Guard against a stampede: the app polls several endpoints at once, so an
+ * expired session produces a burst of 401s. Only the first one should navigate.
+ */
+let redirectingToLogin = false;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
+  if (res.status === 401) {
+    // The session expired or was never established. The server answers API
+    // calls with 401 rather than redirecting, precisely so this decision is
+    // made here instead of an HTML login page arriving where JSON was expected.
+    if (!redirectingToLogin) {
+      redirectingToLogin = true;
+      const next = window.location.pathname + window.location.search;
+      window.location.href = `/login?next=${encodeURIComponent(next)}`;
+    }
+    throw new Error("401 oturum gerekli");
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 240)}` : ""}`);

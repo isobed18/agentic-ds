@@ -20,6 +20,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
+from sklearn.utils.validation import check_is_fitted
 
 from ads.contracts.problem import Metric, TaskType
 from ads.contracts.training import (
@@ -260,6 +261,8 @@ def train_candidates(
     results: list[CandidateResult] = []
     final_estimators: dict[str, Pipeline] = {}
     outer_training_frames: dict[str, pd.DataFrame] = {}
+    holdout_row_counts: dict[str, int] = {}
+    inner_fold_counts: dict[str, int] = {}
 
     for candidate_number, candidate in enumerate(candidates):
         pipeline_factory = _pipeline_factory(preprocessor_factory, candidate)
@@ -297,6 +300,8 @@ def train_candidates(
         )
         final_estimators[candidate.id] = final_estimator
         outer_training_frames[candidate.id] = outer_train
+        holdout_row_counts[candidate.id] = len(holdout)
+        inner_fold_counts[candidate.id] = len(fold_results)
 
         evaluations = [
             MetricEvaluation(
@@ -327,6 +332,7 @@ def train_candidates(
         ),
     )
     winning_pipeline = final_estimators[winner.candidate_id]
+    check_is_fitted(winning_pipeline)
     preprocessor_recipe = component_recipe(winning_pipeline.named_steps["preprocessor"])
     report = TrainingReport(
         task_type=task_type,
@@ -337,6 +343,12 @@ def train_candidates(
         target_null_rows_dropped=target_null_rows_dropped,
         training_row_count=len(training_frame),
         preprocessor_recipe=preprocessor_recipe,
+        fitted_pipeline_verified=True,
+        fit_scope="outer_train_only",
+        outer_train_row_count=len(outer_training_frames[winner.candidate_id]),
+        holdout_row_count=holdout_row_counts[winner.candidate_id],
+        holdout_rows_used_for_fit=0,
+        inner_fold_fit_count=inner_fold_counts[winner.candidate_id],
     )
     if store is None or run_id is None:
         return report

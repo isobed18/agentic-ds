@@ -14,7 +14,13 @@ class AgentMemberAudit(FrozenModel):
 
     member: int = Field(ge=1)
     model: str
-    attempts: int = Field(ge=1)
+    attempts: int = Field(
+        ge=0,
+        description=(
+            "Model calls made. Zero is valid when a required advisory runtime is "
+            "unavailable before the first model call."
+        ),
+    )
     accepted: bool
     validation_failures: list[str] = Field(default_factory=list)
     repairs: list[str] = Field(default_factory=list)
@@ -50,6 +56,7 @@ class AgentAudit(Artifact):
     )
     allowed_tools: list[str] = Field(default_factory=list)
     evidence_tools: list[str] = Field(default_factory=list)
+    skills_used: list[str] = Field(default_factory=list)
     validator_count: int = Field(ge=0)
     pydantic_contract_enforced: bool = True
     raw_rows_shared: bool = False
@@ -64,6 +71,7 @@ class AgentAudit(Artifact):
             "output_contract": self.output_contract,
             "validator_count": self.validator_count,
             "tool_count": len(self.evidence_tools),
+            "skill_count": len(self.skills_used),
             "pydantic_validated": self.pydantic_contract_enforced,
             "raw_rows_shared": self.raw_rows_shared,
         }

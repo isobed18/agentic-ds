@@ -108,6 +108,58 @@ class InterpretationUnavailableLLM(FakeLLM):
         )
 
 
+class InvestigationUnavailableLLM(FakeLLM):
+    """Fail authored tool loops; all mandatory/planner calls still work."""
+
+    def __init__(self, responses: list[Any]) -> None:
+        super().__init__(responses)
+        self.investigation_calls = 0
+
+    def generate_structured(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        json_schema: dict[str, Any],
+        profile: ModelProfile,
+    ) -> LLMResponse:
+        if json_schema.get("title") in {
+            "InvestigationAction",
+            "ProblemInvestigationAction",
+            "ValidationInvestigationAction",
+        }:
+            self.investigation_calls += 1
+            raise KeyError("local investigator failed unexpectedly")
+        return super().generate_structured(
+            system=system,
+            prompt=prompt,
+            json_schema=json_schema,
+            profile=profile,
+        )
+
+
+class AvailableExecutionBackend:
+    """Protocol-complete backend whose execution must not be reached in this test."""
+
+    def __init__(self, root: Path) -> None:
+        self.data_dir = root / "data"
+        self.artifacts_dir = root / "artifacts"
+        self.data_dir.mkdir(parents=True)
+        self.artifacts_dir.mkdir(parents=True)
+
+    def available(self) -> bool:
+        return True
+
+    def create_session(self, run_id: str) -> str:
+        raise AssertionError(f"unexpected session for {run_id}")
+
+    def execute(self, session: Any, code: str, timeout: float = 30.0) -> Any:
+        raise AssertionError("unexpected execution")
+
+    def destroy(self, session: Any) -> None:
+        raise AssertionError("unexpected destroy")
+
+
 def test_full_spec_definition_needs_no_llm_and_exposes_planner_agents() -> None:
     spec = build_full_spec_definition()
 
@@ -124,7 +176,27 @@ def test_full_spec_definition_needs_no_llm_and_exposes_planner_agents() -> None:
     assert "analysis_comprehension" not in spec.stage_ids()
 
 
-def _schema_response() -> dict[str, Any]:
+def test_default_policy_names_exactly_the_full_workflow_stages() -> None:
+    spec = build_full_spec_definition()
+    policy = GatePolicy.load()
+
+    assert set(policy.stages) == set(spec.stage_ids())
+
+
+def test_every_mandatory_policy_criterion_has_an_orchestrator_check() -> None:
+    policy = GatePolicy.load()
+    rubrics = build_pipeline_rubrics()
+
+    for stage_id, stage in policy.stages.items():
+        if not stage.mandatory_criteria:
+            continue
+        rubric = rubrics.get(stage_id)
+        assert rubric is not None, f"{stage_id} has mandatory criteria but no rubric"
+        rubric_ids = {criterion.id for criterion in rubric.criteria}
+        assert stage.mandatory_criteria <= rubric_ids
+
+
+def _schema_plan() -> dict[str, Any]:
     return {
         "base_table": "physicians__physician_master",
         "base_grain": ["physician_id"],
@@ -142,6 +214,41 @@ def _schema_response() -> dict[str, Any]:
         ],
         "warnings": [],
     }
+
+
+def _schema_actions() -> list[dict[str, Any]]:
+    """Exercise investigation, deterministic execution, then exact-plan submission."""
+    plan = _schema_plan()
+    return [
+        {
+            "action": "call_tool",
+            "tool_id": "candidate_keys",
+            "arguments": {"table": "physicians__physician_master"},
+            "reason": "Measure whether the proposed base grain is a clean key.",
+        },
+        {
+            "action": "call_tool",
+            "tool_id": "join_overlap",
+            "arguments": {
+                "from_table": "physicians__compensation",
+                "from_column": "physician_id",
+                "to_table": "physicians__physician_master",
+                "to_column": "physician_id",
+            },
+            "reason": "Measure support for the proposed compensation join.",
+        },
+        {
+            "action": "call_tool",
+            "tool_id": "trial_integration_plan",
+            "arguments": {"plan": plan},
+            "reason": "Execute the exact plan and measure its realized grain.",
+        },
+        {
+            "action": "submit_plan",
+            "plan": plan,
+            "reason": "Submit the exact executable plan that passed its trial.",
+        },
+    ]
 
 
 def _problem_response() -> dict[str, Any]:
@@ -178,7 +285,20 @@ def _validation_response() -> dict[str, Any]:
     }
 
 
-def _state(tmp_path: Path, sample_dir: Path, run_id: str) -> RunState:
+def _leakage_abandon() -> dict[str, Any]:
+    return {
+        "action": "abandon",
+        "reason": "No feature-specific recording timestamp exists in this ABT.",
+    }
+
+
+def _state(
+    tmp_path: Path,
+    sample_dir: Path,
+    run_id: str,
+    *,
+    execution_backend: Any | None = None,
+) -> RunState:
     state = RunState(
         run_id=run_id,
         store=ArtifactStore(tmp_path / run_id),
@@ -190,6 +310,7 @@ def _state(tmp_path: Path, sample_dir: Path, run_id: str) -> RunState:
         source_path=sample_dir,
         candidate_limit=2,
         validation_folds=3,
+        execution_backend=execution_backend,
     )
     return state
 
@@ -212,11 +333,12 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
 ) -> None:
     llm = FakeLLM(
         [
-            _schema_response(),
+            *_schema_actions(),
             {"items": []},
             _problem_response(),
             _validation_response(),
             {"items": []},
+            _leakage_abandon(),
         ]
     )
     spec, registry = build_full_spec(llm)
@@ -231,7 +353,7 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
     )
 
     assert outcome.completed, outcome.error
-    assert len(llm.calls) == 5
+    assert len(llm.calls) == 9
     assert state.attempt_count("schema_discovery") == 1
     assert state.attempt_count("problem_discovery") == 1
     assert state.attempt_count("validation_strategy") == 1
@@ -256,7 +378,12 @@ def test_unavailable_interpretation_model_does_not_block_report(
     tmp_path: Path, sample_dir: Path, failure_type: type[Exception]
 ) -> None:
     llm = InterpretationUnavailableLLM(
-        [_schema_response(), _problem_response(), _validation_response()],
+        [
+            *_schema_actions(),
+            _problem_response(),
+            _validation_response(),
+            _leakage_abandon(),
+        ],
         failure_type=failure_type,
     )
     spec, registry = build_full_spec(llm)
@@ -298,16 +425,89 @@ def test_unavailable_interpretation_model_does_not_block_report(
         ]
 
 
+def test_failing_authored_eda_agent_does_not_block_the_final_report(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    llm = InvestigationUnavailableLLM(
+        [
+            *_schema_actions(),
+            {"items": []},
+            _problem_response(),
+            _validation_response(),
+            {"items": []},
+            _leakage_abandon(),
+        ]
+    )
+    spec, registry = build_full_spec(llm)
+    state = _state(
+        tmp_path,
+        sample_dir,
+        "authored-eda-unavailable",
+        execution_backend=AvailableExecutionBackend(tmp_path / "execution"),
+    )
+
+    outcome = run_workflow(
+        spec,
+        registry,
+        state,
+        policy=_policy_with_leakage_retry(),
+        rubrics=build_pipeline_rubrics(),
+    )
+
+    assert outcome.completed, outcome.error
+    assert llm.investigation_calls == 5
+    state.require(ArtifactType.FINAL_REPORT, FinalReport, name="final_report")
+    audits = state.store.load_all(
+        state.run_id, ArtifactType.AGENT_AUDIT, AgentAudit
+    )
+    investigation = next(
+        audit for audit in audits if audit.stage_id == "eda_investigation"
+    )
+    assert investigation.valid_members == 0
+    assert investigation.members[0].validation_failures == [
+        "investigation_error:KeyError"
+    ]
+    problem_investigation = next(
+        audit for audit in audits if audit.stage_id == "problem_investigation"
+    )
+    assert problem_investigation.valid_members == 0
+    assert problem_investigation.members[0].validation_failures == [
+        "investigation_error:KeyError"
+    ]
+    validation_investigation = next(
+        audit for audit in audits if audit.stage_id == "validation_investigation"
+    )
+    assert validation_investigation.valid_members == 0
+    assert validation_investigation.members[0].validation_failures == [
+        "investigation_error:KeyError"
+    ]
+    feature_investigation = next(
+        audit for audit in audits if audit.stage_id == "feature_investigation"
+    )
+    assert feature_investigation.valid_members == 0
+    assert feature_investigation.members[0].validation_failures == [
+        "investigation_error:KeyError"
+    ]
+    model_investigation = next(
+        audit for audit in audits if audit.stage_id == "model_investigation"
+    )
+    assert model_investigation.valid_members == 0
+    assert model_investigation.members[0].validation_failures == [
+        "investigation_error:KeyError"
+    ]
+
+
 def test_malformed_interpretation_output_does_not_block_report(
     tmp_path: Path, sample_dir: Path
 ) -> None:
     llm = FakeLLM(
         [
-            _schema_response(),
+            *_schema_actions(),
             "not JSON",
             _problem_response(),
             _validation_response(),
             "also not JSON",
+            _leakage_abandon(),
         ]
     )
     spec, registry = build_full_spec(llm)
@@ -334,7 +534,17 @@ def test_malformed_interpretation_output_does_not_block_report(
 def test_invalid_agent_contract_retries_through_orchestrator(
     tmp_path: Path, sample_dir: Path
 ) -> None:
-    llm = FakeLLM(["not JSON", _schema_response(), {"items": []}])
+    llm = FakeLLM(
+        [
+            "not JSON",
+            {
+                "action": "abandon",
+                "reason": "Cannot establish a tested integration plan in this attempt.",
+            },
+            *_schema_actions(),
+            {"items": []},
+        ]
+    )
     full_spec, registry = build_full_spec(llm)
     observed_validation_failures: list[int] = []
     schema_component = registry.resolve("pipeline.schema_discovery")
@@ -374,16 +584,59 @@ def test_invalid_agent_contract_retries_through_orchestrator(
     }
     assert attempts[1].decision is not None
     assert attempts[1].decision.verdict is GateVerdict.AUTO_PROCEED
-    assert len(llm.calls) == 3
+    assert len(llm.calls) == 7
     assert observed_validation_failures == [1, 0]
-    assert "Orchestrator correction" in llm.calls[1]["prompt"]
-    assert "schema.base_grain_declared" in llm.calls[1]["prompt"]
+    assert "Orchestrator correction" in llm.calls[2]["prompt"]
+    assert "schema.base_grain_declared" in llm.calls[2]["prompt"]
+
+
+def test_schema_investigation_can_recover_inside_one_stage_attempt(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    plan = _schema_plan()
+    llm = FakeLLM(
+        [
+            {
+                "action": "submit_plan",
+                "plan": plan,
+                "reason": "Submit before trial so the host rejects this draft.",
+            },
+            {
+                "action": "call_tool",
+                "tool_id": "trial_integration_plan",
+                "arguments": {"plan": plan},
+                "reason": "Run the required deterministic plan trial.",
+            },
+            {
+                "action": "submit_plan",
+                "plan": plan,
+                "reason": "Submit the exact plan now backed by its trial.",
+            },
+            {"items": []},
+        ]
+    )
+    full_spec, registry = build_full_spec(llm)
+    selected = tuple(
+        stage
+        for stage in full_spec.stages
+        if stage.id in {"intake", "schema_discovery"}
+    )
+    spec = linear_spec("schema-loop-recovery", "1", selected)
+    state = _state(tmp_path, sample_dir, "schema-loop-recovery")
+
+    outcome = run_workflow(spec, registry, state, rubrics=build_pipeline_rubrics())
+
+    assert outcome.completed, outcome.error
+    assert state.attempt_count("schema_discovery") == 1
+    audit = state.require(ArtifactType.AGENT_AUDIT, AgentAudit, name="agent_audit")
+    assert audit.members[0].validation_failures == ["untested_plan"]
+    assert state.attempts_for("schema_discovery")[0].decision.verdict is GateVerdict.AUTO_PROCEED
 
 
 def test_agent_panel_persists_contract_tool_and_agreement_audit(
     tmp_path: Path, sample_dir: Path
 ) -> None:
-    llm = FakeLLM([_schema_response(), _schema_response(), {"items": []}])
+    llm = FakeLLM([*_schema_actions(), *_schema_actions(), {"items": []}])
     full_spec, registry = build_full_spec(llm, panel_size=2)
     selected = tuple(
         stage for stage in full_spec.stages if stage.id in {"intake", "schema_discovery"}
@@ -398,9 +651,19 @@ def test_agent_panel_persists_contract_tool_and_agreement_audit(
     assert audit.panel_size == 2
     assert audit.valid_members == 2
     assert audit.agreement == 1.0
-    assert audit.allowed_tools == ["candidate_keys", "join_overlap"]
+    assert audit.allowed_tools == [
+        "candidate_keys",
+        "cardinality",
+        "column_profile",
+        "join_overlap",
+        "trial_integration_plan",
+    ]
     assert "candidate_keys" in audit.evidence_tools
-    assert set(audit.evidence_tools) <= {"candidate_keys", "join_overlap"}
+    assert set(audit.evidence_tools) == {
+        "candidate_keys",
+        "join_overlap",
+        "trial_integration_plan",
+    }
     assert audit.pydantic_contract_enforced is True
     assert audit.raw_rows_shared is False
-    assert len(llm.calls) == 3
+    assert len(llm.calls) == 9

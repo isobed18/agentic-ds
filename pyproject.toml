@@ -41,6 +41,7 @@ packages = ["src/ads"]
 [tool.hatch.build.targets.wheel.force-include]
 # The built React bundle (npm --prefix web run build).
 "src/ads/api/static" = "ads/api/static"
+"src/ads/skills" = "ads/skills"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

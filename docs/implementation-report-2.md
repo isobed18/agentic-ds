@@ -307,7 +307,8 @@ map and the progress bar cannot drift apart again.
 
 ## 6. Outstanding
 
-Three findings that were not fixed, with the reasoning.
+Three findings that were not fixed. All three are recorded in `docs/AGENT_DIALOGUE.md` with
+the reasoning.
 
 ### 6.1 The splitting stage records no artifact
 
@@ -344,7 +345,7 @@ was deliberately not patched in isolation.
 ## 7. Collaboration mechanics
 
 Two agent sessions worked this repository simultaneously. The working agreement is
-a written working agreement; the channel was an append-only dialogue file with git
+`docs/COLLABORATION.md`; the channel is `docs/AGENT_DIALOGUE.md` (now ~27,000 words) with git
 as transport and tagged entries — FINDING, QUESTION, PUSHBACK, PROPOSAL, DECISION, HANDOFF,
 BLOCKED.
 

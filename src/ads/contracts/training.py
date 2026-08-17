@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
@@ -79,6 +79,21 @@ class TrainingReport(Artifact):
     training_row_count: int | None = Field(default=None, ge=1)
     preprocessor_recipe: SklearnComponentRecipe | None = None
     model_blob: ModelBlobReference | None = None
+    fitted_pipeline_verified: bool = Field(
+        default=False,
+        description=(
+            "Executor-owned result of checking that the selected pipeline is fitted; "
+            "agent-authored output cannot set this field in the pipeline."
+        ),
+    )
+    fit_scope: Literal["outer_train_only"] | None = Field(
+        default=None,
+        description="Executor-recorded data boundary used for final model fitting.",
+    )
+    outer_train_row_count: int | None = Field(default=None, ge=1)
+    holdout_row_count: int | None = Field(default=None, ge=1)
+    holdout_rows_used_for_fit: int | None = Field(default=None, ge=0)
+    inner_fold_fit_count: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _consistent_results(self) -> TrainingReport:
@@ -101,6 +116,29 @@ class TrainingReport(Artifact):
             raise ValueError(
                 "training_row_count + target_null_rows_dropped must equal input_row_count."
             )
+        fit_evidence = (
+            self.fit_scope,
+            self.outer_train_row_count,
+            self.holdout_row_count,
+            self.holdout_rows_used_for_fit,
+            self.inner_fold_fit_count,
+        )
+        if any(value is None for value in fit_evidence) and any(
+            value is not None for value in fit_evidence
+        ):
+            raise ValueError("Training fit-scope evidence must be complete or entirely absent.")
+        if self.fitted_pipeline_verified != all(
+            value is not None for value in fit_evidence
+        ):
+            raise ValueError(
+                "A fitted-pipeline verification and complete fit-scope evidence "
+                "must be recorded together."
+            )
+        if (
+            self.fit_scope == "outer_train_only"
+            and self.holdout_rows_used_for_fit != 0
+        ):
+            raise ValueError("outer_train_only cannot report holdout rows used for fit.")
         candidate_ids = [result.candidate_id for result in self.results]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("Candidate ids must be unique.")
@@ -151,6 +189,12 @@ class TrainingReport(Artifact):
             "input_row_count": self.input_row_count,
             "target_null_rows_dropped": self.target_null_rows_dropped,
             "training_row_count": self.training_row_count,
+            "fitted_pipeline_verified": self.fitted_pipeline_verified,
+            "fit_scope": self.fit_scope,
+            "outer_train_row_count": self.outer_train_row_count,
+            "holdout_row_count": self.holdout_row_count,
+            "holdout_rows_used_for_fit": self.holdout_rows_used_for_fit,
+            "inner_fold_fit_count": self.inner_fold_fit_count,
             "model_artifact_id": self.model_blob.artifact_id if self.model_blob else None,
         }
 

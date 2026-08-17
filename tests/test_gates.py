@@ -88,6 +88,34 @@ class TestHardConstraintsAreUnbypassable:
         assert decision.reason_code == "leakage_detected"
         assert any("total_comp_ytd" in i for i in decision.correction_instructions)
 
+    def test_structural_leakage_stops_without_any_correlation_signal(self) -> None:
+        decision = _decide(
+            signals=QualitySignals(
+                leakage_suspect_columns=["followup_missing"],
+                structural_leakage_suspect_columns=["followup_missing"],
+            ),
+            profile=FULL_AUTO,
+        )
+
+        assert decision.verdict is GateVerdict.RETRY
+        assert decision.reason_code == "leakage_detected"
+        assert "followup_missing" in decision.correction_instructions[0]
+
+    def test_registered_challenge_requires_human_and_never_auto_clears(self) -> None:
+        decision = _decide(
+            signals=QualitySignals(
+                max_target_correlation=0.99,
+                leakage_suspect_columns=["legitimate_rule"],
+                target_relationship_suspect_columns=["legitimate_rule"],
+                leakage_challenge_review_columns=["legitimate_rule"],
+            ),
+            profile=FULL_AUTO,
+        )
+
+        assert decision.verdict is GateVerdict.ESCALATE
+        assert decision.reason_code == "leakage_challenge_needs_confirmation"
+        assert decision.human_prompt is not None
+
     def test_pii_egress_stops_even_in_full_auto(self) -> None:
         decision = _decide(
             signals=QualitySignals(pii_columns_in_context=1), profile=FULL_AUTO

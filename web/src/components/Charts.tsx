@@ -6,9 +6,9 @@
  * chart library would add hundreds of kilobytes to render six shapes. These are
  * the six the backend actually emits.
  *
- * Every chart takes counts, quantiles or correlations — never rows. That is the
- * same boundary the agents sit behind: the browser is no more entitled to raw
- * records than a model is.
+ * Every chart takes counts, quantiles or correlations — never rows. A local
+ * investigator may inspect a read-only copy, but the browser only receives its
+ * validated aggregate manifest.
  *
  * Each shape renders at two sizes. `compact` is the thumbnail in the analysis
  * strip, where the job is to be recognisable at a glance, so labels and axes are

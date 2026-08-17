@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from ads.sandbox import (
@@ -16,6 +17,7 @@ from ads.sandbox import (
     SandboxManager,
     SandboxSession,
     TextOutput,
+    materialize_frame_copies,
 )
 
 
@@ -77,6 +79,36 @@ def test_mount_sources_must_exist_and_be_distinct(tmp_path: Path) -> None:
     same = SandboxManager(SandboxConfig(data_dir=tmp_path, artifacts_dir=tmp_path))
     with pytest.raises(ValueError, match="different directories"):
         same.build_create_command("run")
+
+
+def test_replacing_materialized_inputs_removes_prior_stage_copies(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    materialize_frame_copies(
+        manager,
+        {
+            "source_customers": pd.DataFrame({"customer": [1]}),
+            "abt": pd.DataFrame({"target": [99]}),
+        },
+    )
+
+    paths = materialize_frame_copies(
+        manager,
+        {
+            "experiment_train": pd.DataFrame({"feature": [1], "target": [2]}),
+            "experiment_validation": pd.DataFrame({"feature": [3]}),
+        },
+        replace_existing=True,
+    )
+
+    visible_csvs = {path.name for path in manager.data_dir.glob("*.csv")}
+    assert visible_csvs == {
+        "experiment_train.csv",
+        "experiment_validation.csv",
+    }
+    assert set(paths) == {"experiment_train", "experiment_validation"}
+    assert not (manager.data_dir / "abt.csv").exists()
 
 
 def test_execute_decodes_streams_errors_figures_and_dataframes(tmp_path: Path) -> None:

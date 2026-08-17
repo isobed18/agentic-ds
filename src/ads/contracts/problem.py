@@ -15,7 +15,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, ClassVar
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 
@@ -141,6 +141,36 @@ class ProblemDiscoveryProposal(FrozenModel):
     """The agent's full response: a ranked list of candidate framings."""
 
     candidates: list[ProblemCandidateProposal] = Field(min_length=1, max_length=6)
+
+
+class ProblemInvestigationActionKind(StrEnum):
+    CALL_TOOL = "call_tool"
+    FINISH = "finish"
+    ABANDON = "abandon"
+
+
+class ProblemInvestigationAction(FrozenModel):
+    """One turn of active problem-framing investigation before proposal."""
+
+    action: ProblemInvestigationActionKind
+    tool_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    reason: str = Field(min_length=5, max_length=500)
+
+    @model_validator(mode="after")
+    def _action_shape(self) -> ProblemInvestigationAction:
+        if self.action is ProblemInvestigationActionKind.CALL_TOOL:
+            if self.tool_id is None:
+                raise ValueError("call_tool requires tool_id.")
+            if self.tool_id == "execute_python":
+                code = self.arguments.get("code")
+                if not isinstance(code, str) or not code.strip():
+                    raise ValueError("execute_python requires non-empty code.")
+                if len(code) > 30_000:
+                    raise ValueError("execute_python code exceeds 30,000 characters.")
+        elif self.tool_id is not None or self.arguments:
+            raise ValueError(f"{self.action.value} cannot carry a tool call.")
+        return self
 
 
 class ProblemCandidate(FrozenModel):

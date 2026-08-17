@@ -11,12 +11,23 @@ from collections.abc import Callable
 
 from ads.contracts.base import Artifact
 from ads.contracts.eda import EDAReport
-from ads.contracts.integration import IntegrationPlan
+from ads.contracts.features import FeatureSpec
+from ads.contracts.integration import (
+    IntegrationPlan,
+    IntegrationTrial,
+    integration_plan_fingerprint,
+)
 from ads.contracts.problem import ProblemCandidateSet
 from ads.contracts.reporting import EvaluationReport
-from ads.contracts.validation import ValidationStrategy
+from ads.contracts.training import TrainingReport
+from ads.contracts.validation import (
+    ValidationStrategy,
+    ValidationTrial,
+    validation_strategy_fingerprint,
+)
 from ads.orchestration import Criterion, CritiqueContext, Rubric, RubricRegistry
 from ads.pipeline.stages import INTEGRATION_GRAIN_PRESERVED_KEY
+from ads.store import compute_artifact_id
 
 
 def _artifact_check[A: Artifact](
@@ -39,6 +50,19 @@ def _integration_grain_preserved(context: CritiqueContext) -> bool:
     return state.blackboard.get(INTEGRATION_GRAIN_PRESERVED_KEY) is True
 
 
+def _plan_trial_passed(context: CritiqueContext) -> bool:
+    plan = context.artifact_of(IntegrationPlan)
+    trial = context.artifact_of(IntegrationTrial)
+    if plan is None or trial is None or plan.trial_artifact_id is None:
+        return False
+    proposal = plan.to_proposal()
+    return (
+        trial.grain_preserved
+        and compute_artifact_id(trial) == plan.trial_artifact_id
+        and trial.plan_fingerprint == integration_plan_fingerprint(proposal)
+    )
+
+
 def build_pipeline_rubrics() -> RubricRegistry:
     """Return the versioned deterministic standards used by the pipeline."""
     registry = RubricRegistry()
@@ -58,6 +82,13 @@ def build_pipeline_rubrics() -> RubricRegistry:
                         "The plan passed the deterministic relationship and fan-out validators."
                     ),
                     check=_valid_contract,
+                ),
+                Criterion(
+                    id="schema.plan_trial_passed",
+                    description=(
+                        "The exact executable plan passed a deterministic DuckDB grain trial."
+                    ),
+                    check=_plan_trial_passed,
                 ),
             ),
         ),
@@ -104,6 +135,18 @@ def build_pipeline_rubrics() -> RubricRegistry:
                         and _valid_contract(context)
                     ),
                 ),
+                Criterion(
+                    id="validation.strategy_trial_passed",
+                    description="The exact selected strategy passed an executor-owned trial.",
+                    check=lambda context: (
+                        (strategy := context.artifact_of(ValidationStrategy)) is not None
+                        and (trial := context.artifact_of(ValidationTrial)) is not None
+                        and strategy.trial_artifact_id == compute_artifact_id(trial)
+                        and trial.proposal_fingerprint
+                        == validation_strategy_fingerprint(strategy.to_proposal())
+                        and trial.passed
+                    ),
+                ),
             ),
         ),
         Rubric(
@@ -132,6 +175,74 @@ def build_pipeline_rubrics() -> RubricRegistry:
                         lambda report: report.missingness_quantified,
                     ),
                 )
+            ),
+        ),
+        Rubric(
+            stage_id="feature_pipeline",
+            version="v1",
+            criteria=(
+                Criterion(
+                    id="features.columns_accounted_for",
+                    description="Every non-target input has exactly one feature route.",
+                    check=_artifact_check(
+                        FeatureSpec,
+                        lambda spec: len(spec.input_columns) - 1
+                        == len(spec.numeric_columns)
+                        + len(spec.categorical_columns)
+                        + len(spec.datetime_columns)
+                        + len(spec.dropped_columns),
+                    ),
+                ),
+                Criterion(
+                    id="features.preprocessing_is_fold_local",
+                    description="Learned preprocessing statistics are fitted per fold.",
+                    check=_artifact_check(
+                        FeatureSpec,
+                        lambda spec: spec.preprocessing_scope == "fit_per_training_fold"
+                        and not spec.source_mutation_allowed,
+                    ),
+                ),
+            ),
+        ),
+        Rubric(
+            stage_id="training",
+            version="v1",
+            criteria=(
+                Criterion(
+                    id="features.pipeline_is_fitted_object",
+                    description=(
+                        "The selected sklearn pipeline was verified fitted before persistence."
+                    ),
+                    check=_artifact_check(
+                        TrainingReport,
+                        lambda report: report.fitted_pipeline_verified,
+                    ),
+                ),
+                Criterion(
+                    id="features.no_test_fold_statistics",
+                    description=(
+                        "Preprocessing and estimator fitting used outer-training rows only."
+                    ),
+                    check=_artifact_check(
+                        TrainingReport,
+                        lambda report: (
+                            report.fit_scope == "outer_train_only"
+                            and report.holdout_rows_used_for_fit == 0
+                            and report.inner_fold_fit_count is not None
+                        ),
+                    ),
+                ),
+                Criterion(
+                    id="model_selection.baseline_included",
+                    description="Model selection included exactly one mandatory naive baseline.",
+                    check=_artifact_check(
+                        TrainingReport,
+                        lambda report: len(
+                            [result for result in report.results if result.is_baseline]
+                        )
+                        == 1,
+                    ),
+                ),
             ),
         ),
         Rubric(

@@ -14,9 +14,9 @@ would drift from the gate, and the two disagreeing about what matters is worse
 than either being slightly wrong.
 
 **Charts carry aggregates, never rows.** Every panel here is built from counts,
-quantiles, correlations and bin tallies that the EDA profiler already computed.
-This is the same two-plane boundary the agents live behind — a browser is no
-more entitled to raw records than a model is. It is also why there is no
+quantiles, correlations and bin tallies. The local investigator may read a
+read-only data copy, but its browser output must still pass this aggregate-only
+contract. It is also why there is no
 scatter plot of observations anywhere in this file: a scatter is a picture of
 individual rows, so the relationship panel ranks measured association strength
 instead.
@@ -117,6 +117,47 @@ def eda_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     # Most severe first: the strip is read left to right, and the thing most
     # likely to invalidate the model should not be the one you have to scroll to.
     return sorted(panels, key=lambda item: -_RANK[item["severity"]])
+
+
+def exploratory_panel(
+    payload: dict[str, Any],
+    interpretations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Render one validated agent-authored analysis through the existing card shape."""
+    manifest = payload.get("manifest") or {}
+    measured = manifest.get("chart") or {}
+    kind = measured.get("kind")
+    chart: dict[str, Any] = {
+        "kind": kind,
+        "x_label": measured.get("x_label"),
+        "y_label": measured.get("y_label"),
+    }
+    if kind == "histogram":
+        chart["bins"] = measured.get("bins", [])
+    else:
+        chart["series"] = measured.get("series", [])
+        chart["signed"] = bool(measured.get("signed"))
+        if measured.get("unit") in {"percent", "ratio"}:
+            chart["unit"] = measured["unit"]
+    table = manifest.get("table")
+    return {
+        "id": "exploratory_" + str(payload.get("code_hash", ""))[:16],
+        "title": manifest.get("title") or "Exploratory analysis",
+        "severity": REVIEW,
+        "caption": "Agent-authored · exploratory evidence",
+        "description": (
+            "Additional analysis written by the local agent and executed against a "
+            "read-only data copy. It cannot affect gates."
+        ),
+        "chart": chart,
+        "insights": [
+            "This result is exploratory. Review its proposed interpretation and "
+            "verification question before relying on it."
+        ],
+        "table": table,
+        "origin": "agent_authored",
+        "proposed_interpretations": interpretations,
+    }
 
 
 def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
@@ -877,6 +918,52 @@ def training_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(panels, key=lambda item: -_RANK[item["severity"]])
 
 
+def model_experiment_panel(
+    payload: dict[str, Any],
+    interpretations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Render a host-scored authored experiment inside the training stage."""
+    metric = str(payload.get("metric") or "score")
+    score = payload.get("score")
+    baseline = payload.get("baseline_score")
+    manifest = payload.get("manifest") or {}
+    return _panel(
+        "model_experiment",
+        str(manifest.get("title") or "Agent-authored model experiment"),
+        {
+            "kind": "hbar",
+            "x_label": f"Development {metric}",
+            "series": [
+                {"label": "Authored experiment", "value": score or 0.0},
+                {"label": "Naive baseline", "value": baseline or 0.0},
+            ],
+        },
+        severity=REVIEW,
+        caption="Agent-authored · host-scored · exploratory",
+        description=(
+            "Code ran against copied development data. The host scored its predictions "
+            "against labels withheld from the execution environment."
+        ),
+        insights=[
+            f"Measured {metric} on {_fmt(payload.get('evaluation_row_count'))} "
+            "inner-development rows; the final holdout was not used.",
+            "This experiment cannot replace the deterministic winner or affect a gate.",
+        ],
+        table={
+            "columns": ["Result", metric, "Evidence"],
+            "rows": [
+                ["Authored experiment", _fmt(score), "Host measured"],
+                ["Naive baseline", _fmt(baseline), "Host measured"],
+                ["Model family", str(manifest.get("model_family") or "—"), "Agent declared"],
+            ],
+        },
+    ) | {
+        "origin": "agent_authored",
+        "evidence_class": "exploratory",
+        "proposed_interpretations": interpretations,
+    }
+
+
 def _candidate_panel(results, primary, metric, winner_id, lower_is_better):
     rows = []
     for candidate in results:
@@ -1079,6 +1166,7 @@ _LEAKAGE_KINDS = {
 
 def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     findings = payload.get("findings", [])
+    challenges = payload.get("challenges", [])
     checked = payload.get("n_features_checked", 0)
     blocking = [f for f in findings if f.get("blocking")]
     if not checked:
@@ -1105,8 +1193,10 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             + "."
         )
 
-    return [
-        _panel(
+    for challenge in challenges:
+        insights.append(str(challenge.get("result_summary") or ""))
+
+    panel = _panel(
             "leakage_findings",
             "Leakage audit",
             {
@@ -1151,7 +1241,17 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             if findings
             else None,
         )
+    panel["proposed_interpretations"] = [
+        {
+            "measurement_id": challenge.get("finding_fingerprint"),
+            "epistemic_state": "proposed",
+            "interpretation": challenge.get("interpretation"),
+            "why_it_matters": challenge.get("why_it_matters"),
+            "verification_question": challenge.get("verification_question"),
+        }
+        for challenge in challenges
     ]
+    return [panel]
 
 
 # ------------------------------------------------------------ schema graph
@@ -1237,8 +1337,10 @@ def _confidence(overlap: float | None) -> str:
 
 __all__ = [
     "eda_panels",
+    "exploratory_panel",
     "evaluation_panels",
     "leakage_panels",
+    "model_experiment_panel",
     "schema_graph",
     "source_panels",
     "training_panels",

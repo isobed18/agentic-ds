@@ -15,6 +15,8 @@ from ads.contracts.problem import Metric, TaskType
 from ads.contracts.training import TrainingReport
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
 from ads.gates import GatePolicy, evaluate_gate
+from ads.orchestration import CritiqueContext, critique_stage
+from ads.pipeline import build_pipeline_rubrics
 from ads.store import ArtifactStore
 from ads.training import TrainingError, default_candidates, train_candidates
 
@@ -158,6 +160,43 @@ def test_predictive_data_beats_the_baseline(predictive_report: TrainingReport) -
     }
 
 
+def test_runner_records_executor_owned_fit_scope(
+    predictive_report: TrainingReport,
+) -> None:
+    assert predictive_report.fitted_pipeline_verified
+    assert predictive_report.fit_scope == "outer_train_only"
+    assert predictive_report.holdout_rows_used_for_fit == 0
+    assert predictive_report.outer_train_row_count is not None
+    assert predictive_report.holdout_row_count is not None
+    assert predictive_report.inner_fold_fit_count == _strategy().n_folds
+
+
+def test_training_rubric_rejects_a_legacy_report_without_fit_scope(
+    predictive_report: TrainingReport,
+) -> None:
+    fit_fields = {
+        "fitted_pipeline_verified",
+        "fit_scope",
+        "outer_train_row_count",
+        "holdout_row_count",
+        "holdout_rows_used_for_fit",
+        "inner_fold_fit_count",
+    }
+    legacy_report = TrainingReport.model_validate(
+        predictive_report.model_dump(exclude=fit_fields)
+    )
+    rubric = build_pipeline_rubrics().get("training")
+    assert rubric is not None
+
+    critique = critique_stage(
+        rubric,
+        CritiqueContext(stage_id="training", artifacts=[legacy_report]),
+    )
+
+    assert "features.pipeline_is_fitted_object" in critique.unmet_criteria
+    assert "features.no_test_fold_statistics" in critique.unmet_criteria
+
+
 def test_pure_noise_does_not_beat_its_baseline(noise_report: TrainingReport) -> None:
     signals = noise_report.to_quality_signals()
 
@@ -171,7 +210,7 @@ def test_noise_report_triggers_model_below_baseline_gate(
 ) -> None:
     policy = GatePolicy.load()
     decision = evaluate_gate(
-        stage=policy.stage("model_selection"),
+        stage=policy.stage("training"),
         signals=noise_report.to_quality_signals(),
         profile=BUILTIN_PROFILES["checkpointed"],
         policy=policy,

@@ -1,7 +1,7 @@
 ---
 skill_id: fe.temporal_features
-trigger: any column with semantic_type == datetime
-applies_to: [feature_pipeline]
+trigger: has_datetime
+applies_to: [feature_investigation, model_investigation]
 source: adapted from business-science/ai-data-science-team (MIT)
 ---
 
@@ -22,10 +22,10 @@ A raw timestamp is almost never useful to a tree model. Decompose it.
 
 ## Leakage warning
 
-If the run's `ValidationStrategy` is temporal, **any** feature derived from a
-date at or beyond the holdout cutoff is leakage. Aggregations over a transaction
-history must be windowed to data available before the cutoff, not computed over
-the full history.
+Feature values must use only information available at each row's prediction
+time. A date after the prediction moment is unavailable regardless of which
+validation strategy is used. Historical aggregates must be windowed per row,
+not computed over the full extract.
 
 This is the single most common way a temporal project produces an excellent
 validation score and a worthless model.

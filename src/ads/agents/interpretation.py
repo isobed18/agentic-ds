@@ -65,6 +65,7 @@ _COMPATIBLE_KINDS = {
             MeasurementKind.PERIOD_DISTRIBUTION,
             MeasurementKind.TEXT_SHAPE,
             MeasurementKind.NUMERIC_PROFILE,
+            MeasurementKind.EXPLORATORY_ANALYSIS,
         }
     ),
     InterpretationKind.COLUMN_SEMANTICS: frozenset(
@@ -75,6 +76,7 @@ _COMPATIBLE_KINDS = {
             MeasurementKind.NUMERIC_PROFILE,
             MeasurementKind.PERIOD_DISTRIBUTION,
             MeasurementKind.KEY_CARDINALITY,
+            MeasurementKind.EXPLORATORY_ANALYSIS,
         }
     ),
     InterpretationKind.OPEN_QUESTION: frozenset(MeasurementKind),

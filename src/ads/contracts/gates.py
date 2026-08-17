@@ -106,6 +106,15 @@ class QualitySignals(FrozenModel):
     # Leakage / correctness
     max_target_correlation: float | None = Field(default=None, ge=0.0, le=1.0)
     leakage_suspect_columns: list[str] = Field(default_factory=list)
+    target_relationship_suspect_columns: list[str] = Field(default_factory=list)
+    structural_leakage_suspect_columns: list[str] = Field(default_factory=list)
+    leakage_challenge_review_columns: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Blocking leakage findings for which a registered deterministic test "
+            "produced evidence worth human review. This never auto-clears a finding."
+        ),
+    )
     separator_suspect_columns: list[str] = Field(
         default_factory=list,
         description=(

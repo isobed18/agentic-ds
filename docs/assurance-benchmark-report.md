@@ -4,8 +4,9 @@
 **Period:** 2026-08-13 → 2026-08-14
 **Built by:** Codex (codex CLI, `gpt-5.6-sol`, high reasoning) with Claude (Claude Code) as
 reviewer, execution proxy and second oracle reviewer
-**Companion documents:** [implementation-report-2.md](implementation-report-2.md),
-[architecture-report.md](architecture-report.md)
+**Companion documents:** [HARDENING_TRACK.md](HARDENING_TRACK.md) (the brief),
+[COLLABORATION.md](COLLABORATION.md) (working agreement),
+[AGENT_DIALOGUE.md](AGENT_DIALOGUE.md) (the full exchange, ~27,000 words)
 
 ---
 

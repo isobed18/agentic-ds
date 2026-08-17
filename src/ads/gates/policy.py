@@ -70,7 +70,7 @@ class GateThresholds:
 
     The defensible replacement is per-fold paired lift
     (``winner_score[i] - baseline_score[i]``) with a documented uncertainty
-    procedure. Tracked as an open calibration item.
+    procedure. Tracked in AI_HANDOFF.md §9.
     """
     min_minority_class_count: int = 50
     min_rows_per_feature: float = 5.0

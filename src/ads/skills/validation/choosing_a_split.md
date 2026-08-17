@@ -1,6 +1,6 @@
 ---
 skill_id: validation.choosing_a_split
-trigger: always (stage 4)
+trigger: always
 applies_to: [validation_strategy]
 source: original
 ---
@@ -24,8 +24,10 @@ risk stage and gates to a human by default.
 
 ## Signals to read from the profile
 
-- Repeated entity: a column with `semantic_type == identifier` whose
-  `unique_rate` is well below 1.0 on the ABT.
+- Repeated entity: use the measured recurrence and containment matrix. A nearly
+  unique identifier may still require grouping; unique rate is not a safe cutoff.
+- Group only on a measured full-coverage candidate. If none contains every
+  repeating identifier domain, escalate with the containment gaps.
 - Time ordering: any `datetime` column with `span_days` covering multiple
   reporting periods.
 - Imbalance: `minority_class_rate` below 0.2.
