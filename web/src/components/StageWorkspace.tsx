@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 /**
  * Centre workspace for one stage.
  *
@@ -16,13 +17,17 @@ import {
   api,
   type FactValue,
   type GateDecision,
+  type ProfiledTable,
   type StageDetail,
   type StageOutput,
   type Story,
   type WorkflowNode,
 } from "../lib/api";
-import { statusLabel } from "../lib/status";
+import { reasonLabel, statusLabel, verdictLabel } from "../lib/status";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
+import { BranchPicker } from "./BranchPicker";
+import { SensitivityOverride } from "./SensitivityOverride";
+import { StageDirective } from "./StageDirective";
 import { NeedsAttention, type AttentionItem } from "./NeedsAttention";
 import { SchemaMap } from "./SchemaMap";
 import { titleize } from "./PipelineRail";
@@ -42,8 +47,14 @@ function fmt(v: FactValue | null | undefined): string {
 }
 
 export function StageWorkspace({
-  runId, node, onAnswered,
-}: { runId: string | null; node: WorkflowNode | null; onAnswered: () => void }) {
+  runId, node, sourceId = null, onAnswered, onBranched,
+}: {
+  runId: string | null;
+  node: WorkflowNode | null;
+  sourceId?: string | null;
+  onAnswered: () => void;
+  onBranched?: (runIds: string[]) => void;
+}) {
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,10 +72,17 @@ export function StageWorkspace({
   }, [runId, node?.id, node?.status, node?.attempt_count]);
 
   if (!node) {
-    return <div className="p-6"><Empty title="Select a stage" hint="Pick a node in the pipeline above to see its workspace." /></div>;
+    return <div className="p-6"><Empty title={t("Select a stage")} hint="Pick a node in the pipeline above to see its workspace." /></div>;
   }
 
   const outputs = detail?.outputs ?? [];
+  const candidates = outputs.flatMap((o) => o.story?.choices ?? []);
+  // Intake emits one data card per source table; the override needs their
+  // columns, and this is the same payload the panel above already renders.
+  const profileTables = outputs
+    .filter((o) => o.type === "data_card")
+    .map((o) => (o.summary ?? {}) as unknown as ProfiledTable)
+    .filter((t) => Array.isArray((t as ProfiledTable).columns));
   const attention = collectAttention(detail);
   // The gate that is actually waiting on a person, if any.
   const openGate = detail?.gate_decisions.find((g) => g.human_prompt) ?? null;
@@ -86,7 +104,7 @@ export function StageWorkspace({
         </p>
       </header>
 
-      {loading && !detail && <Spinner label="Loading stage…" />}
+      {loading && !detail && <Spinner label={t("Loading stage…")} />}
       {error && <p className="card border-stop-500/30 bg-stop-50 px-4 py-3 text-sm text-stop-700">{error}</p>}
 
       {needsHuman && detail?.human_view?.state_label && !openGate && (
@@ -97,6 +115,27 @@ export function StageWorkspace({
 
       {openGate && runId && (
         <ApprovalCard runId={runId} decision={openGate} onAnswered={onAnswered} />
+      )}
+
+      {/* Offered while the run is stopped here: the classification is on screen
+          and nothing downstream has been built on it yet. */}
+      {openGate && runId && node.id === "intake" && profileTables.length > 0 && (
+        <SensitivityOverride runId={runId} tables={profileTables} />
+      )}
+
+      {runId && node.kind !== "deterministic" && (
+        <StageDirective runId={runId} stageId={node.id} />
+      )}
+
+      {/* Only offered where the choice actually forks the project. Branching a
+          later stage would produce runs that differ in nothing a person picked. */}
+      {runId && node.id === "problem_discovery" && candidates.length > 1 && (
+        <BranchPicker
+          choices={candidates}
+          sourceId={sourceId}
+          parentRunId={runId}
+          onBranched={(ids) => onBranched?.(ids)}
+        />
       )}
 
       {attention.length > 0 && (
@@ -112,7 +151,7 @@ export function StageWorkspace({
       {outputs.map((o) => <OutputBlock key={o.artifact_id} output={o} />)}
 
       {detail && detail.attempts.length > 0 && (
-        <Disclosure title="Attempts" count={detail.attempts.length}>
+        <Disclosure title={t("Attempts")} count={detail.attempts.length}>
           <DataTable
             columns={["#", "Verdict", "Started", "Ended", "Artifacts"]}
             rows={detail.attempts.map((a) => [
@@ -126,19 +165,18 @@ export function StageWorkspace({
         </Disclosure>
       )}
 
+      {/* Gate internals -- reason codes, rule ids, artifact hashes -- are
+          debugging output, not something a person reading their own run needs.
+          They remain in the API and the audit record; they are simply no longer
+          the first thing on screen. */}
       {detail && detail.gate_decisions.length > 0 && (
-        <Disclosure title="Gate decisions" count={detail.gate_decisions.length}>
+        <Disclosure title={t("Decision history")} count={detail.gate_decisions.length}>
           <ul className="space-y-1.5">
             {detail.gate_decisions.map((g, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm">
-                <Badge tone={toneFor(g.verdict)}>{g.verdict}</Badge>
-                <code className="font-mono text-[11px] text-ink-faint">{g.reason_code}</code>
-                <span className="text-xs text-ink-mute">attempt {g.attempt}</span>
-                {g.triggered_rules.length > 0 && (
-                  <span className="w-full font-mono text-[11px] text-ink-faint">
-                    {g.triggered_rules.join(", ")}
-                  </span>
-                )}
+                <Badge tone={toneFor(g.verdict)}>{verdictLabel(g.verdict)}</Badge>
+                <span className="text-ink-soft">{reasonLabel(g.reason_code)}</span>
+                {g.attempt > 1 && <span className="text-xs text-ink-mute">attempt {g.attempt}</span>}
               </li>
             ))}
           </ul>
@@ -146,15 +184,13 @@ export function StageWorkspace({
       )}
 
       {outputs.length > 0 && (
-        <Disclosure title="Artifacts" count={outputs.length}>
+        <Disclosure title={t("Artifacts")} count={outputs.length}>
           <ul className="space-y-1.5">
             {outputs.map((a) => (
               <li key={a.artifact_id} className="flex items-center gap-2 text-sm">
                 <Badge>{a.type}</Badge>
                 <span className="truncate text-ink-soft">{a.name}</span>
-                <code className="ml-auto shrink-0 font-mono text-[11px] text-ink-faint">
-                  {a.artifact_id.slice(0, 16)}
-                </code>
+
               </li>
             ))}
           </ul>
@@ -202,14 +238,45 @@ function OutputBlock({ output }: { output: StageOutput }) {
             <path d="M10 2.5 11.6 7 16 8.5 11.6 10 10 14.5 8.4 10 4 8.5 8.4 7z" strokeLinejoin="round" />
           </svg>
           <p className="text-sm leading-relaxed text-ink-soft">
-            <span className="font-semibold text-brand-700">Recommendation: </span>{s.suggestion}
+            <span className="font-semibold text-brand-700">{t("Recommendation:")} </span>{s.suggestion}
           </p>
         </div>
       )}
 
 
+      {/* The agent's own explanations, each carrying what it was measured from
+          and the question a person should ask before believing it. Marked as a
+          proposal rather than a finding, because that is what it is. */}
+      {has("insights") && (
+        <Disclosure title={t("What the agent noticed")} count={s.insights!.length} defaultOpen>
+          <div className="space-y-2">
+            {s.insights!.map((item, i) => (
+              <article key={i} className="rounded-lg border border-line bg-surface-sunken px-4 py-3">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <Badge tone="brand">{t("Agent proposal")}</Badge>
+                  {item.subjects?.slice(0, 3).map((subject) => (
+                    <code key={subject} className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-ink-soft">
+                      {subject}
+                    </code>
+                  ))}
+                </div>
+                <p className="text-sm leading-relaxed text-ink">{item.interpretation}</p>
+                {item.why_it_matters && (
+                  <p className="mt-1 text-xs leading-relaxed text-ink-mute">{item.why_it_matters}</p>
+                )}
+                {item.verification_question && (
+                  <p className="mt-2 border-l-2 border-warn-500 pl-2 text-xs text-warn-700">
+                    {item.verification_question}
+                  </p>
+                )}
+              </article>
+            ))}
+          </div>
+        </Disclosure>
+      )}
+
       {has("choices") && (
-        <Disclosure title="Candidate problems" count={s.choices!.length} defaultOpen>
+        <Disclosure title={t("Candidate problems")} count={s.choices!.length} defaultOpen>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {s.choices!.map((c, i) => (
               <article key={i} className={cx("card px-4 py-3", i === 0 && "border-brand-500 ring-2 ring-brand-100")}>
@@ -219,9 +286,9 @@ function OutputBlock({ output }: { output: StageOutput }) {
                   {i === 0 && c.viable !== false && <Badge tone="brand">selected</Badge>}
                 </div>
                 <dl className="mt-2 grid grid-cols-3 gap-2 border-t border-line-soft pt-2">
-                  <Pair label="Target" value={c.target ?? "—"} />
-                  <Pair label="Task" value={(c.task ?? "—").replace(/_/g, " ")} />
-                  <Pair label="Metric" value={c.metric ?? "—"} />
+                  <Pair label={t("Target")} value={c.target ?? "—"} />
+                  <Pair label={t("Task")} value={(c.task ?? "—").replace(/_/g, " ")} />
+                  <Pair label={t("Metric")} value={c.metric ?? "—"} />
                 </dl>
                 {c.rationale && <p className="mt-2 text-xs leading-relaxed text-ink-mute">{c.rationale}</p>}
               </article>
@@ -231,7 +298,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
       )}
 
       {has("model_comparison") && (
-        <Disclosure title="Model comparison" count={s.model_comparison!.length} defaultOpen>
+        <Disclosure title={t("Model comparison")} count={s.model_comparison!.length} defaultOpen>
           <DataTable
             columns={["Candidate", "Role", "CV mean", "CV std", "Holdout"]}
             rows={s.model_comparison!.map((m) => [
@@ -256,13 +323,13 @@ function OutputBlock({ output }: { output: StageOutput }) {
       {has("panels") && <AnalysisStrip panels={s.panels as AnalysisPanel[]} />}
 
       {s.schema_graph && s.schema_graph.edges.length > 0 && (
-        <Disclosure title="Relationship map" count={s.schema_graph.edges.length} defaultOpen>
+        <Disclosure title={t("Relationship map")} count={s.schema_graph.edges.length} defaultOpen>
           <SchemaMap graph={s.schema_graph} />
         </Disclosure>
       )}
 
       {has("criteria") && (
-        <Disclosure title="Coverage checks" count={Object.keys(s.criteria!).length}>
+        <Disclosure title={t("Coverage checks")} count={Object.keys(s.criteria!).length}>
           <ul className="space-y-1.5">
             {Object.entries(s.criteria!).map(([label, ok]) => (
               <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
@@ -277,7 +344,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
       )}
 
       {has("history_alerts") && (
-        <Disclosure title="Decision history" count={s.history_alerts!.length}>
+        <Disclosure title={t("Decision history")} count={s.history_alerts!.length}>
           <ul className="space-y-1.5">
             {s.history_alerts!.map((a, i) => (
               <li key={i} className="flex items-start gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-soft">
@@ -290,7 +357,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
       )}
 
       {has("findings") && (
-        <Disclosure title="Findings" count={s.findings!.length}>
+        <Disclosure title={t("Findings")} count={s.findings!.length}>
           <pre className="overflow-x-auto rounded-lg bg-surface-sunken p-3 text-[11px] leading-relaxed text-ink-soft">
             {JSON.stringify(s.findings, null, 2)}
           </pre>
@@ -298,7 +365,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
       )}
 
       {has("excluded_columns") && (
-        <Disclosure title="Excluded columns" count={s.excluded_columns!.length}>
+        <Disclosure title={t("Excluded columns")} count={s.excluded_columns!.length}>
           <div className="flex flex-wrap gap-1.5">
             {s.excluded_columns!.map((c) => <Badge key={c} tone="warn">{c}</Badge>)}
           </div>
@@ -306,13 +373,13 @@ function OutputBlock({ output }: { output: StageOutput }) {
       )}
 
       {s.rationale && (
-        <Disclosure title="Rationale">
+        <Disclosure title={t("Rationale")}>
           <p className="max-w-3xl text-sm leading-relaxed text-ink-soft">{s.rationale}</p>
         </Disclosure>
       )}
 
       {s.report_markdown && (
-        <Disclosure title="Full report">
+        <Disclosure title={t("Full report")}>
           <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed text-ink-soft">
             {s.report_markdown}
           </pre>
@@ -329,9 +396,18 @@ function ApprovalCard({
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /**
+   * A gate answer is accepted exactly once: the run leaves `awaiting_human`
+   * immediately, so a second submission is rejected with 400. This card stays
+   * mounted until the next poll notices, and re-enabling the buttons in that
+   * window invited a second click that looked like a failure even though the
+   * first answer had already been applied and the run had resumed.
+   */
+  const [sent, setSent] = useState(false);
   const prompt = decision.human_prompt!;
 
   async function answer(optionId: string) {
+    if (sent || busy) return;
     setBusy(optionId);
     setError(null);
     try {
@@ -341,10 +417,10 @@ function ApprovalCard({
         instructions: note ? [note] : [],
       });
       setNote("");
+      setSent(true);
       onAnswered();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
       setBusy(null);
     }
   }
@@ -352,22 +428,25 @@ function ApprovalCard({
   return (
     <section className="card mb-4 border-l-4 border-l-stop-500 px-4 py-4">
       <div className="mb-1 flex items-center gap-2">
-        <Badge tone="stop">Approval required</Badge>
-        <code className="font-mono text-[11px] text-ink-faint">{decision.reason_code}</code>
+        <Badge tone={sent ? "ok" : "stop"}>{sent ? "Answer sent" : "Approval required"}</Badge>
+        <span className="text-xs text-ink-mute">{reasonLabel(decision.reason_code)}</span>
       </div>
+      {sent && (
+        <p className="mb-2 text-xs text-ok-700">
+          {t("Recorded. The run is resuming — this card clears on the next refresh.")}
+        </p>
+      )}
       <h3 className="text-sm font-semibold text-ink">{prompt.question}</h3>
       <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-ink-mute">{prompt.context_summary}</p>
 
-      {decision.triggered_rules.length > 0 && (
-        <p className="mt-2 font-mono text-[11px] text-ink-faint">rules: {decision.triggered_rules.join(", ")}</p>
-      )}
+
 
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {prompt.options.map((o) => (
           <button
             key={o.option_id}
             onClick={() => void answer(o.option_id)}
-            disabled={busy !== null}
+            disabled={sent || busy !== null}
             className={cx(
               "rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
               o.recommended ? "border-brand-500 bg-brand-50 hover:bg-brand-100" : "border-line bg-surface hover:bg-surface-sunken",
@@ -384,7 +463,7 @@ function ApprovalCard({
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="Optional instructions to attach to a rework…"
+          placeholder={t("Optional instructions to attach to a rework…")}
           className="field mt-2.5 text-xs"
         />
       )}

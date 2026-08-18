@@ -59,6 +59,12 @@ def register_integration_tools(registry: ToolRegistry) -> ToolRegistry:
     registry.register(
         ToolDefinition(
             tool_id="trial_integration_plan",
+            arguments={
+                'plan': (
+                    'IntegrationPlanProposal object: base_table, base_grain, '
+                    'joins[], aggregations[]'
+                ),
+            },
             tier=PermissionTier.READ_DATA,
             description=(
                 "Execute a proposed integration plan in DuckDB and measure its realized grain."

@@ -12,6 +12,7 @@ from sklearn.metrics import f1_score, mean_squared_error, roc_auc_score
 from ads.contracts.problem import Metric, TaskType
 from ads.contracts.validation import ValidationStrategy
 from ads.splitting import make_splitter, split_holdout
+from ads.training.frame_contracts import validate_feature_partition, validate_frame_copy
 
 ROW_ID_COLUMN = "__ads_experiment_row_id"
 
@@ -41,6 +42,7 @@ def prepare_experiment_partition(
     """
     if ROW_ID_COLUMN in frame.columns:
         raise ValueError(f"Reserved experiment column {ROW_ID_COLUMN!r} already exists.")
+    validate_frame_copy(frame)
     if target_column not in frame.columns:
         raise ValueError(f"Target column {target_column!r} is missing.")
     labeled = frame.loc[frame[target_column].notna()].copy()
@@ -70,9 +72,17 @@ def prepare_experiment_partition(
     )
     validation_features = validation.drop(columns=[target_column])
     validation_features.insert(0, ROW_ID_COLUMN, validation_ids)
+    training = training.reset_index(drop=True)
+    validation_features = validation_features.reset_index(drop=True)
+    validate_feature_partition(
+        training=training,
+        validation_features=validation_features,
+        target_column=target_column,
+        row_id_column=ROW_ID_COLUMN,
+    )
     return ExperimentPartition(
-        training=training.reset_index(drop=True),
-        validation_features=validation_features.reset_index(drop=True),
+        training=training,
+        validation_features=validation_features,
         validation_targets=validation_targets,
         target_column=target_column,
     )

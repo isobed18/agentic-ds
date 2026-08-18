@@ -73,7 +73,9 @@ from ads.pipeline.stages import (
     EXECUTION_BACKEND_KEY,
     SOURCE_CARDS_KEY,
     SOURCE_FRAMES_KEY,
+    STAGE_DIRECTIVES_KEY,
     VALIDATION_FOLDS_KEY,
+    agent_runtime_policy,
 )
 from ads.sandbox import ExecutionBackend, materialize_frame_copies
 from ads.splitting import execute_validation_trial
@@ -101,6 +103,23 @@ def _admit_tool(
     result = broker.invoke(spec, tool_id, runtime, **arguments)
     context.admit_tool_result(result.tool_id, result.summary, tier=result.tier)
     return result
+
+
+def _with_directives(context: AgentContext, state: RunState, stage_id: str) -> AgentContext:
+    """Carry a person's instruction to this stage's agent into its context.
+
+    Rendered as a distinct section rather than folded into the correction block,
+    because they mean different things: a correction says the last attempt was
+    wrong, a directive says what the human wants regardless of any attempt. An
+    agent that cannot tell them apart will treat a preference as a failure.
+    """
+    directives = (state.blackboard.get(STAGE_DIRECTIVES_KEY) or {}).get(stage_id)
+    if not directives:
+        return context
+    context.sections["Instruction from the human"] = "\n".join(
+        f"- {line}" for line in directives
+    )
+    return context
 
 
 def _with_correction(context: AgentContext, correction: list[str] | None) -> AgentContext:
@@ -143,9 +162,7 @@ def _agent_audit(
         panel_size=len(result.members),
         valid_members=sum(member.succeeded for member in result.members),
         agreement=result.agreement if len(result.members) > 1 else None,
-        verbatim_agreement=(
-            result.verbatim_agreement if len(result.members) > 1 else None
-        ),
+        verbatim_agreement=(result.verbatim_agreement if len(result.members) > 1 else None),
         allowed_tools=sorted(spec.allowed_tools),
         evidence_tools=sorted({item.tool_id for item in context.evidence_tools}),
         skills_used=list(context.facts.get("skill_ids", [])),
@@ -173,8 +190,7 @@ def _source_inputs(state: RunState) -> tuple[list[DataCard], dict[str, pd.DataFr
     if not isinstance(cards, list) or not all(isinstance(card, DataCard) for card in cards):
         raise ValueError("Intake did not place source DataCards on the run blackboard.")
     if not isinstance(frames, dict) or not all(
-        isinstance(name, str) and isinstance(frame, pd.DataFrame)
-        for name, frame in frames.items()
+        isinstance(name, str) and isinstance(frame, pd.DataFrame) for name, frame in frames.items()
     ):
         raise ValueError("Intake did not place source frames on the run blackboard.")
     return cards, frames
@@ -204,21 +220,13 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
             panel_size=len(members),
             valid_members=len(valid),
             agreement=(
-                max(decisions.values(), default=0) / len(members)
-                if len(members) > 1
-                else None
+                max(decisions.values(), default=0) / len(members) if len(members) > 1 else None
             ),
             verbatim_agreement=(
-                max(verbatim.values(), default=0) / len(members)
-                if len(members) > 1
-                else None
+                max(verbatim.values(), default=0) / len(members) if len(members) > 1 else None
             ),
-            allowed_tools=sorted(
-                build_schema_action_spec(allow_code=allow_code).allowed_tools
-            ),
-            evidence_tools=sorted(
-                {tool for member in members for tool in member.tool_calls}
-            ),
+            allowed_tools=sorted(build_schema_action_spec(allow_code=allow_code).allowed_tools),
+            evidence_tools=sorted({tool for member in members for tool in member.tool_calls}),
             validator_count=len(build_schema_spec().validators) + 2,
             raw_rows_shared=any(member.raw_rows_shared for member in members),
             members=[
@@ -227,9 +235,7 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                     model=member.model,
                     attempts=member.attempts,
                     accepted=member.succeeded,
-                    validation_failures=[
-                        failure.code for failure in member.failures
-                    ],
+                    validation_failures=[failure.code for failure in member.failures],
                     repairs=[],
                     latency_s=round(member.latency_s, 3),
                 )
@@ -244,16 +250,20 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         if backend is not None and not isinstance(backend, ExecutionBackend):
             raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
         data_paths = materialize_frame_copies(backend, frames) if backend else {}
+        runtime_policy = agent_runtime_policy(state)
         allow_code = False
         if backend is not None:
             probe = ToolRuntime(execution_backend=backend)
-            allow_code = probe.execution_available()
+            allow_code = probe.execution_available() and runtime_policy.code_enabled(
+                "schema_investigation"
+            )
 
         members: list[SchemaMemberResult] = []
         for member_index in range(panel_size):
             context = build_context_with_evidence(cards, relationships)
             if state.user_intent:
                 context.sections["User planning preferences"] = state.user_intent
+            context = _with_directives(context, state, "schema_discovery")
             context = _with_correction(context, correction)
             runtime = ToolRuntime.from_sources(
                 cards,
@@ -268,6 +278,8 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                     llm=llm,
                     runtime=runtime,
                     data_paths=data_paths,
+                    budget=runtime_policy.budget("schema_investigation"),
+                    code_execution_enabled=runtime_policy.code_enabled("schema_investigation"),
                 )
             )
 
@@ -275,9 +287,10 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         valid = [member for member in members if member.succeeded]
         if not valid:
             failures = [failure for member in members for failure in member.failures]
-            detail = "; ".join(
-                f"{failure.code}: {failure.detail}" for failure in failures
-            ) or "The schema investigators returned no tested plan."
+            detail = (
+                "; ".join(f"{failure.code}: {failure.detail}" for failure in failures)
+                or "The schema investigators returned no tested plan."
+            )
             return StageResult(
                 artifacts=[audit],
                 names={0: "agent_audit"},
@@ -288,9 +301,7 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         counts = Counter(member.decision_fingerprint for member in valid)
         selected_fingerprint = counts.most_common(1)[0][0]
         selected = next(
-            member
-            for member in valid
-            if member.decision_fingerprint == selected_fingerprint
+            member for member in valid if member.decision_fingerprint == selected_fingerprint
         )
         assert selected.proposal is not None
         assert selected.trial is not None
@@ -314,17 +325,11 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 # no outstanding contract failure. Treating investigation history as
                 # final invalidity would make the new correction loop self-defeating.
                 validation_failures=0,
-                self_consistency_agreement=(
-                    audit.agreement if panel_size > 1 else None
-                ),
+                self_consistency_agreement=(audit.agreement if panel_size > 1 else None),
                 panel_size=panel_size if panel_size > 1 else None,
-                panel_valid_members=(
-                    len(valid) if panel_size > 1 else None
-                ),
+                panel_valid_members=(len(valid) if panel_size > 1 else None),
             ),
-            digest=(
-                f"{plan.summary()}; deterministic trial: {trial.summary()}"
-            ),
+            digest=(f"{plan.summary()}; deterministic trial: {trial.summary()}"),
         )
 
     return stage
@@ -339,9 +344,7 @@ def _abt_frame(state: RunState) -> pd.DataFrame:
 
 def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     """Create problem discovery plus deterministic support attachment/selection."""
-    spec = _single_call(
-        _require_evidence(build_problem_spec(), "column_profile", "null_rate")
-    )
+    spec = _single_call(_require_evidence(build_problem_spec(), "column_profile", "null_rate"))
 
     def stage(state: RunState, correction: list[str] | None = None) -> StageResult:
         card = state.require(ArtifactType.DATA_CARD, DataCard)
@@ -353,9 +356,7 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
         if backend is not None:
             if not isinstance(backend, ExecutionBackend):
-                raise TypeError(
-                    "Configured execution backend does not satisfy ExecutionBackend."
-                )
+                raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
             materialize_frame_copies(
                 backend,
                 {card.table_name: frame},
@@ -370,6 +371,10 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                     run_id=f"{state.run_id}-problem-investigation",
                     execution_backend=backend,
                     artifacts_dir=backend.artifacts_dir,
+                ),
+                budget=agent_runtime_policy(state).budget("problem_investigation"),
+                code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                    "problem_investigation"
                 ),
             )
             investigation_audit = investigation.audit
@@ -439,9 +444,7 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 n_rows=support.n_rows,
                 minority_class_count=support.minority_class_count,
                 rows_per_feature=support.rows_per_feature,
-                self_consistency_agreement=(
-                    result.agreement if panel_size > 1 else None
-                ),
+                self_consistency_agreement=(result.agreement if panel_size > 1 else None),
                 panel_size=panel_size if panel_size > 1 else None,
                 panel_valid_members=(
                     sum(m.succeeded for m in result.members) if panel_size > 1 else None
@@ -483,14 +486,13 @@ def make_validation_strategy_stage(llm: StructuredLLM, *, panel_size: int = 1):
         context.admit_tool_result(measured.tool_id, measured.summary, tier=measured.tier)
         if state.user_intent:
             context.sections["User planning preferences"] = state.user_intent
+        context = _with_directives(context, state, "validation_strategy")
         context = _with_correction(context, correction)
         investigation_audit: AgentAudit | None = None
         backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
         if backend is not None:
             if not isinstance(backend, ExecutionBackend):
-                raise TypeError(
-                    "Configured execution backend does not satisfy ExecutionBackend."
-                )
+                raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
             materialize_frame_copies(
                 backend,
                 {card.table_name: frame},
@@ -506,6 +508,10 @@ def make_validation_strategy_stage(llm: StructuredLLM, *, panel_size: int = 1):
                     execution_backend=backend,
                     artifacts_dir=backend.artifacts_dir,
                     resources={"validation_signals": signals},
+                ),
+                budget=agent_runtime_policy(state).budget("validation_investigation"),
+                code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                    "validation_investigation"
                 ),
             )
         result: AgentPanelResult[ValidationStrategyProposal] = run_agent_panel(
@@ -534,9 +540,7 @@ def make_validation_strategy_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 validation_failures=_validation_failure_count(result),
                 n_rows=signals.n_usable_rows,
                 minority_class_count=signals.minority_class_count,
-                self_consistency_agreement=(
-                    result.agreement if panel_size > 1 else None
-                ),
+                self_consistency_agreement=(result.agreement if panel_size > 1 else None),
                 panel_size=panel_size if panel_size > 1 else None,
                 panel_valid_members=(
                     sum(m.succeeded for m in result.members) if panel_size > 1 else None

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from ads.agents.base import AgentContext, AgentSpec
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.gates import PermissionTier
 from ads.contracts.problem import (
@@ -16,9 +17,6 @@ from ads.contracts.problem import (
 )
 from ads.llm import LARGE, StructuredLLM
 from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_registry
-
-MAX_TURNS = 8
-MAX_TRANSCRIPT_CHARS = 20_000
 
 SYSTEM_PROMPT = """\
 You are the investigative scout for problem discovery. Do not choose the final problem yet.
@@ -94,25 +92,32 @@ def investigate_problem_context(
     context: AgentContext,
     llm: StructuredLLM,
     runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> ProblemInvestigationResult:
     """Let the scout choose tool calls; failures leave deterministic context intact."""
-    allow_code = runtime.backend() is not None and runtime.execution_available()
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["problem_investigation"]
+    allow_code = (
+        code_execution_enabled and runtime.backend() is not None and runtime.execution_available()
+    )
     spec = build_spec(allow_code=allow_code)
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tools: list[str] = []
+    tool_attempts = 0
     failures: list[str] = []
     model = spec.profile.name
     latency = 0.0
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             prompt = context.render()
             if transcript:
-                prompt += "\n\n## Investigation transcript\n" + "\n".join(transcript)[
-                    -MAX_TRANSCRIPT_CHARS:
-                ]
+                prompt += (
+                    "\n\n## Investigation transcript\n"
+                    + "\n".join(transcript)[-budget.max_transcript_chars :]
+                )
             response = llm.generate_structured(
-                system=spec.system_prompt,
+                system=spec.system_prompt_with_tools(),
                 prompt=prompt,
                 json_schema=ProblemInvestigationAction.model_json_schema(),
                 profile=spec.profile,
@@ -150,7 +155,7 @@ def investigate_problem_context(
                     transcript.append("Finish rejected: call at least one measurement tool.")
                     continue
                 context.sections["Agent-directed investigation"] = "\n".join(transcript)[
-                    -MAX_TRANSCRIPT_CHARS:
+                    -budget.max_transcript_chars :
                 ]
                 return ProblemInvestigationResult(
                     audit=_audit(
@@ -164,6 +169,11 @@ def investigate_problem_context(
                     )
                 )
             assert action.tool_id is not None
+            if tool_attempts >= budget.max_tool_calls:
+                failures.append("tool_call_budget_exhausted")
+                transcript.append("Tool call rejected: configured tool budget is exhausted.")
+                continue
+            tool_attempts += 1
             try:
                 result = broker.invoke(spec, action.tool_id, runtime, **action.arguments)
             except ToolError as exc:
@@ -182,7 +192,7 @@ def investigate_problem_context(
             audit=_audit(
                 spec,
                 model=model,
-                attempts=MAX_TURNS,
+                attempts=budget.max_turns,
                 accepted=False,
                 tools=tools,
                 failures=[*failures, "turn_budget_exhausted"],

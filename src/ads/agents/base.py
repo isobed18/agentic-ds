@@ -234,8 +234,49 @@ class AgentSpec[TOut: BaseModel]:
     aggregation step without naming each path.
     """
 
+    def tool_reference(self) -> str:
+        """The allowed tools rendered as callable signatures, or "" if none.
+
+        Agents were previously given tool *names* and a prose sentence, and had
+        to infer argument names and shapes. They inferred badly: on one measured
+        run an investigator called the same tool eight times, failed every call,
+        exhausted its turn budget and produced no evidence; others invented tool
+        names that were never registered. Names alone are not an interface.
+        """
+        if not self.allowed_tools:
+            return ""
+        from ads.tools import build_tool_registry
+
+        registry = build_tool_registry()
+        lines = []
+        for tool_id in sorted(self.allowed_tools):
+            try:
+                lines.append(f"- {registry.resolve(tool_id).signature()}")
+            except Exception:  # noqa: BLE001 - a stale name must not break the run
+                continue
+        if not lines:
+            return ""
+        return (
+            "## Callable tools\n"
+            "Call only these, with exactly these argument names. "
+            "Any other tool name will fail.\n" + "\n".join(lines)
+        )
+
+    def system_prompt_with_tools(self) -> str:
+        """The system prompt plus the callable-tool reference.
+
+        Investigator loops build their own turn prompts rather than going
+        through :meth:`build_prompt`, so the reference has to reach them here or
+        it reaches them nowhere.
+        """
+        reference = self.tool_reference()
+        return f"{self.system_prompt}\n\n{reference}" if reference else self.system_prompt
+
     def build_prompt(self, context: AgentContext, correction: str | None = None) -> str:
         parts = [context.render()]
+        reference = self.tool_reference()
+        if reference:
+            parts.append(reference)
         if correction:
             parts.append(f"## Correction required\n{correction}")
         return "\n\n".join(parts)
@@ -282,7 +323,7 @@ def run_agent[TOut: BaseModel](
             context.evidence_tools.extend(evidence_provider(attempt_no, context))
             _validate_tool_evidence(spec, context)
         response = llm.generate_structured(
-            system=spec.system_prompt,
+            system=spec.system_prompt_with_tools(),
             prompt=spec.build_prompt(context, correction),
             json_schema=schema,
             profile=spec.profile,

@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from ads.agents.base import AgentContext, AgentSpec
 from ads.agents.interpretation import validate_measurement_binding
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.comprehension import (
     ComprehensionBrief,
@@ -43,8 +44,7 @@ from ads.llm import LARGE, StructuredLLM
 from ads.store import compute_artifact_id
 from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_registry
 
-MAX_TURNS = 10
-MAX_TRANSCRIPT_CHARS = 24_000
+MAX_TURNS = DEFAULT_INVESTIGATION_BUDGETS["eda_investigation"].max_turns
 MAX_MANIFEST_BYTES = 128_000
 MANIFEST_NAME = "exploratory_analysis.json"
 
@@ -251,13 +251,12 @@ def _promote(
         sections={},
         facts={"measurement_by_id": {measurement.measurement_id: measurement}},
     )
-    failures = validate_measurement_binding(
-        InterpretationBatchProposal(items=[proposal]), context
-    )
+    failures = validate_measurement_binding(InterpretationBatchProposal(items=[proposal]), context)
     if failures:
-        raise ValueError("Manifest interpretation is not bound to its measurement: " + "; ".join(
-            failure.code for failure in failures
-        ))
+        raise ValueError(
+            "Manifest interpretation is not bound to its measurement: "
+            + "; ".join(failure.code for failure in failures)
+        )
     brief = ComprehensionBrief(
         scope=ComprehensionScope.ANALYSIS,
         measurement_bundle_id=compute_artifact_id(bundle),
@@ -272,12 +271,15 @@ def investigate_eda(
     report: EDAReport,
     llm: StructuredLLM,
     runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> EDAInvestigationResult:
     """Run the bounded tool loop; every failure degrades without blocking EDA."""
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["eda_investigation"]
     spec = build_spec()
     backend = runtime.backend()
-    if backend is None or not runtime.execution_available():
-        reason = "sandbox_unavailable"
+    if not code_execution_enabled or backend is None or not runtime.execution_available():
+        reason = "code_execution_disabled" if not code_execution_enabled else "sandbox_unavailable"
         return EDAInvestigationResult(
             artifacts=(),
             audit=_audit(
@@ -295,6 +297,7 @@ def investigate_eda(
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tool_calls: list[str] = []
+    tool_attempts = 0
     produced: dict[str, tuple[str, int | None]] = {}
     failures: list[str] = []
     attempts = 0
@@ -303,14 +306,14 @@ def investigate_eda(
     base_prompt = _context(card, report)
 
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             attempts += 1
-            history = "\n\n".join(transcript)[-MAX_TRANSCRIPT_CHARS:]
+            history = "\n\n".join(transcript)[-budget.max_transcript_chars :]
             prompt = base_prompt + (
                 "\n\n## Investigation transcript\n" + history if history else ""
             )
             response = llm.generate_structured(
-                system=spec.system_prompt,
+                system=spec.system_prompt_with_tools(),
                 prompt=prompt,
                 json_schema=InvestigationAction.model_json_schema(),
                 profile=spec.profile,
@@ -347,6 +350,11 @@ def investigate_eda(
 
             if action.action is InvestigationActionKind.CALL_TOOL:
                 assert action.tool_id is not None
+                if tool_attempts >= budget.max_tool_calls:
+                    failures.append("tool_call_budget_exhausted")
+                    transcript.append("Tool call rejected: configured budget exhausted.")
+                    continue
+                tool_attempts += 1
                 try:
                     result = broker.invoke(
                         spec,
@@ -357,8 +365,7 @@ def investigate_eda(
                 except ToolError as exc:
                     failures.append(f"tool_error:{action.tool_id}")
                     transcript.append(
-                        f"Turn {turn} tool {action.tool_id} failed: "
-                        f"{type(exc).__name__}: {exc}"
+                        f"Turn {turn} tool {action.tool_id} failed: {type(exc).__name__}: {exc}"
                     )
                     continue
                 tool_calls.append(action.tool_id)
@@ -403,9 +410,7 @@ def investigate_eda(
                 )
             except (OSError, ValueError, ValidationError) as exc:
                 failures.append("invalid_manifest")
-                transcript.append(
-                    f"Turn {turn} manifest rejected: {type(exc).__name__}: {exc}"
-                )
+                transcript.append(f"Turn {turn} manifest rejected: {type(exc).__name__}: {exc}")
                 continue
             return EDAInvestigationResult(
                 artifacts=artifacts,
@@ -438,7 +443,7 @@ def investigate_eda(
     finally:
         runtime.close()
 
-    reason = f"Investigation exhausted its {MAX_TURNS}-turn budget."
+    reason = f"Investigation exhausted its {budget.max_turns}-turn budget."
     return EDAInvestigationResult(
         artifacts=(),
         audit=_audit(

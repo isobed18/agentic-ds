@@ -279,3 +279,9 @@ def test_classification_metrics_match_contract(
     )
 
     assert {evaluation.metric for evaluation in report.winner.metrics} == expected_metrics
+    assert report.label_issue_measurement is not None
+    assert report.label_issue_measurement.evaluated_row_count > 0
+    assert (
+        report.label_issue_measurement.evaluated_row_count
+        <= report.label_issue_measurement.eligible_row_count
+    )

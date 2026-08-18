@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from ads.agents.runtime import AgentRuntimePolicy
 from ads.contracts.agents import AgentAudit
 from ads.contracts.base import ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
@@ -311,6 +312,12 @@ def _state(
         candidate_limit=2,
         validation_folds=3,
         execution_backend=execution_backend,
+        # The scripted model answers a fixed sequence, so an extra call per
+        # source table would exhaust it and make every script depend on the
+        # fixture's table count. The sensitivity agent has its own tests.
+        agent_runtime_policy=AgentRuntimePolicy(
+            investigators_disabled=frozenset({"sensitivity_investigation"})
+        ),
     )
     return state
 

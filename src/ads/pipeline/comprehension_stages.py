@@ -16,6 +16,7 @@ from ads.agents.model_investigator import (
     degraded_model_investigation,
     investigate_model,
 )
+from ads.agents.sensitivity_investigator import investigate_sensitivity
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.base import ArtifactType
 from ads.contracts.comprehension import (
@@ -54,6 +55,7 @@ from ads.pipeline.stages import (
     EXECUTION_BACKEND_KEY,
     MODEL_FRAME_KEY,
     SOURCE_CARDS_KEY,
+    agent_runtime_policy,
 )
 from ads.sandbox import ExecutionBackend, materialize_frame_copies
 from ads.store import compute_artifact_id
@@ -84,9 +86,7 @@ def _audit_from_result(
                 model=attempts[-1].response.model if attempts else spec.profile.name,
                 attempts=max(len(attempts), 1),
                 accepted=result.succeeded,
-                validation_failures=[
-                    failure.code for failure in result.all_failures
-                ],
+                validation_failures=[failure.code for failure in result.all_failures],
                 repairs=[repair for attempt in attempts for repair in attempt.repairs],
                 latency_s=result.total_latency_s,
             )
@@ -176,10 +176,7 @@ def _interpret(
         brief = ComprehensionBrief(
             scope=scope,
             measurement_bundle_id=bundle_id,
-            items=[
-                InterpretationItem.from_proposal(item, measurements)
-                for item in proposal.items
-            ],
+            items=[InterpretationItem.from_proposal(item, measurements) for item in proposal.items],
         )
     return StageResult(
         artifacts=[bundle, brief, audit],
@@ -210,9 +207,7 @@ def _merge(primary: StageResult, advisory: StageResult) -> StageResult:
 def augment_schema_discovery_stage(stage, llm: StructuredLLM):
     """Run source interpretation after a valid plan, inside the existing checkpoint."""
 
-    def augmented(
-        state: RunState, correction: list[str] | None = None
-    ) -> StageResult:
+    def augmented(state: RunState, correction: list[str] | None = None) -> StageResult:
         primary = stage(state, correction)
         plan = next(
             (item for item in primary.artifacts if isinstance(item, IntegrationPlan)),
@@ -221,10 +216,26 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
         if plan is None:
             return primary
         cards = state.blackboard.get(SOURCE_CARDS_KEY)
-        if not isinstance(cards, list) or not all(
-            isinstance(card, DataCard) for card in cards
-        ):
+        if not isinstance(cards, list) or not all(isinstance(card, DataCard) for card in cards):
             raise ValueError("Intake did not place source DataCards on the run blackboard.")
+
+        # Sensitivity before the features are chosen. The classifier is a
+        # name-matcher plus checksums and misses personal columns whose names it
+        # does not recognise; the agent reads what the name means. It can only
+        # add, never clear a checksum, and it is given no values.
+        reviewed: list[DataCard] = []
+        renamed: list[str] = []
+        enabled = agent_runtime_policy(state).investigator_enabled(
+            "sensitivity_investigation"
+        )
+        for card in cards if enabled else []:
+            updated, changed = investigate_sensitivity(card, llm)
+            reviewed.append(updated)
+            renamed.extend(f"{card.table_name}.{column}" for column in changed)
+        if renamed:
+            state.blackboard[SOURCE_CARDS_KEY] = reviewed
+            cards = reviewed
+
         advisory = _interpret(
             stage_id="source_comprehension",
             scope=ComprehensionScope.SOURCE,
@@ -239,9 +250,7 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
 def augment_eda_stage(stage, llm: StructuredLLM):
     """Add non-blocking authored investigation and measured interpretation to EDA."""
 
-    def augmented(
-        state: RunState, correction: list[str] | None = None
-    ) -> StageResult:
+    def augmented(state: RunState, correction: list[str] | None = None) -> StageResult:
         primary = stage(state, correction)
         report = next(
             (item for item in primary.artifacts if isinstance(item, EDAReport)),
@@ -255,7 +264,12 @@ def augment_eda_stage(stage, llm: StructuredLLM):
             raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
         exploration_artifacts = []
         exploration_names: dict[int, str] = {}
-        if backend is not None:
+        # The fixed profiler above has already run and is what the stage is
+        # judged on. This block only adds an agent-authored analysis, so the
+        # switch removes work rather than protection.
+        if backend is not None and agent_runtime_policy(state).investigator_enabled(
+            "eda_investigation"
+        ):
             frame = state.blackboard.get(ABT_FRAME_KEY)
             if not isinstance(frame, pd.DataFrame):
                 raise ValueError("Integration did not place the ABT frame on the blackboard.")
@@ -270,6 +284,10 @@ def augment_eda_stage(stage, llm: StructuredLLM):
                     run_id=state.run_id,
                     execution_backend=backend,
                     artifacts_dir=backend.artifacts_dir,
+                ),
+                budget=agent_runtime_policy(state).budget("eda_investigation"),
+                code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                    "eda_investigation"
                 ),
             )
             exploration_artifacts.extend(investigation.artifacts)
@@ -312,9 +330,7 @@ def augment_eda_stage(stage, llm: StructuredLLM):
 def augment_leakage_stage(stage, llm: StructuredLLM):
     """Let an agent request a registered challenge without weakening the floor."""
 
-    def augmented(
-        state: RunState, correction: list[str] | None = None
-    ) -> StageResult:
+    def augmented(state: RunState, correction: list[str] | None = None) -> StageResult:
         primary = stage(state, correction)
         report_index = next(
             (
@@ -332,9 +348,7 @@ def augment_leakage_stage(stage, llm: StructuredLLM):
             return primary
 
         card = state.require(ArtifactType.DATA_CARD, DataCard)
-        strategy = state.require(
-            ArtifactType.VALIDATION_STRATEGY, ValidationStrategy
-        )
+        strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
         frame = state.blackboard.get(ABT_FRAME_KEY)
         if not isinstance(frame, pd.DataFrame):
             raise ValueError("Integration did not place the ABT frame on the blackboard.")
@@ -342,10 +356,7 @@ def augment_leakage_stage(stage, llm: StructuredLLM):
         if backend is not None and not isinstance(backend, ExecutionBackend):
             raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
         data_paths = materialize_frame_copies(backend, {"abt": frame}) if backend else {}
-        catalog = {
-            leakage_finding_fingerprint(finding): finding
-            for finding in report.findings
-        }
+        catalog = {leakage_finding_fingerprint(finding): finding for finding in report.findings}
         result = investigate_leakage(
             card=card,
             report=report,
@@ -359,11 +370,13 @@ def augment_leakage_stage(stage, llm: StructuredLLM):
                 artifacts_dir=backend.artifacts_dir if backend else None,
                 resources={"leakage_findings": catalog, "data_paths": data_paths},
             ),
+            budget=agent_runtime_policy(state).budget("leakage_investigation"),
+            code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                "leakage_investigation"
+            ),
         )
         enriched = (
-            report.with_challenge(result.challenge)
-            if result.challenge is not None
-            else report
+            report.with_challenge(result.challenge) if result.challenge is not None else report
         )
         artifacts = list(primary.artifacts)
         artifacts[report_index] = enriched
@@ -446,9 +459,7 @@ def _feature_experiment_artifacts(
         scope=ComprehensionScope.ANALYSIS,
         measurement_bundle_id=compute_artifact_id(bundle),
         items=[
-            InterpretationItem.from_proposal(
-                proposal, {measurement.measurement_id: measurement}
-            )
+            InterpretationItem.from_proposal(proposal, {measurement.measurement_id: measurement})
         ],
     )
     return bundle, brief
@@ -509,6 +520,10 @@ def augment_feature_pipeline_stage(stage, llm: StructuredLLM):
                     execution_backend=backend,
                     artifacts_dir=backend.artifacts_dir,
                 ),
+                budget=agent_runtime_policy(state).budget("feature_investigation"),
+                code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                    "feature_investigation"
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - advisory experiment is non-blocking
             investigation = degraded_feature_investigation(f"{type(exc).__name__}: {exc}")
@@ -543,9 +558,7 @@ def augment_feature_pipeline_stage(stage, llm: StructuredLLM):
 def augment_training_stage(stage, llm: StructuredLLM):
     """Add one isolated authored experiment without changing training signals."""
 
-    def augmented(
-        state: RunState, correction: list[str] | None = None
-    ) -> StageResult:
+    def augmented(state: RunState, correction: list[str] | None = None) -> StageResult:
         primary = stage(state, correction)
         report = next(
             (item for item in primary.artifacts if isinstance(item, TrainingReport)),
@@ -562,9 +575,7 @@ def augment_training_stage(stage, llm: StructuredLLM):
             if not isinstance(frame, pd.DataFrame):
                 raise ValueError("Integration did not place the ABT frame on the blackboard.")
             problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
-            strategy = state.require(
-                ArtifactType.VALIDATION_STRATEGY, ValidationStrategy
-            )
+            strategy = state.require(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
             if problem.target_column is None:
                 raise ValueError("Authored model experiments require a supervised target.")
             partition = prepare_experiment_partition(
@@ -601,11 +612,13 @@ def augment_training_stage(stage, llm: StructuredLLM):
                     execution_backend=backend,
                     artifacts_dir=backend.artifacts_dir,
                 ),
+                budget=agent_runtime_policy(state).budget("model_investigation"),
+                code_execution_enabled=agent_runtime_policy(state).code_enabled(
+                    "model_investigation"
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - authored experiment is advisory
-            investigation = degraded_model_investigation(
-                f"{type(exc).__name__}: {exc}"
-            )
+            investigation = degraded_model_investigation(f"{type(exc).__name__}: {exc}")
 
         if investigation.experiment is None:
             return _merge(

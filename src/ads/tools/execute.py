@@ -122,6 +122,10 @@ def register_execute_tool(registry: ToolRegistry) -> ToolRegistry:
     registry.register(
         ToolDefinition(
             tool_id="execute_python",
+            arguments={
+                'code': 'Python source to run in the sandbox',
+                'timeout': 'optional seconds, 0-120, default 30',
+            },
             tier=PermissionTier.EXECUTE,
             description="Execute Python in the isolated persistent Jupyter sandbox.",
             handler=execute_python,

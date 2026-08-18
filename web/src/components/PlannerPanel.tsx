@@ -19,8 +19,15 @@ const RULES = [
 ];
 
 export function PlannerPanel({
-  runId, stageId, open, onToggle,
-}: { runId: string | null; stageId: string | null; open: boolean; onToggle: () => void }) {
+  runId = null, stageId = null, sourceId = null, open = true, onToggle,
+}: {
+  runId?: string | null;
+  stageId?: string | null;
+  /** Ask about a dataset before any run exists; the planner gets its profile. */
+  sourceId?: string | null;
+  open?: boolean;
+  onToggle?: () => void;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,7 +44,9 @@ export function PlannerPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await api.plannerChat({ run_id: runId, stage_id: stageId, message: text });
+      const res = await api.plannerChat({
+        run_id: runId, stage_id: stageId, source_id: sourceId, message: text,
+      });
       const reply = res.reply ?? res.message ?? "(no reply)";
       setMessages((m) => [...m, { role: "assistant", text: String(reply), at: now }]);
     } catch (e) {
@@ -63,15 +72,22 @@ export function PlannerPanel({
   }
 
   return (
-    <aside className="flex w-[340px] shrink-0 flex-col border-l border-line bg-surface">
+    <aside className={cx(
+      "flex flex-col bg-surface",
+      onToggle ? "w-[340px] shrink-0 border-l border-line" : "h-[560px] rounded-xl border border-line",
+    )}>
       <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
         <SparkIcon />
-        <span className="flex-1 text-sm font-semibold">Planner / Orchestrator</span>
+        <span className="flex-1 text-sm font-semibold">
+          {sourceId && !runId ? "Ask about this data" : "Planner / Orchestrator"}
+        </span>
+        {onToggle && (
         <button onClick={onToggle} className="rounded p-1 text-ink-faint hover:bg-surface-sunken hover:text-ink" title="Collapse">
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="m5 5 10 10M15 5 5 15" strokeLinecap="round" />
           </svg>
         </button>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">

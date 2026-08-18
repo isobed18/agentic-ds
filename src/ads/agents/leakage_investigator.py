@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from ads.agents.base import AgentSpec
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.datacard import DataCard
 from ads.contracts.gates import PermissionTier
@@ -22,9 +23,6 @@ from ads.contracts.leakage import (
 from ads.contracts.validation import ValidationStrategy
 from ads.llm import LARGE, StructuredLLM
 from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_registry
-
-MAX_TURNS = 8
-MAX_TRANSCRIPT_CHARS = 20_000
 
 SYSTEM_PROMPT = """\
 You are investigating whether a deterministic leakage warning has a legitimate domain
@@ -138,10 +136,7 @@ def _context(
         '- correlation: {"table":"abt","left_column":"...","right_column":"..."}',
         '- cardinality: {"table":"abt","column":"..."}',
         '- null_rate: {"table":"abt","column":"..."}',
-        (
-            '- test_recorded_before_prediction: {"proposal": '
-            "<LeakageChallengeProposal object>}"
-        ),
+        ('- test_recorded_before_prediction: {"proposal": <LeakageChallengeProposal object>}'),
     ]
     if allow_code:
         tools.append('- execute_python: {"code":"...","timeout":30}; ABT=/data/abt.csv')
@@ -155,9 +150,7 @@ def _context(
         + "\n\n## Available tools\n"
         + "\n".join(tools)
         + "\n\n## Challenge proposal schema\n"
-        + json.dumps(
-            LeakageChallengeProposal.model_json_schema(), separators=(",", ":")
-        )
+        + json.dumps(LeakageChallengeProposal.model_json_schema(), separators=(",", ":"))
     )
 
 
@@ -168,13 +161,17 @@ def investigate_leakage(
     strategy: ValidationStrategy,
     llm: StructuredLLM,
     runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> LeakageInvestigationResult:
     """Seek one registered challenge; all model/runtime failures preserve the floor."""
-    allow_code = runtime.execution_available()
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["leakage_investigation"]
+    allow_code = code_execution_enabled and runtime.execution_available()
     spec = build_spec(allow_code=allow_code)
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tool_calls: list[str] = []
+    tool_attempts = 0
     challenges: dict[str, LeakageChallenge] = {}
     failures: list[str] = []
     attempts = 0
@@ -183,14 +180,14 @@ def investigate_leakage(
     prompt_base = _context(card, report, strategy, allow_code=allow_code)
 
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             attempts += 1
-            history = "\n\n".join(transcript)[-MAX_TRANSCRIPT_CHARS:]
+            history = "\n\n".join(transcript)[-budget.max_transcript_chars :]
             prompt = prompt_base + (
                 "\n\n## Investigation transcript\n" + history if history else ""
             )
             response = llm.generate_structured(
-                system=spec.system_prompt,
+                system=spec.system_prompt_with_tools(),
                 prompt=prompt,
                 json_schema=LeakageChallengeAction.model_json_schema(),
                 profile=spec.profile,
@@ -226,13 +223,17 @@ def investigate_leakage(
                 )
             if action.action is LeakageChallengeActionKind.CALL_TOOL:
                 assert action.tool_id is not None
+                if tool_attempts >= budget.max_tool_calls:
+                    failures.append("tool_call_budget_exhausted")
+                    transcript.append("Tool call rejected: configured budget exhausted.")
+                    continue
+                tool_attempts += 1
                 try:
                     result = broker.invoke(spec, action.tool_id, runtime, **action.arguments)
                 except ToolError as exc:
                     failures.append(f"tool_error:{action.tool_id}")
                     transcript.append(
-                        f"Turn {turn} tool {action.tool_id} failed: "
-                        f"{type(exc).__name__}: {exc}"
+                        f"Turn {turn} tool {action.tool_id} failed: {type(exc).__name__}: {exc}"
                     )
                     continue
                 tool_calls.append(action.tool_id)
@@ -242,9 +243,7 @@ def investigate_leakage(
                     if not isinstance(challenge_fingerprint, str):
                         failures.append("missing_challenge_fingerprint")
                     else:
-                        challenges[challenge_fingerprint] = LeakageChallenge.model_validate(
-                            data
-                        )
+                        challenges[challenge_fingerprint] = LeakageChallenge.model_validate(data)
                 transcript.append(
                     f"Turn {turn} tool {action.tool_id} result: {result.summary}; "
                     f"data={json.dumps(result.data, default=str, separators=(',', ':'))[:8000]}"
@@ -304,7 +303,7 @@ def investigate_leakage(
             failures=failures,
             latency_s=latency,
         ),
-        degraded_reason=f"Leakage investigation exhausted {MAX_TURNS} turns.",
+        degraded_reason=f"Leakage investigation exhausted {budget.max_turns} turns.",
     )
 
 

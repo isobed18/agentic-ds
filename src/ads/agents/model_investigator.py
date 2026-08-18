@@ -11,6 +11,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from ads.agents.base import AgentSpec
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.exploration import InvestigationAction, InvestigationActionKind
 from ads.contracts.gates import PermissionTier
@@ -27,8 +28,7 @@ from ads.training.experiments import (
     measure_experiment_predictions,
 )
 
-MAX_TURNS = 10
-MAX_TRANSCRIPT_CHARS = 24_000
+MAX_TURNS = DEFAULT_INVESTIGATION_BUDGETS["model_investigation"].max_turns
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 MANIFEST_NAME = "model_experiment.json"
 
@@ -85,9 +85,7 @@ def _context(
     skill_text: str,
 ) -> str:
     columns = [
-        column
-        for column in partition.validation_features.columns
-        if column != ROW_ID_COLUMN
+        column for column in partition.validation_features.columns if column != ROW_ID_COLUMN
     ]
     deterministic = {
         "task_type": problem.task_type.value,
@@ -213,17 +211,22 @@ def investigate_model(
     report: TrainingReport,
     llm: StructuredLLM,
     runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> ModelInvestigationResult:
     """Run one advisory experiment; every failure preserves deterministic training."""
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["model_investigation"]
     spec = build_spec()
     skills = select_skills("model_investigation", list(runtime.cards.values()))
     skill_ids = [skill.skill_id for skill in skills]
-    if runtime.backend() is None or not runtime.execution_available():
-        return _degraded(spec, "sandbox_unavailable", skills_used=skill_ids)
+    if not code_execution_enabled or runtime.backend() is None or not runtime.execution_available():
+        reason = "code_execution_disabled" if not code_execution_enabled else "sandbox_unavailable"
+        return _degraded(spec, reason, skills_used=skill_ids)
 
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tool_calls: list[str] = []
+    tool_attempts = 0
     produced: dict[str, tuple[str, int | None, frozenset[str]]] = {}
     failures: list[str] = []
     attempts = 0
@@ -237,14 +240,14 @@ def investigate_model(
     )
 
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             attempts += 1
-            history = "\n\n".join(transcript)[-MAX_TRANSCRIPT_CHARS:]
+            history = "\n\n".join(transcript)[-budget.max_transcript_chars :]
             prompt = base_prompt + (
                 "\n\n## Investigation transcript\n" + history if history else ""
             )
             response = llm.generate_structured(
-                system=spec.system_prompt,
+                system=spec.system_prompt_with_tools(),
                 prompt=prompt,
                 json_schema=InvestigationAction.model_json_schema(),
                 profile=spec.profile,
@@ -278,6 +281,11 @@ def investigate_model(
 
             if action.action is InvestigationActionKind.CALL_TOOL:
                 assert action.tool_id is not None
+                if tool_attempts >= budget.max_tool_calls:
+                    failures.append("tool_call_budget_exhausted")
+                    transcript.append("Tool call rejected: configured budget exhausted.")
+                    continue
+                tool_attempts += 1
                 try:
                     result = broker.invoke(
                         spec,
@@ -288,8 +296,7 @@ def investigate_model(
                 except ToolError as exc:
                     failures.append(f"tool_error:{action.tool_id}")
                     transcript.append(
-                        f"Turn {turn} tool {action.tool_id} failed: "
-                        f"{type(exc).__name__}: {exc}"
+                        f"Turn {turn} tool {action.tool_id} failed: {type(exc).__name__}: {exc}"
                     )
                     continue
                 tool_calls.append(action.tool_id)
@@ -351,18 +358,14 @@ def investigate_model(
                     manifest=manifest,
                     code=code,
                     code_hash=hashlib.sha256(code.encode()).hexdigest(),
-                    predictions_hash=hashlib.sha256(
-                        predictions_path.read_bytes()
-                    ).hexdigest(),
+                    predictions_hash=hashlib.sha256(predictions_path.read_bytes()).hexdigest(),
                     execution_count=execution_count,
                     tool_calls=tool_calls,
                     manifest_ref=action.artifact_ref,
                 )
             except (OSError, ValueError, ValidationError) as exc:
                 failures.append("invalid_experiment_output")
-                transcript.append(
-                    f"Turn {turn} experiment rejected: {type(exc).__name__}: {exc}"
-                )
+                transcript.append(f"Turn {turn} experiment rejected: {type(exc).__name__}: {exc}")
                 continue
             return ModelInvestigationResult(
                 experiment=experiment,
@@ -393,7 +396,7 @@ def investigate_model(
 
     return _degraded(
         spec,
-        f"Investigation exhausted its {MAX_TURNS}-turn budget.",
+        f"Investigation exhausted its {budget.max_turns}-turn budget.",
         model=model,
         attempts=attempts,
         tools=tool_calls,

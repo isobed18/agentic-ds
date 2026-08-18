@@ -37,12 +37,58 @@ export const isRunActive = (s?: string | null) =>
 /** Human-facing label. The backend vocabulary is precise but not prose. */
 export const statusLabel = (s?: string | null) =>
   ({
-    pending: "pending",
-    running: "running",
-    retry: "retrying",
-    blocked: "needs approval",
-    failed: "failed",
-    succeeded: "complete",
-    interrupted: "interrupted",
-    awaiting_human: "needs you",
+    pending: "bekliyor",
+    queued: "sırada",
+    running: "çalışıyor",
+    resuming: "devam ediyor",
+    retry: "yeniden deniyor",
+    blocked: "onay bekliyor",
+    failed: "başarısız",
+    succeeded: "tamamlandı",
+    completed: "tamamlandı",
+    interrupted: "yarıda kaldı",
+    awaiting_human: "sizi bekliyor",
   })[s ?? ""] ?? (s ?? "").replace(/_/g, " ");
+
+/**
+ * Gate verdicts and reason codes are internal vocabulary. They stay in the API
+ * and the audit record — the run's own history should read as sentences, not as
+ * enum values a reader has to decode.
+ */
+const VERDICT_LABELS: Record<string, string> = {
+  auto_proceed: "Devam etti",
+  retry: "Geri gönderildi",
+  escalate: "Size soruldu",
+  abort: "Durduruldu",
+};
+
+export const verdictLabel = (v: string): string =>
+  VERDICT_LABELS[v] ?? titleCase(v);
+
+const REASON_LABELS: Record<string, string> = {
+  profile_checkpoint: "Bu adımı gözden geçirmek istediniz",
+  leakage_detected: "Bir öznitelik cevabı sızdırıyor olabilir",
+  leakage_unresolved: "Düzeltmeden sonra da sızıntı sürüyor",
+  leakage_challenge_needs_confirmation: "Agent sızıntı bulgusuna itiraz etti",
+  retry_budget_exhausted: "Deneme hakkı kalmadı",
+  repeated_identical_failure: "Aynı hata tekrarlandı",
+  pii_egress_requested: "Kişisel veri makineden çıkacaktı",
+  destructive_operation: "Bir adım kaynak veriyi değiştirecekti",
+  model_below_baseline: "Model referans modeli geçemedi",
+  lift_within_noise: "İyileşme gürültü sınırları içinde",
+  high_cv_variance: "Katlamalar arası skorlar çok değişken",
+  candidate_disagreement: "Öneriler birbirini tutmadı",
+  statistical_support_low: "Bunu destekleyecek kadar veri yok",
+  degenerate_split: "Bölme bir katlamayı kullanılamaz bıraktı",
+  unmet_mandatory_criteria: "Zorunlu bir kontrol geçmedi",
+  risk_class_gate: "Bu adım yüksek riskli",
+  clean: "İşaretlenecek bir şey yok",
+};
+
+export const reasonLabel = (code: string): string =>
+  REASON_LABELS[code] ?? titleCase(code);
+
+function titleCase(s: string): string {
+  const words = s.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}

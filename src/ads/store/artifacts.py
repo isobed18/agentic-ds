@@ -31,15 +31,19 @@ from ads.contracts.agents import AgentAudit
 from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard
+from ads.contracts.eda import EDAReport
 from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.exploration import ExploratoryAnalysis
+from ads.contracts.feature_experiment import FeatureExperiment
+from ads.contracts.features import FeatureSpec
 from ads.contracts.gates import CritiqueResult, GateDecision
 from ads.contracts.integration import IntegrationPlan, IntegrationTrial
 from ads.contracts.leakage import LeakageReport
 from ads.contracts.model_experiment import ModelExperiment
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
+from ads.contracts.reporting import EvaluationReport
 from ads.contracts.training import TrainingReport
-from ads.contracts.validation import ValidationStrategy
+from ads.contracts.validation import ValidationStrategy, ValidationTrial
 
 A = TypeVar("A", bound=Artifact)
 
@@ -83,6 +87,15 @@ _TYPE_REGISTRY: dict[ArtifactType, type[Artifact]] = {
     ArtifactType.MEASUREMENT_BUNDLE: MeasurementBundle,
     ArtifactType.COMPREHENSION_BRIEF: ComprehensionBrief,
     ArtifactType.EXPLORATORY_ANALYSIS: ExploratoryAnalysis,
+    # These five were written by the pipeline but absent here, so `load()`
+    # raised "No model registered" for artifacts that existed on disk. The API
+    # never noticed because it serves stored payloads untyped; anything reading
+    # an artifact by its type — a script, a test, a later stage — did not.
+    ArtifactType.EDA_REPORT: EDAReport,
+    ArtifactType.EVALUATION_REPORT: EvaluationReport,
+    ArtifactType.FEATURE_SPEC: FeatureSpec,
+    ArtifactType.FEATURE_EXPERIMENT: FeatureExperiment,
+    ArtifactType.VALIDATION_TRIAL: ValidationTrial,
 }
 
 

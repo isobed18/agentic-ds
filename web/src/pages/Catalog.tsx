@@ -78,23 +78,32 @@ export function Datasets() {
             title={d.label}
             right={
               <div className="flex items-center gap-1.5">
-                {d.sensitive_columns > 0 && <Badge tone="warn">{d.sensitive_columns} sensitive</Badge>}
-                {d.quality_issues > 0 && <Badge tone="stop">{d.quality_issues} issues</Badge>}
-                <Badge>{d.tables} tables</Badge>
+                {(d.sensitive_columns ?? 0) > 0 && <Badge tone="warn">{d.sensitive_columns} sensitive</Badge>}
+                {(d.quality_issues ?? 0) > 0 && <Badge tone="stop">{d.quality_issues} issues</Badge>}
+                {d.tables !== undefined && <Badge>{d.tables} tables</Badge>}
               </div>
             }
           >
-            <div className="mb-3 flex flex-wrap gap-2">
-              <Metric label="Rows" value={fmt(d.rows)} />
-              <Metric label="Columns" value={String(d.columns)} />
-              <Metric label="Candidate keys" value={String(d.candidate_keys)} />
-              <Metric label="Sensitive" value={String(d.sensitive_columns)} />
-            </div>
-            <DataTable
-              columns={["Table", "Format", "Rows", "Columns", "Keys", "Issues"]}
-              rows={d.table_summaries.map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
-            />
-            <p className="mt-3 text-xs text-ink-faint">{d.privacy}</p>
+            {/* An unreadable folder arrives with a profile_error and none of the
+                measured fields, so say what went wrong rather than rendering a
+                row of zeroes that looks like a real empty dataset. */}
+            {d.profile_error ? (
+              <p className="rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">{d.profile_error}</p>
+            ) : (
+              <>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <Metric label="Rows" value={fmt(d.rows ?? 0)} />
+                  <Metric label="Columns" value={String(d.columns ?? 0)} />
+                  <Metric label="Candidate keys" value={String(d.candidate_keys ?? 0)} />
+                  <Metric label="Sensitive" value={String(d.sensitive_columns ?? 0)} />
+                </div>
+                <DataTable
+                  columns={["Table", "Format", "Rows", "Columns", "Keys", "Issues"]}
+                  rows={(d.table_summaries ?? []).map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
+                />
+                <p className="mt-3 text-xs text-ink-faint">{d.privacy}</p>
+              </>
+            )}
           </Disclosure>
         ))}
       </div>

@@ -27,28 +27,96 @@ from ads.contracts.datacard import (
     NumericStats,
     SemanticType,
     Sensitivity,
+    SensitivityEvidence,
+    SensitivityEvidenceCode,
     TextScript,
     TextStats,
     ValueCount,
 )
 from ads.intake.loaders import LoadedTable
 
-# Column-name signals for sensitivity classification. Deliberately broad: a
-# false PII positive costs a few sample values, a false negative leaks data.
-_PII_NAME_PATTERNS = (
-    "name", "surname", "firstname", "lastname", "fullname",
-    "email", "mail", "phone", "mobile", "tel", "fax",
-    "ssn", "sin", "nin", "tckn", "tc_kimlik", "national_id", "passport",
-    "address", "street", "postcode", "zip", "city_of_birth",
-    "dob", "birth", "iban", "account_no", "account_number", "card",
-    "credit_card", "cvv", "license", "tax_id",
-)
+# Exact token phrases avoid substring failures such as ``license_plate_count``.
+# Turkish spellings are normalized to ASCII before matching so both dotted and
+# dotless I, and diacritics, have one deterministic representation.
+_PII_NAME_PHRASES = {
+    ("full", "name"),
+    ("fullname",),
+    ("first", "name"),
+    ("firstname",),
+    ("last", "name"),
+    ("lastname",),
+    ("surname",),
+    ("email",),
+    ("mail",),
+    ("phone",),
+    ("mobile",),
+    ("tel",),
+    ("fax",),
+    ("ssn",),
+    ("sin",),
+    ("nin",),
+    ("tckn",),
+    ("tc", "kimlik"),
+    ("national", "id"),
+    ("passport",),
+    ("address",),
+    ("street",),
+    ("postcode",),
+    ("zip",),
+    ("dob",),
+    ("birth", "date"),
+    ("iban",),
+    ("account", "no"),
+    ("account", "number"),
+    ("credit", "card"),
+    ("cvv",),
+    ("driver", "license"),
+    ("drivers", "license"),
+    ("license", "no"),
+    ("tax", "id"),
+    ("musteri", "adi"),
+    ("ad", "soyad"),
+    ("isim", "soyisim"),
+    ("dogum", "tarihi"),
+    ("vergi", "no"),
+    ("vergi", "numarasi"),
+    ("e", "posta"),
+    ("eposta",),
+    ("cep", "telefonu"),
+    ("telefon",),
+    ("ev", "adresi"),
+    ("adres",),
+    ("pasaport", "no"),
+    ("ehliyet", "no"),
+    ("kredi", "karti"),
+}
+_DERIVED_FIELD_SUFFIXES = {
+    "count",
+    "rate",
+    "ratio",
+    "score",
+    "length",
+    "distribution",
+    "type",
+    "flag",
+    "indicator",
+    "average",
+    "avg",
+    "min",
+    "max",
+    "total",
+    "sayisi",
+    "orani",
+    "puani",
+    "uzunlugu",
+    "turu",
+    "tipi",
+}
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$")
 _LONG_DIGIT_RE = re.compile(r"^[0-9]{9,}$")
+_FORMATTED_PHONE_RE = re.compile(r"^\+?[0-9][0-9 ()-]{7,18}[0-9]$")
 _URL_RE = re.compile(r"^(?:https?://|www[.])[^ ]+$", re.IGNORECASE)
-_STRUCTURED_ID_RE = re.compile(
-    r"^(?=.{4,}$)(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9][A-Za-z0-9._:/-]*$"
-)
+_STRUCTURED_ID_RE = re.compile(r"^(?=.{4,}$)(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 _ID_NAME_PATTERNS = ("_id", "id_", "^id$", "_no$", "_key$", "code$", "_ref$", "uuid", "guid")
 # Cardinality above which an id-shaped name is treated as a key even when the
@@ -77,30 +145,122 @@ class ProfileOptions:
 def _looks_like_identifier_name(name: str) -> bool:
     lowered = name.lower()
     return any(
-        re.search(pattern, lowered) if pattern.startswith("^") or pattern.endswith("$")
+        re.search(pattern, lowered)
+        if pattern.startswith("^") or pattern.endswith("$")
         else pattern in lowered
         for pattern in _ID_NAME_PATTERNS
     )
 
 
-def classify_sensitivity(name: str, series: pd.Series) -> Sensitivity:
-    """Classify a column's redaction class from its name and a value sample."""
-    lowered = name.lower()
-    if any(pattern in lowered for pattern in _PII_NAME_PATTERNS):
-        return Sensitivity.PII
+@dataclass(frozen=True)
+class SensitivityAssessment:
+    sensitivity: Sensitivity
+    evidence: tuple[SensitivityEvidence, ...] = ()
+
+
+def _normalise_name_tokens(name: str) -> tuple[str, ...]:
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
+    folded = unicodedata.normalize("NFKD", expanded.casefold())
+    ascii_like = "".join(char for char in folded if not unicodedata.combining(char))
+    ascii_like = ascii_like.translate(str.maketrans({"ı": "i", "ş": "s", "ğ": "g"}))
+    return tuple(token for token in re.split(r"[^a-z0-9]+", ascii_like) if token)
+
+
+def _contains_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    width = len(phrase)
+    return any(tokens[index : index + width] == phrase for index in range(len(tokens) - width + 1))
+
+
+def _luhn_valid(value: str) -> bool:
+    digits = re.sub(r"[ -]", "", value)
+    if not digits.isdigit() or not 13 <= len(digits) <= 19:
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for index, character in enumerate(digits):
+        digit = int(character)
+        if index % 2 == parity:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def _iban_valid(value: str) -> bool:
+    compact = re.sub(r"\s", "", value).upper()
+    if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", compact):
+        return False
+    rearranged = compact[4:] + compact[:4]
+    numeric = "".join(str(ord(char) - 55) if char.isalpha() else char for char in rearranged)
+    return int(numeric) % 97 == 1
+
+
+def _tckn_valid(value: str) -> bool:
+    digits = re.sub(r"\s", "", value)
+    if not re.fullmatch(r"[1-9][0-9]{10}", digits):
+        return False
+    values = [int(character) for character in digits]
+    tenth = ((sum(values[0:9:2]) * 7) - sum(values[1:8:2])) % 10
+    eleventh = sum(values[:10]) % 10
+    return values[9] == tenth and values[10] == eleventh
+
+
+def _value_evidence(
+    code: SensitivityEvidenceCode,
+    matches: pd.Series,
+) -> SensitivityEvidence:
+    count = int(matches.sum())
+    measured = int(len(matches))
+    return SensitivityEvidence(
+        code=code,
+        source="value_shape",
+        match_count=count,
+        measured_count=measured,
+        match_rate=round(count / max(measured, 1), 6),
+    )
+
+
+def assess_sensitivity(name: str, series: pd.Series) -> SensitivityAssessment:
+    """Classify sensitivity from bounded, row-free name and value-shape evidence."""
+    evidence: list[SensitivityEvidence] = []
+    tokens = _normalise_name_tokens(name)
+    is_derived = bool(tokens and tokens[-1] in _DERIVED_FIELD_SUFFIXES)
+    if not is_derived and any(_contains_phrase(tokens, phrase) for phrase in _PII_NAME_PHRASES):
+        evidence.append(
+            SensitivityEvidence(
+                code=SensitivityEvidenceCode.COLUMN_NAME,
+                source="column_name",
+            )
+        )
 
     non_null = series.dropna()
     if non_null.empty:
-        return Sensitivity.INTERNAL
+        sensitivity = Sensitivity.PII if evidence else Sensitivity.INTERNAL
+        return SensitivityAssessment(sensitivity=sensitivity, evidence=tuple(evidence))
 
     sample = non_null.head(200).astype(str)
-    if sample.str.match(_EMAIL_RE).mean() > 0.5:
-        return Sensitivity.PII
-    if sample.str.match(_LONG_DIGIT_RE).mean() > 0.8 and series.nunique() > len(sample) * 0.8:
-        # Long, near-unique digit strings are account/ID numbers far more often
-        # than they are measurements.
-        return Sensitivity.PII
-    return Sensitivity.INTERNAL
+    detectors = (
+        (SensitivityEvidenceCode.EMAIL_SHAPE, sample.str.fullmatch(_EMAIL_RE)),
+        (SensitivityEvidenceCode.TURKISH_ID_CHECKSUM, sample.map(_tckn_valid)),
+        (SensitivityEvidenceCode.IBAN_CHECKSUM, sample.map(_iban_valid)),
+        (SensitivityEvidenceCode.PAYMENT_CARD_CHECKSUM, sample.map(_luhn_valid)),
+        (
+            SensitivityEvidenceCode.FORMATTED_PHONE_SHAPE,
+            sample.str.fullmatch(_FORMATTED_PHONE_RE) & sample.str.contains(r"[^0-9]", regex=True),
+        ),
+    )
+    for code, matches in detectors:
+        measured = _value_evidence(code, matches)
+        if measured.match_rate is not None and measured.match_rate > 0.8:
+            evidence.append(measured)
+    sensitivity = Sensitivity.PII if evidence else Sensitivity.INTERNAL
+    return SensitivityAssessment(sensitivity=sensitivity, evidence=tuple(evidence))
+
+
+def classify_sensitivity(name: str, series: pd.Series) -> Sensitivity:
+    """Compatibility projection of :func:`assess_sensitivity`."""
+    return assess_sensitivity(name, series).sensitivity
 
 
 def infer_semantic_type(name: str, series: pd.Series, n_rows: int) -> SemanticType:
@@ -133,9 +293,9 @@ def infer_semantic_type(name: str, series: pd.Series, n_rows: int) -> SemanticTy
     )
 
     if pd.api.types.is_numeric_dtype(series):
-        is_integral = pd.api.types.is_integer_dtype(series) or (
-            non_null.astype(float) % 1 == 0
-        ).all()
+        is_integral = (
+            pd.api.types.is_integer_dtype(series) or (non_null.astype(float) % 1 == 0).all()
+        )
         if is_integral and id_by_name:
             return SemanticType.IDENTIFIER
         if is_integral and n_unique <= _MAX_CATEGORICAL_CARDINALITY:
@@ -174,9 +334,7 @@ def _try_parse_datetime(as_str: pd.Series) -> pd.Series | None:
     if len(as_str) <= _DATETIME_SAMPLE_SIZE:
         sample = as_str
     else:
-        positions = np.linspace(
-            0, len(as_str) - 1, num=_DATETIME_SAMPLE_SIZE, dtype=int
-        )
+        positions = np.linspace(0, len(as_str) - 1, num=_DATETIME_SAMPLE_SIZE, dtype=int)
         sample = as_str.iloc[positions]
     if sample.empty or sample.str.fullmatch(r"[0-9]+").mean() > 0.8:
         return None
@@ -292,9 +450,10 @@ def _text_stats(series: pd.Series) -> TextStats | None:
     email_matches = values.str.fullmatch(_EMAIL_RE)
     url_matches = values.str.fullmatch(_URL_RE)
     identifier_matches = (
-        values.str.fullmatch(_LONG_DIGIT_RE)
-        | values.str.fullmatch(_STRUCTURED_ID_RE)
-    ) & ~email_matches & ~url_matches
+        (values.str.fullmatch(_LONG_DIGIT_RE) | values.str.fullmatch(_STRUCTURED_ID_RE))
+        & ~email_matches
+        & ~url_matches
+    )
     return TextStats(
         measured_count=len(values),
         min_length=int(lengths.min()),
@@ -331,7 +490,8 @@ def profile_column(
     n_unique = int(non_null.nunique())
     total = max(len(series), 1)
 
-    sensitivity = classify_sensitivity(name, series)
+    sensitivity_assessment = assess_sensitivity(name, series)
+    sensitivity = sensitivity_assessment.sensitivity
     semantic_type = infer_semantic_type(name, series, n_rows)
 
     numeric = None
@@ -379,6 +539,7 @@ def profile_column(
         dtype=str(series.dtype),
         semantic_type=semantic_type,
         sensitivity=sensitivity,
+        sensitivity_evidence=list(sensitivity_assessment.evidence),
         null_count=null_count,
         null_rate=round(null_count / total, 6),
         n_unique=n_unique,
@@ -417,9 +578,7 @@ def profile_table(table: LoadedTable, options: ProfileOptions | None = None) -> 
             )
         )
 
-    columns = [
-        profile_column(str(col), working[col], n_rows, options) for col in working.columns
-    ]
+    columns = [profile_column(str(col), working[col], n_rows, options) for col in working.columns]
 
     # Single-column candidate keys. Composite keys are handled in ads.intake.keys.
     # Continuous measurements are excluded even when they happen to be unique:
@@ -489,8 +648,7 @@ def datacard_digest(card: DataCard) -> str:
             parts.append("PII/redacted")
         if col.numeric:
             parts.append(
-                f"range=[{col.numeric.min:.4g}..{col.numeric.max:.4g}] "
-                f"med={col.numeric.p50:.4g}"
+                f"range=[{col.numeric.min:.4g}..{col.numeric.max:.4g}] med={col.numeric.p50:.4g}"
             )
         if col.datetime:
             parts.append(f"span={col.datetime.min[:10]}..{col.datetime.max[:10]}")
@@ -508,9 +666,7 @@ def datacard_digest(card: DataCard) -> str:
                 "url": col.text.url_pattern_rate,
                 "identifier": col.text.identifier_pattern_rate,
             }
-            visible_patterns = [
-                f"{name}={rate:.1%}" for name, rate in patterns.items() if rate > 0
-            ]
+            visible_patterns = [f"{name}={rate:.1%}" for name, rate in patterns.items() if rate > 0]
             if visible_patterns:
                 parts.append("patterns=[" + ",".join(visible_patterns) + "]")
         if col.top_values:

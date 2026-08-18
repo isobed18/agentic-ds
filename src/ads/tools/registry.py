@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ads.contracts.gates import PermissionTier
@@ -14,14 +14,36 @@ ToolHandler = Callable[[ToolRuntime, Mapping[str, Any]], ToolPayload]
 
 @dataclass(frozen=True)
 class ToolDefinition:
+    """A callable measurement, described well enough for an agent to call it.
+
+    ``arguments`` exists because its absence was expensive. A tool advertised
+    only a one-line prose description, so an agent had to guess the argument
+    names and shapes from it. Measured on a real run: the validation
+    investigator called ``trial_validation_strategy`` eight times in a row and
+    every single call raised, then the turn budget ran out having produced no
+    evidence at all — 476 seconds spent on a tool it could not learn to call.
+    Other agents invented tool names outright (``python_interpreter``,
+    ``missingness``) that no registry entry ever had.
+    """
+
     tool_id: str
     tier: PermissionTier
     description: str
     handler: ToolHandler
+    #: ``name -> what to pass``. Rendered into the agent's prompt verbatim.
+    arguments: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.tool_id or not self.tool_id.replace("_", "").isalnum():
             raise ValueError("tool_id must contain only letters, digits, and underscores")
+
+    def signature(self) -> str:
+        """One line an agent can copy: the id, its arguments, and what it does."""
+        if not self.arguments:
+            return f"{self.tool_id}() — {self.description}"
+        args = ", ".join(self.arguments)
+        detail = "; ".join(f"{name}: {what}" for name, what in self.arguments.items())
+        return f"{self.tool_id}({args}) — {self.description} Arguments: {detail}"
 
 
 class ToolRegistry:

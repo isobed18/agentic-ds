@@ -11,6 +11,8 @@ import { isAttention } from "../lib/status";
 import { cx } from "./ui";
 
 interface Props {
+  /** node id -> candidate labels, drawn as parallel nodes in one column. */
+  pseudoBranches?: Record<string, string[]>;
   nodes: WorkflowNode[];
   selected: string | null;
   onSelect: (id: string) => void;
@@ -43,8 +45,23 @@ function toColumns(nodes: WorkflowNode[]): WorkflowNode[][] {
   return columns;
 }
 
-export function PipelineRail({ nodes, selected, onSelect }: Props) {
-  const columns = toColumns(nodes);
+export function PipelineRail({ nodes, selected, onSelect, pseudoBranches }: Props) {
+  // Training already fits several candidates in one stage. Drawing them as
+  // parallel nodes shows what the run actually did; it does not change the
+  // pipeline, and they merge back at the next stage because they never left it.
+  const expanded = pseudoBranches
+    ? nodes.flatMap((node) => {
+        const labels = pseudoBranches[node.id];
+        if (!labels || labels.length < 2) return [node];
+        return labels.map((label, i) => ({
+          ...node,
+          id: i === 0 ? node.id : `${node.id}::${i}`,
+          label,
+          branch_of: node.id,
+        }));
+      })
+    : nodes;
+  const columns = toColumns(expanded);
 
   return (
     <div className="shrink-0 overflow-x-auto border-b border-line bg-surface px-6 py-4">

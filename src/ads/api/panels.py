@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from ads.api.i18n import t as _t
+
 #: Missingness at or above this fraction is called out rather than merely shown.
 HIGH_MISSING_RATE = 0.10
 #: |correlation| at or above this between two features is worth a human look.
@@ -142,17 +144,21 @@ def exploratory_panel(
     table = manifest.get("table")
     return {
         "id": "exploratory_" + str(payload.get("code_hash", ""))[:16],
-        "title": manifest.get("title") or "Exploratory analysis",
+        "title": manifest.get("title") or _t("Exploratory analysis"),
         "severity": REVIEW,
-        "caption": "Agent-authored · exploratory evidence",
+        "caption": _t("Agent-authored · exploratory evidence"),
         "description": (
-            "Additional analysis written by the local agent and executed against a "
-            "read-only data copy. It cannot affect gates."
+            _t(
+                "Additional analysis written by the local agent and executed against a read-only "
+                "data copy. It cannot affect gates."
+            )
         ),
         "chart": chart,
         "insights": [
-            "This result is exploratory. Review its proposed interpretation and "
-            "verification question before relying on it."
+            _t(
+                "This result is exploratory. Review its proposed interpretation and verification "
+                "question before relying on it."
+            )
         ],
         "table": table,
         "origin": "agent_authored",
@@ -184,7 +190,7 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
         )
         return _panel(
             "target_distribution",
-            "Target distribution",
+            _t("Target distribution"),
             {
                 "kind": "bar",
                 "x_label": column,
@@ -238,17 +244,17 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
     )
     return _panel(
         "target_distribution",
-        "Target distribution",
+        _t("Target distribution"),
         chart,
         severity=severity,
         caption=f"median {_fmt(numeric.get('p50'))}",
         description=f"How the numeric target {column!r} is distributed across observed rows.",
         insights=insights,
         table={
-            "columns": ["Statistic", "Value"],
+            "columns": [_t("Statistic"), "Value"],
             "rows": [
                 ["Rows", f"{target.get('total_count', 0):,}"],
-                ["Observed", f"{target.get('non_null_count', 0):,}"],
+                [_t("Observed"), f"{target.get('non_null_count', 0):,}"],
                 ["Missing", _pct(null_rate)],
                 ["Minimum", _fmt(numeric.get("min"))],
                 ["25th percentile", _fmt(numeric.get("p25"))],
@@ -256,7 +262,7 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
                 ["75th percentile", _fmt(numeric.get("p75"))],
                 ["Maximum", _fmt(numeric.get("max"))],
                 ["Mean", _fmt(mean)],
-                ["Std deviation", _fmt(spread)],
+                [_t("Std deviation"), _fmt(spread)],
             ],
         },
     )
@@ -278,16 +284,16 @@ def _missingness_panel(missingness: list[dict[str, Any]]) -> dict[str, Any]:
             "each choice changes what the model can be used for."
         )
     elif present:
-        insights.append("Missingness is present but every column is below the 10% threshold.")
+        insights.append(_t("Missingness is present but every column is below the 10% threshold."))
     else:
-        insights.append("No missing values were measured in any column.")
+        insights.append(_t("No missing values were measured in any column."))
 
     return _panel(
         "missing_values",
-        "Missing values",
+        _t("Missing values"),
         {
             "kind": "hbar",
-            "x_label": "Missing share",
+            "x_label": _t("Missing share"),
             "unit": "percent",
             "series": [
                 {"label": m["column"], "value": m.get("null_rate") or 0.0}
@@ -300,10 +306,10 @@ def _missingness_panel(missingness: list[dict[str, Any]]) -> dict[str, Any]:
             if high
             else ("all columns under 10%" if present else "no missing values")
         ),
-        description="Share of rows with no value, per column.",
+        description=_t("Share of rows with no value, per column."),
         insights=insights,
         table={
-            "columns": ["Column", "Missing rows", "Missing share"],
+            "columns": ["Column", _t("Missing rows"), _t("Missing share")],
             "rows": [
                 [m["column"], f"{m.get('null_count', 0):,}", _pct(m.get("null_rate"))]
                 for m in missingness[:24]
@@ -327,16 +333,18 @@ def _correlation_panel(matrix: dict[str, Any]) -> dict[str, Any]:
     insights = []
     if strong:
         insights.append(
-            f"{len(strong)} feature pair(s) are correlated at or above "
-            f"{STRONG_CORRELATION:.2f}. Treat these as leakage candidates until the "
-            "audit confirms otherwise, and expect unstable coefficients if both are kept."
+            _t(
+                "{n} feature pair(s) are correlated at or above {threshold}. Treat "
+                "these as leakage candidates until the audit confirms otherwise, and "
+                "expect unstable coefficients if both are kept."
+            ).format(n=len(strong), threshold=f"{STRONG_CORRELATION:.2f}")
         )
     else:
-        insights.append("No feature pair reaches the 0.90 correlation threshold.")
+        insights.append(_t("No feature pair reaches the 0.90 correlation threshold."))
 
     return _panel(
         "correlation_heatmap",
-        "Correlation heatmap",
+        _t("Correlation heatmap"),
         {
             "kind": "heatmap",
             "columns": columns[:24],
@@ -346,12 +354,14 @@ def _correlation_panel(matrix: dict[str, Any]) -> dict[str, Any]:
         },
         severity=WARNING if strong else INFO,
         caption=(
-            f"{len(strong)} strong pair(s)" if strong else "no strong correlation"
+            _t("{n} strong pair(s)").format(n=len(strong))
+            if strong
+            else _t("no strong correlation")
         ),
-        description="Pearson correlation between every pair of numeric columns.",
+        description=_t("Pearson correlation between every pair of numeric columns."),
         insights=insights,
         table={
-            "columns": ["Column A", "Column B", "Correlation"],
+            "columns": [_t("Column A"), _t("Column B"), _t("Correlation")],
             "rows": [[a, b, f"{v:+.3f}"] for a, b, v in strong[:20]],
         }
         if strong
@@ -377,9 +387,9 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
             "before clipping — removing genuine extremes biases the model toward the middle."
         )
     elif any_outliers:
-        insights.append("Some values sit outside the fences, but no column exceeds 5%.")
+        insights.append(_t("Some values sit outside the fences, but no column exceeds 5%."))
     else:
-        insights.append("No values fall outside the 1.5×IQR fences.")
+        insights.append(_t("No values fall outside the 1.5×IQR fences."))
 
     boxes = [o for o in outliers[:12] if o.get("p25") is not None]
     # Runs recorded before quartiles were carried on this artifact can still
@@ -403,7 +413,7 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
         if boxes
         else {
             "kind": "hbar",
-            "x_label": "Outlier share",
+            "x_label": _t("Outlier share"),
             "unit": "percent",
             "series": [
                 {"label": o["column"], "value": o.get("outlier_rate") or 0.0}
@@ -413,18 +423,20 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
     )
     return _panel(
         "outliers",
-        "Outliers",
+        _t("Outliers"),
         chart,
         severity=severity,
         caption=(
             f"{len(flagged)} column(s) over {_pct(HIGH_OUTLIER_RATE)}"
             if flagged
-            else f"{len(any_outliers)} column(s) with outliers"
+            else _t("{n} column(s) with outliers").format(n=len(any_outliers))
         ),
-        description="Quartiles and 1.5×IQR fences per numeric column, with the share beyond them.",
+        description=
+            _t("Quartiles and 1.5×IQR fences per numeric column, with the share beyond them."),
         insights=insights,
         table={
-            "columns": ["Column", "Lower fence", "Median", "Upper fence", "Outliers", "Share"],
+            "columns": ["Column", 
+                _t("Lower fence"), "Median", _t("Upper fence"), _t("Outliers"), "Share"],
             "rows": [
                 [
                     o["column"],
@@ -463,7 +475,7 @@ def _relationship_panel(
 
     return _panel(
         "feature_relationships",
-        "Feature relationships",
+        _t("Feature relationships"),
         {
             "kind": "hbar",
             "x_label": f"|correlation| with {target or 'target'}",
@@ -480,17 +492,19 @@ def _relationship_panel(
         },
         severity=ISSUE if strong else REVIEW,
         caption=(
-            f"{len(strong)} near-perfect predictor(s)"
+            _t("{n} near-perfect predictor(s)").format(n=len(strong))
             if strong
-            else f"{len(relationships)} feature(s) measured"
+            else _t("{n} feature(s) measured").format(n=len(relationships))
         ),
         description=(
-            "Measured association between each feature and the target. These are "
-            "aggregate statistics — no individual rows are plotted."
+            _t(
+                "Measured association between each feature and the target. These are aggregate "
+                "statistics — no individual rows are plotted."
+            )
         ),
         insights=insights,
         table={
-            "columns": ["Feature", "Pearson", "Adjusted MI"],
+            "columns": ["Feature", "Pearson", _t("Adjusted MI")],
             "rows": [
                 [
                     r["column"],
@@ -522,7 +536,7 @@ def _balance_panel(balance: dict[str, Any]) -> dict[str, Any]:
     classes = balance.get("classes", [])
     return _panel(
         "class_balance",
-        "Class balance",
+        _t("Class balance"),
         {
             "kind": "donut",
             "series": [
@@ -530,8 +544,8 @@ def _balance_panel(balance: dict[str, Any]) -> dict[str, Any]:
             ],
         },
         severity=severity,
-        caption=f"{ratio:.1f}:1 majority to minority",
-        description="Share of each target class among observed rows.",
+        caption=_t("{r}:1 majority to minority").format(r=f"{ratio:.1f}"),
+        description=_t("Share of each target class among observed rows."),
         insights=insights,
         table={
             "columns": ["Class", "Count", "Share"],
@@ -600,7 +614,7 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # dataset. The grain is the first thing a person needs and it was
         # already measured.
         grain = (
-            f"one row per {' + '.join(keys[0])}"
+            _t("one row per {k}").format(k=" + ".join(keys[0]))
             if keys and keys[0]
             else "no column or combination was measured unique, so one row's identity is unclear"
         )
@@ -644,7 +658,7 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 f"Highest missingness is {missing[0]['label']} at {_pct(worst)}."
             )
         else:
-            insights.append("No missing values in any column.")
+            insights.append(_t("No missing values in any column."))
 
         panels.append(
             _panel(
@@ -656,7 +670,7 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # whether a table is mostly identifiers or mostly measurements.
                 {
                     "kind": "hbar",
-                    "x_label": "Missing share",
+                    "x_label": _t("Missing share"),
                     "unit": "percent",
                     "series": missing[:14],
                 }
@@ -684,7 +698,7 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 description=description,
                 insights=insights,
                 table={
-                    "columns": ["Column", "Type", "Sensitivity", "Missing", "Distinct"],
+                    "columns": ["Column", "Type", _t("Sensitivity"), "Missing", _t("Distinct")],
                     "rows": [
                         [
                             column.get("name"),
@@ -716,24 +730,34 @@ _PROTECTIONS: dict[str, set[str]] = {
     "grouped_temporal": {"entity_isolation", "temporal_ordering"},
 }
 
-_PROTECTION_LABELS = {
-    "entity_isolation": "Entity isolation",
-    "temporal_ordering": "Temporal ordering",
-    "class_balance": "Class balance",
-}
+# A function, not a dict literal: a module-level `_t()` is evaluated once at
+# import and would freeze every reader into whichever language happened to be
+# active then. Labels are looked up per request.
+def _protection_labels() -> dict[str, str]:
+    return {
+        "entity_isolation": _t("Entity isolation"),
+        "temporal_ordering": _t("Temporal ordering"),
+        "class_balance": _t("Class balance"),
+    }
 
 _PROTECTION_MEANING = {
     "entity_isolation": (
-        "The same entity cannot appear in both training and evaluation. Without it a "
-        "model can memorise an individual and be scored on that same individual."
+        _t(
+            "The same entity cannot appear in both training and evaluation. Without it a model "
+            "can memorise an individual and be scored on that same individual."
+        )
     ),
     "temporal_ordering": (
-        "Training data never comes from later than evaluation data. Without it the "
-        "model has seen the future and the score is unachievable in production."
+        _t(
+            "Training data never comes from later than evaluation data. Without it the model has "
+            "seen the future and the score is unachievable in production."
+        )
     ),
     "class_balance": (
-        "Each fold keeps the observed class proportions, so per-fold scores are "
-        "comparable to each other."
+        _t(
+            "Each fold keeps the observed class proportions, so per-fold scores are comparable to "
+            "each other."
+        )
     ),
 }
 
@@ -763,7 +787,7 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
         required.add("class_balance")
 
     rows = []
-    for key, label in _PROTECTION_LABELS.items():
+    for key, label in _protection_labels().items():
         need, have = key in required, key in provided
         rows.append(
             {
@@ -791,21 +815,23 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             f"{strategy} provides every protection the measured data requires."
         )
     for key in sorted(required):
-        insights.append(f"{_PROTECTION_LABELS[key]}: {_PROTECTION_MEANING[key]}")
+        insights.append(f"{_protection_labels()[key]}: {_PROTECTION_MEANING[key]}")
     if not required:
         insights.append(
-            "No repeated entities and no multi-period time span were measured, so no "
-            "structural protection is strictly required."
+            _t(
+                "No repeated entities and no multi-period time span were measured, so no "
+                "structural protection is strictly required."
+            )
         )
 
     spans = signals.get("temporal_spans") or []
     return [
         _panel(
             "split_protection",
-            "Split protection",
+            _t("Split protection"),
             {
                 "kind": "hbar",
-                "x_label": "Protection provided",
+                "x_label": _t("Protection provided"),
                 "unit": "ratio",
                 "series": [{"label": r["label"], "value": r["value"]} for r in rows],
             },
@@ -821,7 +847,7 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             ),
             insights=insights,
             table={
-                "columns": ["Protection", "Required by data", "Provided by strategy"],
+                "columns": [_t("Protection"), _t("Required by data"), _t("Provided by strategy")],
                 "rows": [
                     [r["label"], "yes" if r["need"] else "no", "yes" if r["have"] else "no"]
                     for r in rows
@@ -830,13 +856,13 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
         ),
         _panel(
             "split_setup",
-            "Split setup",
+            _t("Split setup"),
             {
                 "kind": "bar",
                 "y_label": "Rows",
                 "series": [
                     {
-                        "label": "Training",
+                        "label": _t("Training"),
                         "value": round(
                             (signals.get("n_usable_rows") or 0)
                             * (1 - (payload.get("test_size") or 0.2))
@@ -857,7 +883,7 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 else INFO
             ),
             caption=f"{payload.get('n_folds')} folds, {_pct(payload.get('test_size'))} holdout",
-            description="How the rows are divided, and how many survive the target filter.",
+            description=_t("How the rows are divided, and how many survive the target filter."),
             insights=[
                 f"{signals.get('n_usable_rows', 0):,} of {signals.get('n_rows', 0):,} rows "
                 "are usable; the rest have no target value and cannot be trained on or "
@@ -875,13 +901,13 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             table={
                 "columns": ["Setting", "Value"],
                 "rows": [
-                    ["Strategy", str(strategy)],
+                    [_t("Strategy"), str(strategy)],
                     ["Folds", str(payload.get("n_folds"))],
-                    ["Holdout fraction", _pct(payload.get("test_size"))],
-                    ["Time column", str(payload.get("time_column") or "—")],
-                    ["Group column", str(payload.get("group_column") or "—")],
-                    ["Holdout cutoff", str(payload.get("holdout_cutoff") or "—")],
-                    ["Usable rows", f"{signals.get('n_usable_rows', 0):,}"],
+                    [_t("Holdout fraction"), _pct(payload.get("test_size"))],
+                    [_t("Time column"), str(payload.get("time_column") or "—")],
+                    [_t("Group column"), str(payload.get("group_column") or "—")],
+                    [_t("Holdout cutoff"), str(payload.get("holdout_cutoff") or "—")],
+                    [_t("Usable rows"), f"{signals.get('n_usable_rows', 0):,}"],
                 ],
             },
         ),
@@ -929,32 +955,37 @@ def model_experiment_panel(
     manifest = payload.get("manifest") or {}
     return _panel(
         "model_experiment",
-        str(manifest.get("title") or "Agent-authored model experiment"),
+        str(manifest.get("title") or _t("Agent-authored model experiment")),
         {
             "kind": "hbar",
             "x_label": f"Development {metric}",
             "series": [
-                {"label": "Authored experiment", "value": score or 0.0},
-                {"label": "Naive baseline", "value": baseline or 0.0},
+                {"label": _t("Authored experiment"), "value": score or 0.0},
+                {"label": _t("Naive baseline"), "value": baseline or 0.0},
             ],
         },
         severity=REVIEW,
-        caption="Agent-authored · host-scored · exploratory",
+        caption=_t("Agent-authored · host-scored · exploratory"),
         description=(
-            "Code ran against copied development data. The host scored its predictions "
-            "against labels withheld from the execution environment."
+            _t(
+                "Code ran against copied development data. The host scored its predictions "
+                "against labels withheld from the execution environment."
+            )
         ),
         insights=[
             f"Measured {metric} on {_fmt(payload.get('evaluation_row_count'))} "
             "inner-development rows; the final holdout was not used.",
-            "This experiment cannot replace the deterministic winner or affect a gate.",
+            _t("This experiment cannot replace the deterministic winner or affect a gate."),
         ],
         table={
-            "columns": ["Result", metric, "Evidence"],
+            "columns": ["Result", metric, _t("Evidence")],
             "rows": [
-                ["Authored experiment", _fmt(score), "Host measured"],
-                ["Naive baseline", _fmt(baseline), "Host measured"],
-                ["Model family", str(manifest.get("model_family") or "—"), "Agent declared"],
+                [_t("Authored experiment"), _fmt(score), _t("Host measured")],
+                [_t("Naive baseline"), _fmt(baseline), _t("Host measured")],
+                [
+                    _t("Model family"),
+                    str(manifest.get("model_family") or "—"),
+                    _t("Agent declared")],
             ],
         },
     ) | {
@@ -986,7 +1017,7 @@ def _candidate_panel(results, primary, metric, winner_id, lower_is_better):
     winner_row = next((r for r in rows if r["selected"]), rows[0])
     return _panel(
         "candidate_comparison",
-        "Candidate comparison",
+        _t("Candidate comparison"),
         {
             "kind": "hbar",
             "x_label": f"Holdout {metric}",
@@ -1028,7 +1059,7 @@ def _fold_panel(winner, stats, folds, metric):
     severity = WARNING if cov >= 0.25 else INFO
     return _panel(
         "cv_stability",
-        "Cross-validation stability",
+        _t("Cross-validation stability"),
         {
             "kind": "bar",
             "x_label": "Fold",
@@ -1057,7 +1088,7 @@ def _fold_panel(winner, stats, folds, metric):
         table={
             "columns": ["Fold", metric],
             "rows": [[f"Fold {i + 1}", _fmt(s)] for i, s in enumerate(folds)]
-            + [["Mean", _fmt(mean)], ["Std deviation", _fmt(spread)]],
+            + [["Mean", _fmt(mean)], [_t("Std deviation"), _fmt(spread)]],
         },
     )
 
@@ -1072,13 +1103,13 @@ def _baseline_panel(winner, baseline, primary, metric, lower_is_better):
     )
     return _panel(
         "baseline_comparison",
-        "Lift over baseline",
+        _t("Lift over baseline"),
         {
             "kind": "bar",
             "y_label": metric,
             "series": [
-                {"label": baseline.get("display_name", "Baseline"), "value": b_score or 0.0},
-                {"label": winner.get("display_name", "Selected"), "value": w_score or 0.0},
+                {"label": baseline.get("display_name", _t("Baseline")), "value": b_score or 0.0},
+                {"label": winner.get("display_name", _t("Selected")), "value": w_score or 0.0},
             ],
         },
         severity=INFO if beat else ISSUE,
@@ -1119,7 +1150,7 @@ def evaluation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         _panel(
             "holdout_metrics",
-            "Holdout performance",
+            _t("Holdout performance"),
             {
                 "kind": "hbar",
                 "x_label": "Score",
@@ -1132,8 +1163,10 @@ def evaluation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             severity=WARNING if unresolved else INFO,
             caption=f"{len(metrics)} metric(s) measured",
             description=(
-                "Every metric measured on the held-out split, scored once after the "
-                "model was selected."
+                _t(
+                    "Every metric measured on the held-out split, scored once after the model was "
+                    "selected."
+                )
             ),
             insights=[
                 f"Primary metric {primary_name} scored {_fmt(primary_score)}.",
@@ -1157,10 +1190,10 @@ def evaluation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 #: Leakage families, in the language a person needs rather than the code name.
 _LEAKAGE_KINDS = {
-    "target_correlation": "Correlates with the target almost perfectly",
-    "perfect_separator": "Separates the target classes perfectly",
-    "unwindowed_aggregate": "Aggregates data from the holdout period",
-    "missingness_separator": "Its missingness alone predicts the target",
+    "target_correlation": _t("Correlates with the target almost perfectly"),
+    "perfect_separator": _t("Separates the target classes perfectly"),
+    "unwindowed_aggregate": _t("Aggregates data from the holdout period"),
+    "missingness_separator": _t("Its missingness alone predicts the target"),
 }
 
 
@@ -1198,10 +1231,10 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
     panel = _panel(
             "leakage_findings",
-            "Leakage audit",
+            _t("Leakage audit"),
             {
                 "kind": "hbar",
-                "x_label": "Leakage score",
+                "x_label": _t("Leakage score"),
                 "unit": "ratio",
                 "series": [
                     {"label": f.get("column", "?"), "value": f.get("score") or 0.0}
@@ -1226,7 +1259,7 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             ),
             insights=insights,
             table={
-                "columns": ["Feature", "Family", "Score", "Threshold", "Blocking"],
+                "columns": ["Feature", "Family", "Score", _t("Threshold"), _t("Blocking")],
                 "rows": [
                     [
                         f.get("column"),

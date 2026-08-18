@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from ads.sandbox.backend import ExecutionBackend
+from ads.training.frame_contracts import validate_frame_copy
 
 _SAFE_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _TRACKING_FILE = ".ads_materialized_frames.json"
@@ -59,6 +60,7 @@ def materialize_frame_copies(
         tracked.clear()
     paths: dict[str, str] = {}
     for table, frame in frames.items():
+        validate_frame_copy(frame)
         if not _SAFE_TABLE.fullmatch(table):
             raise ValueError(
                 f"Table name {table!r} cannot be materialized safely for execution."

@@ -54,6 +54,7 @@ def test_create_command_enforces_the_security_boundary(tmp_path: Path) -> None:
         "HOME=/tmp",
         "JUPYTER_RUNTIME_DIR=/tmp/jupyter",
         "MPLCONFIGDIR=/tmp/matplotlib",
+        "PYTHONPATH=/opt/ads",
     ]
 
     tmpfs = [command[index + 1] for index, value in enumerate(command) if value == "--tmpfs"]
@@ -192,3 +193,47 @@ def test_live_kernel_preserves_state_across_executions(tmp_path: Path) -> None:
     assert second.stdout == "sum 10\n"
     frame = next(output for output in second.outputs if isinstance(output, DataFrameOutput))
     assert frame.data == ((2,), (3,), (5,))
+
+
+def test_live_skrub_helper_fits_train_only_and_replays_validation(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    if not manager.docker_available():
+        pytest.skip("Docker daemon is unavailable")
+    if not manager.image_available():
+        pytest.skip("ads-sandbox:latest is not built")
+
+    session = manager.create_session("live-skrub-fold")
+    try:
+        result = manager.execute(
+            session,
+            """
+import pandas as pd
+from ads_skrub_tools import fit_transform_feature_fold
+train = pd.DataFrame({
+    '__ads_experiment_row_id': ['t1', 't2', 't3', 't4'],
+    'dirty_city': ['Istanbul', 'istanbul', 'Ankara', 'Izmir'],
+    'event_time': pd.to_datetime(['2024-01-01', '2024-01-02', '2024-01-03', '2024-01-04']),
+    'target': [0, 1, 0, 1],
+})
+validation = pd.DataFrame({
+    '__ads_experiment_row_id': ['v1', 'v2'],
+    'dirty_city': ['ISTANBUL', 'Bursa'],
+    'event_time': pd.to_datetime(['2024-02-01', '2024-02-02']),
+})
+fold = fit_transform_feature_fold(train, validation, target_column='target', string_components=3)
+print('shapes', fold.training.shape, fold.validation.shape)
+print('ids', fold.validation['__ads_experiment_row_id'].tolist())
+print(
+    'validation_category_learned',
+    any('Bursa' in str(column) for column in fold.training.columns),
+)
+""",
+            timeout=60,
+        )
+    finally:
+        manager.destroy(session)
+
+    assert not result.errors
+    assert "ids ['v1', 'v2']" in result.stdout
+    assert "shapes (4," in result.stdout
+    assert "validation_category_learned False" in result.stdout

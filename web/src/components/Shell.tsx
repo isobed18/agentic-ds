@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 /**
  * Application shell: collapsible left rail, top bar, routed content.
  *
@@ -6,10 +7,13 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { Notifications } from "./Notifications";
+import { LANGUAGES, currentLanguage, setLanguage } from "../lib/i18n";
 import { cx } from "./ui";
 
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
+  { to: "/explore", label: "Your data", icon: DataIcon },
   { to: "/workflows", label: "Workflows", icon: FlowIcon },
   { to: "/datasets", label: "Datasets", icon: DataIcon },
   { to: "/experiments", label: "Experiments", icon: FlaskIcon },
@@ -44,7 +48,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
           </div>
           {!collapsed && (
             <span className="truncate text-[15px] font-semibold tracking-tight">
-              Agentic Data Science
+              {t("Agentic Data Science")}
             </span>
           )}
         </div>
@@ -80,7 +84,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
           <svg viewBox="0 0 20 20" className={cx("h-4 w-4 shrink-0 transition-transform", collapsed && "rotate-180")} fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M12 5 7 10l5 5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          {!collapsed && <span>Collapse</span>}
+          {!collapsed && <span>{t("Collapse")}</span>}
         </button>
 
         <ProfileCard collapsed={collapsed} />
@@ -89,6 +93,10 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-[60px] shrink-0 items-center gap-4 border-b border-line bg-surface px-6">
           {topBar ?? <Breadcrumb path={location.pathname} />}
+          <div className="ml-auto flex items-center gap-1">
+            <LanguagePicker />
+            <Notifications />
+          </div>
         </header>
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
@@ -130,8 +138,8 @@ function ProfileCard({ collapsed }: { collapsed: boolean }) {
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1 text-left">
-              <span className="block truncate text-sm font-medium text-ink">Ishak Bediryorganci</span>
-              <span className="block truncate text-xs text-ink-mute">Data Scientist</span>
+              <span className="block truncate text-sm font-medium text-ink">{t("Ishak Bediryorganci")}</span>
+              <span className="block truncate text-xs text-ink-mute">{t("Data Scientist")}</span>
             </span>
             <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
@@ -155,3 +163,25 @@ function FlaskIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><p
 function CubeIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></svg>; }
 function DocIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg>; }
 function GearIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg>; }
+
+
+/** Language choice. Persisted per browser and sent to the API with every call. */
+function LanguagePicker() {
+  const active = currentLanguage();
+  return (
+    <div className="flex items-center rounded-lg border border-line p-0.5">
+      {LANGUAGES.map((l) => (
+        <button
+          key={l.code}
+          onClick={() => l.code !== active && setLanguage(l.code)}
+          className={cx(
+            "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+            l.code === active ? "bg-brand-600 text-white" : "text-ink-mute hover:bg-surface-sunken",
+          )}
+        >
+          {l.code.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}

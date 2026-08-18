@@ -6,6 +6,7 @@ from ads.contracts.validation import ValidationTrial
 from ads.pipeline.rubrics import build_pipeline_rubrics
 from ads.pipeline.stages import (
     ABT_FRAME_KEY,
+    AGENT_RUNTIME_POLICY_KEY,
     DROPPED_FEATURES_KEY,
     FEATURE_SPEC_KEY,
     FINAL_MARKDOWN_KEY,
@@ -14,6 +15,7 @@ from ads.pipeline.stages import (
     SPLIT_DIAGNOSTICS_KEY,
     TRAINING_FRAME_COLUMNS_KEY,
     FinalReport,
+    agent_runtime_policy,
     configure_full_pipeline_state,
     configure_pipeline_state,
 )
@@ -33,6 +35,7 @@ register_artifact_type(ValidationTrial)
 
 __all__ = [
     "ABT_FRAME_KEY",
+    "AGENT_RUNTIME_POLICY_KEY",
     "DROPPED_FEATURES_KEY",
     "FINAL_MARKDOWN_KEY",
     "FEATURE_SPEC_KEY",
@@ -49,4 +52,5 @@ __all__ = [
     "build_pipeline_rubrics",
     "configure_full_pipeline_state",
     "configure_pipeline_state",
+    "agent_runtime_policy",
 ]

@@ -38,6 +38,32 @@ class ModelBlobReference(FrozenModel):
     provenance_filename: str = "provenance.json"
 
 
+class LabelIssueMeasurement(FrozenModel):
+    """Row-free Cleanlab summary computed from out-of-fold probabilities."""
+
+    code: Literal["classification_label_issue_candidates"] = (
+        "classification_label_issue_candidates"
+    )
+    provider: Literal["cleanlab"] = "cleanlab"
+    evaluated_row_count: int = Field(ge=1)
+    eligible_row_count: int = Field(ge=1)
+    candidate_issue_count: int = Field(ge=0)
+    candidate_issue_rate: float = Field(ge=0.0, le=1.0)
+    mean_label_quality: float = Field(ge=0.0, le=1.0)
+    p10_label_quality: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _counts_are_consistent(self) -> LabelIssueMeasurement:
+        if self.evaluated_row_count > self.eligible_row_count:
+            raise ValueError("evaluated_row_count cannot exceed eligible_row_count.")
+        if self.candidate_issue_count > self.evaluated_row_count:
+            raise ValueError("candidate_issue_count cannot exceed evaluated_row_count.")
+        expected_rate = self.candidate_issue_count / self.evaluated_row_count
+        if abs(self.candidate_issue_rate - expected_rate) > 1e-6:
+            raise ValueError("candidate_issue_rate does not match the recorded counts.")
+        return self
+
+
 class CandidateResult(FrozenModel):
     """Persistable measurements for one fitted candidate model."""
 
@@ -94,6 +120,7 @@ class TrainingReport(Artifact):
     holdout_row_count: int | None = Field(default=None, ge=1)
     holdout_rows_used_for_fit: int | None = Field(default=None, ge=0)
     inner_fold_fit_count: int | None = Field(default=None, ge=1)
+    label_issue_measurement: LabelIssueMeasurement | None = None
 
     @model_validator(mode="after")
     def _consistent_results(self) -> TrainingReport:
@@ -195,12 +222,18 @@ class TrainingReport(Artifact):
             "holdout_row_count": self.holdout_row_count,
             "holdout_rows_used_for_fit": self.holdout_rows_used_for_fit,
             "inner_fold_fit_count": self.inner_fold_fit_count,
+            "label_issue_candidate_rate": (
+                self.label_issue_measurement.candidate_issue_rate
+                if self.label_issue_measurement
+                else None
+            ),
             "model_artifact_id": self.model_blob.artifact_id if self.model_blob else None,
         }
 
 
 __all__ = [
     "CandidateResult",
+    "LabelIssueMeasurement",
     "MetricEvaluation",
     "ModelBlobReference",
     "SklearnComponentRecipe",

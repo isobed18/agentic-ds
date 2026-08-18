@@ -19,6 +19,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from ads.agents.runtime import DEFAULT_AGENT_RUNTIME_POLICY, AgentRuntimePolicy
+from ads.api import i18n
 from ads.api.auth import config_from_env, install_auth
 from ads.api.panels import (
     eda_panels,
@@ -37,7 +39,7 @@ from ads.contracts.integration import IntegrationPlan
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
 from ads.gates import GatePolicy
-from ads.intake import load_directory, profile_tables
+from ads.intake import detect_relationships, load_directory, profile_tables
 from ads.llm import LARGE, OllamaClient, StructuredLLM
 from ads.orchestration import RunState, resume_workflow, run_workflow
 from ads.pipeline import (
@@ -64,6 +66,7 @@ _PIPELINE_STAGES = {
     "validation_strategy",
     "eda",
     "leakage_audit",
+    "feature_pipeline",
     "splitting",
     "training",
     "evaluation",
@@ -83,6 +86,11 @@ class _PlannerChatReply(BaseModel):
     focus_stage: str | None = None
     proposed_decision: Literal["approve", "retry", "abort"] | None = None
     decision_instructions: list[str] = Field(default_factory=list)
+    #: stage_id -> instructions the planner is passing on to that stage's agent.
+    #: This is the indirect route: a person describes what they want to the
+    #: planner, and the planner decides which stage it belongs to. The direct
+    #: route is the instruction box on the stage itself.
+    stage_directives: dict[str, list[str]] = Field(default_factory=dict)
 
 
 def _now() -> str:
@@ -99,10 +107,19 @@ class RunSummary:
     status: str
     last_activity: str
     pending_question: dict[str, Any] | None = None
+    #: Set when this run was branched from another to try a different problem.
+    #: A branch is a separate run rather than a fork inside the engine: the
+    #: problem changes, so every later stage reasons from a different premise
+    #: and needs its own agents. Sharing an engine would only share state that
+    #: is no longer true for both sides.
+    parent_run_id: str | None = None
+    branch_label: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "parent_run_id": self.parent_run_id,
+            "branch_label": self.branch_label,
             "artifact_count": self.artifact_count,
             "stages": self.stages,
             "status": self.status,
@@ -327,6 +344,12 @@ class ControlPlane:
             "Valid stages are intake, schema_discovery, integration, problem_discovery, "
             "validation_strategy, eda, leakage_audit, splitting, training, evaluation, report. "
             "Rules such as approval preferences or retry limits belong in rules_to_remember. "
+            "When the human asks for something an agent should do differently at a "
+            "specific stage -- a model family to prefer, a metric to report, a column "
+            "to leave alone -- put it in stage_directives keyed by that stage id. It "
+            "reaches that stage's agent the next time it runs. Do not use it for "
+            "anything the deterministic layer decides; it is an instruction to an "
+            "agent, not a setting. "
             "Also map enforceable supervision requests: use checkpoint_stages when the human "
             "must approve a clean stage, auto_proceed_stages to remove such a checkpoint (hard "
             "safety gates still apply), and max_retries_by_stage for retry limits from 0 to 9. "
@@ -381,6 +404,11 @@ class ControlPlane:
         patch = {key: value for key, value in reply.configuration_patch.items() if key in allowed}
         result = reply.model_dump()
         result["configuration_patch"] = patch
+        result["stage_directives"] = {
+            stage: [line.strip() for line in lines if line.strip()]
+            for stage, lines in reply.stage_directives.items()
+            if stage in _PIPELINE_STAGES and any(line.strip() for line in lines)
+        }
         result["checkpoint_stages"] = [
             stage for stage in reply.checkpoint_stages if stage in _PIPELINE_STAGES
         ]
@@ -392,6 +420,22 @@ class ControlPlane:
             for stage, retries in reply.max_retries_by_stage.items()
             if stage in _PIPELINE_STAGES
         }
+        # Applied here rather than returned for the UI to apply, so the planner
+        # route and the direct route end in the same place. A directive the user
+        # never sees applied is the failure mode worth avoiding: they asked the
+        # planner, the planner agreed, and nothing reached the agent.
+        applied: dict[str, list[str]] = {}
+        if run_id and result["stage_directives"]:
+            for stage, lines in result["stage_directives"].items():
+                for line in lines:
+                    try:
+                        applied[stage] = self.direct_stage(run_id, stage, line)
+                    except ValueError:
+                        # A finished or evicted run cannot take directives. The
+                        # planner still answers; it just could not act.
+                        continue
+        result["stage_directives_applied"] = applied
+
         result["model"] = response.model
         result["latency_s"] = response.latency_s
         return result
@@ -420,6 +464,10 @@ class ControlPlane:
                 if decisions
                 else "no_gate_record"
             )
+            runtime = self._runtime_runs.get(run_id)
+            configuration = runtime.configuration if runtime else (progress or {}).get(
+                "configuration", {}
+            )
             stages = {ref.stage_exec_id for ref in refs if ref.stage_exec_id}
             if progress:
                 stages.update(item["stage_id"] for item in progress["attempts"])
@@ -437,6 +485,8 @@ class ControlPlane:
                         else ""
                     ),
                     pending_question=pending,
+                    parent_run_id=configuration.get("parent_run_id"),
+                    branch_label=configuration.get("branch_label"),
                 )
             )
         return sorted(summaries, key=lambda item: item.last_activity, reverse=True)
@@ -571,11 +621,32 @@ class ControlPlane:
 
     def source_profile(self, source_id: str) -> dict[str, Any]:
         """Profile source files into a schema-only browser projection."""
-        cards = profile_tables(load_directory(self.source_path(source_id)))
+        loaded = load_directory(self.source_path(source_id))
+        cards = profile_tables(loaded)
         if not cards:
             raise ValueError("source contains no supported data files")
+        # Measured before any run exists. This is what makes the pre-run screen
+        # honest: the relationships shown are the same ones schema discovery
+        # will reason over, not a picture drawn from column names.
+        relationships = [
+            {
+                "from_table": candidate.from_table,
+                "from_columns": list(candidate.from_columns),
+                "to_table": candidate.to_table,
+                "to_columns": list(candidate.to_columns),
+                "overlap_rate": candidate.overlap_rate,
+                "orphan_rate": candidate.orphan_rate,
+                "parent_coverage": candidate.parent_coverage,
+                "cardinality": candidate.cardinality,
+                "name_affinity": candidate.name_affinity,
+            }
+            for candidate in detect_relationships(
+                cards, {table.name: table.frame for table in loaded}
+            )
+        ]
         return {
             "source_id": source_id,
+            "relationships": relationships,
             "tables": [
                 {
                     "name": card.table_name,
@@ -617,6 +688,10 @@ class ControlPlane:
         mode: str = "manual",
         supervision: dict[str, Any] | None = None,
         agent_panel_size: int = 1,
+        eda_agent: bool = True,
+        run_mode: str = "auto",
+        parent_run_id: str | None = None,
+        branch_label: str | None = None,
     ) -> str:
         source_path = self.source_path(source_id)
         if mode not in {"agent", "manual"}:
@@ -637,9 +712,32 @@ class ControlPlane:
                 f"{problem.excluded_columns!r}."
             )
             run_intent = f"{run_intent}\n\n{preferences}" if run_intent else preferences
+        if run_mode not in {"auto", "manual"}:
+            raise ValueError("run_mode must be 'auto' or 'manual'")
         supervision = self._normalise_supervision(supervision or {})
+        checkpoints = list(supervision["checkpoint_stages"])
+        # Manual is not a second control path: it is every stage declared a
+        # checkpoint, so it runs through the same gate as everything else and
+        # cannot accidentally weaken a hard rule. Auto leaves the gate to decide
+        # on its own signals, which is what it did before this existed.
+        if run_mode == "manual":
+            checkpoints = sorted(set(checkpoints) | _PIPELINE_STAGES)
+        # If the caller did not state what should be predicted, the discovery
+        # stage is choosing the entire project on their behalf. That is a
+        # decision a person has to see before the rest of the pipeline is built
+        # on top of it, so the checkpoint is not optional here — it is implied
+        # by the absence of a stated problem, not by a supervision preference.
+        if problem.confirmed_by == "auto" and "problem_discovery" not in checkpoints:
+            checkpoints.append("problem_discovery")
         profile = BUILTIN_PROFILES["full_auto"].model_copy(
-            update={"checkpoint_stages": supervision["checkpoint_stages"]}
+            update={"checkpoint_stages": sorted(checkpoints)}
+        )
+        # Switching the EDA investigator off leaves the fixed profiler running;
+        # it trades an agent-authored analysis for roughly a minute of latency.
+        agent_runtime_policy = (
+            DEFAULT_AGENT_RUNTIME_POLICY
+            if eda_agent
+            else AgentRuntimePolicy(investigators_disabled=frozenset({"eda_investigation"}))
         )
         policy = self._policy_for_supervision(supervision)
         state = RunState(
@@ -674,6 +772,7 @@ class ControlPlane:
                         artifacts_dir=sandbox_outputs,
                     )
                 ),
+                agent_runtime_policy=agent_runtime_policy,
             )
         else:
             spec, registry = build_default_spec(), build_default_registry()
@@ -700,6 +799,9 @@ class ControlPlane:
             "instructions": state.user_intent,
             "supervision": supervision,
             "agent_panel_size": agent_panel_size if mode == "agent" else 0,
+            "run_mode": run_mode,
+            "parent_run_id": parent_run_id,
+            "branch_label": branch_label,
         }
         runtime = _RuntimeRun(
             run_id=run_id,
@@ -782,6 +884,118 @@ class ControlPlane:
             current = policy.stage(stage_id)
             stages[stage_id] = replace(current, max_attempts=int(retries) + 1)
         return replace(policy, stages=stages)
+
+    def apply_sensitivity_overrides(
+        self, run_id: str, overrides: dict[str, str]
+    ) -> dict[str, str]:
+        """Let a person correct the machine's PII classification before it is used.
+
+        The classifier decides which columns are dropped from the feature pool.
+        It is a heuristic, it is wrong in both directions, and the person looking
+        at the screen usually knows which columns are personal. This applies
+        their correction to the profiled cards in place, so the decision that
+        follows is made on what they said rather than on what a name-matcher
+        guessed.
+
+        Deliberately narrow: it can only move a column between `pii` and
+        `internal`. It cannot rename, drop, or otherwise reshape a card.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None:
+            raise ValueError("this run is not resident; it cannot be adjusted")
+
+        from ads.contracts.datacard import Sensitivity
+        from ads.pipeline.stages import SOURCE_CARDS_KEY
+
+        allowed = {"pii": Sensitivity.PII, "internal": Sensitivity.INTERNAL}
+        cards = runtime.state.blackboard.get(SOURCE_CARDS_KEY) or []
+        known = {column.name for card in cards for column in card.columns}
+
+        applied: dict[str, str] = {}
+        for name, value in overrides.items():
+            target = allowed.get(str(value).lower())
+            if target is None:
+                raise ValueError(f"sensitivity must be one of {sorted(allowed)}")
+            if name not in known:
+                raise ValueError(f"unknown column {name!r}")
+            applied[name] = target.value
+
+        if not applied:
+            return {}
+
+        # Cards are frozen contracts, so this rebuilds rather than mutates.
+        rebuilt = []
+        for card in cards:
+            columns = [
+                col.model_copy(update={"sensitivity": allowed[applied[col.name]]})
+                if col.name in applied
+                else col
+                for col in card.columns
+            ]
+            rebuilt.append(card.model_copy(update={"columns": columns}))
+        runtime.state.blackboard[SOURCE_CARDS_KEY] = rebuilt
+
+        with self._lock:
+            runtime.events.append(
+                {
+                    "event": "sensitivity_overridden",
+                    "at": _now(),
+                    "stage": runtime.current_stage,
+                    "columns": applied,
+                }
+            )
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        return applied
+
+    def direct_stage(self, run_id: str, stage_id: str, instruction: str) -> list[str]:
+        """Address an instruction to the agent working a specific stage.
+
+        This is not a gate answer and not a retry correction. A correction says
+        the last attempt was wrong; a directive says what the person wants, and
+        applies every time that stage runs including the first. Keeping them
+        separate matters because an agent that cannot tell them apart reads a
+        preference as a failure and starts trying to fix something that was not
+        broken.
+
+        The instruction survives until the run ends, so it can be left for a
+        stage that has not started yet.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None:
+            raise ValueError("this run is not resident; it cannot be directed")
+        if stage_id not in _PIPELINE_STAGES:
+            raise ValueError(f"unknown stage {stage_id!r}")
+        text = instruction.strip()
+        if not text:
+            raise ValueError("instruction cannot be empty")
+
+        from ads.pipeline.stages import STAGE_DIRECTIVES_KEY
+
+        directives = dict(runtime.state.blackboard.get(STAGE_DIRECTIVES_KEY) or {})
+        directives[stage_id] = [*directives.get(stage_id, []), text]
+        runtime.state.blackboard[STAGE_DIRECTIVES_KEY] = directives
+
+        with self._lock:
+            runtime.events.append(
+                {
+                    "event": "stage_directed",
+                    "at": _now(),
+                    "stage": stage_id,
+                    "instruction": text,
+                }
+            )
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        return directives[stage_id]
+
+    def stage_directives(self, run_id: str) -> dict[str, list[str]]:
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None:
+            return {}
+        from ads.pipeline.stages import STAGE_DIRECTIVES_KEY
+
+        return dict(runtime.state.blackboard.get(STAGE_DIRECTIVES_KEY) or {})
 
     def answer_run(
         self, run_id: str, *, decision: str, instructions: list[str] | None = None
@@ -907,25 +1121,46 @@ class ControlPlane:
         if isinstance(grain, str):
             grain = [grain]
         validation = body.get("validation") or {}
+
+        # A caller may legitimately not know what it wants predicted yet — that
+        # is the whole premise of agent mode, where problem_discovery decides.
+        # These fields are therefore optional, and when they are absent the
+        # problem is marked `auto` rather than `human`.
+        #
+        # Recording an unspecified problem as human-confirmed was not harmless:
+        # the UI silently defaulted to the first table's first candidate target,
+        # that placeholder was written to the record as the human's intent, and
+        # the run built an entire project around it.
+        stated = {"task_type", "primary_metric", "target_column"} & body.keys()
+        task_type = TaskType(body["task_type"]) if body.get("task_type") else TaskType.REGRESSION
+        metric = Metric(body["primary_metric"]) if body.get("primary_metric") else Metric.RMSE
         return (
             IntegrationPlan(
-                base_table=str(body["base_table"]),
+                base_table=str(body.get("base_table") or ""),
                 base_grain=list(grain or []),
                 grain_description=str(
                     body.get("grain_description") or "One analytical row per selected grain."
                 ),
             ),
             ProblemDefinition(
-                task_type=TaskType(body["task_type"]),
+                task_type=task_type,
                 target_column=body.get("target_column") or None,
-                primary_metric=Metric(body["primary_metric"]),
-                title=str(body.get("problem_title") or "Configured analysis")[:120],
+                primary_metric=metric,
+                title=str(
+                    body.get("problem_title")
+                    or ("Configured analysis" if stated else "Awaiting problem discovery")
+                )[:120],
                 description=str(
                     body.get("problem_description")
-                    or "Problem configured through the local workflow UI."
+                    or (
+                        "Problem configured through the local workflow UI."
+                        if stated
+                        else "Placeholder. No problem was stated at launch; the "
+                        "discovery stage proposes one and a human confirms it."
+                    )
                 )[:1000],
                 excluded_columns=list(body.get("excluded_columns") or []),
-                confirmed_by="human",
+                confirmed_by="human" if stated else "auto",
             ),
             ValidationStrategy(
                 strategy=SplitStrategy(validation.get("strategy", "random")),
@@ -1264,6 +1499,36 @@ class ControlPlane:
             # The join plan as a picture. The brief asks that the schema not be
             # something only the agent understands.
             story["schema_graph"] = schema_graph(payload)
+        elif artifact_type == "comprehension_brief":
+            # The agent's own explanations. They were produced and stored from
+            # the beginning and never rendered, so the half of the product that
+            # exists to help a person understand their data was invisible.
+            items = payload.get("items", [])
+            story["insights"] = [
+                {
+                    "kind": item.get("kind"),
+                    "interpretation": item.get("interpretation"),
+                    "why_it_matters": item.get("why_it_matters"),
+                    "verification_question": (item.get("verification") or {}).get("question")
+                    if isinstance(item.get("verification"), dict)
+                    else item.get("verification"),
+                    "confidence": item.get("confidence"),
+                    "epistemic_state": item.get("epistemic_state", "proposed"),
+                    "subjects": [
+                        f"{subject.get('table')}.{subject.get('column')}"
+                        if subject.get("column")
+                        else subject.get("table")
+                        for subject in item.get("subjects", [])
+                    ],
+                }
+                for item in items
+            ]
+            if payload.get("degraded"):
+                # Say that the agent could not produce an explanation, rather
+                # than showing an empty section that reads as "nothing to say".
+                story["warnings"] = [
+                    str(payload.get("degradation_reason") or "Interpretation was not produced.")
+                ]
         elif artifact_type == "integration_trial":
             story["suggestion"] = (
                 "The proposed plan was executed by the deterministic integration engine "
@@ -1881,6 +2146,22 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
     if auth_config is not None and auth_config.enabled:
         install_auth(app, auth_config)
 
+    @app.middleware("http")
+    async def select_language(request: Request, call_next):
+        """Bind the reader's language for the duration of one request.
+
+        Explicit `?lang=` wins over the browser's Accept-Language, so a shared
+        link can carry its own language and a switch in the UI takes effect
+        without depending on browser settings.
+        """
+        chosen = request.query_params.get("lang") or request.headers.get("accept-language")
+        with i18n.using(chosen):
+            return await call_next(request)
+
+    @app.get("/api/languages")
+    def languages() -> dict[str, Any]:
+        return {"supported": list(i18n.SUPPORTED), "default": i18n.DEFAULT}
+
     @app.get("/api/health", include_in_schema=False)
     def health() -> dict[str, Any]:
         """Unauthenticated liveness probe. Reports no run or artifact data."""
@@ -1998,10 +2279,38 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
                 mode=str(body.get("mode", "manual")),
                 supervision=body.get("supervision"),
                 agent_panel_size=int(body.get("agent_panel_size", 1)),
+                eda_agent=bool(body.get("eda_agent", True)),
+                run_mode=str(body.get("run_mode", "auto")),
+                parent_run_id=body.get("parent_run_id"),
+                branch_label=body.get("branch_label"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id}
+
+    @app.post("/api/runs/{run_id}/stages/{stage_id}/direct")
+    def direct_stage(run_id: str, stage_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            directives = plane.direct_stage(
+                run_id, stage_id, str(body.get("instruction", ""))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"run_id": run_id, "stage_id": stage_id, "directives": directives}
+
+    @app.get("/api/runs/{run_id}/directives")
+    def run_directives(run_id: str) -> dict[str, Any]:
+        return {"run_id": run_id, "directives": plane.stage_directives(run_id)}
+
+    @app.post("/api/runs/{run_id}/sensitivity")
+    def override_sensitivity(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            applied = plane.apply_sensitivity_overrides(
+                run_id, dict(body.get("columns") or {})
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"run_id": run_id, "applied": applied}
 
     @app.post("/api/runs/{run_id}/answer")
     def answer_run(run_id: str, body: dict[str, Any]) -> dict[str, str]:

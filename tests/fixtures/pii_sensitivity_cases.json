@@ -1,0 +1,218 @@
+[
+  {
+    "name": "full_name",
+    "expected": "pii",
+    "values": [
+      "Ada Lovelace",
+      "Grace Hopper",
+      "Katherine Johnson"
+    ]
+  },
+  {
+    "name": "musteri_adi",
+    "expected": "pii",
+    "values": [
+      "Ayse Yilmaz",
+      "Mehmet Demir",
+      "Elif Kaya"
+    ]
+  },
+  {
+    "name": "ad_soyad",
+    "expected": "pii",
+    "values": [
+      "Deniz Aydin",
+      "Can Ozturk",
+      "Ece Arslan"
+    ]
+  },
+  {
+    "name": "dogum_tarihi",
+    "expected": "pii",
+    "values": [
+      "1988-03-04",
+      "1976-11-20",
+      "1994-07-15"
+    ]
+  },
+  {
+    "name": "vergi_no",
+    "expected": "pii",
+    "values": [
+      "1234567890",
+      "1234567891",
+      "1234567892"
+    ]
+  },
+  {
+    "name": "tc_kimlik_no",
+    "expected": "pii",
+    "values": [
+      "12345678950",
+      "23456789138",
+      "34567891238"
+    ]
+  },
+  {
+    "name": "e_posta",
+    "expected": "pii",
+    "values": [
+      "ada@example.test",
+      "grace@example.test",
+      "kat@example.test"
+    ]
+  },
+  {
+    "name": "cep_telefonu",
+    "expected": "pii",
+    "values": [
+      "+905321112233",
+      "+905331112233",
+      "+905341112233"
+    ]
+  },
+  {
+    "name": "iban",
+    "expected": "pii",
+    "values": [
+      "TR05000610051978645784132600",
+      "TR02001000999990123456789000",
+      "TR29000100200300400500600700"
+    ]
+  },
+  {
+    "name": "passport_no",
+    "expected": "pii",
+    "values": [
+      "U12345678",
+      "U22345678",
+      "U32345678"
+    ]
+  },
+  {
+    "name": "credit_card_number",
+    "expected": "pii",
+    "values": [
+      "4111111111111111",
+      "5555555555554444",
+      "378282246310005"
+    ]
+  },
+  {
+    "name": "ev_adresi",
+    "expected": "pii",
+    "values": [
+      "Ataturk Cd 10",
+      "Inonu Sk 4",
+      "Cumhuriyet Mh 7"
+    ]
+  },
+  {
+    "name": "license_plate_count",
+    "expected": "internal",
+    "values": [
+      0,
+      2,
+      4
+    ]
+  },
+  {
+    "name": "email_campaign_count",
+    "expected": "internal",
+    "values": [
+      2,
+      4,
+      8
+    ]
+  },
+  {
+    "name": "customer_name_length",
+    "expected": "internal",
+    "values": [
+      8,
+      12,
+      15
+    ]
+  },
+  {
+    "name": "birth_year_distribution",
+    "expected": "internal",
+    "values": [
+      1980,
+      1990,
+      2000
+    ]
+  },
+  {
+    "name": "phone_call_count",
+    "expected": "internal",
+    "values": [
+      1,
+      0,
+      5
+    ]
+  },
+  {
+    "name": "address_quality_score",
+    "expected": "internal",
+    "values": [
+      0.8,
+      0.7,
+      0.9
+    ]
+  },
+  {
+    "name": "card_type",
+    "expected": "internal",
+    "values": [
+      "gold",
+      "silver",
+      "bronze"
+    ]
+  },
+  {
+    "name": "account_balance",
+    "expected": "internal",
+    "values": [
+      1250.5,
+      940.0,
+      83.2
+    ]
+  },
+  {
+    "name": "sku",
+    "expected": "internal",
+    "values": [
+      "123456789001",
+      "123456789002",
+      "123456789003"
+    ]
+  },
+  {
+    "name": "event_timestamp_ms",
+    "expected": "internal",
+    "values": [
+      1710000000000,
+      1710000001000,
+      1710000002000
+    ]
+  },
+  {
+    "name": "transaction_id",
+    "expected": "internal",
+    "values": [
+      "900000000001",
+      "900000000002",
+      "900000000003"
+    ]
+  },
+  {
+    "name": "product_license_type",
+    "expected": "internal",
+    "values": [
+      "open",
+      "commercial",
+      "trial"
+    ]
+  }
+]

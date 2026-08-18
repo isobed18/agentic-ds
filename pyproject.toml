@@ -15,6 +15,9 @@ dependencies = [
     "joblib>=1.4",
     "httpx>=0.27",
     "pyyaml>=6.0",
+    "pydantic-ai-slim>=2.31,<3",
+    "pandera[pandas]>=0.32,<0.33",
+    "cleanlab>=2.9,<3",
 ]
 
 [project.optional-dependencies]

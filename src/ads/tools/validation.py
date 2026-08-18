@@ -40,6 +40,13 @@ def register_validation_tools(registry: ToolRegistry) -> ToolRegistry:
     registry.register(
         ToolDefinition(
             tool_id="trial_validation_strategy",
+            arguments={
+                'table': 'table name to split',
+                'proposal': (
+                    'ValidationStrategyProposal object: strategy, n_folds, '
+                    'test_size, group_column, time_column'
+                ),
+            },
             tier=PermissionTier.READ_DATA,
             description="Execute and measure one exact validation strategy proposal.",
             handler=trial_validation_strategy,

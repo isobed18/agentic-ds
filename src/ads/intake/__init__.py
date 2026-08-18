@@ -23,6 +23,7 @@ from ads.intake.loaders import (
 )
 from ads.intake.profiler import (
     ProfileOptions,
+    assess_sensitivity,
     classify_sensitivity,
     datacard_digest,
     infer_semantic_type,
@@ -35,6 +36,7 @@ __all__ = [
     "KeyDetectionOptions",
     "LoadedTable",
     "ProfileOptions",
+    "assess_sensitivity",
     "classify_sensitivity",
     "datacard_digest",
     "detect_primary_keys",

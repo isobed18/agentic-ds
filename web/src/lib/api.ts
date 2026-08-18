@@ -8,6 +8,7 @@
 
 export type { StageStatus } from "./status";
 import type { StageStatus } from "./status";
+import { activeLanguage } from "./i18n";
 
 export interface WorkflowNode {
   id: string;
@@ -46,6 +47,8 @@ export interface RunSummary {
   created_at?: string;
   pending_question?: GateDecision | null;
   dataset?: string;
+  parent_run_id?: string | null;
+  branch_label?: string | null;
 }
 
 export interface GateDecision {
@@ -67,17 +70,25 @@ export interface HumanPrompt {
   allows_free_text?: boolean;
 }
 
+/**
+ * A folder under `data/` that the profiler cannot read comes back carrying only
+ * `source_id`, `label` and `profile_error` — every measured field is absent.
+ * They are optional here because the API genuinely omits them, not as a
+ * convenience: typing them as required made the UI crash on the first
+ * unreadable folder it met.
+ */
 export interface DatasetSummary {
   source_id: string;
   label: string;
-  tables: number;
-  rows: number;
-  columns: number;
-  candidate_keys: number;
-  quality_issues: number;
-  sensitive_columns: number;
-  table_summaries: { name: string; format: string; rows: number; columns: number; candidate_keys: number; issues: string[] }[];
-  privacy: string;
+  profile_error?: string;
+  tables?: number;
+  rows?: number;
+  columns?: number;
+  candidate_keys?: number;
+  quality_issues?: number;
+  sensitive_columns?: number;
+  table_summaries?: { name: string; format: string; rows: number; columns: number; candidate_keys: number; issues: string[] }[];
+  privacy?: string;
 }
 
 export interface ModelSummary {
@@ -180,6 +191,16 @@ export interface Story {
     };
     missingness?: { column: string; null_count: number; null_rate: number }[];
   };
+  /** The agent's own explanations, each bound to what it was measured from. */
+  insights?: {
+    kind?: string;
+    interpretation?: string;
+    why_it_matters?: string;
+    verification_question?: string;
+    confidence?: string;
+    epistemic_state?: string;
+    subjects?: string[];
+  }[];
   report_markdown?: string;
 }
 
@@ -239,9 +260,23 @@ export interface ProfiledTable {
   columns: ProfiledColumn[];
 }
 
+/** A foreign key the profiler measured, whether or not the data declares one. */
+export interface MeasuredRelationship {
+  from_table: string;
+  from_columns: string[];
+  to_table: string;
+  to_columns: string[];
+  overlap_rate: number;
+  orphan_rate: number;
+  parent_coverage: number;
+  cardinality: string;
+  name_affinity: number;
+}
+
 export interface SourceProfile {
   source_id: string;
   tables: ProfiledTable[];
+  relationships?: MeasuredRelationship[];
   privacy: string;
 }
 
@@ -265,12 +300,19 @@ export interface RunRequest {
   agent_panel_size: number;
   base_table: string;
   base_grain: string[];
-  task_type: string;
-  primary_metric: string;
-  target_column: string | null;
+  /**
+   * Optional, and deliberately so. Omitting them means "I do not know what
+   * should be predicted yet" — the server records the problem as `auto` rather
+   * than as the human's intent, and forces a checkpoint at problem discovery.
+   * Sending a guessed value is not a neutral default; it becomes the stated
+   * intent that steers every later stage.
+   */
+  task_type?: string;
+  primary_metric?: string;
+  target_column?: string | null;
   problem_title?: string;
   excluded_columns?: string[];
-  validation: {
+  validation?: {
     strategy: string;
     n_folds: number;
     test_size: number;
@@ -278,6 +320,16 @@ export interface RunRequest {
     time_column?: string | null;
   };
   instructions?: string[];
+  /** Whether the EDA investigator runs on top of the fixed profiler. */
+  eda_agent?: boolean;
+  /**
+   * `auto` lets the gate decide on its own signals; `manual` declares every
+   * stage a checkpoint, so the run stops after each one for approval.
+   */
+  run_mode?: "auto" | "manual";
+  /** Set when this run explores an alternative problem alongside another run. */
+  parent_run_id?: string;
+  branch_label?: string;
 }
 
 export interface StageDetail {
@@ -310,7 +362,10 @@ export interface Hardening {
 let redirectingToLogin = false;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  // The server composes some panel prose around measured values, so it needs to
+  // know the language at fetch time; it cannot be translated afterwards.
+  const separator = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${path}${separator}lang=${activeLanguage()}`, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
@@ -363,10 +418,45 @@ export const api = {
   sourceProfile: (id: string) =>
     request<SourceProfile>(`/api/data-sources/${encodeURIComponent(id)}/profile`),
   datasets: () => request<DatasetSummary[]>("/api/catalog/datasets"),
+
+  /**
+   * Upload one file. Omit `sourceId` for the first file of a new group and pass
+   * the returned id for every file after it, so a multi-table dataset arrives
+   * as one source rather than several.
+   */
+  upload: async (file: File, sourceId?: string) => {
+    const query = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : "";
+    const res = await fetch(`/api/uploads/${encodeURIComponent(file.name)}${query}`, {
+      method: "POST",
+      body: file,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(body ? JSON.parse(body).detail ?? body : `${res.status}`);
+    }
+    return (await res.json()) as { source_id: string; label: string; files: string[] };
+  },
   experiments: () => request<ExperimentSummary[]>("/api/catalog/experiments"),
   models: () => request<ModelSummary[]>("/api/catalog/models"),
   reports: () => request<ReportSummary[]>("/api/catalog/reports"),
   hardening: () => request<Hardening>("/api/hardening"),
+  /** Move a column between pii and internal before the classification is used. */
+  overrideSensitivity: (runId: string, columns: Record<string, "pii" | "internal">) =>
+    request<{ applied: Record<string, string> }>(`/api/runs/${runId}/sensitivity`, {
+      method: "POST",
+      body: JSON.stringify({ columns }),
+    }),
+
+  /** Address an instruction to the agent working one stage of this run. */
+  directStage: (runId: string, stageId: string, instruction: string) =>
+    request<{ directives: string[] }>(`/api/runs/${runId}/stages/${stageId}/direct`, {
+      method: "POST",
+      body: JSON.stringify({ instruction }),
+    }),
+
+  directives: (runId: string) =>
+    request<{ directives: Record<string, string[]> }>(`/api/runs/${runId}/directives`),
+
   plannerChat: (body: unknown) => request<{ reply?: string; message?: string; [k: string]: unknown }>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }),
   artifact: (id: string) => request<Record<string, unknown>>(`/api/artifacts/${id}`),
 };

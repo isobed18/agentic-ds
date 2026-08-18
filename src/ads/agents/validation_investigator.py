@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import json
 
-from pydantic import ValidationError
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
 
 from ads.agents.base import AgentContext, AgentSpec
+from ads.agents.pydantic_runtime import (
+    InvestigationCompletion,
+    StructuredLLMFunctionModel,
+)
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.gates import PermissionTier
-from ads.contracts.validation import (
-    ValidationInvestigationAction,
-    ValidationInvestigationActionKind,
-)
+from ads.contracts.validation import ValidationInvestigationAction
 from ads.llm import LARGE, StructuredLLM
 from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_registry
-
-MAX_TURNS = 8
 
 SYSTEM_PROMPT = """\
 You are a validation-strategy investigator. Compare plausible split designs by calling
@@ -52,76 +53,100 @@ def build_spec(*, allow_code: bool) -> AgentSpec[ValidationInvestigationAction]:
 
 
 def investigate_validation_context(
-    *, context: AgentContext, llm: StructuredLLM, runtime: ToolRuntime
+    *,
+    context: AgentContext,
+    llm: StructuredLLM,
+    runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> AgentAudit:
     """Add agent-selected trial evidence; failures preserve the mandatory floor."""
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["validation_investigation"]
     spec = build_spec(
-        allow_code=runtime.backend() is not None and runtime.execution_available()
+        allow_code=(
+            code_execution_enabled
+            and runtime.backend() is not None
+            and runtime.execution_available()
+        )
     )
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tools: list[str] = []
+    tool_attempts = 0
     failures: list[str] = []
-    latency = 0.0
-    model = spec.profile.name
     accepted = False
-    attempts = 0
-    try:
-        for turn in range(1, MAX_TURNS + 1):
-            attempts = turn
-            prompt = context.render()
-            if transcript:
-                prompt += "\n\n## Trial transcript\n" + "\n".join(transcript)[-20_000:]
-            response = llm.generate_structured(
-                system=spec.system_prompt,
-                prompt=prompt,
-                json_schema=ValidationInvestigationAction.model_json_schema(),
-                profile=spec.profile,
-            )
-            latency += response.latency_s
-            model = response.model
-            if response.parsed is None:
-                failures.append("invalid_json")
-                continue
-            try:
-                action = ValidationInvestigationAction.model_validate(response.parsed)
-            except ValidationError as exc:
-                failures.append("invalid_action")
-                transcript.append(f"Turn {turn} rejected: {exc}")
-                continue
-            if action.action is ValidationInvestigationActionKind.ABANDON:
-                failures.append("agent_abandoned")
-                break
-            if action.action is ValidationInvestigationActionKind.FINISH:
-                if "trial_validation_strategy" not in tools:
-                    failures.append("finished_without_strategy_trial")
-                    transcript.append("Finish rejected: trial at least one exact strategy.")
-                    continue
-                accepted = True
-                context.sections["Agent-directed validation trials"] = "\n".join(transcript)[
-                    -20_000:
-                ]
-                break
-            assert action.tool_id is not None
-            try:
-                result = broker.invoke(spec, action.tool_id, runtime, **action.arguments)
-            except ToolError as exc:
-                failures.append(f"tool_error:{action.tool_id}")
-                transcript.append(
-                    f"Turn {turn} {action.tool_id} failed: {type(exc).__name__}: {exc}"
-                )
-                continue
-            tools.append(action.tool_id)
+    adapter = StructuredLLMFunctionModel(
+        llm=llm,
+        profile=spec.profile,
+        action_contract=ValidationInvestigationAction,
+        max_transcript_chars=budget.max_transcript_chars,
+    )
+
+    def invoke_tool(
+        tool_id: str,
+        arguments: dict[str, object],
+        reason: str,
+    ) -> str:
+        """Execute one admitted ADS tool through the permission broker."""
+        del reason
+        nonlocal tool_attempts
+        if tool_attempts >= budget.max_tool_calls:
+            if "tool_call_budget_exhausted" not in failures:
+                failures.append("tool_call_budget_exhausted")
+            raise ModelRetry("tool_call_budget_exhausted")
+        tool_attempts += 1
+        try:
+            result = broker.invoke(spec, tool_id, runtime, **arguments)
+        except ToolError as exc:
+            failures.append(f"tool_error:{tool_id}")
             transcript.append(
-                f"Turn {turn} {action.tool_id}: {result.summary}; data="
-                + json.dumps(result.data, default=str, separators=(",", ":"))[:8_000]
+                f"Turn {adapter.request_count} {tool_id} failed: {type(exc).__name__}: {exc}"
             )
+            raise ModelRetry(f"tool_error:{tool_id}:{type(exc).__name__}") from exc
+        tools.append(tool_id)
+        transcript.append(
+            f"Turn {adapter.request_count} {tool_id}: {result.summary}; data="
+            + json.dumps(result.data, default=str, separators=(",", ":"))[:8_000]
+        )
+        return transcript[-1]
+
+    agent = Agent(
+        adapter.model(),
+        output_type=InvestigationCompletion,
+        instructions=spec.system_prompt_with_tools(),
+        tools=[invoke_tool],
+        retries=budget.max_turns,
+    )
+
+    @agent.output_validator
+    def validate_completion(output: InvestigationCompletion) -> InvestigationCompletion:
+        if output.status == "finished" and "trial_validation_strategy" not in tools:
+            if "finished_without_strategy_trial" not in failures:
+                failures.append("finished_without_strategy_trial")
+            raise ModelRetry("finished_without_strategy_trial")
+        return output
+
+    try:
+        run = agent.run_sync(
+            context.render(),
+            usage_limits=UsageLimits(request_limit=budget.max_turns),
+        )
+        if run.output.status == "abandoned":
+            failures.append("agent_abandoned")
         else:
-            failures.append("turn_budget_exhausted")
+            accepted = True
+            context.sections["Agent-directed validation trials"] = "\n".join(transcript)[
+                -budget.max_transcript_chars :
+            ]
+    except UsageLimitExceeded:
+        failures.append("turn_budget_exhausted")
+    except UnexpectedModelBehavior as exc:
+        failures.append(f"investigation_error:{type(exc).__name__}")
     except Exception as exc:  # noqa: BLE001 - advisory investigation boundary
         failures.append(f"investigation_error:{type(exc).__name__}")
     finally:
         runtime.close()
+    failures.extend(adapter.validation_failures)
     return AgentAudit(
         stage_id="validation_investigation",
         agent_id=spec.id,
@@ -135,12 +160,12 @@ def investigate_validation_context(
         members=[
             AgentMemberAudit(
                 member=1,
-                model=model,
-                attempts=max(attempts, 1),
+                model=adapter.model_name,
+                attempts=max(adapter.request_count, 1),
                 accepted=accepted,
                 validation_failures=failures,
                 repairs=[],
-                latency_s=round(latency, 3),
+                latency_s=adapter.latency_s,
             )
         ],
     )

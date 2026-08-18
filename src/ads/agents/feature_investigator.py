@@ -11,6 +11,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from ads.agents.base import AgentSpec
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.exploration import InvestigationAction, InvestigationActionKind
 from ads.contracts.feature_experiment import FeatureExperiment, FeatureExperimentManifest
@@ -27,7 +28,7 @@ from ads.training.experiments import (
     measure_experiment_predictions,
 )
 
-MAX_TURNS = 10
+MAX_TURNS = DEFAULT_INVESTIGATION_BUDGETS["feature_investigation"].max_turns
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 MANIFEST_NAME = "feature_experiment.json"
 
@@ -42,6 +43,11 @@ the same input columns but NO target. Fit and derive everything from training ro
 must contain exactly __ads_experiment_row_id and prediction. The manifest has no score field: the
 host scores it against labels that are never mounted. This result is exploratory, cannot change
 the production FeatureSpec, cannot satisfy a gate, and never uses the final holdout.
+
+For dirty strings and datetimes you may use
+`from ads_skrub_tools import fit_transform_feature_fold`. It fits a pinned skrub vectorizer on
+training features and replays that fitted object on validation. Relational skrub joins are not
+available because this sandbox has no auxiliary-table lineage or as-of contract.
 """
 
 
@@ -149,13 +155,17 @@ def investigate_features(
     feature_spec: FeatureSpec,
     llm: StructuredLLM,
     runtime: ToolRuntime,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> FeatureInvestigationResult:
     """Run one advisory feature experiment; every failure preserves the floor."""
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["feature_investigation"]
     spec = build_spec()
     selected_skills = select_skills("feature_investigation", list(runtime.cards.values()))
     skill_ids = [skill.skill_id for skill in selected_skills]
-    if runtime.backend() is None or not runtime.execution_available():
-        return _degraded("sandbox_unavailable", spec=spec, skills=skill_ids)
+    if not code_execution_enabled or runtime.backend() is None or not runtime.execution_available():
+        reason = "code_execution_disabled" if not code_execution_enabled else "sandbox_unavailable"
+        return _degraded(reason, spec=spec, skills=skill_ids)
     available = set(partition.validation_features.columns) - {ROW_ID_COLUMN}
     context = {
         "task_type": problem.task_type.value,
@@ -178,15 +188,16 @@ def investigate_features(
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tool_calls: list[str] = []
+    tool_attempts = 0
     produced: dict[str, tuple[str, int | None, frozenset[str]]] = {}
     failures: list[str] = []
     latency = 0.0
     model = spec.profile.name
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             response = llm.generate_structured(
-                system=spec.system_prompt,
-                prompt=base_prompt + "\n\n" + "\n".join(transcript)[-24_000:],
+                system=spec.system_prompt_with_tools(),
+                prompt=base_prompt + "\n\n" + "\n".join(transcript)[-budget.max_transcript_chars :],
                 json_schema=InvestigationAction.model_json_schema(),
                 profile=spec.profile,
             )
@@ -214,6 +225,11 @@ def investigate_features(
                 )
             if action.action is InvestigationActionKind.CALL_TOOL:
                 assert action.tool_id is not None
+                if tool_attempts >= budget.max_tool_calls:
+                    failures.append("tool_call_budget_exhausted")
+                    transcript.append("Tool call rejected: configured budget exhausted.")
+                    continue
+                tool_attempts += 1
                 try:
                     result = broker.invoke(spec, action.tool_id, runtime, **action.arguments)
                 except ToolError as exc:
@@ -291,7 +307,7 @@ def investigate_features(
         return _degraded(
             "turn_budget_exhausted",
             spec=spec,
-            attempts=MAX_TURNS,
+            attempts=budget.max_turns,
             model=model,
             tools=tool_calls,
             failures=failures,

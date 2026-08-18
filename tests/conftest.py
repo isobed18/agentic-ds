@@ -52,3 +52,20 @@ LEDGER = "ledger_2019_2024"
 MASTER = "physicians__physician_master"
 COMPENSATION = "physicians__compensation"
 TRANSACTIONS = "transactions"
+
+
+@pytest.fixture(autouse=True)
+def _english_assertions():
+    """Pin the suite to English.
+
+    Panel prose is now translated, and the default language is Turkish because
+    that is who this deployment is for. Tests assert on the English source
+    strings, which are also the catalogue keys — so rather than restating every
+    assertion in Turkish and having to restate it again for the next language,
+    the suite states which language it is testing and the assertions stay
+    stable. The Turkish rendering is covered separately in test_i18n.py.
+    """
+    from ads.api import i18n
+
+    with i18n.using("en"):
+        yield

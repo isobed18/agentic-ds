@@ -121,6 +121,8 @@ class SandboxManager:
             "JUPYTER_RUNTIME_DIR=/tmp/jupyter",
             "--env",
             "MPLCONFIGDIR=/tmp/matplotlib",
+            "--env",
+            "PYTHONPATH=/opt/ads",
             "--mount",
             f"type=bind,source={data},target=/data,readonly",
             "--mount",

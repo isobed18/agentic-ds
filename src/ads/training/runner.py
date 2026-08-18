@@ -33,6 +33,7 @@ from ads.contracts.validation import ValidationStrategy
 from ads.splitting import SplitError, fit_in_folds
 from ads.store import ArtifactStore
 from ads.training.candidates import RANDOM_SEED, CandidateSpec
+from ads.training.data_issues import measure_classification_label_issues
 from ads.training.persistence import (
     attach_training_provenance,
     hash_training_frame,
@@ -225,6 +226,7 @@ def train_candidates(
     *,
     target_column: str,
     task_type: TaskType,
+    primary_metric: Metric | None = None,
     store: ArtifactStore | None = None,
     run_id: str | None = None,
 ) -> TrainingReport:
@@ -256,13 +258,27 @@ def train_candidates(
             f"{target_null_rows_dropped} null target value(s)."
         )
 
+    # Every metric for the task is evaluated regardless, so honouring the
+    # problem's choice costs nothing. Ignoring it did cost something: the
+    # evaluation stage asserts that TrainingReport.primary_metric equals
+    # ProblemDefinition.primary_metric, so any run choosing anything other than
+    # the first metric for its task crashed after training had already
+    # succeeded. It went unnoticed because the fixture problems all happened to
+    # want the first metric.
     metric_order = _METRICS_BY_TASK[task_type]
-    primary_metric = metric_order[0]
+    if primary_metric is None:
+        primary_metric = metric_order[0]
+    elif primary_metric not in metric_order:
+        raise TrainingError(
+            f"Metric {primary_metric.value!r} is not defined for task "
+            f"{task_type.value!r}. Available: {[m.value for m in metric_order]}."
+        )
     results: list[CandidateResult] = []
     final_estimators: dict[str, Pipeline] = {}
     outer_training_frames: dict[str, pd.DataFrame] = {}
     holdout_row_counts: dict[str, int] = {}
     inner_fold_counts: dict[str, int] = {}
+    candidate_fold_results: dict[str, Any] = {}
 
     for candidate_number, candidate in enumerate(candidates):
         pipeline_factory = _pipeline_factory(preprocessor_factory, candidate)
@@ -302,6 +318,7 @@ def train_candidates(
         outer_training_frames[candidate.id] = outer_train
         holdout_row_counts[candidate.id] = len(holdout)
         inner_fold_counts[candidate.id] = len(fold_results)
+        candidate_fold_results[candidate.id] = fold_results
 
         evaluations = [
             MetricEvaluation(
@@ -334,6 +351,44 @@ def train_candidates(
     winning_pipeline = final_estimators[winner.candidate_id]
     check_is_fitted(winning_pipeline)
     preprocessor_recipe = component_recipe(winning_pipeline.named_steps["preprocessor"])
+    label_issue_measurement = None
+    if task_type in {
+        TaskType.BINARY_CLASSIFICATION,
+        TaskType.MULTICLASS_CLASSIFICATION,
+    }:
+        fold_probabilities: list[np.ndarray] = []
+        fold_labels: list[np.ndarray] = []
+        class_order: np.ndarray | None = None
+        try:
+            winning_folds = candidate_fold_results[winner.candidate_id]
+            for fold in winning_folds:
+                validation = training_frame.loc[fold.validation_index]
+                current_classes = np.asarray(fold.estimator.classes_)
+                if class_order is None:
+                    class_order = current_classes
+                elif not np.array_equal(class_order, current_classes):
+                    raise TrainingError("OOF classifier class order changed between folds.")
+                probabilities = np.asarray(
+                    fold.estimator.predict_proba(validation.drop(columns=[target_column])),
+                    dtype=float,
+                )
+                class_to_index = {
+                    value: index for index, value in enumerate(current_classes.tolist())
+                }
+                encoded = validation[target_column].map(class_to_index)
+                if encoded.isna().any():
+                    raise TrainingError("OOF labels include a class absent from the fitted fold.")
+                fold_probabilities.append(probabilities)
+                fold_labels.append(encoded.to_numpy(dtype=int))
+            label_issue_measurement = measure_classification_label_issues(
+                labels=np.concatenate(fold_labels),
+                pred_probs=np.concatenate(fold_probabilities),
+                eligible_row_count=len(winning_folds.outer_train_index),
+            )
+        except (AttributeError, TrainingError, ValueError):
+            # Diagnostics are advisory. A classifier without calibrated
+            # probabilities must not turn an otherwise valid training run red.
+            label_issue_measurement = None
     report = TrainingReport(
         task_type=task_type,
         primary_metric=primary_metric,
@@ -349,6 +404,7 @@ def train_candidates(
         holdout_row_count=holdout_row_counts[winner.candidate_id],
         holdout_rows_used_for_fit=0,
         inner_fold_fit_count=inner_fold_counts[winner.candidate_id],
+        label_issue_measurement=label_issue_measurement,
     )
     if store is None or run_id is None:
         return report

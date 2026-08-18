@@ -13,9 +13,9 @@ is involved in producing a DataCard.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 
@@ -46,6 +46,57 @@ class Sensitivity(StrEnum):
     PUBLIC = "public"
     INTERNAL = "internal"
     PII = "pii"
+
+
+class SensitivityEvidenceCode(StrEnum):
+    """Stable reasons emitted by deterministic sensitivity classification."""
+
+    COLUMN_NAME = "pii_column_name"
+    EMAIL_SHAPE = "pii_email_shape"
+    TURKISH_ID_CHECKSUM = "pii_turkish_id_checksum"
+    IBAN_CHECKSUM = "pii_iban_checksum"
+    PAYMENT_CARD_CHECKSUM = "pii_payment_card_checksum"
+    FORMATTED_PHONE_SHAPE = "pii_formatted_phone_shape"
+    #: A local agent read the column's name and profile and judged it personal.
+    #: Kept as its own code so an audit can always separate what was measured
+    #: from what was inferred, and so the two can be weighed differently.
+    AGENT_JUDGEMENT = "pii_agent_judgement"
+
+
+class SensitivityEvidence(FrozenModel):
+    """Row-free evidence for a sensitivity decision.
+
+    Name evidence has no row population, so its counts are null. Value-shape
+    evidence always reports the bounded sample denominator and match rate.
+    """
+
+    code: SensitivityEvidenceCode
+    source: Literal["column_name", "value_shape", "agent"]
+    #: Present only for agent evidence: why it judged the column personal.
+    rationale: str | None = Field(default=None, max_length=400)
+    match_count: int | None = Field(default=None, ge=0)
+    measured_count: int | None = Field(default=None, ge=0)
+    match_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def evidence_population_matches_source(self) -> SensitivityEvidence:
+        measured = (self.match_count, self.measured_count, self.match_rate)
+        if self.source in {"column_name", "agent"} and any(
+            value is not None for value in measured
+        ):
+            raise ValueError("name and agent evidence cannot carry row measurements")
+        if self.source == "agent" and not self.rationale:
+            raise ValueError("agent evidence must say why")
+        if self.source != "agent" and self.rationale is not None:
+            # A measured detector has no opinion to record; if it grew one, the
+            # audit could no longer tell inference from measurement.
+            raise ValueError("only agent evidence carries a rationale")
+        if self.source == "value_shape":
+            if any(value is None for value in measured):
+                raise ValueError("value-shape evidence requires row measurements")
+            if self.measured_count == 0 or self.match_count > self.measured_count:
+                raise ValueError("invalid value-shape evidence population")
+        return self
 
 
 class TextScript(StrEnum):
@@ -120,6 +171,7 @@ class ColumnProfile(FrozenModel):
     dtype: str
     semantic_type: SemanticType
     sensitivity: Sensitivity = Sensitivity.INTERNAL
+    sensitivity_evidence: list[SensitivityEvidence] = Field(default_factory=list)
 
     null_count: int = Field(ge=0)
     null_rate: float = Field(ge=0.0, le=1.0)

@@ -83,6 +83,29 @@ _COMPATIBLE_KINDS = {
 }
 
 
+def _citation_rules() -> str:
+    """Render the compatibility map the validator will judge against.
+
+    It existed only inside the validator, so the agent was told which
+    measurements exist but not which of them each interpretation kind is allowed
+    to cite. Measured on a real run: every comprehension attempt was rejected
+    with `incompatible_measurement_kind` or `unknown_measurement`, both briefs
+    came back degraded with zero items, and the user saw no agent explanation at
+    all. A rule an agent is judged by and never shown is not a rule, it is a trap.
+    """
+    lines = []
+    for interpretation_kind, measurement_kinds in sorted(
+        _COMPATIBLE_KINDS.items(), key=lambda pair: pair[0].value
+    ):
+        allowed = ", ".join(sorted(kind.value for kind in measurement_kinds))
+        lines.append(f"- {interpretation_kind.value} may cite: {allowed}")
+    header = (
+        "Cite only measurement ids listed in the catalog above, and only kinds "
+        "allowed for the interpretation kind you chose:"
+    )
+    return "\n".join([header, *lines])
+
+
 def build_context(
     bundle,
     scope: ComprehensionScope,
@@ -92,6 +115,7 @@ def build_context(
         sections={
             "Scope": scope.value,
             "Measured catalog": rendered,
+            "Citation rules": _citation_rules(),
             "Task": (
                 "Select only consequential interpretations that save a human time. "
                 "Return no item that lacks measured support and a verification question."

@@ -14,7 +14,7 @@ from ads.contracts.problem import TaskType
 from ads.discovery import correlation_strength, detect_validation_signals
 from ads.intake import ProfileOptions, detect_primary_keys, measure_relationship, profile_column
 from ads.tools.models import ToolPayload, ToolRuntime
-from ads.tools.registry import ToolDefinition, ToolRegistry
+from ads.tools.registry import ToolDefinition, ToolHandler, ToolRegistry
 
 
 def _table(runtime: ToolRuntime, table: str) -> pd.DataFrame:
@@ -182,24 +182,96 @@ def validation_signals(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> To
     return ToolPayload(summary=_summary("validation_signals", data), data=data)
 
 
+_TABLE_COLUMN = {"table": "table name", "column": "column name in that table"}
+
+# The description used to be generated from the tool id — "Deterministically
+# measure column profile." — which told an agent nothing it could not read off
+# the name, and named no arguments at all. Each entry now states what comes back
+# and exactly what to pass.
+_DS_TOOLS: tuple[tuple[str, PermissionTier, ToolHandler, str, dict[str, str]], ...] = (
+    (
+        "column_profile",
+        PermissionTier.READ_DATA,
+        column_profile,
+        "Full profile of one column: dtype, semantic type, null rate, uniqueness, distribution.",
+        _TABLE_COLUMN,
+    ),
+    (
+        "value_counts",
+        PermissionTier.READ_DATA,
+        value_counts,
+        "Most frequent values of one column with their counts.",
+        _TABLE_COLUMN,
+    ),
+    (
+        "correlation",
+        PermissionTier.READ_DATA,
+        correlation,
+        "Correlation between two numeric columns of one table.",
+        {
+            "table": "table name",
+            "left_column": "first numeric column",
+            "right_column": "second numeric column",
+        },
+    ),
+    (
+        "cardinality",
+        PermissionTier.READ_DATA,
+        cardinality,
+        "Distinct-value count and uniqueness rate of one column.",
+        _TABLE_COLUMN,
+    ),
+    (
+        "null_rate",
+        PermissionTier.READ_DATA,
+        null_rate,
+        "Missing-value count and rate of one column.",
+        _TABLE_COLUMN,
+    ),
+    (
+        "candidate_keys",
+        PermissionTier.READ_DATA,
+        candidate_keys,
+        "Columns that uniquely identify a row of one table.",
+        {"table": "table name"},
+    ),
+    (
+        "join_overlap",
+        PermissionTier.READ_DATA,
+        join_overlap,
+        "Measure whether two columns in different tables actually join: row overlap, "
+        "distinct overlap and parent coverage.",
+        {
+            "from_table": "left table name",
+            "from_column": "left join column",
+            "to_table": "right table name",
+            "to_column": "right join column",
+        },
+    ),
+    (
+        "validation_signals",
+        PermissionTier.READ_DATA,
+        validation_signals,
+        "Split-safety measurements: repeated entities, temporal spans, containment.",
+        {
+            "table": "table name",
+            "target_column": "target column",
+            "task_type": "regression | binary_classification | multiclass_classification",
+            "n_folds": "optional integer, default 3",
+        },
+    ),
+)
+
+
 def register_ds_tools(registry: ToolRegistry) -> ToolRegistry:
-    definitions = (
-        ("column_profile", PermissionTier.READ_DATA, column_profile),
-        ("value_counts", PermissionTier.READ_DATA, value_counts),
-        ("correlation", PermissionTier.READ_DATA, correlation),
-        ("cardinality", PermissionTier.READ_DATA, cardinality),
-        ("null_rate", PermissionTier.READ_DATA, null_rate),
-        ("candidate_keys", PermissionTier.READ_DATA, candidate_keys),
-        ("join_overlap", PermissionTier.READ_DATA, join_overlap),
-        ("validation_signals", PermissionTier.READ_DATA, validation_signals),
-    )
-    for tool_id, tier, handler in definitions:
+    for tool_id, tier, handler, description, arguments in _DS_TOOLS:
         registry.register(
             ToolDefinition(
                 tool_id=tool_id,
                 tier=tier,
-                description=f"Deterministically measure {tool_id.replace('_', ' ')}.",
+                description=description,
                 handler=handler,
+                arguments=arguments,
             )
         )
     return registry

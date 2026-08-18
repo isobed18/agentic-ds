@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 
 from ads.agents.base import AgentContext, AgentSpec, ValidationFailure
+from ads.agents.runtime import DEFAULT_INVESTIGATION_BUDGETS, InvestigationBudget
 from ads.agents.schema_discovery import build_spec as build_plan_spec
 from ads.contracts.gates import PermissionTier
 from ads.contracts.integration import (
@@ -21,8 +22,7 @@ from ads.contracts.integration import (
 from ads.llm import LARGE, StructuredLLM
 from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_registry
 
-MAX_TURNS = 12
-MAX_TRANSCRIPT_CHARS = 30_000
+MAX_TURNS = DEFAULT_INVESTIGATION_BUDGETS["schema_investigation"].max_turns
 
 SYSTEM_PROMPT = """\
 You are actively investigating how to integrate several messy tables into one analytical base
@@ -63,11 +63,7 @@ class SchemaMemberResult:
 
     @property
     def decision_fingerprint(self) -> str | None:
-        return (
-            integration_plan_fingerprint(self.proposal)
-            if self.proposal is not None
-            else None
-        )
+        return integration_plan_fingerprint(self.proposal) if self.proposal is not None else None
 
     @property
     def verbatim_fingerprint(self) -> str | None:
@@ -98,9 +94,7 @@ def build_action_spec(*, allow_code: bool) -> AgentSpec[SchemaInvestigationActio
         profile=LARGE,
         max_attempts=1,
         allowed_tools=frozenset(tools),
-        max_tool_tier=(
-            PermissionTier.EXECUTE if allow_code else PermissionTier.READ_DATA
-        ),
+        max_tool_tier=(PermissionTier.EXECUTE if allow_code else PermissionTier.READ_DATA),
         narration_fields=frozenset({"reason"}),
     )
 
@@ -147,15 +141,19 @@ def investigate_schema(
     llm: StructuredLLM,
     runtime: ToolRuntime,
     data_paths: dict[str, str] | None = None,
+    budget: InvestigationBudget | None = None,
+    code_execution_enabled: bool = True,
 ) -> SchemaMemberResult:
     """Run one bounded investigator member and require an exact successful trial."""
+    budget = budget or DEFAULT_INVESTIGATION_BUDGETS["schema_investigation"]
     data_paths = data_paths or {}
-    allow_code = bool(data_paths) and runtime.execution_available()
+    allow_code = code_execution_enabled and bool(data_paths) and runtime.execution_available()
     spec = build_action_spec(allow_code=allow_code)
     plan_spec = build_plan_spec()
     broker = PermissionBroker(build_tool_registry())
     transcript: list[str] = []
     tool_calls: list[str] = []
+    tool_attempts = 0
     failures: list[ValidationFailure] = []
     trials: dict[str, IntegrationTrial] = {}
     model = spec.profile.name
@@ -173,14 +171,14 @@ def investigate_schema(
     )
 
     try:
-        for turn in range(1, MAX_TURNS + 1):
+        for turn in range(1, budget.max_turns + 1):
             attempts += 1
-            history = "\n\n".join(transcript)[-MAX_TRANSCRIPT_CHARS:]
+            history = "\n\n".join(transcript)[-budget.max_transcript_chars :]
             prompt = base_prompt + (
                 "\n\n## Investigation transcript\n" + history if history else ""
             )
             response = llm.generate_structured(
-                system=spec.system_prompt,
+                system=spec.system_prompt_with_tools(),
                 prompt=prompt,
                 json_schema=SchemaInvestigationAction.model_json_schema(),
                 profile=spec.profile,
@@ -222,6 +220,16 @@ def investigate_schema(
 
             if action.action is SchemaActionKind.CALL_TOOL:
                 assert action.tool_id is not None
+                if tool_attempts >= budget.max_tool_calls:
+                    failures.append(
+                        ValidationFailure(
+                            layer="tool",
+                            code="tool_call_budget_exhausted",
+                            detail="Configured tool call budget is exhausted.",
+                        )
+                    )
+                    continue
+                tool_attempts += 1
                 try:
                     result = broker.invoke(
                         spec,
@@ -236,9 +244,7 @@ def investigate_schema(
                         detail=f"{type(exc).__name__}: {exc}",
                     )
                     failures.append(failure)
-                    transcript.append(
-                        f"Turn {turn} tool {action.tool_id} failed: {failure.detail}"
-                    )
+                    transcript.append(f"Turn {turn} tool {action.tool_id} failed: {failure.detail}")
                     continue
                 tool_calls.append(action.tool_id)
                 context.admit_tool_result(
@@ -290,9 +296,7 @@ def investigate_schema(
                 )
             if plan_failures:
                 failures.extend(plan_failures)
-                transcript.append(
-                    f"Turn {turn} plan rejected: {_render_failures(plan_failures)}"
-                )
+                transcript.append(f"Turn {turn} plan rejected: {_render_failures(plan_failures)}")
                 continue
             return SchemaMemberResult(
                 proposal=action.plan,
@@ -314,12 +318,12 @@ def investigate_schema(
     finally:
         runtime.close()
 
-    if attempts >= MAX_TURNS:
+    if attempts >= budget.max_turns:
         failures.append(
             ValidationFailure(
                 layer="budget",
                 code="turn_budget_exhausted",
-                detail=f"Schema investigation exhausted {MAX_TURNS} turns.",
+                detail=f"Schema investigation exhausted {budget.max_turns} turns.",
             )
         )
     return SchemaMemberResult(

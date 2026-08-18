@@ -126,6 +126,12 @@ def register_leakage_tools(registry: ToolRegistry) -> ToolRegistry:
     registry.register(
         ToolDefinition(
             tool_id="test_recorded_before_prediction",
+            arguments={
+                'proposal': (
+                    'LeakageChallengeProposal object: finding_fingerprint, '
+                    'test_kind, columns'
+                ),
+            },
             tier=PermissionTier.READ_DATA,
             description=(
                 "Measure whether a leakage-suspect feature was recorded no later "
