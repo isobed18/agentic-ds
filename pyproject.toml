@@ -21,6 +21,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Kesif katmani: dosya tanima ve yonlendirme (src/ads/kesif).
+# Cekirdege eklenmedi; bu bilesen kullanilmadan kurulum gerekmez.
+kesif = [
+    "magika>=1.0",
+    "mcp>=2.0",
+]
 api = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
