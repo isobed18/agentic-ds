@@ -12,7 +12,7 @@ import { PipelineRail } from "../components/PipelineRail";
 import { PlannerPanel } from "../components/PlannerPanel";
 import { StageWorkspace } from "../components/StageWorkspace";
 import { Badge, Spinner, cx, toneFor } from "../components/ui";
-import { api, type RunSummary, type WorkflowNode } from "../lib/api";
+import { api, type RunOptions, type RunSummary, type WorkflowNode } from "../lib/api";
 import { isActive, isRunActive, isSucceeded, statusLabel } from "../lib/status";
 
 
@@ -33,6 +33,10 @@ export function Workflows() {
   // later manual selection is not fought by the URL.
   const [params, setParams] = useSearchParams();
   const [presetSource, setPresetSource] = useState<string | null>(null);
+  const [options, setOptions] = useState<RunOptions | null>(null);
+  useEffect(() => {
+    api.runOptions().then(setOptions).catch(() => setOptions(null));
+  }, []);
   useEffect(() => {
     const source = params.get("source");
     const run = params.get("run");
@@ -77,6 +81,13 @@ export function Workflows() {
     [nodes, stageId],
   );
   const currentRun = runs.find((r) => r.run_id === runId) ?? null;
+  const staged = currentRun?.status === "staged" || currentRun?.status === "staging";
+  // A staged run exists to be looked at and configured, and intake is where
+  // both happen, so opening one lands there rather than on whatever stage
+  // happened to be selected for the previous run.
+  useEffect(() => {
+    if (staged) setStageId("intake");
+  }, [staged, runId]);
   // Sibling runs of the same project, so a branch is visible as a branch rather
   // than as an unrelated row that happens to share a dataset.
   const family = useMemo(() => {
@@ -205,7 +216,9 @@ export function Workflows() {
               ))}
             </span>
           )}
-          <span className="text-xs text-ink-mute">{done}/{nodes.length} stages complete</span>
+          <span className="text-xs text-ink-mute">
+            {done}/{nodes.length} {t("stages complete")}
+          </span>
           <div className="h-1.5 w-32 overflow-hidden rounded-full bg-line">
             <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${nodes.length ? (done / nodes.length) * 100 : 0}%` }} />
           </div>
@@ -228,8 +241,12 @@ export function Workflows() {
           runId={runId}
           node={selected}
           sourceId={currentRun?.dataset ?? null}
+          runStatus={currentRun?.status ?? null}
+          options={options}
           onAnswered={() => { void refresh(); void refreshRuns(); }}
           onBranched={(ids) => { void refreshRuns(); if (ids[0]) setRunId(ids[0]); }}
+          onStarted={() => { setLive(true); void refresh(); void refreshRuns(); }}
+          onDiscarded={() => { setRunId(null); setNodes([]); void refreshRuns(); }}
         />
       </div>
 

@@ -18,19 +18,21 @@ import {
   type FactValue,
   type GateDecision,
   type ProfiledTable,
+  type RunOptions,
   type StageDetail,
   type StageOutput,
   type Story,
   type WorkflowNode,
 } from "../lib/api";
-import { reasonLabel, statusLabel, verdictLabel } from "../lib/status";
+import { elapsedLabel, reasonLabel, statusLabel, verdictLabel } from "../lib/status";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { BranchPicker } from "./BranchPicker";
 import { SensitivityOverride } from "./SensitivityOverride";
 import { StageDirective } from "./StageDirective";
 import { NeedsAttention, type AttentionItem } from "./NeedsAttention";
 import { SchemaMap } from "./SchemaMap";
-import { titleize } from "./PipelineRail";
+import { IntakeStage } from "./IntakeStage";
+import { stageName } from "./PipelineRail";
 import { Badge, DataTable, Disclosure, Empty, Metric, Spinner, cx, toneFor } from "./ui";
 
 /** Long floats are measurements, not identifiers — show them at human precision. */
@@ -47,13 +49,19 @@ function fmt(v: FactValue | null | undefined): string {
 }
 
 export function StageWorkspace({
-  runId, node, sourceId = null, onAnswered, onBranched,
+  runId, node, sourceId = null, runStatus = null, options = null,
+  onAnswered, onBranched, onStarted, onDiscarded,
 }: {
   runId: string | null;
   node: WorkflowNode | null;
   sourceId?: string | null;
+  /** The run's own status, which is what makes intake a decision screen. */
+  runStatus?: string | null;
+  options?: RunOptions | null;
   onAnswered: () => void;
   onBranched?: (runIds: string[]) => void;
+  onStarted?: () => void;
+  onDiscarded?: () => void;
 }) {
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,15 +100,25 @@ export function StageWorkspace({
     <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
       <header className="mb-4">
         <div className="flex flex-wrap items-center gap-2.5">
-          <h2 className="text-xl font-semibold tracking-tight">{titleize(node.id)}</h2>
+          <h2 className="text-xl font-semibold tracking-tight">{stageName(node.id)}</h2>
           <Badge tone={toneFor(node.status)}>{statusLabel(node.status)}</Badge>
           <Badge tone={node.kind === "deterministic" ? "neutral" : "brand"}>
-            {node.kind === "deterministic" ? "Deterministic" : "Agent"}
+            {node.kind === "deterministic" ? t("Deterministic") : t("Agent")}
           </Badge>
-          {node.attempt_count > 1 && <Badge tone="warn">{node.attempt_count} attempts</Badge>}
+          {node.attempt_count > 1 && (
+            <Badge tone="warn">{node.attempt_count} {t("attempts")}</Badge>
+          )}
+          {elapsedLabel(node.elapsed_seconds) && (
+            <span
+              className="text-xs tabular-nums text-ink-mute"
+              title={node.ended_at ?? node.started_at ?? undefined}
+            >
+              {elapsedLabel(node.elapsed_seconds)}
+            </span>
+          )}
         </div>
         <p className="mt-1 max-w-3xl text-sm text-ink-mute">
-          {detail?.stage?.description ?? node.description}
+          {t(detail?.stage?.description ?? node.description ?? "")}
         </p>
       </header>
 
@@ -117,9 +135,26 @@ export function StageWorkspace({
         <ApprovalCard runId={runId} decision={openGate} onAnswered={onAnswered} />
       )}
 
-      {/* Offered while the run is stopped here: the classification is on screen
-          and nothing downstream has been built on it yet. */}
-      {openGate && runId && node.id === "intake" && profileTables.length > 0 && (
+      {/* Intake is the screen where the run is decided, so it is the whole
+          workspace rather than one panel among several: the data as measured,
+          the PII call while it is still free to change, and the configuration
+          the run continues with. */}
+      {runId && node.id === "intake" && sourceId && (
+        <IntakeStage
+          runId={runId}
+          sourceId={sourceId}
+          staged={runStatus === "staged"}
+          staging={runStatus === "staging"}
+          tables={profileTables}
+          options={options}
+          onStarted={() => onStarted?.()}
+          onDiscarded={() => onDiscarded?.()}
+        />
+      )}
+
+      {/* Offered while any other stage is stopped for a person: the
+          classification is on screen and nothing has been built on it yet. */}
+      {openGate && runId && node.id !== "intake" && profileTables.length > 0 && (
         <SensitivityOverride runId={runId} tables={profileTables} />
       )}
 
@@ -151,18 +186,7 @@ export function StageWorkspace({
       {outputs.map((o) => <OutputBlock key={o.artifact_id} output={o} />)}
 
       {detail && detail.attempts.length > 0 && (
-        <Disclosure title={t("Attempts")} count={detail.attempts.length}>
-          <DataTable
-            columns={["#", "Verdict", "Started", "Ended", "Artifacts"]}
-            rows={detail.attempts.map((a) => [
-              a.attempt,
-              a.verdict ?? (a.error ? "error" : "—"),
-              (a.started_at ?? "").replace("T", " ").slice(0, 19),
-              (a.ended_at ?? "—").replace("T", " ").slice(0, 19),
-              a.artifact_ids.length,
-            ])}
-          />
-        </Disclosure>
+        <Attempts attempts={detail.attempts} />
       )}
 
       {/* Gate internals -- reason codes, rule ids, artifact hashes -- are
@@ -428,7 +452,9 @@ function ApprovalCard({
   return (
     <section className="card mb-4 border-l-4 border-l-stop-500 px-4 py-4">
       <div className="mb-1 flex items-center gap-2">
-        <Badge tone={sent ? "ok" : "stop"}>{sent ? "Answer sent" : "Approval required"}</Badge>
+        <Badge tone={sent ? "ok" : "stop"}>
+          {sent ? t("Answer sent") : t("Approval required")}
+        </Badge>
         <span className="text-xs text-ink-mute">{reasonLabel(decision.reason_code)}</span>
       </div>
       {sent && (
@@ -452,7 +478,14 @@ function ApprovalCard({
               o.recommended ? "border-brand-500 bg-brand-50 hover:bg-brand-100" : "border-line bg-surface hover:bg-surface-sunken",
             )}
           >
-            <span className="block text-sm font-medium text-ink">{o.label}{o.recommended && " ★"}</span>
+            <span className="flex items-baseline gap-1.5">
+              <span className="text-sm font-medium text-ink">{o.label}</span>
+              {o.recommended && (
+                <span className="rounded bg-brand-500/15 px-1 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-brand-700">
+                  {t("suggested")}
+                </span>
+              )}
+            </span>
             <span className="mt-0.5 block text-[11px] leading-snug text-ink-mute">{o.consequence}</span>
             {o.downstream_effect && <span className="mt-1 block text-[11px] text-warn-700">{o.downstream_effect}</span>}
           </button>
@@ -541,3 +574,97 @@ function collectAttention(detail: StageDetail | null): AttentionItem[] {
   }
   return items;
 }
+
+
+/**
+ * What each attempt did, and why the gate was not satisfied.
+ *
+ * A rejected attempt produces no artifacts, so the workspace showed nothing at
+ * all for it: seven minutes of a 27B model would pass, the rail would say
+ * "×2", and the screen would be empty. The reason was in the attempt's
+ * critique the whole time and was never rendered -- the person watching had no
+ * way to tell a slow stage from a broken one.
+ */
+function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
+  const unfinished = attempts.some((a) => !a.ended_at);
+  return (
+    <Disclosure
+      title={t("Attempts")}
+      count={attempts.length}
+      defaultOpen={attempts.length > 1 || unfinished}
+    >
+      <ol className="space-y-2">
+        {attempts.map((attempt) => {
+          const seconds =
+            attempt.ended_at && attempt.started_at
+              ? (Date.parse(attempt.ended_at) - Date.parse(attempt.started_at)) / 1000
+              : null;
+          const unmet = attempt.critique?.unmet_criteria ?? [];
+          const findings = attempt.critique?.findings ?? [];
+          return (
+            <li
+              key={attempt.attempt}
+              className="rounded-lg border border-line bg-surface-sunken px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold tabular-nums text-ink">
+                  #{attempt.attempt}
+                </span>
+                <Badge tone={attempt.verdict ? toneFor(attempt.verdict) : "neutral"}>
+                  {attempt.verdict ? verdictLabel(attempt.verdict) : t("running")}
+                </Badge>
+                {elapsedLabel(seconds) && (
+                  <span className="text-[11px] tabular-nums text-ink-mute">
+                    {elapsedLabel(seconds)}
+                  </span>
+                )}
+                {attempt.artifact_ids.length > 0 && (
+                  <span className="text-[11px] text-ink-faint">
+                    {attempt.artifact_ids.length} {t("artifacts")}
+                  </span>
+                )}
+              </div>
+
+              {attempt.error && (
+                <p className="mt-1.5 text-[11px] text-stop-700">{attempt.error}</p>
+              )}
+
+              {/* The mechanical checks the plan failed. These are what turned a
+                  seven-minute stage into a retry, and they are the only thing
+                  that explains an empty screen. */}
+              {unmet.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {unmet.map((id) => {
+                    const finding = findings.find((f) => f.check_id === id);
+                    return (
+                      <li key={id} className="text-[11px] leading-snug text-warn-700">
+                        · {t(checkText(id, finding?.evidence))}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </Disclosure>
+  );
+}
+
+/**
+ * A check id is a code, so it is translated as one. The recorded evidence is
+ * the fallback for a check this build has never seen -- better an English
+ * sentence than a bare identifier.
+ */
+function checkText(checkId: string, evidence?: string | null): string {
+  return CHECK_TEXT[checkId] ?? evidence ?? checkId;
+}
+
+const CHECK_TEXT: Record<string, string> = {
+  "schema.base_grain_declared": "The plan declared no base grain.",
+  "schema.fan_out_aggregated":
+    "The plan did not pass the relationship and fan-out validators.",
+  "schema.plan_trial_passed":
+    "The plan failed a trial execution against the real tables.",
+};

@@ -28,6 +28,11 @@ api = [
 workflow-prefect = [
     "prefect>=3,<4",
 ]
+# Fold-local vectorisers offered to sandboxed agent code. Optional because the
+# pipeline runs without it; the sandbox helper is simply not importable.
+sandbox = [
+    "skrub>=0.5,<1",
+]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=5.0",

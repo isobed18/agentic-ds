@@ -43,6 +43,10 @@ def load_env_file(path: Path) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, default=ROOT / "data/artifacts")
+    # Both default to this file's repository rather than the working directory.
+    # A deployment is served from a checkout that has no data/ of its own, and
+    # a relative default there means no datasets and no error to say why.
+    parser.add_argument("--data", type=Path, default=ROOT / "data")
     parser.add_argument("--port", type=int, default=8077)
     parser.add_argument(
         "--insecure-cookie",
@@ -76,13 +80,19 @@ def main() -> None:
     from ads.api import create_app
 
     args.artifacts.mkdir(parents=True, exist_ok=True)
+    if not args.data.is_dir():
+        raise SystemExit(
+            f"No data directory at {args.data.resolve()}.\n"
+            "Pass --data <path> pointing at the folder that holds the datasets."
+        )
     print(f"Artifacts: {args.artifacts.resolve()}")
+    print(f"Data:      {args.data.resolve()}")
     print(f"User:      {values['ADS_AUTH_USERNAME']}")
     print(f"Bound to:  127.0.0.1:{args.port}  (loopback only -- not on the LAN)")
     print("Password gate: ON")
 
     uvicorn.run(
-        create_app(args.artifacts),
+        create_app(args.artifacts, source_roots=[args.data]),
         host="127.0.0.1",
         port=args.port,
         # cloudflared is the only client and it is on this host, so the
