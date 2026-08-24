@@ -130,11 +130,12 @@ def _interpret(
     scope: ComprehensionScope,
     bundle: MeasurementBundle,
     llm: StructuredLLM,
+    cards: list[DataCard] | None = None,
 ) -> StageResult:
     """Return a healthy or explicitly degraded brief; never raise an LLM failure."""
     spec = build_spec()
     bundle_id = compute_artifact_id(bundle)
-    context = build_context(bundle, scope)
+    context = build_context(bundle, scope, cards)
     try:
         result = run_agent(spec, context, llm)
     except Exception as exc:  # noqa: BLE001 - this entire component is advisory
@@ -241,6 +242,7 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
             scope=ComprehensionScope.SOURCE,
             bundle=source_measurement_bundle(cards, plan),
             llm=llm,
+            cards=cards,
         )
         return _merge(primary, advisory)
 

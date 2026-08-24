@@ -7,11 +7,12 @@ also written beside the artifact store so completed and interrupted runs remain
 inspectable after the server restarts.
 """
 
+import hashlib
 import json
 import re
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,8 +41,9 @@ from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, Ta
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
 from ads.gates import GatePolicy
 from ads.intake import detect_relationships, load_directory, profile_tables
+from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
 from ads.llm import LARGE, OllamaClient, StructuredLLM
-from ads.orchestration import RunState, resume_workflow, run_workflow
+from ads.orchestration import EdgeCondition, RunState, resume_workflow, run_workflow
 from ads.pipeline import (
     build_default_registry,
     build_default_spec,
@@ -114,12 +116,18 @@ class RunSummary:
     #: is no longer true for both sides.
     parent_run_id: str | None = None
     branch_label: str | None = None
+    #: Which dataset this run is working on. The frontend has been reading a
+    #: `dataset` field off this object since it was written; nothing ever put
+    #: one there, so every screen that needed the source got `undefined`.
+    source_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "parent_run_id": self.parent_run_id,
             "branch_label": self.branch_label,
+            "source_id": self.source_id,
+            "dataset": self.source_id,
             "artifact_count": self.artifact_count,
             "stages": self.stages,
             "status": self.status,
@@ -141,6 +149,10 @@ class _RuntimeRun:
     events: list[dict[str, Any]] = field(default_factory=list)
     outcome: Any | None = None
     error: str | None = None
+    #: Continues a staged run from where it stopped. Held rather than rebuilt
+    #: so the second half executes against the same state and the artifacts
+    #: intake and schema discovery already produced are not recomputed.
+    resume: Any | None = None
 
 
 @dataclass
@@ -153,6 +165,10 @@ class ControlPlane:
     llm_factory: Callable[[], StructuredLLM] | None = None
     workflow_runner: Callable[..., Any] | None = None
     _runtime_runs: dict[str, _RuntimeRun] = field(default_factory=dict)
+    #: source_id -> (file fingerprint, profile). Invalidated by the fingerprint
+    #: rather than by a timer, so a changed file is re-profiled immediately and
+    #: an unchanged one is never re-read.
+    _profile_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
@@ -177,7 +193,7 @@ class ControlPlane:
         """Return the fixed pipeline graph, optionally annotated with run state."""
         progress = self.progress(run_id) if run_id else None
         if progress:
-            mode = progress.get("configuration", {}).get("mode", "manual")
+            mode = self._mode_of(progress)
         spec = build_full_spec_definition() if mode == "agent" else build_default_spec()
         raw = spec.to_dict()
         attempts = progress["attempts"] if progress else []
@@ -202,6 +218,14 @@ class ControlPlane:
                     "status": status,
                     "attempt_count": len(own),
                     "retry_count": sum(item.get("verdict") == "retry" for item in own),
+                    # Wall time across every attempt of this stage, and the
+                    # moment the last one started. A stage that took four
+                    # minutes and one that took four seconds looked identical
+                    # before this, which is most of what a person wants to know
+                    # while watching a run they cannot otherwise see inside.
+                    "elapsed_seconds": self._elapsed(own),
+                    "started_at": own[0]["started_at"] if own else None,
+                    "ended_at": own[-1]["ended_at"] if own else None,
                 }
             )
         return {
@@ -226,7 +250,7 @@ class ControlPlane:
         stage_id = latest["stage_id"]
         if (
             current == stage_id
-            and run_status in {"queued", "running"}
+            and run_status in {"queued", "running", "staging"}
             and not latest.get("ended_at")
         ):
             return "running"
@@ -487,9 +511,57 @@ class ControlPlane:
                     pending_question=pending,
                     parent_run_id=configuration.get("parent_run_id"),
                     branch_label=configuration.get("branch_label"),
+                    source_id=(
+                        runtime.source_id if runtime else configuration.get("source_id")
+                    ),
                 )
             )
         return sorted(summaries, key=lambda item: item.last_activity, reverse=True)
+
+    @staticmethod
+    def _mode_of(progress: dict[str, Any]) -> str:
+        """Which spec this run is executing.
+
+        Staging records `agent` when it starts, because that is the spec it
+        builds. The fallback covers a run whose snapshot predates that: it had
+        no mode, every reader inferred `manual`, and the rail drew a nine-stage
+        pipeline for a run that had already executed schema discovery -- a
+        stage that pipeline does not contain -- while the stage endpoint
+        answered 404 for whatever the person was looking at.
+        """
+        configured = progress.get("configuration") or {}
+        if configured.get("mode"):
+            return str(configured["mode"])
+        staged_states = {"staging", "staged"}
+        has_agent_stage = any(
+            attempt.get("stage_id") in _PLANNER_AGENTS
+            for attempt in progress.get("attempts") or []
+        )
+        if has_agent_stage or progress.get("status") in staged_states:
+            return "agent"
+        return "manual"
+
+    @staticmethod
+    def _elapsed(attempts: list[dict[str, Any]]) -> float | None:
+        """Seconds spent in a stage, summed over its attempts.
+
+        Summed rather than measured end to end, because a retried stage sits
+        idle between attempts while the gate and any human decide, and counting
+        that as execution time would report a stage as slow when it was waiting.
+        A running attempt has no end yet and is measured against now.
+        """
+        total = 0.0
+        counted = False
+        for attempt in attempts:
+            started = attempt.get("started_at")
+            if not started:
+                continue
+            begin = datetime.fromisoformat(started)
+            ended = attempt.get("ended_at")
+            finish = datetime.fromisoformat(ended) if ended else datetime.now(UTC)
+            total += max(0.0, (finish - begin).total_seconds())
+            counted = True
+        return round(total, 1) if counted else None
 
     def _artifact_run_ids(self) -> list[str]:
         with self.store._connect() as conn:  # noqa: SLF001 - read-only index projection
@@ -507,7 +579,11 @@ class ControlPlane:
             if not root.exists():
                 continue
             for child in sorted(root.iterdir()):
-                if child.is_dir() and not self._reserved_path(child) and any(child.iterdir()):
+                if (
+                    child.is_dir()
+                    and not self._reserved_path(child)
+                    and self._holds_loadable_files(child)
+                ):
                     sources.append({"source_id": child.name, "label": child.name})
         if self.upload_root is not None and self.upload_root.exists():
             for child in sorted(self.upload_root.iterdir()):
@@ -576,6 +652,22 @@ class ControlPlane:
                 return resolved
         raise KeyError(source_id)
 
+    @staticmethod
+    def _holds_loadable_files(directory: Path) -> bool:
+        """Whether this folder is a dataset rather than a folder that exists.
+
+        `data/` also holds working directories -- another run's artifact store,
+        a sandbox, an export probe -- and offering them as datasets put five
+        rows on the chooser of which three answered "source contains no
+        supported data files" when clicked. A directory the loader cannot read
+        anything from is not a dataset, whatever else it is.
+        """
+        supported = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES
+        return any(
+            path.is_file() and path.suffix.lower() in supported
+            for path in directory.rglob("*")
+        )
+
     def _reserved_path(self, path: Path) -> bool:
         resolved = path.resolve()
         reserved = {self.store.root.resolve(), self._run_state_root.resolve()}
@@ -619,8 +711,38 @@ class ControlPlane:
             "files": files,
         }
 
+    def _source_fingerprint(self, source_id: str) -> str:
+        """Identify a source by what its files are, not by when we last looked.
+
+        Name, size and modification time of every file. Content hashing would be
+        stronger and would mean reading 121 MB to answer "has this changed",
+        which is the cost the cache exists to avoid. A file edited within the
+        same mtime tick and to the identical byte length would be missed; that
+        is the accepted gap and it is written down rather than assumed away.
+        """
+        root = Path(self.source_path(source_id))
+        parts = []
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                stat = path.stat()
+                parts.append(f"{path.relative_to(root)}:{stat.st_size}:{stat.st_mtime_ns}")
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
     def source_profile(self, source_id: str) -> dict[str, Any]:
-        """Profile source files into a schema-only browser projection."""
+        """Profile source files into a schema-only browser projection.
+
+        Cached on the source's file fingerprint. Profiling re-reads and
+        re-measures every file, and the dataset list calls this once per source
+        on every request: measured through the tunnel, listing three sources took
+        5.22s, of which 4.91s was one 121 MB dataset being re-profiled for a
+        screen that had already shown it.
+        """
+        fingerprint = self._source_fingerprint(source_id)
+        with self._lock:
+            cached = self._profile_cache.get(source_id)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+
         loaded = load_directory(self.source_path(source_id))
         cards = profile_tables(loaded)
         if not cards:
@@ -644,7 +766,7 @@ class ControlPlane:
                 cards, {table.name: table.frame for table in loaded}
             )
         ]
-        return {
+        profile: dict[str, Any] = {
             "source_id": source_id,
             "relationships": relationships,
             "tables": [
@@ -673,8 +795,269 @@ class ControlPlane:
             ],
             "privacy": "Schema and aggregate statistics only; source rows and values are omitted.",
         }
+        with self._lock:
+            self._profile_cache[source_id] = (fingerprint, profile)
+        return profile
 
     # --------------------------------------------------------------- execution
+
+    #: Staging stops here. Intake measures the data and schema discovery reads
+    #: what it means; between them they produce everything a person needs on
+    #: screen before deciding anything, and neither depends on a stated problem.
+    STAGE_UNTIL = "schema_discovery"
+
+    def stage_run(
+        self, source_id: str, configuration: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Start a run and stop it after intake and schema discovery.
+
+        This is a real run from its first moment -- same id, same state, same
+        artifact lineage -- that has been asked to stop early. It was a
+        reservation holding a cached profile before, which meant the pipeline
+        showed nothing until the user had already committed to a configuration,
+        and the intake they were looking at was not the intake the run would
+        later perform. Continuing it resumes the same state at the next stage,
+        so nothing measured here is measured twice.
+        """
+        source_path = self.source_path(source_id)
+        run_id = f"run-{uuid.uuid4().hex[:8]}"
+        state = RunState(
+            run_id=run_id,
+            store=self.store,
+            profile=BUILTIN_PROFILES["full_auto"],
+        )
+        llm: StructuredLLM | None = self.llm_factory() if self.llm_factory else OllamaClient()
+        if isinstance(llm, OllamaClient) and not llm.is_available():
+            llm.close()
+            raise ValueError(
+                "Reading the schema needs Ollama at http://localhost:11434. "
+                "Start Ollama and choose the dataset again."
+            )
+        spec, registry = build_full_spec(llm, panel_size=1)
+        sandbox_root = self.store.root.parent / "sandbox" / run_id
+        (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+        (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+        configure_full_pipeline_state(
+            state,
+            source_path=source_path,
+            execution_backend=SandboxManager(
+                SandboxConfig(
+                    data_dir=sandbox_root / "data",
+                    artifacts_dir=sandbox_root / "artifacts",
+                )
+            ),
+            agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+        )
+        runtime = _RuntimeRun(
+            run_id=run_id,
+            source_id=source_id,
+            state=state,
+            configuration={
+                "source_id": source_id,
+                # Staging builds and runs the agent spec, so the run is an
+                # agent run from this moment. Leaving it unset meant every
+                # reader inferred "manual" and looked the run up in a
+                # nine-stage pipeline that does not contain the stage it had
+                # just executed.
+                "mode": "agent",
+                **(configuration or {}),
+            },
+            status="staging",
+        )
+        with self._lock:
+            self._runtime_runs[run_id] = runtime
+            runtime.events.append({"event": "run_staged", "at": _now(), "source": source_id})
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+        runner = self.workflow_runner or run_workflow
+
+        def execute() -> None:
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=GatePolicy.load(),
+                    on_event=event,
+                    stop_after=self.STAGE_UNTIL,
+                )
+                with self._lock:
+                    runtime.status = runtime.outcome.status
+                    runtime.error = runtime.outcome.error
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+
+        # Held so the second half runs on this state rather than a fresh one.
+        runtime.resume = (spec, registry, state, llm)
+        threading.Thread(target=execute, name=f"ads-stage-{run_id}", daemon=True).start()
+        return {
+            "run_id": run_id,
+            "status": "staging",
+            "profile": self.source_profile(source_id),
+        }
+
+    def update_staged_run(self, run_id: str, configuration: dict[str, Any]) -> dict[str, Any]:
+        """Amend a staged run's configuration before it is started.
+
+        Accepted while the first stages are still executing as well as after:
+        a person reading the schema and setting a target at the same time is
+        the normal case, and making them wait would be an artificial race.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status not in {"staging", "staged"}:
+            raise ValueError("this run is not staged")
+        with self._lock:
+            runtime.configuration.update(configuration)
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        return dict(runtime.configuration)
+
+    def start_staged_run(self, run_id: str, configuration: dict[str, Any] | None = None) -> str:
+        """Continue a staged run through the rest of the pipeline.
+
+        The run keeps its id. It was replaced by a freshly started one before,
+        which threw away the intake and schema discovery the person had just
+        spent their attention reading and re-ran both against the same files.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status != "staged":
+            raise ValueError("this run is not staged")
+        if runtime.resume is None:
+            raise ValueError(
+                "this staged run did not survive a restart and cannot be continued; "
+                "choose the dataset again"
+            )
+        body = {**runtime.configuration, **(configuration or {})}
+        spec, registry, state, llm = runtime.resume
+
+        run_mode = str(body.get("run_mode", "auto"))
+        if run_mode not in {"auto", "manual"}:
+            raise ValueError("run_mode must be 'auto' or 'manual'")
+        supervision = self._normalise_supervision(body.get("supervision") or {})
+        checkpoints = list(supervision["checkpoint_stages"])
+        if run_mode == "manual":
+            checkpoints = sorted(set(checkpoints) | _PIPELINE_STAGES)
+        # The problem has not been chosen yet at this point in the pipeline --
+        # the agent chooses it two stages from here -- so the checkpoint that
+        # start_run derives from an unstated problem applies here always.
+        if "problem_discovery" not in checkpoints:
+            checkpoints.append("problem_discovery")
+        state.profile = BUILTIN_PROFILES["full_auto"].model_copy(
+            update={"checkpoint_stages": sorted(checkpoints)}
+        )
+        intent = _as_intent(body.get("instructions"))
+        preferences = self._staged_preferences(body)
+        state.user_intent = "\n\n".join(part for part in (intent, preferences) if part) or None
+
+        runtime.configuration.update(
+            {
+                **body,
+                "supervision": supervision,
+                "run_mode": run_mode,
+                "instructions": state.user_intent,
+            }
+        )
+        with self._lock:
+            runtime.status = "running"
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+        runner = self.workflow_runner or run_workflow
+        resume_at = spec.next_stage(self.STAGE_UNTIL, EdgeCondition.ON_PROCEED)
+
+        def execute() -> None:
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=self._policy_for_supervision(supervision),
+                    on_event=event,
+                    start_at=resume_at,
+                )
+                with self._lock:
+                    runtime.status = runtime.outcome.status
+                    runtime.error = runtime.outcome.error
+                    runtime.current_stage = getattr(runtime.outcome, "final_stage", None)
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.updated_at = _now()
+            finally:
+                if isinstance(llm, OllamaClient):
+                    llm.close()
+            self._persist_runtime(runtime)
+
+        threading.Thread(target=execute, name=f"ads-run-{run_id}", daemon=True).start()
+        return run_id
+
+    @staticmethod
+    def _staged_preferences(body: dict[str, Any]) -> str | None:
+        """Render whatever the person chose on the staged screen as guidance.
+
+        These are preferences, not contracts: the agent still discovers the
+        problem from measured evidence, and stating a target it cannot support
+        must not silently override what the data says.
+        """
+        stated = {
+            "target": body.get("target_column"),
+            "task": body.get("task_type"),
+            "primary metric": body.get("primary_metric"),
+            "base table": body.get("base_table"),
+            "excluded columns": body.get("excluded_columns") or None,
+        }
+        chosen = [f"{name} {value!r}" for name, value in stated.items() if value]
+        if not chosen:
+            return None
+        return (
+            "User-configured planning preferences (honour when compatible with "
+            "measured evidence): " + "; ".join(chosen) + "."
+        )
+
+    def _event_recorder(self, runtime: _RuntimeRun) -> Callable[[str, dict[str, Any]], None]:
+        """Record a stage event on the run and persist it."""
+
+        def event(name: str, payload: dict[str, Any]) -> None:
+            with self._lock:
+                runtime.events.append({"event": name, "at": _now(), **payload})
+                runtime.updated_at = _now()
+                if name == "stage_started":
+                    runtime.current_stage = payload.get("stage")
+            self._persist_runtime(runtime)
+
+        return event
+
+    def discard_staged_run(self, run_id: str) -> None:
+        """Drop a staged run from memory *and* from disk.
+
+        Staging persists a snapshot so a reserved run survives a restart, which
+        means forgetting the in-memory copy alone does not discard anything --
+        the run reappears in the list from `run-state/` the next time it is
+        read. Observed on the deployment: a discarded staged run was still
+        there, still `staged`, after the API said `discarded`.
+        """
+        with self._lock:
+            runtime = self._runtime_runs.get(run_id)
+            if runtime is not None and runtime.status != "staged":
+                raise ValueError(f"run {run_id!r} is not staged; it is {runtime.status}")
+            self._runtime_runs.pop(run_id, None)
+            if _SAFE_RUN_ID.fullmatch(run_id) is None:
+                raise ValueError("run_id contains unsafe characters")
+            snapshot = (self._run_state_root / f"{run_id}.json").resolve()
+            if self._run_state_root.resolve() not in snapshot.parents:
+                raise RuntimeError("refusing to remove a snapshot outside run-state")
+            snapshot.unlink(missing_ok=True)
 
     def start_run(
         self,
@@ -813,13 +1196,7 @@ class ControlPlane:
             self._runtime_runs[run_id] = runtime
         self._persist_runtime(runtime)
 
-        def event(name: str, payload: dict[str, Any]) -> None:
-            with self._lock:
-                runtime.events.append({"event": name, "at": _now(), **payload})
-                runtime.updated_at = _now()
-                if name == "stage_started":
-                    runtime.current_stage = payload.get("stage")
-            self._persist_runtime(runtime)
+        event = self._event_recorder(runtime)
 
         def execute() -> None:
             with self._lock:
@@ -1042,13 +1419,7 @@ class ControlPlane:
         else:
             spec, registry = build_default_spec(), build_default_registry()
 
-        def event(name: str, payload: dict[str, Any]) -> None:
-            with self._lock:
-                runtime.events.append({"event": name, "at": _now(), **payload})
-                runtime.updated_at = _now()
-                if name == "stage_started":
-                    runtime.current_stage = payload.get("stage")
-            self._persist_runtime(runtime)
+        event = self._event_recorder(runtime)
 
         def execute() -> None:
             with self._lock:
@@ -1205,6 +1576,12 @@ class ControlPlane:
                 "events": list(runtime.events),
                 "error": runtime.error,
                 "attempts": self._attempts(runtime),
+                # The question the run stopped to ask. It lived only on the
+                # in-memory outcome, so `progress` -- the endpoint the run
+                # screen polls -- reported `awaiting_human` and carried nothing
+                # to show, and a run that had stopped for a person displayed no
+                # way to answer it.
+                "pending_question": _pending_question(runtime),
             }
 
     def _persist_runtime(self, runtime: _RuntimeRun) -> None:
@@ -1217,7 +1594,7 @@ class ControlPlane:
     #: Snapshot states that only a live worker in this process can be making
     #: progress on. `awaiting_human` is deliberately absent: it is durable by
     #: design and is meant to be resumed after a restart.
-    _IN_FLIGHT = frozenset({"queued", "running"})
+    _IN_FLIGHT = frozenset({"queued", "running", "staging"})
 
     def progress(self, run_id: str) -> dict[str, Any]:
         runtime = self._runtime_runs.get(run_id)
@@ -1504,14 +1881,28 @@ class ControlPlane:
             # the beginning and never rendered, so the half of the product that
             # exists to help a person understand their data was invisible.
             items = payload.get("items", [])
+            # Both languages are stored; the reader's choice picks one here, and
+            # falls back to English when the model did not produce the Turkish
+            # half rather than showing an empty card.
+            turkish = i18n.current() == "tr"
+
+            def _pick(item: dict[str, Any], field: str) -> Any:
+                if turkish and item.get(f"{field}_tr"):
+                    return item[f"{field}_tr"]
+                return item.get(field)
+
             story["insights"] = [
                 {
                     "kind": item.get("kind"),
-                    "interpretation": item.get("interpretation"),
-                    "why_it_matters": item.get("why_it_matters"),
-                    "verification_question": (item.get("verification") or {}).get("question")
-                    if isinstance(item.get("verification"), dict)
-                    else item.get("verification"),
+                    "interpretation": _pick(item, "interpretation"),
+                    "why_it_matters": _pick(item, "why_it_matters"),
+                    "verification_question": (
+                        item.get("verification_question_tr")
+                        if turkish and item.get("verification_question_tr")
+                        else (item.get("verification") or {}).get("question")
+                        if isinstance(item.get("verification"), dict)
+                        else item.get("verification")
+                    ),
                     "confidence": item.get("confidence"),
                     "epistemic_state": item.get("epistemic_state", "proposed"),
                     "subjects": [
@@ -1831,7 +2222,7 @@ class ControlPlane:
                 progress = self.progress(run_id)
             except KeyError:
                 progress = {"events": [], "attempts": [], "status": None, "current_stage": None}
-            mode = progress.get("configuration", {}).get("mode", "manual")
+            mode = self._mode_of(progress)
             spec = build_full_spec_definition() if mode == "agent" else build_default_spec()
             definition = spec.stage(stage_id)
         except KeyError:
@@ -1978,8 +2369,7 @@ class ControlPlane:
                     "retries": sum(item.get("verdict") == "retry" for item in attempts),
                     "human_stops": sum(item.get("verdict") == "escalate" for item in attempts),
                     "latest_gate": decisions[-1] if decisions else None,
-                    "deletable": summary.status
-                    not in {"queued", "running", "awaiting_human"},
+                    "deletable": summary.status not in {"queued", "running", "staging"},
                 }
             )
         return catalog
@@ -2100,11 +2490,19 @@ class ControlPlane:
             status = "archived"
         # `progress` has already downgraded an abandoned in-flight run to
         # `interrupted`, so what reaches here as active really is active.
-        if status in {"queued", "running", "awaiting_human"}:
+        #
+        # `awaiting_human` is deliberately not in this set. A parked run has no
+        # worker thread -- the one that raised the question returned, and
+        # answering spawns a fresh one -- so nothing is mutating its artifacts
+        # underneath the delete. Refusing it meant a run whose question nobody
+        # intends to answer could never be cleared from the product, which is
+        # the exact dead end this guard exists to prevent for crashed runs.
+        # Typing the run id back is the deliberate act that protects it.
+        if status in {"queued", "running", "staging"}:
             raise ValueError(f"cannot delete an active run with status {status!r}")
         with self._lock:
             runtime = self._runtime_runs.get(run_id)
-            if runtime and runtime.status in {"queued", "running", "awaiting_human"}:
+            if runtime and runtime.status in {"queued", "running", "staging"}:
                 raise ValueError("cannot delete a live in-memory run")
             self._runtime_runs.pop(run_id, None)
             deleted = self.store.delete_run(run_id)
@@ -2115,6 +2513,12 @@ class ControlPlane:
             if snapshot_deleted:
                 snapshot.unlink()
         return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
+
+
+def _pending_question(runtime: Any) -> dict[str, Any] | None:
+    """The escalation a run stopped on, ready for the wire."""
+    question = getattr(getattr(runtime, "outcome", None), "pending_question", None)
+    return question.model_dump(mode="json") if question is not None else None
 
 
 def _as_intent(value: Any) -> str | None:
@@ -2129,14 +2533,29 @@ def _as_intent(value: Any) -> str | None:
     raise ValueError("instructions must be a string or a list of strings")
 
 
-def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPlane | None = None):
-    """Build the lightweight local FastAPI application."""
+def create_app(
+    artifacts_dir: str | Path = "data/artifacts",
+    *,
+    plane: ControlPlane | None = None,
+    source_roots: Sequence[str | Path] | None = None,
+):
+    """Build the lightweight local FastAPI application.
+
+    `source_roots` is worth passing explicitly whenever the process is not
+    launched from the repository. It defaults to `data/` *relative to the
+    working directory*, so a server started from a deployment checkout looked
+    for datasets inside that checkout -- where `data/` is gitignored and
+    therefore absent -- and served an empty list with no error anywhere.
+    """
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse, Response
     from fastapi.staticfiles import StaticFiles
 
     store = ArtifactStore(artifacts_dir)
-    plane = plane or ControlPlane(store=store)
+    plane = plane or ControlPlane(
+        store=store,
+        source_roots=tuple(Path(root) for root in source_roots or ()),
+    )
     app = FastAPI(title="Agentic DS workflow", version="0.2.0")
 
     # Password gate. Installed only when a credential is configured, so the
@@ -2311,6 +2730,36 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "applied": applied}
+
+    @app.post("/api/runs/staged")
+    def stage_run(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.stage_run(str(body["source_id"]), body.get("configuration"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.patch("/api/runs/{run_id}/staged")
+    def update_staged(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return {"configuration": plane.update_staged_run(run_id, body)}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/start")
+    def start_staged(run_id: str, body: dict[str, Any]) -> dict[str, str]:
+        try:
+            started = plane.start_staged_run(run_id, body or None)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"run_id": started, "status": "running"}
+
+    @app.post("/api/runs/{run_id}/discard")
+    def discard_staged(run_id: str) -> dict[str, str]:
+        try:
+            plane.discard_staged_run(run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"run_id": run_id, "status": "discarded"}
 
     @app.post("/api/runs/{run_id}/answer")
     def answer_run(run_id: str, body: dict[str, Any]) -> dict[str, str]:

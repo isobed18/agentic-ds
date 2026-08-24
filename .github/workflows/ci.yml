@@ -1,0 +1,60 @@
+# Runs the same two commands the working agreement runs locally: the whole
+# test suite, and ruff. Nothing here talks to a model -- the suite must pass
+# on a machine with no Ollama, which is also the property that makes it
+# meaningful, since a test that quietly needs a local 27B model is a test that
+# only ever runs on one laptop.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[api,dev,sandbox]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Test
+        run: pytest -p no:cacheprovider
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm --prefix web ci
+      # `build` is `tsc -b && vite build`, so this type-checks as well.
+      - name: Build
+        run: npm --prefix web run build
+      # The bundle is committed so the server can be run straight from a
+      # checkout. If a source change lands without a rebuild, the deployed UI
+      # is silently the previous one -- which has happened here before.
+      - name: The committed bundle matches the sources
+        run: |
+          if ! git diff --quiet -- src/ads/api/static; then
+            echo "::error::src/ads/api/static is stale. Run: npm --prefix web run build"
+            git diff --stat -- src/ads/api/static
+            exit 1
+          fi

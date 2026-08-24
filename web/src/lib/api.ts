@@ -23,6 +23,10 @@ export interface WorkflowNode {
   status: StageStatus;
   attempt_count: number;
   retry_count: number;
+  /** Wall time summed over this stage's attempts; null before it has run. */
+  elapsed_seconds?: number | null;
+  started_at?: string | null;
+  ended_at?: string | null;
   branch_of?: string | null;
   label?: string;
 }
@@ -222,7 +226,18 @@ export interface StageAttempt {
   artifact_ids: string[];
   verdict?: string | null;
   error?: string | null;
-  critique?: string | null;
+  /**
+   * The orchestrator's rubric result. Typed as a string here for as long as
+   * anyone can remember, while the API has always sent the object -- so the
+   * one field that explains why an attempt was rejected could not be read.
+   */
+  critique?: StageCritique | null;
+}
+
+export interface StageCritique {
+  rubric_version?: string;
+  unmet_criteria?: string[];
+  findings?: { check_id: string; severity: string; evidence?: string | null }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */
@@ -413,6 +428,31 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+
+  /**
+   * Choosing a dataset starts a run immediately and stops it after intake and
+   * schema discovery. What comes back is a real run id and the profile, so the
+   * pipeline can be drawn before anything has been configured.
+   */
+  stageRun: (sourceId: string) =>
+    request<{ run_id: string; status: string; profile: SourceProfile }>("/api/runs/staged", {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId }),
+    }),
+  /** Amend a staged run's configuration. Accepted while it is still staging. */
+  updateStaged: (runId: string, configuration: Record<string, unknown>) =>
+    request<{ configuration: Record<string, unknown> }>(`/api/runs/${runId}/staged`, {
+      method: "PATCH",
+      body: JSON.stringify(configuration),
+    }),
+  /** Continue a staged run through the rest of the pipeline. Same run id. */
+  startStaged: (runId: string, configuration: Record<string, unknown>) =>
+    request<{ run_id: string; status: string }>(`/api/runs/${runId}/start`, {
+      method: "POST",
+      body: JSON.stringify(configuration),
+    }),
+  discardStaged: (runId: string) =>
+    request<{ run_id: string; status: string }>(`/api/runs/${runId}/discard`, { method: "POST" }),
   runOptions: () => request<RunOptions>("/api/run-options"),
   dataSources: () => request<DataSource[]>("/api/data-sources"),
   sourceProfile: (id: string) =>

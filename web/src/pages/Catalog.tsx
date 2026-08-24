@@ -1,3 +1,4 @@
+import { t } from "../lib/i18n";
 /**
  * Sidebar destinations: Datasets, Experiments, Models, Reports, Settings, Home.
  *
@@ -67,10 +68,10 @@ const num = (n: number, d = 4) => (Number.isFinite(n) ? n.toFixed(d) : "—");
 export function Datasets() {
   const { data, error, loading } = useAsync<DatasetSummary[]>(() => api.datasets());
   return (
-    <Page title="Datasets" subtitle="Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.">
-      {loading && <Spinner label="Loading datasets…" />}
+    <Page title={t("Datasets")} subtitle={t("Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.")}>
+      {loading && <Spinner label={t("Loading datasets…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title="No datasets yet" hint="Drop files into data/ and run the pipeline to profile them." />}
+      {data?.length === 0 && <Empty title={t("No datasets yet")} hint={t("Drop files into data/ and run the pipeline to profile them.")} />}
       <div className="space-y-3">
         {data?.map((d) => (
           <Disclosure
@@ -92,10 +93,10 @@ export function Datasets() {
             ) : (
               <>
                 <div className="mb-3 flex flex-wrap gap-2">
-                  <Metric label="Rows" value={fmt(d.rows ?? 0)} />
-                  <Metric label="Columns" value={String(d.columns ?? 0)} />
-                  <Metric label="Candidate keys" value={String(d.candidate_keys ?? 0)} />
-                  <Metric label="Sensitive" value={String(d.sensitive_columns ?? 0)} />
+                  <Metric label={t("Rows")} value={fmt(d.rows ?? 0)} />
+                  <Metric label={t("Columns")} value={String(d.columns ?? 0)} />
+                  <Metric label={t("Candidate keys")} value={String(d.candidate_keys ?? 0)} />
+                  <Metric label={t("Sensitive")} value={String(d.sensitive_columns ?? 0)} />
                 </div>
                 <DataTable
                   columns={["Table", "Format", "Rows", "Columns", "Keys", "Issues"]}
@@ -114,10 +115,10 @@ export function Datasets() {
 export function Models() {
   const { data, error, loading } = useAsync<ModelSummary[]>(() => api.models());
   return (
-    <Page title="Models" subtitle="Trained artifacts with their measured holdout performance and provenance.">
-      {loading && <Spinner label="Loading models…" />}
+    <Page title={t("Models")} subtitle={t("Trained artifacts with their measured holdout performance and provenance.")}>
+      {loading && <Spinner label={t("Loading models…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title="No models yet" hint="Complete a run through the training stage to save a model." />}
+      {data?.length === 0 && <Empty title={t("No models yet")} hint={t("Complete a run through the training stage to save a model.")} />}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {data?.map((m) => (
           <article key={m.artifact_id} className="card px-4 py-3.5">
@@ -130,9 +131,9 @@ export function Models() {
             </div>
             <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
               <Pair label={`Holdout ${m.metric}`} value={num(m.holdout_score, 2)} />
-              <Pair label="CV mean" value={num(m.cv_mean, 2)} />
-              <Pair label="CV std" value={num(m.cv_std, 2)} />
-              <Pair label="Training rows" value={fmt(m.training_rows)} />
+              <Pair label={t("CV mean")} value={num(m.cv_mean, 2)} />
+              <Pair label={t("CV std")} value={num(m.cv_std, 2)} />
+              <Pair label={t("Training rows")} value={fmt(m.training_rows)} />
             </dl>
             <p className="mt-2.5 border-t border-line-soft pt-2 font-mono text-[10.5px] text-ink-faint">
               run {m.run_id} · {m.candidate_count} candidates
@@ -147,10 +148,10 @@ export function Models() {
 export function Reports() {
   const { data, error, loading } = useAsync<ReportSummary[]>(() => api.reports());
   return (
-    <Page title="Reports" subtitle="Generated evaluation reports, downloadable as markdown.">
-      {loading && <Spinner label="Loading reports…" />}
+    <Page title={t("Reports")} subtitle={t("Generated evaluation reports, downloadable as markdown.")}>
+      {loading && <Spinner label={t("Loading reports…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title="No reports yet" hint="Reports appear once a run reaches the report stage." />}
+      {data?.length === 0 && <Empty title={t("No reports yet")} hint={t("Reports appear once a run reaches the report stage.")} />}
       <div className="space-y-2">
         {data?.map((r) => (
           <article key={r.artifact_id} className="card flex items-center gap-3 px-4 py-3">
@@ -159,7 +160,7 @@ export function Reports() {
               <p className="font-mono text-[11px] text-ink-faint">run {r.run_id}</p>
             </div>
             <a href={`/api/reports/${r.artifact_id}/download`} className="btn-ghost !py-1.5 text-xs" download>
-              Download
+              {t("Download")}
             </a>
           </article>
         ))}
@@ -171,10 +172,10 @@ export function Reports() {
 export function Experiments() {
   const { data, error, loading } = useAsync<ExperimentSummary[]>(() => api.experiments());
   return (
-    <Page title="Experiments" subtitle="Every run, with the decisions and gate outcomes it produced.">
-      {loading && <Spinner label="Loading experiments…" />}
+    <Page title={t("Experiments")} subtitle={t("Every run, with the decisions and gate outcomes it produced.")}>
+      {loading && <Spinner label={t("Loading experiments…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title="No experiments yet" hint="Start a run from Workflows." />}
+      {data?.length === 0 && <Empty title={t("No experiments yet")} hint={t("Start a run from Workflows.")} />}
       <div className="space-y-2">
         {data?.map((e) => (
           <Link key={e.run_id} to="/workflows" className="card block px-4 py-3 hover:border-ink-faint">
@@ -192,8 +193,8 @@ export function Experiments() {
 export function Settings() {
   const { data, error, loading } = useAsync<Hardening>(() => api.hardening());
   return (
-    <Page title="Settings" subtitle="Enforced guarantees. These are properties of the system, not preferences.">
-      {loading && <Spinner label="Loading…" />}
+    <Page title={t("Settings")} subtitle={t("Enforced guarantees. These are properties of the system, not preferences.")}>
+      {loading && <Spinner label={t("Loading…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
       <div className="space-y-3">
         {data && Object.entries(data).map(([group, values]) => (
@@ -219,22 +220,22 @@ export function Home() {
   const reports = useAsync<ReportSummary[]>(() => api.reports());
 
   return (
-    <Page title="Overview" subtitle="Local, self-hosted agentic data science. Nothing leaves this machine.">
+    <Page title={t("Overview")} subtitle={t("Local, self-hosted agentic data science. Nothing leaves this machine.")}>
       <div className="mb-5 flex flex-wrap gap-2">
-        <Metric label="Datasets" value={String(datasets.data?.length ?? "—")} />
-        <Metric label="Models" value={String(models.data?.length ?? "—")} />
-        <Metric label="Reports" value={String(reports.data?.length ?? "—")} />
+        <Metric label={t("Datasets")} value={String(datasets.data?.length ?? "—")} />
+        <Metric label={t("Models")} value={String(models.data?.length ?? "—")} />
+        <Metric label={t("Reports")} value={String(reports.data?.length ?? "—")} />
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <Link to="/workflows" className="card px-5 py-4 hover:border-brand-500">
-          <h3 className="text-sm font-semibold">Open the workflow</h3>
+          <h3 className="text-sm font-semibold">{t("Open the workflow")}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-mute">
             Run the pipeline, inspect each stage, and answer approval requests where the
             gate stops for a human.
           </p>
         </Link>
         <Link to="/datasets" className="card px-5 py-4 hover:border-brand-500">
-          <h3 className="text-sm font-semibold">Review your data</h3>
+          <h3 className="text-sm font-semibold">{t("Review your data")}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-mute">
             Profiles, candidate keys and sensitive-column detection — schema and statistics
             only, never raw rows.

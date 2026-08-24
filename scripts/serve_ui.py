@@ -18,6 +18,7 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, default=Path("data/artifacts"))
+    parser.add_argument("--data", type=Path, default=Path("data"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8077)
     args = parser.parse_args()
@@ -35,7 +36,11 @@ def main() -> None:
     args.artifacts.mkdir(parents=True, exist_ok=True)
     print(f"Serving artifacts from {args.artifacts.resolve()}")
     print(f"Open http://{args.host}:{args.port}")
-    uvicorn.run(create_app(args.artifacts), host=args.host, port=args.port)
+    uvicorn.run(
+        create_app(args.artifacts, source_roots=[args.data]),
+        host=args.host,
+        port=args.port,
+    )
 
 
 if __name__ == "__main__":

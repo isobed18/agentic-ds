@@ -47,6 +47,8 @@ def test_catalog_loads_all_documents_with_current_stage_and_trigger_vocabulary()
     assert {skill.skill_id for skill in catalog} == {
         "fe.high_cardinality_categoricals",
         "fe.temporal_features",
+        "intake.describing_a_dataset",
+        "intake.reading_a_schema",
         "validation.choosing_a_split",
     }
     assert all("feature_pipeline" not in skill.applies_to for skill in catalog)
