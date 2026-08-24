@@ -60,6 +60,11 @@ def _plane(tmp_path: Path) -> ControlPlane:
         store=ArtifactStore(tmp_path / "artifacts"),
         source_roots=(source_root,),
         upload_root=tmp_path / "uploads",
+        # Without this, agent mode constructs an OllamaClient and refuses the
+        # run when no model is reachable, so the test passed on a developer
+        # machine and could not pass anywhere else. Nothing here calls the
+        # model: the spec only needs an object to wire the agents to.
+        llm_factory=lambda: object(),
     )
 
 
