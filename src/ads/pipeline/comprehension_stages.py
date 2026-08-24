@@ -226,9 +226,7 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
         # add, never clear a checksum, and it is given no values.
         reviewed: list[DataCard] = []
         renamed: list[str] = []
-        enabled = agent_runtime_policy(state).investigator_enabled(
-            "sensitivity_investigation"
-        )
+        enabled = agent_runtime_policy(state).investigator_enabled("sensitivity_investigation")
         for card in cards if enabled else []:
             updated, changed = investigate_sensitivity(card, llm)
             reviewed.append(updated)

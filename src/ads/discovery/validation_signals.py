@@ -99,9 +99,9 @@ def _repeated_entities(card: DataCard, frame: pd.DataFrame) -> list[RepeatedEnti
                 frame[repeated_column].isin(domain_values),
                 [repeated_column, group_column],
             ]
-            group_counts = subset.groupby(
-                repeated_column, sort=False, dropna=False
-            )[group_column].nunique(dropna=False)
+            group_counts = subset.groupby(repeated_column, sort=False, dropna=False)[
+                group_column
+            ].nunique(dropna=False)
             spanning_value_count = int((group_counts > 1).sum())
             missing_group_value_count = int(
                 subset.loc[subset[group_column].isna(), repeated_column].nunique()
@@ -134,8 +134,7 @@ def full_coverage_group_columns(signals: ValidationSignals) -> list[str]:
         if set(containment) != repeated_columns:
             continue
         if all(
-            item.spanning_value_count == 0
-            and item.missing_group_value_count == 0
+            item.spanning_value_count == 0 and item.missing_group_value_count == 0
             for item in containment.values()
         ):
             safe.append(candidate.column)
@@ -234,9 +233,7 @@ def detect_validation_signals(
 
     repeated = _repeated_entities(card, frame)
     temporal = _temporal_spans(card, frame)
-    n_usable_rows, minority_count, minority_rate = _class_support(
-        frame, target_column, task_type
-    )
+    n_usable_rows, minority_count, minority_rate = _class_support(frame, target_column, task_type)
     warnings = _small_sample_warnings(
         n_usable_rows=n_usable_rows,
         n_folds=n_folds,
@@ -307,31 +304,22 @@ def validation_signals_digest(signals: ValidationSignals) -> str:
 
         safe_groups = full_coverage_group_columns(signals)
         if safe_groups:
-            lines.append(
-                "FULL-COVERAGE GROUP CANDIDATES: " + ", ".join(sorted(safe_groups))
-            )
+            lines.append("FULL-COVERAGE GROUP CANDIDATES: " + ", ".join(sorted(safe_groups)))
         else:
             lines.append("NO FULL-COVERAGE GROUP COLUMN:")
             for candidate in signals.repeated_entity_keys:
                 containment = {item.column: item for item in candidate.containment}
                 if not containment:
-                    lines.append(
-                        f"  - grouping by {candidate.column}: containment not measured"
-                    )
+                    lines.append(f"  - grouping by {candidate.column}: containment not measured")
                     continue
-                for repeated_column in sorted(
-                    item.column for item in signals.repeated_entity_keys
-                ):
+                for repeated_column in sorted(item.column for item in signals.repeated_entity_keys):
                     cell = containment.get(repeated_column)
                     if cell is None:
                         lines.append(
                             f"  - grouping by {candidate.column}: "
                             f"{repeated_column} was not measured"
                         )
-                    elif (
-                        cell.spanning_value_count > 0
-                        or cell.missing_group_value_count > 0
-                    ):
+                    elif cell.spanning_value_count > 0 or cell.missing_group_value_count > 0:
                         detail = (
                             f"grouping by {candidate.column} leaves "
                             f"{cell.spanning_value_count} of "
@@ -340,8 +328,7 @@ def validation_signals_digest(signals: ValidationSignals) -> str:
                         )
                         if cell.missing_group_value_count:
                             detail += (
-                                f" and {cell.missing_group_value_count} with a "
-                                "missing group value"
+                                f" and {cell.missing_group_value_count} with a missing group value"
                             )
                         lines.append(f"  - {detail}")
     else:

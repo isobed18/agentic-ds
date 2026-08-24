@@ -77,9 +77,7 @@ def _encode(value: Any) -> Any:
         return {_TAG: "type", "class_path": _symbol_path(value)}
     if callable(value):
         return {_TAG: "callable", "path": _symbol_path(value)}
-    raise RecipeError(
-        f"Unsupported constructor value {value!r} of type {type(value).__name__}."
-    )
+    raise RecipeError(f"Unsupported constructor value {value!r} of type {type(value).__name__}.")
 
 
 def _decode(value: Any) -> Any:
@@ -113,9 +111,7 @@ def component_recipe(component: BaseEstimator) -> SklearnComponentRecipe:
     """Capture only the importable class and shallow constructor parameters."""
     if not isinstance(component, BaseEstimator):
         raise TypeError("component must be a scikit-learn BaseEstimator.")
-    parameters = {
-        name: _encode(value) for name, value in component.get_params(deep=False).items()
-    }
+    parameters = {name: _encode(value) for name, value in component.get_params(deep=False).items()}
     return SklearnComponentRecipe(
         class_path=_symbol_path(type(component)),
         parameters=parameters,

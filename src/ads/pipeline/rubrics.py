@@ -186,11 +186,13 @@ def build_pipeline_rubrics() -> RubricRegistry:
                     description="Every non-target input has exactly one feature route.",
                     check=_artifact_check(
                         FeatureSpec,
-                        lambda spec: len(spec.input_columns) - 1
-                        == len(spec.numeric_columns)
-                        + len(spec.categorical_columns)
-                        + len(spec.datetime_columns)
-                        + len(spec.dropped_columns),
+                        lambda spec: (
+                            len(spec.input_columns) - 1
+                            == len(spec.numeric_columns)
+                            + len(spec.categorical_columns)
+                            + len(spec.datetime_columns)
+                            + len(spec.dropped_columns)
+                        ),
                     ),
                 ),
                 Criterion(
@@ -198,8 +200,10 @@ def build_pipeline_rubrics() -> RubricRegistry:
                     description="Learned preprocessing statistics are fitted per fold.",
                     check=_artifact_check(
                         FeatureSpec,
-                        lambda spec: spec.preprocessing_scope == "fit_per_training_fold"
-                        and not spec.source_mutation_allowed,
+                        lambda spec: (
+                            spec.preprocessing_scope == "fit_per_training_fold"
+                            and not spec.source_mutation_allowed
+                        ),
                     ),
                 ),
             ),
@@ -237,10 +241,9 @@ def build_pipeline_rubrics() -> RubricRegistry:
                     description="Model selection included exactly one mandatory naive baseline.",
                     check=_artifact_check(
                         TrainingReport,
-                        lambda report: len(
-                            [result for result in report.results if result.is_baseline]
-                        )
-                        == 1,
+                        lambda report: (
+                            len([result for result in report.results if result.is_baseline]) == 1
+                        ),
                     ),
                 ),
             ),
@@ -262,8 +265,7 @@ def build_pipeline_rubrics() -> RubricRegistry:
                     check=_artifact_check(
                         EvaluationReport,
                         lambda report: any(
-                            comparison.is_baseline
-                            for comparison in report.candidate_comparisons
+                            comparison.is_baseline for comparison in report.candidate_comparisons
                         ),
                     ),
                 ),

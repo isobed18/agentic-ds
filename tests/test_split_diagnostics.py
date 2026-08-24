@@ -128,9 +128,7 @@ class TestDegenerateSplitGate:
     def test_tiny_folds_alone_are_enough_to_escalate(self) -> None:
         decision = evaluate_gate(
             stage=GatePolicy.load().stage("eda"),
-            signals=QualitySignals(
-                split_retained_rate=1.0, min_validation_fold_size=4
-            ),
+            signals=QualitySignals(split_retained_rate=1.0, min_validation_fold_size=4),
             profile=CHECKPOINTED,
         )
         assert decision.reason_code == "degenerate_split"
@@ -144,9 +142,7 @@ class TestDegenerateSplitGate:
         """
         decision = evaluate_gate(
             stage=GatePolicy.load().stage("eda"),
-            signals=QualitySignals(
-                split_retained_rate=0.2, min_validation_fold_size=5
-            ),
+            signals=QualitySignals(split_retained_rate=0.2, min_validation_fold_size=5),
             profile=CHECKPOINTED,
         )
         message = decision.human_prompt.context_summary
@@ -156,9 +152,7 @@ class TestDegenerateSplitGate:
     def test_low_coverage_alone_does_not_escalate_by_default(self) -> None:
         decision = evaluate_gate(
             stage=GatePolicy.load().stage("eda"),
-            signals=QualitySignals(
-                split_retained_rate=0.2, min_validation_fold_size=5_000
-            ),
+            signals=QualitySignals(split_retained_rate=0.2, min_validation_fold_size=5_000),
             profile=CHECKPOINTED,
         )
         assert "degenerate_split" not in decision.triggered_rules
@@ -168,9 +162,7 @@ class TestDegenerateSplitGate:
         policy = GatePolicy.from_dict({"thresholds": {"min_split_retained_rate": 0.5}})
         decision = evaluate_gate(
             stage=GatePolicy.load().stage("eda"),
-            signals=QualitySignals(
-                split_retained_rate=0.2, min_validation_fold_size=5_000
-            ),
+            signals=QualitySignals(split_retained_rate=0.2, min_validation_fold_size=5_000),
             profile=CHECKPOINTED,
             policy=policy,
         )
@@ -179,9 +171,12 @@ class TestDegenerateSplitGate:
 
     def test_rule_is_opt_in_like_other_signal_rules(self) -> None:
         signals = QualitySignals(split_retained_rate=0.1, min_validation_fold_size=2)
-        assert evaluate_gate(
-            stage=GatePolicy.load().stage("eda"), signals=signals, profile=FULL_AUTO
-        ).verdict is GateVerdict.AUTO_PROCEED
+        assert (
+            evaluate_gate(
+                stage=GatePolicy.load().stage("eda"), signals=signals, profile=FULL_AUTO
+            ).verdict
+            is GateVerdict.AUTO_PROCEED
+        )
 
     def test_absent_signals_do_not_fire(self) -> None:
         decision = evaluate_gate(

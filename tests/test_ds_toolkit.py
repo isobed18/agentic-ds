@@ -189,9 +189,7 @@ class TestPreprocessor:
     def test_unknown_target_fails_instead_of_becoming_a_feature(self) -> None:
         frame = pd.DataFrame({"feature": [1.0, 2.0], "target": [3.0, 4.0]})
         with pytest.raises(ValueError, match="not present"):
-            build_preprocessor(
-                _card(frame), target_column="targte", excluded_columns=set()
-            )
+            build_preprocessor(_card(frame), target_column="targte", excluded_columns=set())
 
     def test_feature_names_require_fitting(self) -> None:
         frame = pd.DataFrame({"feature": [1.0, 2.0], "target": [3.0, 4.0]})

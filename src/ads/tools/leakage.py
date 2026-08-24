@@ -127,9 +127,8 @@ def register_leakage_tools(registry: ToolRegistry) -> ToolRegistry:
         ToolDefinition(
             tool_id="test_recorded_before_prediction",
             arguments={
-                'proposal': (
-                    'LeakageChallengeProposal object: finding_fingerprint, '
-                    'test_kind, columns'
+                "proposal": (
+                    "LeakageChallengeProposal object: finding_fingerprint, test_kind, columns"
                 ),
             },
             tier=PermissionTier.READ_DATA,

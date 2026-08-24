@@ -41,9 +41,7 @@ class ModelBlobReference(FrozenModel):
 class LabelIssueMeasurement(FrozenModel):
     """Row-free Cleanlab summary computed from out-of-fold probabilities."""
 
-    code: Literal["classification_label_issue_candidates"] = (
-        "classification_label_issue_candidates"
-    )
+    code: Literal["classification_label_issue_candidates"] = "classification_label_issue_candidates"
     provider: Literal["cleanlab"] = "cleanlab"
     evaluated_row_count: int = Field(ge=1)
     eligible_row_count: int = Field(ge=1)
@@ -137,8 +135,7 @@ class TrainingReport(Artifact):
             self.training_row_count is not None
             and self.target_null_rows_dropped is not None
             and self.input_row_count is not None
-            and self.training_row_count + self.target_null_rows_dropped
-            != self.input_row_count
+            and self.training_row_count + self.target_null_rows_dropped != self.input_row_count
         ):
             raise ValueError(
                 "training_row_count + target_null_rows_dropped must equal input_row_count."
@@ -154,17 +151,12 @@ class TrainingReport(Artifact):
             value is not None for value in fit_evidence
         ):
             raise ValueError("Training fit-scope evidence must be complete or entirely absent.")
-        if self.fitted_pipeline_verified != all(
-            value is not None for value in fit_evidence
-        ):
+        if self.fitted_pipeline_verified != all(value is not None for value in fit_evidence):
             raise ValueError(
                 "A fitted-pipeline verification and complete fit-scope evidence "
                 "must be recorded together."
             )
-        if (
-            self.fit_scope == "outer_train_only"
-            and self.holdout_rows_used_for_fit != 0
-        ):
+        if self.fit_scope == "outer_train_only" and self.holdout_rows_used_for_fit != 0:
             raise ValueError("outer_train_only cannot report holdout rows used for fit.")
         candidate_ids = [result.candidate_id for result in self.results]
         if len(candidate_ids) != len(set(candidate_ids)):

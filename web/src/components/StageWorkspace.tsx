@@ -200,7 +200,11 @@ export function StageWorkspace({
               <li key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm">
                 <Badge tone={toneFor(g.verdict)}>{verdictLabel(g.verdict)}</Badge>
                 <span className="text-ink-soft">{reasonLabel(g.reason_code)}</span>
-                {g.attempt > 1 && <span className="text-xs text-ink-mute">attempt {g.attempt}</span>}
+                {g.attempt > 1 && (
+                  <span className="text-xs text-ink-mute">
+                    {t("attempt {n}", { n: g.attempt })}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -223,8 +227,8 @@ export function StageWorkspace({
 
       {!loading && !error && outputs.length === 0 && (
         <Empty
-          title={node.status === "pending" ? "This stage has not run yet" : "No output recorded"}
-          hint={node.status === "pending" ? "Start a run to populate this workspace." : undefined}
+          title={node.status === "pending" ? t("This stage has not run yet") : t("No output recorded")}
+          hint={node.status === "pending" ? t("Start a run to populate this workspace.") : undefined}
         />
       )}
     </div>
@@ -306,8 +310,8 @@ function OutputBlock({ output }: { output: StageOutput }) {
               <article key={i} className={cx("card px-4 py-3", i === 0 && "border-brand-500 ring-2 ring-brand-100")}>
                 <div className="mb-1 flex items-start justify-between gap-2">
                   <h4 className="text-sm font-semibold leading-tight">{c.title}</h4>
-                  {c.viable === false && <Badge tone="stop">not viable</Badge>}
-                  {i === 0 && c.viable !== false && <Badge tone="brand">selected</Badge>}
+                  {c.viable === false && <Badge tone="stop">{t("not viable")}</Badge>}
+                  {i === 0 && c.viable !== false && <Badge tone="brand">{t("selected")}</Badge>}
                 </div>
                 <dl className="mt-2 grid grid-cols-3 gap-2 border-t border-line-soft pt-2">
                   <Pair label={t("Target")} value={c.target ?? "—"} />
@@ -324,10 +328,10 @@ function OutputBlock({ output }: { output: StageOutput }) {
       {has("model_comparison") && (
         <Disclosure title={t("Model comparison")} count={s.model_comparison!.length} defaultOpen>
           <DataTable
-            columns={["Candidate", "Role", "CV mean", "CV std", "Holdout"]}
+            columns={[t("Candidate"), t("Role"), t("CV mean"), t("CV std"), t("Holdout")]}
             rows={s.model_comparison!.map((m) => [
               m.selected ? `${m.candidate}  ★` : m.candidate,
-              m.baseline ? "baseline" : m.selected ? "selected" : "candidate",
+              m.baseline ? t("baseline") : m.selected ? t("selected") : t("candidate"),
               fmt(m.cv_mean),
               fmt(m.cv_std),
               fmt(m.holdout),
@@ -372,7 +376,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
           <ul className="space-y-1.5">
             {s.history_alerts!.map((a, i) => (
               <li key={i} className="flex items-start gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-soft">
-                <Badge tone={a.resolved ? "ok" : "warn"}>{a.resolved ? "resolved" : "open"}</Badge>
+                <Badge tone={a.resolved ? "ok" : "warn"}>{a.resolved ? t("resolved") : t("open")}</Badge>
                 <span>{a.detail}</span>
               </li>
             ))}
@@ -399,6 +403,52 @@ function OutputBlock({ output }: { output: StageOutput }) {
       {s.rationale && (
         <Disclosure title={t("Rationale")}>
           <p className="max-w-3xl text-sm leading-relaxed text-ink-soft">{s.rationale}</p>
+        </Disclosure>
+      )}
+
+      {has("quality_checks") && (
+        <Disclosure title={t("Quality checks")} count={s.quality_checks!.length} defaultOpen>
+          <ul className="space-y-1.5">
+            {s.quality_checks!.map((qc, i) => (
+              <li key={i} className="flex items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-soft">
+                <span className={cx(
+                  "grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold text-white",
+                  qc.passed ? "bg-ok-500" : "bg-stop-500"
+                )}>
+                  {qc.passed ? "✓" : "!"}
+                </span>
+                <span className="font-medium text-ink">{qc.label}</span>
+                {qc.detail && <span className="text-xs text-ink-mute">· {qc.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      )}
+
+      {has("panel") && (
+        <Disclosure title={t("Agent panel execution & activity")} count={s.panel!.length} defaultOpen>
+          <div className="space-y-2">
+            <DataTable
+              columns={[
+                t("Member"),
+                t("Model"),
+                t("Turns"),
+                t("Result"),
+                t("Validation checks"),
+                t("Repairs"),
+                t("Duration"),
+              ]}
+              rows={s.panel!.map((m) => [
+                `#${m.member}`,
+                m.model,
+                m.attempts,
+                m.accepted ? t("Accepted") : t("Rejected"),
+                m.validation_failures?.length ? m.validation_failures.join(", ") : t("All passed"),
+                m.repairs?.length ? m.repairs.join(", ") : t("None needed"),
+                m.latency_s !== undefined ? `${m.latency_s}s` : "—",
+              ])}
+            />
+          </div>
         </Disclosure>
       )}
 

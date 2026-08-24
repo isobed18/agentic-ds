@@ -196,14 +196,14 @@ export function Workflows() {
           </div>
 
           {currentRun && <Badge tone={toneFor(currentRun.status)}>{statusLabel(currentRun.status)}</Badge>}
-          {currentRun?.branch_label && <Badge tone="brand">branch: {currentRun.branch_label}</Badge>}
+          {currentRun?.branch_label && <Badge tone="brand">{t("branch")}: {currentRun.branch_label}</Badge>}
           {family.length > 1 && (
             <span className="flex items-center gap-1">
               {family.map((r) => (
                 <button
                   key={r.run_id}
                   onClick={() => setRunId(r.run_id)}
-                  title={r.branch_label ?? "original"}
+                  title={r.branch_label ?? t("original")}
                   className={cx(
                     "rounded-md border px-2 py-0.5 text-[11px]",
                     r.run_id === runId
@@ -211,7 +211,7 @@ export function Workflows() {
                       : "border-line text-ink-mute hover:bg-surface-sunken",
                   )}
                 >
-                  {r.branch_label ? r.branch_label.slice(0, 22) : "original"}
+                  {r.branch_label ? r.branch_label.slice(0, 22) : t("original")}
                 </button>
               ))}
             </span>
@@ -229,7 +229,7 @@ export function Workflows() {
                 non-wrapping row of status widgets and was reported as missing
                 entirely, so it now keeps its width and says what it starts. */}
             <button onClick={() => setLaunching(true)} className="btn-primary !py-1.5 whitespace-nowrap text-xs">
-              + New run
+              + {t("New run")}
             </button>
           </div>
         </div>

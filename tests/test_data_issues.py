@@ -6,10 +6,7 @@ from ads.training.data_issues import measure_classification_label_issues
 def test_cleanlab_summary_measures_known_oof_label_conflicts_without_rows() -> None:
     labels = np.asarray([0] * 20 + [1] * 20)
     probabilities = np.asarray(
-        [[0.95, 0.05]] * 18
-        + [[0.01, 0.99]] * 2
-        + [[0.05, 0.95]] * 18
-        + [[0.99, 0.01]] * 2
+        [[0.95, 0.05]] * 18 + [[0.01, 0.99]] * 2 + [[0.05, 0.95]] * 18 + [[0.99, 0.01]] * 2
     )
     result = measure_classification_label_issues(
         labels=labels,

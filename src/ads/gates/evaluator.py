@@ -189,11 +189,9 @@ def build_human_prompt(
         )
 
     question = (
-        f"Stage {stage.id!r} is a required checkpoint. Review the output and choose "
-        "how to proceed."
+        f"Stage {stage.id!r} is a required checkpoint. Review the output and choose how to proceed."
         if policy_only
-        else f"Stage {stage.id!r} stopped because a problem was detected. "
-        "Your decision is needed."
+        else f"Stage {stage.id!r} stopped because a problem was detected. Your decision is needed."
     )
 
     return HumanPrompt(

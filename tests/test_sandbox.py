@@ -47,9 +47,7 @@ def test_create_command_enforces_the_security_boundary(tmp_path: Path) -> None:
     assert _option_value(command, "--cpus") == "1.0"
     assert _option_value(command, "--pids-limit") == "128"
     assert "--privileged" not in command
-    environment = [
-        command[index + 1] for index, value in enumerate(command) if value == "--env"
-    ]
+    environment = [command[index + 1] for index, value in enumerate(command) if value == "--env"]
     assert environment == [
         "HOME=/tmp",
         "JUPYTER_RUNTIME_DIR=/tmp/jupyter",
@@ -71,9 +69,7 @@ def test_create_command_enforces_the_security_boundary(tmp_path: Path) -> None:
 
 
 def test_mount_sources_must_exist_and_be_distinct(tmp_path: Path) -> None:
-    missing = SandboxManager(
-        SandboxConfig(data_dir=tmp_path / "missing", artifacts_dir=tmp_path)
-    )
+    missing = SandboxManager(SandboxConfig(data_dir=tmp_path / "missing", artifacts_dir=tmp_path))
     with pytest.raises(FileNotFoundError):
         missing.build_create_command("run")
 

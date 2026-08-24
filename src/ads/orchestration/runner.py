@@ -66,9 +66,7 @@ class Stage(Protocol):
     reach the runtime, decide its own retries, or talk to the gate.
     """
 
-    def __call__(
-        self, state: RunState, correction: list[str] | None = None
-    ) -> StageResult: ...
+    def __call__(self, state: RunState, correction: list[str] | None = None) -> StageResult: ...
 
 
 class RunStatus:
@@ -207,9 +205,7 @@ def run_workflow(
         # The Orchestrator judges the stage against a rubric the stage does not
         # own. A stage-supplied critique is kept only when no rubric exists —
         # otherwise the judged would also be the judge.
-        attempt.critique = _critique(
-            rubrics, current, result, state, critic_llm
-        ) or result.critique
+        attempt.critique = _critique(rubrics, current, result, state, critic_llm) or result.critique
         attempt.ended_at = datetime.now(UTC)
 
         decision = evaluate_gate(
@@ -289,7 +285,10 @@ def _critique(
         facts={"signals": result.signals, "run_state": state},
     )
     return critique_stage(
-        rubric, context, llm=llm, artifact_digest=result.digest  # type: ignore[arg-type]
+        rubric,
+        context,
+        llm=llm,
+        artifact_digest=result.digest,  # type: ignore[arg-type]
     )
 
 
@@ -406,9 +405,7 @@ def resume_workflow(
         if start is None:
             return RunOutcome(state.run_id, RunStatus.COMPLETED, None, [])
     else:
-        raise ValueError(
-            f"unknown decision {decision!r}; expected approve, retry, or abort"
-        )
+        raise ValueError(f"unknown decision {decision!r}; expected approve, retry, or abort")
 
     return run_workflow(
         spec,

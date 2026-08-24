@@ -65,21 +65,22 @@ class TestSpecValidation:
     def test_duplicate_stage_ids_rejected(self) -> None:
         with pytest.raises(ValueError, match="duplicate stage ids"):
             WorkflowSpec(
-                name="w", version="1",
+                name="w",
+                version="1",
                 stages=(_stage_def("a"), _stage_def("a")),
-                edges=(), entry="a",
+                edges=(),
+                entry="a",
             )
 
     def test_unknown_entry_rejected(self) -> None:
         with pytest.raises(ValueError, match="entry stage"):
-            WorkflowSpec(
-                name="w", version="1", stages=(_stage_def("a"),), edges=(), entry="ghost"
-            )
+            WorkflowSpec(name="w", version="1", stages=(_stage_def("a"),), edges=(), entry="ghost")
 
     def test_edge_to_unknown_stage_rejected(self) -> None:
         with pytest.raises(ValueError, match="edge to unknown stage"):
             WorkflowSpec(
-                name="w", version="1",
+                name="w",
+                version="1",
                 stages=(_stage_def("a"),),
                 edges=(Edge("a", "ghost"),),
                 entry="a",
@@ -88,9 +89,11 @@ class TestSpecValidation:
     def test_unreachable_stage_rejected(self) -> None:
         with pytest.raises(ValueError, match="unreachable"):
             WorkflowSpec(
-                name="w", version="1",
+                name="w",
+                version="1",
                 stages=(_stage_def("a"), _stage_def("orphan")),
-                edges=(), entry="a",
+                edges=(),
+                entry="a",
             )
 
     def test_proceed_self_edge_rejected(self) -> None:
@@ -105,7 +108,8 @@ class TestSpecValidation:
         """Catches a stage inserted before its dependency."""
         with pytest.raises(ValueError, match="which no earlier stage produces"):
             linear_spec(
-                "w", "1",
+                "w",
+                "1",
                 [
                     _stage_def("first", consumes=(ArtifactType.EDA_REPORT,)),
                     _stage_def("second", produces=(ArtifactType.EDA_REPORT,)),
@@ -114,7 +118,8 @@ class TestSpecValidation:
 
     def test_valid_dependency_order_accepted(self) -> None:
         spec = linear_spec(
-            "w", "1",
+            "w",
+            "1",
             [
                 _stage_def("first", produces=(ArtifactType.EDA_REPORT,)),
                 _stage_def("second", consumes=(ArtifactType.EDA_REPORT,)),
@@ -128,7 +133,8 @@ class TestSerialisation:
 
     def test_round_trip(self) -> None:
         spec = linear_spec(
-            "baseline", "2",
+            "baseline",
+            "2",
             [
                 _stage_def("intake", produces=(ArtifactType.DATA_CARD,)),
                 _stage_def("eda", consumes=(ArtifactType.DATA_CARD,)),
@@ -161,6 +167,7 @@ class TestHappyPath:
             def stage(s: RunState, correction=None) -> StageResult:
                 calls.append(stage_id)
                 return StageResult(artifacts=[_artifact(stage_id)])
+
             return stage
 
         spec = linear_spec("w", "1", [_stage_def("a"), _stage_def("b"), _stage_def("c")])
@@ -176,9 +183,7 @@ class TestHappyPath:
     def test_artifacts_are_persisted_per_stage(self, state: RunState) -> None:
         spec = linear_spec("w", "1", [_stage_def("a")])
         registry = ComponentRegistry()
-        registry.register(
-            "a_component", lambda s, c: StageResult(artifacts=[_artifact("only")])
-        )
+        registry.register("a_component", lambda s, c: StageResult(artifacts=[_artifact("only")]))
         run_workflow(spec, registry, state)
         assert len(state.store.list("run1", artifact_type=ArtifactType.VALIDATION_STRATEGY)) == 1
 
@@ -211,9 +216,7 @@ class TestCritiqueLoop:
         return stage, seen
 
     def _spec(self) -> WorkflowSpec:
-        return linear_spec(
-            "w", "1", [_stage_def("eda"), _stage_def("done")], retry_stages=["eda"]
-        )
+        return linear_spec("w", "1", [_stage_def("eda"), _stage_def("done")], retry_stages=["eda"])
 
     def _policy(self, max_attempts: int = 3) -> GatePolicy:
         return GatePolicy(
@@ -305,9 +308,7 @@ class TestEscalation:
 
     def test_escalation_is_resumable(self, tmp_path: Path) -> None:
         """Artifacts survive the stop, which is what makes resume possible."""
-        state = RunState(
-            run_id="run1", store=ArtifactStore(tmp_path / "a"), profile=CHECKPOINTED
-        )
+        state = RunState(run_id="run1", store=ArtifactStore(tmp_path / "a"), profile=CHECKPOINTED)
         spec = linear_spec("w", "1", [_stage_def("problem_discovery"), _stage_def("next")])
         registry = ComponentRegistry()
         registry.register(
@@ -357,7 +358,8 @@ class TestFailureHandling:
         """
         with pytest.raises(ValueError, match="cycle among non-retry edges"):
             WorkflowSpec(
-                name="w", version="1",
+                name="w",
+                version="1",
                 stages=(_stage_def("a"), _stage_def("b")),
                 edges=(Edge("a", "b"), Edge("b", "a")),
                 entry="a",
@@ -367,7 +369,8 @@ class TestFailureHandling:
         """The exact spec Codex used: declared out of execution order."""
         with pytest.raises(ValueError, match="cycle among non-retry edges"):
             WorkflowSpec(
-                name="w", version="1",
+                name="w",
+                version="1",
                 stages=(
                     _stage_def("seed"),
                     _stage_def("evaluation", produces=(ArtifactType.EDA_REPORT,)),
@@ -384,7 +387,8 @@ class TestFailureHandling:
     def test_retry_cycle_is_bounded_at_runtime(self, state: RunState) -> None:
         """Retry edges bypass the sort, so the step backstop still earns its keep."""
         spec = WorkflowSpec(
-            name="w", version="1",
+            name="w",
+            version="1",
             stages=(_stage_def("a"), _stage_def("b")),
             edges=(
                 Edge("a", "b", EdgeCondition.ON_PROCEED),
@@ -473,9 +477,7 @@ class TestRunStateProjection:
                 else []
             )
             return StageResult(
-                critique=CritiqueResult(
-                    stage_id="eda", rubric_version="eda.v1", findings=findings
-                )
+                critique=CritiqueResult(stage_id="eda", rubric_version="eda.v1", findings=findings)
             )
 
         spec = linear_spec("w", "1", [_stage_def("eda")], retry_stages=["eda"])
@@ -483,7 +485,9 @@ class TestRunStateProjection:
         registry.register("eda_component", stage)
 
         outcome = run_workflow(
-            spec, registry, state,
+            spec,
+            registry,
+            state,
             policy=GatePolicy(stages={"eda": StageSpec(id="eda", max_attempts=3)}),
         )
         assert outcome.completed
@@ -521,9 +525,7 @@ class TestPerAttemptInputBinding:
     looked, so a correction derived from V1 was applied to a stage now reading V2.
     """
 
-    def test_retry_reads_the_same_inputs_as_the_rejected_attempt(
-        self, state: RunState
-    ) -> None:
+    def test_retry_reads_the_same_inputs_as_the_rejected_attempt(self, state: RunState) -> None:
         seen_rationales: list[str | None] = []
 
         def upstream(s: RunState, correction=None) -> StageResult:
@@ -539,13 +541,12 @@ class TestPerAttemptInputBinding:
             s.put(_artifact("V2"), stage_id="interloper")
             unmet = ["d.needs_work"] if len(seen_rationales) == 1 else []
             return StageResult(
-                critique=CritiqueResult(
-                    stage_id="down", rubric_version="v1", unmet_criteria=unmet
-                )
+                critique=CritiqueResult(stage_id="down", rubric_version="v1", unmet_criteria=unmet)
             )
 
         spec = linear_spec(
-            "w", "1",
+            "w",
+            "1",
             [
                 _stage_def("up", produces=(ArtifactType.VALIDATION_STRATEGY,)),
                 _stage_def("down", consumes=(ArtifactType.VALIDATION_STRATEGY,)),
@@ -557,7 +558,9 @@ class TestPerAttemptInputBinding:
         registry.register("down_component", downstream)
 
         outcome = run_workflow(
-            spec, registry, state,
+            spec,
+            registry,
+            state,
             policy=GatePolicy(
                 stages={
                     "down": StageSpec(
@@ -576,7 +579,8 @@ class TestPerAttemptInputBinding:
     def test_bindings_are_recorded_on_the_attempt(self, state: RunState) -> None:
         """Lineage must be inspectable, not inferred from timestamps."""
         spec = linear_spec(
-            "w", "1",
+            "w",
+            "1",
             [
                 _stage_def("up", produces=(ArtifactType.VALIDATION_STRATEGY,)),
                 _stage_def("down", consumes=(ArtifactType.VALIDATION_STRATEGY,)),

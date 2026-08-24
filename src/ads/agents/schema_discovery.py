@@ -159,7 +159,7 @@ def validate_columns_exist(
                         layer="semantic",
                         code="unknown_column",
                         detail=f"Column {column!r} does not exist in {table!r}. "
-                               f"Available: {known[:12]}",
+                        f"Available: {known[:12]}",
                         field_path=path,
                         repair_suggestion=suggest_name(column, known),
                     )
@@ -260,9 +260,7 @@ def build_spec() -> AgentSpec[IntegrationPlanProposal]:
         rubric="schema_discovery.v1",
         allowed_tools=frozenset({"candidate_keys", "join_overlap"}),
         max_tool_tier=PermissionTier.READ_DATA,
-        column_fields=frozenset(
-            {"base_grain", "group_by", "left_columns", "right_columns"}
-        ),
+        column_fields=frozenset({"base_grain", "group_by", "left_columns", "right_columns"}),
         # `rationale` appears on every join and aggregation step; matching by
         # name covers all of them. Everything else changes the shape of the ABT,
         # including `how` -- an inner join drops rows a left join keeps.
@@ -276,8 +274,7 @@ def build_context_with_evidence(
     """Context plus the derived facts the evidence validators need."""
     context = build_context(cards, relationships)
     context.facts["measured_pairs"] = {
-        (r.from_table, r.from_columns[0], r.to_table, r.to_columns[0])
-        for r in relationships
+        (r.from_table, r.from_columns[0], r.to_table, r.to_columns[0]) for r in relationships
     }
     context.facts["cardinality_by_pair"] = {
         (r.from_table, r.to_table): r.cardinality.value for r in relationships

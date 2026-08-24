@@ -16,9 +16,7 @@ from ads.testing.sample_data import write_sample_dataset
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--out", type=Path, default=Path("data/sample"), help="Output directory"
-    )
+    parser.add_argument("--out", type=Path, default=Path("data/sample"), help="Output directory")
     args = parser.parse_args()
 
     out = write_sample_dataset(args.out)

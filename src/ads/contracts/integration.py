@@ -76,9 +76,7 @@ class RowsPerParentStats(FrozenModel):
             else 0.0
         )
         expected_all_mean = (
-            self.matched_child_rows / self.all_parent_count
-            if self.all_parent_count
-            else 0.0
+            self.matched_child_rows / self.all_parent_count if self.all_parent_count else 0.0
         )
         if abs(self.mean_rows_per_referenced_parent - expected_referenced_mean) > 1e-6:
             raise ValueError("Referenced-parent mean does not match its named denominator.")
@@ -192,9 +190,7 @@ class AggregationStep(FrozenModel):
     """
 
     source_table: str
-    output_name: str = Field(
-        description="Name for the aggregated result; reference this in joins."
-    )
+    output_name: str = Field(description="Name for the aggregated result; reference this in joins.")
     group_by: list[str] = Field(min_length=1)
     aggregations: dict[str, str] = Field(
         description="Mapping of output column name -> SQL aggregate expression."

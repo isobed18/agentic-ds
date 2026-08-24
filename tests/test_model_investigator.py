@@ -130,9 +130,7 @@ class _Backend:
         if self.missing_row:
             predictions = predictions.iloc[:-1]
         predictions.to_csv(self.artifacts_dir / "predictions.csv", index=False)
-        (self.artifacts_dir / MANIFEST_NAME).write_text(
-            json.dumps(_manifest()), encoding="utf-8"
-        )
+        (self.artifacts_dir / MANIFEST_NAME).write_text(json.dumps(_manifest()), encoding="utf-8")
         return ExecutionResult(
             execution_count=1,
             outputs=(TextOutput(text="experiment complete\n", stream="stdout"),),
@@ -324,9 +322,7 @@ def test_unexpected_model_client_failure_degrades_inside_investigator(
     )
 
     assert result.experiment is None
-    assert result.audit.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
+    assert result.audit.members[0].validation_failures == ["investigation_error:KeyError"]
     assert backend.destroyed is False  # failure occurred before a session was created
 
 
@@ -442,8 +438,7 @@ def test_failing_model_agent_preserves_deterministic_training(
     assert result.signals is floor_signals
     assert result.artifacts[0] is report
     assert not any(
-        artifact.artifact_type is ArtifactType.MODEL_EXPERIMENT
-        for artifact in result.artifacts
+        artifact.artifact_type is ArtifactType.MODEL_EXPERIMENT for artifact in result.artifacts
     )
     audit = result.artifacts[-1]
     assert audit.artifact_type is ArtifactType.AGENT_AUDIT

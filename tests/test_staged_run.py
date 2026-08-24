@@ -91,9 +91,10 @@ def _settle(client: TestClient, run_id: str, target: str = "staged") -> None:
         if client.plane._runtime_runs[run_id].status == target:  # noqa: SLF001
             return
         time.sleep(0.02)
-    raise AssertionError(
-        f"run stayed {client.plane._runtime_runs[run_id].status!r}, expected {target!r}"  # noqa: SLF001
-    )
+    run = client.plane._runtime_runs[run_id]  # noqa: SLF001
+    err = getattr(run, "error", None)
+    status = run.status
+    raise AssertionError(f"run stayed {status!r} (error: {err!r}), expected {target!r}")
 
 
 class TestStagingRunsTheFirstStages:
@@ -144,8 +145,7 @@ class TestContinuingKeepsTheWork:
 
         assert recorder.calls[1]["start_at"] == "integration"
         assert recorder.calls[1]["state"] is recorder.calls[0]["state"], (
-            "continuing must reuse the staged state, or the artifacts it "
-            "produced are recomputed"
+            "continuing must reuse the staged state, or the artifacts it produced are recomputed"
         )
 
     def test_manual_mode_makes_every_stage_a_checkpoint(
@@ -190,9 +190,7 @@ class TestContinuingKeepsTheWork:
 
 
 class TestConfiguringAndDiscarding:
-    def test_the_configuration_can_be_amended_before_it_starts(
-        self, client: TestClient
-    ) -> None:
+    def test_the_configuration_can_be_amended_before_it_starts(self, client: TestClient) -> None:
         run_id = _stage(client)
 
         updated = client.patch(f"/api/runs/{run_id}/staged", json={"target_column": "tutar"})
@@ -212,9 +210,7 @@ class TestConfiguringAndDiscarding:
         assert discarded.status_code == 200, discarded.text
         assert [r["run_id"] for r in client.get("/api/runs").json()] == []
 
-    def test_discard_is_refused_for_a_run_that_is_not_staged(
-        self, client: TestClient
-    ) -> None:
+    def test_discard_is_refused_for_a_run_that_is_not_staged(self, client: TestClient) -> None:
         """Otherwise discard answers `discarded` for a run it never touched."""
         run_id = _stage(client)
         client.plane._runtime_runs[run_id].status = "running"  # type: ignore[attr-defined]  # noqa: SLF001
@@ -351,3 +347,50 @@ def test_a_run_that_stopped_to_ask_carries_the_question(client: TestClient) -> N
 
     assert progress["pending_question"] is not None
     assert progress["pending_question"]["human_prompt"]["options"][0]["option_id"] == "retry"
+
+
+class TestStagedRunCaching:
+    def test_repeat_staging_on_same_source_reuses_cache(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        """Staging a second run for the same dataset reuses the first two stages."""
+        run1 = _stage(client)
+        assert len(recorder.calls) == 1
+        assert recorder.calls[0]["stop_after"] == "schema_discovery"
+
+        # Stage a second run for the same source
+        staged2 = client.post("/api/runs/staged", json={"source_id": "demo"})
+        assert staged2.status_code == 200, staged2.text
+        run2 = staged2.json()["run_id"]
+        assert run2 != run1
+        _settle(client, run2, target="staged")
+
+        # The runner should NOT have been invoked a second time for staging
+        assert len(recorder.calls) == 1
+
+        # Continuing run2 resumes at integration
+        client.post(f"/api/runs/{run2}/start", json={})
+        _settle(client, run2, target="completed")
+        assert len(recorder.calls) == 2
+        assert recorder.calls[1]["run_id"] == run2
+        assert recorder.calls[1]["start_at"] == "integration"
+
+    def test_file_modification_invalidates_staged_cache(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        """Modifying a source file forces staging to run again."""
+        run1 = _stage(client)
+        assert len(recorder.calls) == 1
+
+        # Modify the source data
+        source_dir = client.plane.source_path("demo")  # type: ignore[attr-defined]
+        pd.DataFrame({"physician_id": [1, 2, 3, 4], "tutar": [10.0, 20.0, 30.0, 40.0]}).to_csv(
+            source_dir / "table.csv", index=False
+        )
+
+        # Stage again: cache is invalidated, so runner executes staging again
+        run2 = _stage(client)
+        assert run2 != run1
+        assert len(recorder.calls) == 2
+        assert recorder.calls[1]["stop_after"] == "schema_discovery"
+        assert recorder.calls[1]["run_id"] == run2

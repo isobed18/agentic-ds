@@ -107,6 +107,9 @@ export function SchemaDiagram({ tables, relationships }: Props) {
           <marker id="schema-arrow-warn" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
             <path d="M0 0.5 L7.5 4 L0 7.5 z" className="fill-warn-500" />
           </marker>
+          <marker id="schema-arrow-suggested" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0.5 L7.5 4 L0 7.5 z" className="fill-brand-500" />
+          </marker>
         </defs>
 
         {relationships.map((edge, index) => {
@@ -118,30 +121,40 @@ export function SchemaDiagram({ tables, relationships }: Props) {
           const x2 = to.x;
           const y2 = to.y + CARD_HEIGHT / 2;
           const mid = (x1 + x2) / 2;
-          const lossy = edge.orphan_rate > 0.02;
+          const isSuggested = edge.kind === "suggested";
+          const lossy = !isSuggested && edge.orphan_rate > 0.02;
           const active = hovered === null || hovered === edge.from_table || hovered === edge.to_table;
           return (
             <g key={index} opacity={active ? 1 : 0.18}>
               <path
                 d={`M${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
                 fill="none"
-                strokeWidth={lossy ? 2 : 1.4}
-                className={lossy ? "stroke-warn-500" : "stroke-line"}
-                markerEnd={`url(#${lossy ? "schema-arrow-warn" : "schema-arrow"})`}
+                strokeWidth={isSuggested ? 1.6 : lossy ? 2 : 1.4}
+                strokeDasharray={isSuggested ? "5 4" : undefined}
+                className={isSuggested ? "stroke-brand-500" : lossy ? "stroke-warn-500" : "stroke-line"}
+                markerEnd={`url(#${isSuggested ? "schema-arrow-suggested" : lossy ? "schema-arrow-warn" : "schema-arrow"})`}
               />
               <text
                 x={mid}
                 y={(y1 + y2) / 2 - 6}
                 textAnchor="middle"
-                className={cx("text-[9px]", lossy ? "fill-warn-700" : "fill-ink-faint")}
+                className={cx(
+                  "text-[9px]",
+                  isSuggested ? "fill-brand-600 font-medium" : lossy ? "fill-warn-700 font-medium" : "fill-ink-faint"
+                )}
               >
                 {edge.cardinality}
-                {lossy && ` · ${(edge.orphan_rate * 100).toFixed(1)}% ${t("unmatched")}`}
+                {isSuggested && ` · ${t("suggested")}`}
+                {!isSuggested && lossy && ` · ${(edge.orphan_rate * 100).toFixed(1)}% ${t("unmatched")}`}
               </text>
               <title>
-                {`${edge.from_table}.${edge.from_columns.join(" + ")} → ` +
-                  `${edge.to_table}.${edge.to_columns.join(" + ")} · ` +
-                  `${(edge.overlap_rate * 100).toFixed(1)}% ${t("of rows match")}`}
+                {isSuggested
+                  ? `[${t("Claim / Suggestion")}] ${edge.from_table}.${edge.from_columns.join(" + ")} → ` +
+                    `${edge.to_table}.${edge.to_columns.join(" + ")}` +
+                    (edge.rationale ? ` · ${edge.rationale}` : "")
+                  : `${edge.from_table}.${edge.from_columns.join(" + ")} → ` +
+                    `${edge.to_table}.${edge.to_columns.join(" + ")} · ` +
+                    `${(edge.overlap_rate * 100).toFixed(1)}% ${t("of rows match")}`}
               </title>
             </g>
           );
@@ -187,9 +200,20 @@ export function SchemaDiagram({ tables, relationships }: Props) {
         })}
       </svg>
 
-      <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-        {t("Every edge is an overlap measured between real column values, not a match on column names. An amber edge loses rows when the tables are joined.")}
-      </p>
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] leading-relaxed text-ink-faint">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 bg-ink-faint" />
+          {t("Measured relationship (evidence)")}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 bg-warn-500" />
+          {t("Lossy relationship (drops rows)")}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 border-b-2 border-dashed border-brand-500" />
+          {t("Agent-suggested relationship (claim)")}
+        </span>
+      </div>
     </div>
   );
 }

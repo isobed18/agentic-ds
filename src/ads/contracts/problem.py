@@ -51,8 +51,13 @@ class Metric(StrEnum):
 #: "accuracy" on a 0.3%-positive fraud target is how a useless model gets shipped.
 METRICS_BY_TASK: dict[TaskType, frozenset[Metric]] = {
     TaskType.BINARY_CLASSIFICATION: frozenset(
-        {Metric.ROC_AUC, Metric.AVERAGE_PRECISION, Metric.F1,
-         Metric.BALANCED_ACCURACY, Metric.ACCURACY}
+        {
+            Metric.ROC_AUC,
+            Metric.AVERAGE_PRECISION,
+            Metric.F1,
+            Metric.BALANCED_ACCURACY,
+            Metric.ACCURACY,
+        }
     ),
     TaskType.MULTICLASS_CLASSIFICATION: frozenset(
         {Metric.F1, Metric.BALANCED_ACCURACY, Metric.ACCURACY}

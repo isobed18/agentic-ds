@@ -106,9 +106,7 @@ def test_live_authored_feature_experiment_is_host_scored_and_exploratory(
     artifacts_dir = tmp_path / "artifacts"
     data_dir.mkdir()
     artifacts_dir.mkdir()
-    backend = SandboxManager(
-        SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir)
-    )
+    backend = SandboxManager(SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir))
     if not backend.docker_available():
         pytest.skip("Docker daemon is unavailable")
     if not backend.image_available():
@@ -135,12 +133,8 @@ def test_live_authored_feature_experiment_is_host_scored_and_exploratory(
         strategy=SplitStrategy.RANDOM,
         rationale="Synthetic rows have no temporal or entity boundary.",
     )
-    feature_spec = FeatureSpec.from_card(
-        card, target_column="target", excluded_columns=frozenset()
-    )
-    partition = prepare_experiment_partition(
-        frame, strategy, target_column="target"
-    )
+    feature_spec = FeatureSpec.from_card(card, target_column="target", excluded_columns=frozenset())
+    partition = prepare_experiment_partition(frame, strategy, target_column="target")
     frames = {
         "experiment_train": partition.training,
         "experiment_validation": partition.validation_features,

@@ -45,9 +45,7 @@ class TestImmutability:
     def test_extra_fields_rejected(self) -> None:
         """An LLM inventing a field must fail validation, not be silently kept."""
         with pytest.raises(ValidationError):
-            ValidationStrategy(
-                strategy=SplitStrategy.RANDOM, rationale="x", made_up_field=1
-            )
+            ValidationStrategy(strategy=SplitStrategy.RANDOM, rationale="x", made_up_field=1)
 
 
 class TestValidationStrategy:
@@ -150,15 +148,27 @@ class TestRelationshipCandidate:
 
     def test_confidence_rewards_coverage_and_names(self) -> None:
         weak = RelationshipCandidate(
-            from_table="a", from_columns=["x"], to_table="b", to_columns=["y"],
-            overlap_rate=0.9, orphan_rate=0.1, parent_coverage=0.05,
-            n_from_distinct=10, n_to_distinct=200,
+            from_table="a",
+            from_columns=["x"],
+            to_table="b",
+            to_columns=["y"],
+            overlap_rate=0.9,
+            orphan_rate=0.1,
+            parent_coverage=0.05,
+            n_from_distinct=10,
+            n_to_distinct=200,
         )
         strong = RelationshipCandidate(
-            from_table="a", from_columns=["physician_id"], to_table="b",
+            from_table="a",
+            from_columns=["physician_id"],
+            to_table="b",
             to_columns=["physician_id"],
-            overlap_rate=0.9, orphan_rate=0.1, parent_coverage=1.0, name_affinity=1.0,
-            n_from_distinct=10, n_to_distinct=10,
+            overlap_rate=0.9,
+            orphan_rate=0.1,
+            parent_coverage=1.0,
+            name_affinity=1.0,
+            n_from_distinct=10,
+            n_to_distinct=10,
         )
         assert strong.confidence > weak.confidence
 

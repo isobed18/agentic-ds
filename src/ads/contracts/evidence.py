@@ -145,11 +145,7 @@ class MeasurementBundle(Artifact):
             "n_measurements": len(self.records),
             "kinds": sorted({record.kind.value for record in self.records}),
             "tables": sorted(
-                {
-                    subject.table
-                    for record in self.records
-                    for subject in record.subjects
-                }
+                {subject.table for record in self.records for subject in record.subjects}
             ),
         }
 

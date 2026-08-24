@@ -62,9 +62,7 @@ def test_stage_and_measured_schema_select_applicable_skills() -> None:
     model = select_skills("model_investigation", [card])
     feature = select_skills("feature_investigation", [card])
 
-    assert [skill.skill_id for skill in validation] == [
-        "validation.choosing_a_split"
-    ]
+    assert [skill.skill_id for skill in validation] == ["validation.choosing_a_split"]
     assert {skill.skill_id for skill in model} == {
         "fe.high_cardinality_categoricals",
         "fe.temporal_features",

@@ -45,8 +45,7 @@ def export_training_script(
     task_type = TaskType(task_type)
     if task_type is not report.task_type:
         raise ValueError(
-            f"task_type={task_type.value!r} does not match report task "
-            f"{report.task_type.value!r}."
+            f"task_type={task_type.value!r} does not match report task {report.task_type.value!r}."
         )
     if not target_column.strip():
         raise ValueError("target_column must not be empty.")

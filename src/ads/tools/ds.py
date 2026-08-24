@@ -85,9 +85,7 @@ def value_counts(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayl
         "n_unique": profile.n_unique,
         "non_null_count": len(_series(runtime, table, column)) - profile.null_count,
         "top_values": (
-            []
-            if redacted
-            else [item.model_dump(mode="json") for item in profile.top_values]
+            [] if redacted else [item.model_dump(mode="json") for item in profile.top_values]
         ),
     }
     if redacted:
@@ -106,9 +104,7 @@ def correlation(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPaylo
         "table": table,
         "left_column": left,
         "right_column": right,
-        "max_absolute_pearson_spearman": (
-            round(strength, 6) if strength is not None else None
-        ),
+        "max_absolute_pearson_spearman": (round(strength, 6) if strength is not None else None),
     }
     return ToolPayload(summary=_summary("correlation", data), data=data)
 

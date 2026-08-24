@@ -14,6 +14,7 @@
  * stopped for — is worse than either being slightly miscalibrated.
  */
 import { useEffect, useRef, useState } from "react";
+import { t } from "../lib/i18n";
 import { Chart, type ChartSpec } from "./Charts";
 import { Badge, DataTable, cx } from "./ui";
 
@@ -37,13 +38,22 @@ export interface AnalysisPanel {
   }[];
 }
 
-const SEVERITY: Record<string, { tone: "neutral" | "ok" | "warn" | "stop" | "brand"; label: string }> = {
-  ok: { tone: "ok", label: "OK" },
-  info: { tone: "neutral", label: "Info" },
-  review: { tone: "brand", label: "Review" },
-  warning: { tone: "warn", label: "Warning" },
-  issue: { tone: "stop", label: "Potential issue" },
-};
+function severityMeta(sev: string) {
+  switch (sev) {
+    case "ok":
+      return { tone: "ok" as const, label: t("OK") };
+    case "info":
+      return { tone: "neutral" as const, label: t("Info") };
+    case "review":
+      return { tone: "brand" as const, label: t("Review") };
+    case "warning":
+      return { tone: "warn" as const, label: t("Warning") };
+    case "issue":
+      return { tone: "stop" as const, label: t("Potential issue") };
+    default:
+      return { tone: "neutral" as const, label: t("Info") };
+  }
+}
 
 export function AnalysisStrip({ panels }: { panels: AnalysisPanel[] }) {
   const [selected, setSelected] = useState(panels[0]?.id ?? null);
@@ -69,7 +79,7 @@ export function AnalysisStrip({ panels }: { panels: AnalysisPanel[] }) {
           style={{ scrollbarWidth: "thin" }}
         >
           {panels.map((panel) => {
-            const meta = SEVERITY[panel.severity] ?? SEVERITY.info;
+            const meta = severityMeta(panel.severity);
             const isActive = panel.id === active.id;
             return (
               <button
@@ -96,7 +106,7 @@ export function AnalysisStrip({ panels }: { panels: AnalysisPanel[] }) {
                 <Badge tone={meta.tone}>{meta.label}</Badge>
                 {panel.origin === "agent_authored" && (
                   <span className="ml-1 text-[9px] font-semibold uppercase tracking-wide text-brand-700">
-                    Agent-authored
+                    {t("Agent-authored")}
                   </span>
                 )}
                 <div className="my-2 h-[76px] w-full text-ink">
@@ -127,7 +137,7 @@ function ScrollButton({ side, onClick }: { side: "left" | "right"; onClick: () =
   return (
     <button
       onClick={onClick}
-      title={side === "left" ? "Scroll left" : "Scroll right"}
+      title={side === "left" ? t("Scroll left") : t("Scroll right")}
       className={cx(
         "absolute top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface shadow-card hover:bg-surface-sunken",
         side === "left" ? "-left-3" : "-right-3",
@@ -146,19 +156,19 @@ function ScrollButton({ side, onClick }: { side: "left" | "right"; onClick: () =
 
 function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
   const [open, setOpen] = useState(true);
-  const meta = SEVERITY[panel.severity] ?? SEVERITY.info;
+  const meta = severityMeta(panel.severity);
 
   return (
     <article className="card mt-1 px-4 py-3.5">
       <header className="flex flex-wrap items-center gap-2.5">
         <h3 className="text-sm font-semibold text-ink">{panel.title}</h3>
         <Badge tone={meta.tone}>{meta.label}</Badge>
-        {panel.origin === "agent_authored" && <Badge tone="brand">Agent-authored</Badge>}
+        {panel.origin === "agent_authored" && <Badge tone="brand">{t("Agent-authored")}</Badge>}
         <button
           onClick={() => setOpen((o) => !o)}
           className="btn-ghost ml-auto !py-1 text-[11px]"
         >
-          {open ? "Collapse" : "Expand"}
+          {open ? t("Collapse") : t("Expand")}
         </button>
       </header>
       {panel.description && (
@@ -185,11 +195,11 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
                 className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-xs font-semibold text-brand-800">Proposed interpretation</h4>
+                  <h4 className="text-xs font-semibold text-brand-800">{t("Proposed interpretation")}</h4>
                   <Badge tone="brand">{item.epistemic_state ?? "proposed"}</Badge>
                   {item.confidence && (
                     <span className="text-[10px] text-brand-700">
-                      model self-assessment: {item.confidence}
+                      {t("model self-assessment: {confidence}", { confidence: item.confidence })}
                     </span>
                   )}
                 </div>
@@ -200,13 +210,13 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
                 )}
                 {item.why_it_matters && (
                   <p className="mt-1 text-xs leading-relaxed text-ink-mute">
-                    <span className="font-semibold text-ink-soft">Why it matters: </span>
+                    <span className="font-semibold text-ink-soft">{t("Why it matters:")} </span>
                     {item.why_it_matters}
                   </p>
                 )}
                 {item.verification_question && (
                   <p className="mt-2 border-t border-brand-200 pt-2 text-xs leading-relaxed text-brand-800">
-                    <span className="font-semibold">Verify: </span>
+                    <span className="font-semibold">{t("Verify:")} </span>
                     {item.verification_question}
                   </p>
                 )}
@@ -214,7 +224,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
             ))}
             {panel.insights && panel.insights.length > 0 && (
               <div>
-                <h4 className="mb-1.5 text-xs font-semibold text-ink">Key insights</h4>
+                <h4 className="mb-1.5 text-xs font-semibold text-ink">{t("Key insights")}</h4>
                 <ul className="space-y-1.5">
                   {panel.insights.map((insight, i) => (
                     <li key={i} className="flex gap-2 text-xs leading-relaxed text-ink-soft">
@@ -228,7 +238,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
 
             {panel.table && panel.table.rows.length > 0 && (
               <div>
-                <h4 className="mb-1.5 text-xs font-semibold text-ink">Summary statistics</h4>
+                <h4 className="mb-1.5 text-xs font-semibold text-ink">{t("Summary statistics")}</h4>
                 <div className="max-h-[260px] overflow-y-auto rounded-lg border border-line">
                   <DataTable columns={panel.table.columns} rows={panel.table.rows} />
                 </div>

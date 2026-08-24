@@ -58,9 +58,7 @@ def prepare_experiment_partition(
         outer_train,
         target_column=target_column,
     )
-    development_train_index, development_validation_index = next(
-        splitter.iter_folds(outer_train)
-    )
+    development_train_index, development_validation_index = next(splitter.iter_folds(outer_train))
     training = outer_train.loc[development_train_index].copy()
     validation = outer_train.loc[development_validation_index].copy()
     training.insert(0, ROW_ID_COLUMN, [f"train_{index:08d}" for index in range(len(training))])
@@ -93,9 +91,7 @@ def _prediction_series(
     partition: ExperimentPartition,
 ) -> pd.Series:
     if list(predictions.columns) != [ROW_ID_COLUMN, "prediction"]:
-        raise ValueError(
-            f"Predictions must contain exactly [{ROW_ID_COLUMN!r}, 'prediction']."
-        )
+        raise ValueError(f"Predictions must contain exactly [{ROW_ID_COLUMN!r}, 'prediction'].")
     if predictions[ROW_ID_COLUMN].duplicated().any():
         raise ValueError("Prediction row ids must be unique.")
     supplied = set(predictions[ROW_ID_COLUMN].astype(str))
@@ -124,9 +120,7 @@ def measure_experiment_predictions(
         numeric = pd.to_numeric(predicted, errors="coerce")
         if numeric.isna().any() or not np.isfinite(numeric).all():
             raise ValueError("Regression predictions must be finite numbers.")
-        baseline = DummyRegressor(strategy="mean").fit(
-            np.zeros((len(train_truth), 1)), train_truth
-        )
+        baseline = DummyRegressor(strategy="mean").fit(np.zeros((len(train_truth), 1)), train_truth)
         baseline_predictions = baseline.predict(np.zeros((len(truth), 1)))
         return (
             float(np.sqrt(mean_squared_error(truth, numeric))),
@@ -161,9 +155,7 @@ def measure_experiment_predictions(
             float(f1_score(truth_labels, baseline_labels, average="macro")),
         )
 
-    raise ValueError(
-        f"Authored experiments do not support {task_type.value}/{metric.value}."
-    )
+    raise ValueError(f"Authored experiments do not support {task_type.value}/{metric.value}.")
 
 
 __all__ = [

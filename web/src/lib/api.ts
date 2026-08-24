@@ -206,6 +206,16 @@ export interface Story {
     subjects?: string[];
   }[];
   report_markdown?: string;
+  quality_checks?: { label: string; passed: boolean; detail?: string }[];
+  panel?: {
+    member: number;
+    model: string;
+    attempts: number;
+    accepted: boolean;
+    validation_failures?: string[];
+    repairs?: string[];
+    latency_s?: number;
+  }[];
 }
 
 export interface StageOutput {
@@ -286,6 +296,8 @@ export interface MeasuredRelationship {
   parent_coverage: number;
   cardinality: string;
   name_affinity: number;
+  kind?: "measured" | "suggested";
+  rationale?: string;
 }
 
 export interface SourceProfile {

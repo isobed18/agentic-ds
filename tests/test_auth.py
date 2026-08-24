@@ -214,26 +214,20 @@ def test_health_is_public_and_leaks_nothing(client: TestClient) -> None:
 
 
 def test_correct_credentials_open_the_api(client: TestClient) -> None:
-    res = client.post(
-        "/api/auth/login", json={"username": "isobed18", "password": PASSWORD}
-    )
+    res = client.post("/api/auth/login", json={"username": "isobed18", "password": PASSWORD})
     assert res.status_code == 200
     assert COOKIE_NAME in res.cookies
     assert client.get("/api/runs").status_code == 200
 
 
 def test_wrong_password_is_rejected(client: TestClient) -> None:
-    res = client.post(
-        "/api/auth/login", json={"username": "isobed18", "password": "wrong"}
-    )
+    res = client.post("/api/auth/login", json={"username": "isobed18", "password": "wrong"})
     assert res.status_code == 401
     assert client.get("/api/runs").status_code == 401
 
 
 def test_wrong_username_is_rejected(client: TestClient) -> None:
-    res = client.post(
-        "/api/auth/login", json={"username": "admin", "password": PASSWORD}
-    )
+    res = client.post("/api/auth/login", json={"username": "admin", "password": PASSWORD})
     assert res.status_code == 401
 
 
@@ -273,15 +267,11 @@ def test_repeated_failures_lock_the_endpoint(client: TestClient) -> None:
     assert 429 in codes, f"never rate limited: {codes}"
     # And the lockout must hold even for the *correct* password, or it is not a
     # lockout, only a message.
-    blocked = client.post(
-        "/api/auth/login", json={"username": "isobed18", "password": PASSWORD}
-    )
+    blocked = client.post("/api/auth/login", json={"username": "isobed18", "password": PASSWORD})
     assert blocked.status_code == 429
 
 
-def test_no_auth_configured_leaves_the_api_open(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_auth_configured_leaves_the_api_open(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The historical behaviour the loopback launcher and the rest of the suite
     # depend on. serve_public.py is what prevents this reaching the tunnel.
     for name in ("ADS_AUTH_USERNAME", "ADS_AUTH_PASSWORD_HASH"):
