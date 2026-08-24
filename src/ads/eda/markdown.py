@@ -80,9 +80,7 @@ def _correlation_section(report: EDAReport) -> list[str]:
         ]
     )
     for name, row in zip(matrix.columns, matrix.values, strict=True):
-        lines.append(
-            f"| `{name}` | " + " | ".join(_number(value) for value in row) + " |"
-        )
+        lines.append(f"| `{name}` | " + " | ".join(_number(value) for value in row) + " |")
     lines.append("")
     return lines
 

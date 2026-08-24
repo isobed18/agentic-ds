@@ -100,9 +100,7 @@ def test_model_confidence_is_deliberately_non_orderable() -> None:
 
 
 def test_proposal_cannot_omit_verification_or_author_an_observation() -> None:
-    measured = _measurement(
-        MeasurementKind.TABLE_PROFILE, [SubjectRef(table="orders")]
-    )
+    measured = _measurement(MeasurementKind.TABLE_PROFILE, [SubjectRef(table="orders")])
     payload = {
         **_proposal(measured, kind=InterpretationKind.TABLE_PURPOSE).model_dump(),
         "observation": "This is not a model-authored field.",
@@ -116,13 +114,9 @@ def test_proposal_cannot_omit_verification_or_author_an_observation() -> None:
 
 
 def test_executor_resolves_citation_and_keeps_claim_proposed() -> None:
-    measured = _measurement(
-        MeasurementKind.TABLE_PROFILE, [SubjectRef(table="orders")]
-    )
+    measured = _measurement(MeasurementKind.TABLE_PROFILE, [SubjectRef(table="orders")])
     proposal = _proposal(measured, kind=InterpretationKind.TABLE_PURPOSE)
-    item = InterpretationItem.from_proposal(
-        proposal, {measured.measurement_id: measured}
-    )
+    item = InterpretationItem.from_proposal(proposal, {measured.measurement_id: measured})
 
     assert item.citations == [measured]
     assert item.epistemic_state == "proposed"
@@ -154,9 +148,7 @@ def test_relationship_claim_requires_one_citation_covering_both_tables() -> None
         confidence=ModelConfidence.LOW,
     )
 
-    failures = validate_measurement_binding(
-        InterpretationBatchProposal(items=[proposal]), context
-    )
+    failures = validate_measurement_binding(InterpretationBatchProposal(items=[proposal]), context)
 
     assert "relationship_requires_joint_measurement" in {item.code for item in failures}
 
@@ -175,9 +167,7 @@ def test_wrong_kind_and_unbound_column_are_rejected() -> None:
         subjects=[SubjectRef(table="orders", column="freight_value")],
     )
 
-    failures = validate_measurement_binding(
-        InterpretationBatchProposal(items=[proposal]), context
-    )
+    failures = validate_measurement_binding(InterpretationBatchProposal(items=[proposal]), context)
     codes = {item.code for item in failures}
     assert codes == {"incompatible_measurement_kind", "unbound_subject"}
 
@@ -191,9 +181,7 @@ def test_datacard_measurements_expose_zero_rate_without_source_text() -> None:
         }
     )
     card = profile_table(
-        LoadedTable(
-            name="events", frame=frame, source_uri="mem", source_format="csv"
-        )
+        LoadedTable(name="events", frame=frame, source_uri="mem", source_format="csv")
     )
 
     records = datacard_measurements(card)
@@ -203,9 +191,7 @@ def test_datacard_measurements_expose_zero_rate_without_source_text() -> None:
         if record.kind is MeasurementKind.NUMERIC_PROFILE
         and record.subjects == [SubjectRef(table="events", column="amount")]
     )
-    serialized = json.dumps(
-        [record.model_dump(mode="json") for record in records], sort_keys=True
-    )
+    serialized = json.dumps([record.model_dump(mode="json") for record in records], sort_keys=True)
 
     assert numeric.value["zero_rate"] == 0.5
     assert secret not in serialized

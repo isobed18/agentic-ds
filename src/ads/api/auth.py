@@ -490,9 +490,7 @@ def install_auth(app: FastAPI, config: AuthConfig) -> None:
         password_ok = verify_password(password, config.password_hash)
         if not (name_ok and password_ok):
             limiter.record_failure(key)
-            return JSONResponse(
-                {"detail": "Kullanıcı adı veya parola hatalı."}, status_code=401
-            )
+            return JSONResponse({"detail": "Kullanıcı adı veya parola hatalı."}, status_code=401)
 
         limiter.record_success(key)
         response = JSONResponse({"username": config.username})

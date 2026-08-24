@@ -71,9 +71,7 @@ def _rubric() -> Rubric:
 
 @pytest.fixture
 def state(tmp_path: Path) -> RunState:
-    return RunState(
-        run_id="run1", store=ArtifactStore(tmp_path / "artifacts"), profile=FULL_AUTO
-    )
+    return RunState(run_id="run1", store=ArtifactStore(tmp_path / "artifacts"), profile=FULL_AUTO)
 
 
 class TestDeterministicHalf:
@@ -83,9 +81,7 @@ class TestDeterministicHalf:
         assert result.rubric_version == "eda.v1"
 
     def test_passing_mechanical_check_is_silent(self) -> None:
-        result = critique_stage(
-            _rubric(), CritiqueContext(stage_id="eda", artifacts=[_artifact()])
-        )
+        result = critique_stage(_rubric(), CritiqueContext(stage_id="eda", artifacts=[_artifact()]))
         assert result.unmet_criteria == []
 
     def test_judgment_items_are_skipped_without_a_model(self) -> None:
@@ -115,9 +111,7 @@ class TestJudgmentHalf:
 
     def test_computed_results_are_handed_over_as_established_fact(self) -> None:
         llm = FakeLLM([{"unmet_criteria": [], "findings": []}])
-        critique_stage(
-            _rubric(), CritiqueContext(stage_id="eda", artifacts=[_artifact()]), llm=llm
-        )
+        critique_stage(_rubric(), CritiqueContext(stage_id="eda", artifacts=[_artifact()]), llm=llm)
         assert "eda.produced_something: met" in llm.calls[0]["prompt"]
 
     def test_invented_criteria_are_ignored(self) -> None:
@@ -180,9 +174,7 @@ class TestRunnerUsesTheRubric:
         registry.register(
             "eda_component",
             lambda s, c: StageResult(
-                critique=CritiqueResult(
-                    stage_id="eda", rubric_version="self", unmet_criteria=[]
-                )
+                critique=CritiqueResult(stage_id="eda", rubric_version="self", unmet_criteria=[])
             ),
         )
         outcome = run_workflow(
@@ -203,16 +195,12 @@ class TestRunnerUsesTheRubric:
         assert outcome.status == RunStatus.AWAITING_HUMAN
         assert state.attempts[0].critique.rubric_version == "eda.v1"
 
-    def test_stage_self_critique_is_kept_when_no_rubric_exists(
-        self, state: RunState
-    ) -> None:
+    def test_stage_self_critique_is_kept_when_no_rubric_exists(self, state: RunState) -> None:
         spec = linear_spec("w", "1", [_stage_def("a")])
         registry = ComponentRegistry()
         registry.register(
             "a_component",
-            lambda s, c: StageResult(
-                critique=CritiqueResult(stage_id="a", rubric_version="self")
-            ),
+            lambda s, c: StageResult(critique=CritiqueResult(stage_id="a", rubric_version="self")),
         )
         run_workflow(spec, registry, state, rubrics=RubricRegistry())
         assert state.attempts[0].critique.rubric_version == "self"
@@ -243,15 +231,11 @@ class TestResumeAfterHuman:
             "problem_discovery_component",
             lambda s, c: (ran.append(f"pd:{c}"), StageResult())[1],
         )
-        registry.register(
-            "after_component", lambda s, c: (ran.append("after"), StageResult())[1]
-        )
+        registry.register("after_component", lambda s, c: (ran.append("after"), StageResult())[1])
         return registry
 
     def _stopped(self, tmp_path: Path):
-        state = RunState(
-            run_id="run1", store=ArtifactStore(tmp_path / "a"), profile=CHECKPOINTED
-        )
+        state = RunState(run_id="run1", store=ArtifactStore(tmp_path / "a"), profile=CHECKPOINTED)
         ran: list[str] = []
         spec, registry = self._spec(), self._registry(ran)
         outcome = run_workflow(spec, registry, state, policy=GatePolicy.load())
@@ -293,17 +277,12 @@ class TestResumeAfterHuman:
 
     def test_abort_stops_the_run(self, tmp_path: Path) -> None:
         spec, registry, state, _ = self._stopped(tmp_path)
-        assert (
-            resume_workflow(spec, registry, state, decision="abort").status
-            == RunStatus.ABORTED
-        )
+        assert resume_workflow(spec, registry, state, decision="abort").status == RunStatus.ABORTED
 
     def test_decision_is_recorded_for_the_report(self, tmp_path: Path) -> None:
         """The report must distinguish human approval from autonomous progress."""
         spec, registry, state, _ = self._stopped(tmp_path)
-        resume_workflow(
-            spec, registry, state, decision="approve", policy=GatePolicy.load()
-        )
+        resume_workflow(spec, registry, state, decision="approve", policy=GatePolicy.load())
         recorded = state.blackboard["human_decisions"]
         assert recorded[0]["stage_id"] == "problem_discovery"
         assert recorded[0]["decision"] == "approve"
@@ -312,9 +291,7 @@ class TestResumeAfterHuman:
         """Resume works because nothing was discarded, not because it replays."""
         spec, registry, state, _ = self._stopped(tmp_path)
         before = len(state.attempts)
-        resume_workflow(
-            spec, registry, state, decision="approve", policy=GatePolicy.load()
-        )
+        resume_workflow(spec, registry, state, decision="approve", policy=GatePolicy.load())
         assert len(state.attempts) > before
 
     def test_resuming_a_run_that_is_not_waiting_is_an_error(self, state: RunState) -> None:
@@ -352,9 +329,7 @@ class TestSelfRetryIdentity:
             retry_stages=["down"],
         )
 
-    def test_retry_without_instructions_still_inherits_inputs(
-        self, state: RunState
-    ) -> None:
+    def test_retry_without_instructions_still_inherits_inputs(self, state: RunState) -> None:
         seen: list[str | None] = []
 
         def downstream(s: RunState, correction=None) -> StageResult:
@@ -363,8 +338,7 @@ class TestSelfRetryIdentity:
             s.put(_artifact("V2"), stage_id="interloper")
             # A signal-driven retry: the rule that fires carries no instructions.
             signals = (
-                QualitySignals(max_target_correlation=0.99) if len(seen) == 1 else
-                QualitySignals()
+                QualitySignals(max_target_correlation=0.99) if len(seen) == 1 else QualitySignals()
             )
             return StageResult(signals=signals)
 
@@ -434,8 +408,7 @@ class TestSelfRetryIdentity:
             bound = s.latest(ArtifactType.VALIDATION_STRATEGY, ValidationStrategy)
             seen.append(bound.rationale if bound else None)
             signals = (
-                QualitySignals(max_target_correlation=0.99) if len(seen) == 1
-                else QualitySignals()
+                QualitySignals(max_target_correlation=0.99) if len(seen) == 1 else QualitySignals()
             )
             return StageResult(signals=signals)
 
@@ -468,9 +441,7 @@ class TestSelfRetryIdentity:
             "1",
             [
                 _stage_def("seed", produces=(ArtifactType.VALIDATION_STRATEGY,)),
-                _stage_def(
-                    "problem_discovery", consumes=(ArtifactType.VALIDATION_STRATEGY,)
-                ),
+                _stage_def("problem_discovery", consumes=(ArtifactType.VALIDATION_STRATEGY,)),
             ],
             retry_stages=["problem_discovery"],
         )

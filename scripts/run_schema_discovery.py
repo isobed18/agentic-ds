@@ -53,8 +53,10 @@ def main() -> None:
     )
 
     print(f"model={args.model} temperature={args.temperature} runs={args.runs}")
-    print(f"context={context.estimated_tokens():,} est. tokens, "
-          f"{len(cards)} tables, {len(relationships)} measured relationships\n")
+    print(
+        f"context={context.estimated_tokens():,} est. tokens, "
+        f"{len(cards)} tables, {len(relationships)} measured relationships\n"
+    )
 
     first_pass = 0
     succeeded = 0
@@ -68,9 +70,11 @@ def main() -> None:
         first_pass += int(result.first_pass_valid)
 
         status = "OK " if result.succeeded else "FAIL"
-        print(f"[run {run_no}] {status} attempts={result.n_attempts} "
-              f"first_pass={result.first_pass_valid} "
-              f"latency={result.total_latency_s:.1f}s")
+        print(
+            f"[run {run_no}] {status} attempts={result.n_attempts} "
+            f"first_pass={result.first_pass_valid} "
+            f"latency={result.total_latency_s:.1f}s"
+        )
 
         for attempt in result.attempts:
             for repair in attempt.repairs:
@@ -81,8 +85,10 @@ def main() -> None:
         if result.output is not None:
             plans.append(result.output)
             plan = result.output
-            print(f"    base={plan.base_table} grain={plan.base_grain} "
-                  f"joins={len(plan.joins)} aggs={len(plan.aggregations)}")
+            print(
+                f"    base={plan.base_table} grain={plan.base_grain} "
+                f"joins={len(plan.joins)} aggs={len(plan.aggregations)}"
+            )
 
     print("\n" + "=" * 70)
     print(f"first-pass validity : {first_pass}/{args.runs}")
@@ -102,8 +108,10 @@ def main() -> None:
                 print(f"             {out_col} = {expr}")
             print(f"             why: {agg.rationale[:110]}")
         for join in plan.joins:
-            print(f"join       : {join.left_table}.{join.left_columns} "
-                  f"{join.how.upper()} {join.right_table}.{join.right_columns}")
+            print(
+                f"join       : {join.left_table}.{join.left_columns} "
+                f"{join.how.upper()} {join.right_table}.{join.right_columns}"
+            )
             print(f"             why: {join.rationale[:110]}")
         for warning in plan.warnings:
             print(f"warning    : {warning}")

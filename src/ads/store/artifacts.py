@@ -279,9 +279,7 @@ class ArtifactStore:
                 raise ArtifactNotFoundError(f"No index entry for id={artifact_id}")
             resolved = _TYPE_REGISTRY.get(ArtifactType(row["artifact_type"]))
             if resolved is None:
-                raise ArtifactNotFoundError(
-                    f"No model registered for type={row['artifact_type']}"
-                )
+                raise ArtifactNotFoundError(f"No model registered for type={row['artifact_type']}")
             model = resolved  # type: ignore[assignment]
 
         return model.model_validate(raw)  # type: ignore[union-attr,return-value]
@@ -314,9 +312,7 @@ class ArtifactStore:
         refs = self.list(run_id, artifact_type=artifact_type, name=name)
         return refs[0] if refs else None
 
-    def load_all(
-        self, run_id: str, artifact_type: ArtifactType, model: type[A]
-    ) -> list[A]:
+    def load_all(self, run_id: str, artifact_type: ArtifactType, model: type[A]) -> list[A]:
         """Load every artifact of a type for a run, typed."""
         refs = self.list(run_id, artifact_type=artifact_type)
         return [self.load(ref.artifact_id, model) for ref in refs]

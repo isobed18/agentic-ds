@@ -303,7 +303,7 @@ function NodeCard({
   return (
     <button
       onClick={() => onSelect(node.id)}
-      title={node.description}
+      title={t(node.description)}
       className={cx(
         "relative flex w-[132px] shrink-0 flex-col gap-1 rounded-xl border bg-surface px-3 text-left transition-all",
         compact ? "py-2" : "py-2.5",

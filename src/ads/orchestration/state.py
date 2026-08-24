@@ -87,9 +87,7 @@ class RunState:
     # ------------------------------------------------------------- artifacts
 
     def put(self, artifact: Artifact, *, stage_id: str, name: str | None = None) -> ArtifactRef:
-        return self.store.put(
-            artifact, run_id=self.run_id, stage_exec_id=stage_id, name=name
-        )
+        return self.store.put(artifact, run_id=self.run_id, stage_exec_id=stage_id, name=name)
 
     def latest[A: Artifact](
         self, artifact_type: ArtifactType, model: type[A], *, name: str | None = None

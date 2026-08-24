@@ -267,19 +267,15 @@ def test_exploratory_artifact_present_in_run_cannot_change_gate_verdict(
                 decision.verdict,
                 decision.reason_code,
                 decision.triggered_rules,
-                    decision.correction_instructions,
-                    decision.human_prompt.context_summary
-                    if decision.human_prompt
-                    else None,
+                decision.correction_instructions,
+                decision.human_prompt.context_summary if decision.human_prompt else None,
             )
         )
         states.append(state)
 
     assert decisions[0] == decisions[1]
     assert states[0].all_of(ArtifactType.EXPLORATORY_ANALYSIS, ExploratoryAnalysis) == []
-    assert len(
-        states[1].all_of(ArtifactType.EXPLORATORY_ANALYSIS, ExploratoryAnalysis)
-    ) == 1
+    assert len(states[1].all_of(ArtifactType.EXPLORATORY_ANALYSIS, ExploratoryAnalysis)) == 1
 
 
 def test_finish_cannot_reference_a_file_the_execution_did_not_create(tmp_path: Path) -> None:

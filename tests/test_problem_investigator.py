@@ -84,9 +84,7 @@ def test_live_problem_scout_chooses_tools_and_executes_read_only_code(
     artifacts_dir = tmp_path / "artifacts"
     data_dir.mkdir()
     artifacts_dir.mkdir()
-    backend = SandboxManager(
-        SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir)
-    )
+    backend = SandboxManager(SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir))
     if not backend.docker_available():
         pytest.skip("Docker daemon is unavailable")
     if not backend.image_available():

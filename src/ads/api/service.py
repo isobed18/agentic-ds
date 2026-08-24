@@ -43,7 +43,14 @@ from ads.gates import GatePolicy
 from ads.intake import detect_relationships, load_directory, profile_tables
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
 from ads.llm import LARGE, OllamaClient, StructuredLLM
-from ads.orchestration import EdgeCondition, RunState, resume_workflow, run_workflow
+from ads.orchestration import (
+    EdgeCondition,
+    RunOutcome,
+    RunState,
+    RunStatus,
+    resume_workflow,
+    run_workflow,
+)
 from ads.pipeline import (
     build_default_registry,
     build_default_spec,
@@ -169,6 +176,10 @@ class ControlPlane:
     #: rather than by a timer, so a changed file is re-profiled immediately and
     #: an unchanged one is never re-read.
     _profile_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
+    #: source_id -> (file fingerprint, cached staged outcome data).
+    #: Staging runs Intake and Schema Discovery (which takes ~7 min on local 27B model).
+    #: When unchanged data is staged again, the staged state & artifacts are reused.
+    _staged_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
@@ -208,12 +219,13 @@ class ControlPlane:
             nodes.append(
                 {
                     **stage,
+                    "description": i18n.t(stage["description"]),
                     "order": index,
                     "kind": "planner_agent" if stage["id"] in _PLANNER_AGENTS else "deterministic",
                     "owner": (
-                        "Local planning agent"
+                        i18n.t("Local planning agent")
                         if stage["id"] in _PLANNER_AGENTS
-                        else "Python executor"
+                        else i18n.t("Python executor")
                     ),
                     "status": status,
                     "attempt_count": len(own),
@@ -281,13 +293,17 @@ class ControlPlane:
             "execution_modes": [
                 {
                     "value": "agent",
-                    "label": "Agent-planned",
-                    "description": "Planner agents discover schema, problem, and validation.",
+                    "label": i18n.t("Agent-planned"),
+                    "description": i18n.t(
+                        "Planner agents discover schema, problem, and validation."
+                    ),
                 },
                 {
                     "value": "manual",
-                    "label": "Manual plan",
-                    "description": "Use the problem and validation choices configured here.",
+                    "label": i18n.t("Manual plan"),
+                    "description": i18n.t(
+                        "Use the problem and validation choices configured here."
+                    ),
                 },
             ],
         }
@@ -489,8 +505,8 @@ class ControlPlane:
                 else "no_gate_record"
             )
             runtime = self._runtime_runs.get(run_id)
-            configuration = runtime.configuration if runtime else (progress or {}).get(
-                "configuration", {}
+            configuration = (
+                runtime.configuration if runtime else (progress or {}).get("configuration", {})
             )
             stages = {ref.stage_exec_id for ref in refs if ref.stage_exec_id}
             if progress:
@@ -511,9 +527,7 @@ class ControlPlane:
                     pending_question=pending,
                     parent_run_id=configuration.get("parent_run_id"),
                     branch_label=configuration.get("branch_label"),
-                    source_id=(
-                        runtime.source_id if runtime else configuration.get("source_id")
-                    ),
+                    source_id=(runtime.source_id if runtime else configuration.get("source_id")),
                 )
             )
         return sorted(summaries, key=lambda item: item.last_activity, reverse=True)
@@ -534,8 +548,7 @@ class ControlPlane:
             return str(configured["mode"])
         staged_states = {"staging", "staged"}
         has_agent_stage = any(
-            attempt.get("stage_id") in _PLANNER_AGENTS
-            for attempt in progress.get("attempts") or []
+            attempt.get("stage_id") in _PLANNER_AGENTS for attempt in progress.get("attempts") or []
         )
         if has_agent_stage or progress.get("status") in staged_states:
             return "agent"
@@ -615,8 +628,7 @@ class ControlPlane:
                         "candidate_keys": sum(len(table["candidate_keys"]) for table in tables),
                         "quality_issues": sum(len(table["issues"]) for table in tables),
                         "sensitive_columns": sum(
-                            column["sensitivity"] == "pii"
-                            for column in columns
+                            column["sensitivity"] == "pii" for column in columns
                         ),
                         "table_summaries": [
                             {
@@ -664,8 +676,7 @@ class ControlPlane:
         """
         supported = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES
         return any(
-            path.is_file() and path.suffix.lower() in supported
-            for path in directory.rglob("*")
+            path.is_file() and path.suffix.lower() in supported for path in directory.rglob("*")
         )
 
     def _reserved_path(self, path: Path) -> bool:
@@ -820,13 +831,98 @@ class ControlPlane:
         so nothing measured here is measured twice.
         """
         source_path = self.source_path(source_id)
+        fingerprint = self._source_fingerprint(source_id)
+        with self._lock:
+            cached_staged = self._staged_cache.get(source_id)
+        if cached_staged is not None and cached_staged[0] == fingerprint:
+            cached_data = cached_staged[1]
+            run_id = f"run-{uuid.uuid4().hex[:8]}"
+            state = RunState(
+                run_id=run_id,
+                store=self.store,
+                profile=BUILTIN_PROFILES["full_auto"],
+            )
+            llm: StructuredLLM | None = self.llm_factory() if self.llm_factory else OllamaClient()
+            if isinstance(llm, OllamaClient) and not llm.is_available():
+                llm.close()
+                raise ValueError(
+                    "Reading the schema needs Ollama at http://localhost:11434. "
+                    "Start Ollama and choose the dataset again."
+                )
+            spec, registry = build_full_spec(llm, panel_size=1)
+            sandbox_root = self.store.root.parent / "sandbox" / run_id
+            (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+            (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+            configure_full_pipeline_state(
+                state,
+                source_path=source_path,
+                execution_backend=SandboxManager(
+                    SandboxConfig(
+                        data_dir=sandbox_root / "data",
+                        artifacts_dir=sandbox_root / "artifacts",
+                    )
+                ),
+                agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+            )
+            for k, v in cached_data.get("blackboard", {}).items():
+                state.blackboard[k] = v
+
+            for item in cached_data.get("artifacts", []):
+                try:
+                    art = self.store.load(item["artifact_id"])
+                    state.put(art, stage_id=item.get("stage_id") or "intake", name=item.get("name"))
+                except Exception:
+                    pass
+
+            for att_data in cached_data.get("attempts", []):
+                new_att = state.begin_attempt(att_data["stage_id"])
+                new_att.started_at = att_data.get("started_at")
+                new_att.ended_at = att_data.get("ended_at")
+                new_att.input_bindings = dict(att_data.get("input_bindings", {}))
+                new_att.artifact_ids = list(att_data.get("artifact_ids", []))
+                new_att.decision = att_data.get("decision")
+                new_att.critique = att_data.get("critique")
+                new_att.error = att_data.get("error")
+                state.active_attempt = None
+
+            runtime = _RuntimeRun(
+                run_id=run_id,
+                source_id=source_id,
+                state=state,
+                configuration={
+                    "source_id": source_id,
+                    "mode": "agent",
+                    **(configuration or {}),
+                },
+                status="staged",
+            )
+            runtime.outcome = RunOutcome(
+                run_id=run_id,
+                status=RunStatus.STAGED,
+                final_stage=self.STAGE_UNTIL,
+                decisions=list(cached_data.get("decisions", [])),
+            )
+            runtime.events = [
+                {"event": "run_staged", "at": _now(), "source": source_id},
+                *[dict(e) for e in cached_data.get("events", []) if e.get("event") != "run_staged"],
+            ]
+            runtime.resume = (spec, registry, state, llm)
+            with self._lock:
+                self._runtime_runs[run_id] = runtime
+            self._persist_runtime(runtime)
+            return {
+                "run_id": run_id,
+                "status": "staged",
+                "profile": self.source_profile(source_id),
+            }
+
         run_id = f"run-{uuid.uuid4().hex[:8]}"
         state = RunState(
             run_id=run_id,
             store=self.store,
             profile=BUILTIN_PROFILES["full_auto"],
         )
-        llm: StructuredLLM | None = self.llm_factory() if self.llm_factory else OllamaClient()
+        llm = self.llm_factory() if self.llm_factory else OllamaClient()
         if isinstance(llm, OllamaClient) and not llm.is_available():
             llm.close()
             raise ValueError(
@@ -887,6 +983,52 @@ class ControlPlane:
                     runtime.status = runtime.outcome.status
                     runtime.error = runtime.outcome.error
                     runtime.updated_at = _now()
+                    if runtime.outcome.status in {RunStatus.STAGED, "staged"}:
+                        from ads.pipeline.stages import (  # noqa: PLC0415
+                            LOADED_TABLES_KEY,
+                            SOURCE_CARDS_KEY,
+                            SOURCE_FRAMES_KEY,
+                        )
+
+                        self._staged_cache[source_id] = (
+                            fingerprint,
+                            {
+                                "attempts": [
+                                    {
+                                        "stage_id": att.stage_id,
+                                        "attempt": att.attempt,
+                                        "started_at": att.started_at,
+                                        "ended_at": att.ended_at,
+                                        "input_bindings": dict(att.input_bindings),
+                                        "artifact_ids": list(att.artifact_ids),
+                                        "decision": att.decision,
+                                        "critique": att.critique,
+                                        "error": att.error,
+                                    }
+                                    for att in state.attempts
+                                ],
+                                "artifacts": [
+                                    {
+                                        "artifact_id": a.artifact_id,
+                                        "stage_id": a.stage_exec_id,
+                                        "name": a.name,
+                                    }
+                                    for a in self.store.list(run_id=state.run_id)
+                                ],
+                                "blackboard": {
+                                    k: v
+                                    for k, v in state.blackboard.items()
+                                    if k
+                                    in {
+                                        SOURCE_CARDS_KEY,
+                                        SOURCE_FRAMES_KEY,
+                                        LOADED_TABLES_KEY,
+                                    }
+                                },
+                                "decisions": list(runtime.outcome.decisions),
+                                "events": list(runtime.events),
+                            },
+                        )
             except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
                 with self._lock:
                     runtime.status = "failed"
@@ -1262,9 +1404,7 @@ class ControlPlane:
             stages[stage_id] = replace(current, max_attempts=int(retries) + 1)
         return replace(policy, stages=stages)
 
-    def apply_sensitivity_overrides(
-        self, run_id: str, overrides: dict[str, str]
-    ) -> dict[str, str]:
+    def apply_sensitivity_overrides(self, run_id: str, overrides: dict[str, str]) -> dict[str, str]:
         """Let a person correct the machine's PII classification before it is used.
 
         The classifier decides which columns are dropped from the feature pool.
@@ -1710,138 +1850,149 @@ class ControlPlane:
         artifact_type: str, name: str | None, summary: dict[str, Any]
     ) -> dict[str, Any]:
         """Turn compact machine summaries into stable, non-technical UI copy."""
-        title = (name or artifact_type).replace("_", " ").title()
-        description = "A durable result produced by this stage."
+        title = i18n.t((name or artifact_type).replace("_", " ").title())
+        description = i18n.t("A durable result produced by this stage.")
         preferred: list[tuple[str, str]] = []
         if artifact_type == "data_card":
-            title = f"Profiled table: {summary.get('table_name', name or 'dataset')}"
-            description = "Schema, size, and quality statistics; no source rows are shown."
+            title = i18n.t(
+                "Profiled table: {name}",
+                name=summary.get("table_name", name or i18n.t("dataset")),
+            )
+            description = i18n.t("Schema, size, and quality statistics; no source rows are shown.")
             preferred = [
-                ("Rows", "n_rows"),
-                ("Columns", "n_columns"),
-                ("Candidate keys", "n_candidate_keys"),
+                (i18n.t("Rows"), "n_rows"),
+                (i18n.t("Columns"), "n_columns"),
+                (i18n.t("Candidate keys"), "n_candidate_keys"),
             ]
         elif artifact_type == "integration_plan":
-            title = "Data integration plan"
-            description = "How source tables are aggregated and joined into one analytical table."
+            title = i18n.t("Data integration plan")
+            description = i18n.t(
+                "How source tables are aggregated and joined into one analytical table."
+            )
             preferred = [
-                ("Base table", "base_table"),
-                ("Joins", "n_joins"),
-                ("Aggregations", "n_aggregations"),
+                (i18n.t("Base table"), "base_table"),
+                (i18n.t("Joins"), "n_joins"),
+                (i18n.t("Aggregations"), "n_aggregations"),
             ]
         elif artifact_type == "integration_trial":
-            title = "Integration plan trial"
-            description = (
+            title = i18n.t("Integration plan trial")
+            description = i18n.t(
                 "Measured result of executing the proposed joins and aggregations on a copy."
             )
             preferred = [
-                ("Base rows", "base_rows"),
-                ("Result rows", "result_rows"),
-                ("Grain preserved", "grain_preserved"),
-                ("Result columns", "n_columns"),
+                (i18n.t("Base rows"), "base_rows"),
+                (i18n.t("Result rows"), "result_rows"),
+                (i18n.t("Grain preserved"), "grain_preserved"),
+                (i18n.t("Result columns"), "n_columns"),
             ]
         elif artifact_type == "problem_candidates":
-            title = "Candidate analysis problems"
-            description = "Problems proposed by the planner and checked against measured support."
-            preferred = [("Candidates", "n_candidates"), ("Viable", "n_viable")]
+            title = i18n.t("Candidate analysis problems")
+            description = i18n.t(
+                "Problems proposed by the planner and checked against measured support."
+            )
+            preferred = [(i18n.t("Candidates"), "n_candidates"), (i18n.t("Viable"), "n_viable")]
         elif artifact_type == "problem_definition":
-            title = str(summary.get("title") or "Selected problem")
-            description = "The target, task, and success metric used downstream."
+            title = str(summary.get("title") or i18n.t("Selected problem"))
+            description = i18n.t("The target, task, and success metric used downstream.")
             preferred = [
-                ("Task", "task_type"),
-                ("Target", "target_column"),
-                ("Metric", "primary_metric"),
+                (i18n.t("Task"), "task_type"),
+                (i18n.t("Target"), "target_column"),
+                (i18n.t("Metric"), "primary_metric"),
             ]
         elif artifact_type == "validation_strategy":
-            title = "Validation plan"
-            description = "How training and holdout data are separated to keep evaluation honest."
+            title = i18n.t("Validation plan")
+            description = i18n.t(
+                "How training and holdout data are separated to keep evaluation honest."
+            )
             preferred = [
-                ("Strategy", "strategy"),
-                ("Folds", "n_folds"),
-                ("Group", "group_column"),
-                ("Time", "time_column"),
+                (i18n.t("Strategy"), "strategy"),
+                (i18n.t("Folds"), "n_folds"),
+                (i18n.t("Group"), "group_column"),
+                (i18n.t("Time"), "time_column"),
             ]
         elif artifact_type == "leakage_report":
-            title = "Leakage audit"
-            description = (
+            title = i18n.t("Leakage audit")
+            description = i18n.t(
                 "Features checked for information that would make model results "
                 "unrealistically good."
             )
             preferred = [
-                ("Features checked", "n_features_checked"),
-                ("Findings", "n_findings"),
-                ("Blocking", "n_blocking"),
-                ("Clean", "is_clean"),
+                (i18n.t("Features checked"), "n_features_checked"),
+                (i18n.t("Findings"), "n_findings"),
+                (i18n.t("Blocking"), "n_blocking"),
+                (i18n.t("Clean"), "is_clean"),
             ]
         elif artifact_type == "trained_model":
-            title = "Model comparison"
-            description = (
+            title = i18n.t("Model comparison")
+            description = i18n.t(
                 "Candidate models compared by cross-validation and untouched holdout performance."
             )
             preferred = [
-                ("Winner", "winner_id"),
-                ("Metric", "primary_metric"),
-                ("Holdout score", "winner_holdout_score"),
-                ("Training rows", "training_row_count"),
+                (i18n.t("Winner"), "winner_id"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Holdout score"), "winner_holdout_score"),
+                (i18n.t("Training rows"), "training_row_count"),
             ]
         elif artifact_type == "model_experiment":
-            title = str(summary.get("title") or "Agent-authored model experiment")
-            description = (
+            title = str(summary.get("title") or i18n.t("Agent-authored model experiment"))
+            description = i18n.t(
                 "An isolated development experiment scored by the host on withheld labels."
             )
             preferred = [
-                ("Model family", "model_family"),
-                ("Metric", "metric"),
-                ("Score", "score"),
-                ("Baseline", "baseline_score"),
-                ("Evaluation rows", "evaluation_rows"),
+                (i18n.t("Model family"), "model_family"),
+                (i18n.t("Metric"), "metric"),
+                (i18n.t("Score"), "score"),
+                (i18n.t("Baseline"), "baseline_score"),
+                (i18n.t("Evaluation rows"), "evaluation_rows"),
             ]
         elif artifact_type == "evaluation_report":
-            title = "Evaluation result"
-            description = (
+            title = i18n.t("Evaluation result")
+            description = i18n.t(
                 "The selected model compared with its baseline, including alerts "
                 "and decision history."
             )
             preferred = [
-                ("Winner", "winner_id"),
-                ("Metric", "primary_metric"),
-                ("Holdout score", "winner_holdout_score"),
-                ("Baseline improvement", "baseline_delta"),
-                ("Alerts", "n_alerts"),
+                (i18n.t("Winner"), "winner_id"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Holdout score"), "winner_holdout_score"),
+                (i18n.t("Baseline improvement"), "baseline_delta"),
+                (i18n.t("Alerts"), "n_alerts"),
             ]
         elif artifact_type == "final_report":
-            title = "Final auditable report"
-            description = (
+            title = i18n.t("Final auditable report")
+            description = i18n.t(
                 "The human-readable handoff tying conclusions to the exact evaluation evidence."
             )
-            preferred = [("Report length", "n_characters")]
+            preferred = [(i18n.t("Report length"), "n_characters")]
         elif artifact_type == "agent_audit":
-            title = "Agent execution audit"
-            description = (
+            title = i18n.t("Agent execution audit")
+            description = i18n.t(
                 "Contract validation, panel agreement, and deterministic tool provenance."
             )
             preferred = [
-                ("Agent", "agent_id"),
-                ("Panel", "panel_size"),
-                ("Valid", "valid_members"),
-                ("Agreement", "agreement"),
-                ("Pydantic", "pydantic_validated"),
-                ("Tools", "tool_count"),
-                ("Skills", "skill_count"),
+                (i18n.t("Agent"), "agent_id"),
+                (i18n.t("Panel"), "panel_size"),
+                (i18n.t("Valid"), "valid_members"),
+                (i18n.t("Agreement"), "agreement"),
+                (i18n.t("Pydantic"), "pydantic_validated"),
+                (i18n.t("Tools"), "tool_count"),
+                (i18n.t("Skills"), "skill_count"),
             ]
         elif artifact_type == "eda_report":
-            title = "Exploratory data findings"
-            description = (
+            title = i18n.t("Exploratory data findings")
+            description = i18n.t(
                 "Measured distributions, missingness, and relationships relevant to the problem."
             )
-            preferred = [(key.replace("_", " ").title(), key) for key in summary][:4]
+            preferred = [(i18n.t(key.replace("_", " ").title()), key) for key in summary][:4]
         elif artifact_type == "exploratory_analysis":
-            title = str(summary.get("title") or "Agent-authored exploratory analysis")
-            description = "Validated exploratory output produced by locally executed code."
+            title = str(summary.get("title") or i18n.t("Agent-authored exploratory analysis"))
+            description = i18n.t(
+                "Validated exploratory output produced by locally executed code."
+            )
             preferred = [
-                ("Evidence class", "evidence_class"),
-                ("Chart", "chart_kind"),
-                ("Tool calls", "tool_calls"),
+                (i18n.t("Evidence class"), "evidence_class"),
+                (i18n.t("Chart"), "chart_kind"),
+                (i18n.t("Tool calls"), "tool_calls"),
             ]
         facts = [
             {"label": label, "value": summary[key]}
@@ -1867,10 +2018,13 @@ class ControlPlane:
             return story
         payload = self.artifact_payload(artifact["artifact_id"])
         if artifact_type == "integration_plan":
-            story["suggestion"] = (
-                f"Use {payload['base_table']} at one row per "
-                f"{', '.join(payload['base_grain'])}; apply {len(payload['aggregations'])} "
-                f"aggregation(s) before {len(payload['joins'])} join(s)."
+            story["suggestion"] = i18n.t(
+                "Use {base_table} at one row per {base_grain}; apply {n_aggs} "
+                "aggregation(s) before {n_joins} join(s).",
+                base_table=payload["base_table"],
+                base_grain=", ".join(payload["base_grain"]),
+                n_aggs=len(payload["aggregations"]),
+                n_joins=len(payload["joins"]),
             )
             story["warnings"] = payload.get("warnings", [])
             # The join plan as a picture. The brief asks that the schema not be
@@ -1918,16 +2072,19 @@ class ControlPlane:
                 # Say that the agent could not produce an explanation, rather
                 # than showing an empty section that reads as "nothing to say".
                 story["warnings"] = [
-                    str(payload.get("degradation_reason") or "Interpretation was not produced.")
+                    str(
+                        payload.get("degradation_reason")
+                        or i18n.t("Interpretation was not produced.")
+                    )
                 ]
         elif artifact_type == "integration_trial":
-            story["suggestion"] = (
+            story["suggestion"] = i18n.t(
                 "The proposed plan was executed by the deterministic integration engine "
                 "before it was accepted."
             )
             story["warnings"] = payload.get("warnings", [])
         elif artifact_type == "problem_candidates":
-            story["suggestion"] = "The planner ranked these analysis problems."
+            story["suggestion"] = i18n.t("The planner ranked these analysis problems.")
             story["choices"] = [
                 {
                     "title": item.get("title"),
@@ -1940,37 +2097,44 @@ class ControlPlane:
                 for item in payload.get("candidates", [])
             ]
         elif artifact_type == "problem_definition":
-            story["suggestion"] = (
-                f"Proceed with “{payload.get('title')}” as a {payload.get('task_type')} "
-                f"problem, predicting {payload.get('target_column')} and measuring "
-                f"{payload.get('primary_metric')}."
+            story["suggestion"] = i18n.t(
+                "Proceed with “{title}” as a {task_type} problem, predicting "
+                "{target_column} and measuring {primary_metric}.",
+                title=payload.get("title"),
+                task_type=payload.get("task_type"),
+                target_column=payload.get("target_column"),
+                primary_metric=payload.get("primary_metric"),
             )
             story["rationale"] = payload.get("description")
             story["excluded_columns"] = payload.get("excluded_columns", [])
         elif artifact_type == "validation_strategy":
             story["panels"] = validation_panels(payload)
-            story["suggestion"] = (
-                f"Use {payload.get('strategy')} validation with {payload.get('n_folds')} folds"
+            story["suggestion"] = i18n.t(
+                "Use {strategy} validation with {n_folds} folds"
                 + (
-                    f", grouped by {payload.get('group_column')}"
+                    ", grouped by {group_column}"
                     if payload.get("group_column")
                     else ""
                 )
                 + (
-                    f", ordered by {payload.get('time_column')}"
+                    ", ordered by {time_column}"
                     if payload.get("time_column")
                     else ""
                 )
-                + "."
+                + ".",
+                strategy=payload.get("strategy"),
+                n_folds=payload.get("n_folds"),
+                group_column=payload.get("group_column"),
+                time_column=payload.get("time_column"),
             )
             story["rationale"] = payload.get("rationale")
         elif artifact_type == "leakage_report":
             blocking = [item for item in payload.get("findings", []) if item.get("blocking")]
             story["panels"] = leakage_panels(payload)
             story["suggestion"] = (
-                "Do not train yet; correct or exclude the blocking features."
+                i18n.t("Do not train yet; correct or exclude the blocking features.")
                 if blocking
-                else "No blocking leakage was detected; training may proceed."
+                else i18n.t("No blocking leakage was detected; training may proceed.")
             )
             story["findings"] = [
                 {
@@ -2005,11 +2169,16 @@ class ControlPlane:
             )
             target_name = payload.get("target_column")
             story["suggestion"] = (
-                f"Start by understanding {target_name}: inspect its distribution, then "
-                "review missing fields and the strongest measured relationships before "
-                "accepting any modelling direction."
+                i18n.t(
+                    "Start by understanding {target}: inspect its distribution, then "
+                    "review missing fields and the strongest measured relationships before "
+                    "accepting any modelling direction.",
+                    target=target_name,
+                )
                 if target_name
-                else "Review coverage, missingness, correlations, and outliers before modelling."
+                else i18n.t(
+                    "Review coverage, missingness, correlations, and outliers before modelling."
+                )
             )
             story["visuals"] = {
                 "target": {
@@ -2030,10 +2199,11 @@ class ControlPlane:
             # analysis, each with its own chart, severity and insights.
             story["panels"] = eda_panels(payload)
             story["criteria"] = {
-                "Target distribution measured": bool(target_name is None or target),
-                "Every feature covered": set(payload.get("feature_columns", []))
-                .issubset(payload.get("covered_columns", [])),
-                "Missingness measured": {
+                i18n.t("Target distribution measured"): bool(target_name is None or target),
+                i18n.t("Every feature covered"): set(
+                    payload.get("feature_columns", [])
+                ).issubset(payload.get("covered_columns", [])),
+                i18n.t("Missingness measured"): {
                     item.get("column") for item in missingness
                 }.issuperset(
                     set(payload.get("covered_columns", []))
@@ -2041,37 +2211,39 @@ class ControlPlane:
                 ),
             }
             warnings = []
-            high_missing = [
-                item for item in missingness if (item.get("null_rate") or 0.0) >= 0.1
-            ]
+            high_missing = [item for item in missingness if (item.get("null_rate") or 0.0) >= 0.1]
             if high_missing:
                 warnings.append(
-                    f"{len(high_missing)} column(s) have at least 10% missing values; "
-                    "confirm how they should be handled."
+                    i18n.t(
+                        "{count} column(s) have at least 10% missing values; "
+                        "confirm how they should be handled.",
+                        count=len(high_missing),
+                    )
                 )
             strong = [
-                item
-                for item in relationships
-                if abs(item.get("pearson_correlation") or 0.0) >= 0.9
+                item for item in relationships if abs(item.get("pearson_correlation") or 0.0) >= 0.9
             ]
             if strong:
                 warnings.append(
-                    f"{len(strong)} feature(s) have |correlation| at or above 0.90; "
-                    "treat these as leakage candidates until audited."
+                    i18n.t(
+                        "{count} feature(s) have |correlation| at or above 0.90; "
+                        "treat these as leakage candidates until audited.",
+                        count=len(strong),
+                    )
                 )
             story["warnings"] = warnings
         elif artifact_type == "exploratory_analysis":
-            story["panels"] = [
-                exploratory_panel(payload, linked_interpretations or [])
-            ]
-            story["suggestion"] = (
+            story["panels"] = [exploratory_panel(payload, linked_interpretations or [])]
+            story["suggestion"] = i18n.t(
                 "Treat this as a proposed extension to the mandatory EDA, not as gate evidence."
             )
         elif artifact_type == "trained_model":
             story["panels"] = training_panels(payload)
-            story["suggestion"] = (
-                f"Select {payload.get('winner_id')} from {len(payload.get('results', []))} "
-                f"compared candidates using {payload.get('primary_metric')}."
+            story["suggestion"] = i18n.t(
+                "Select {winner} from {count} compared candidates using {metric}.",
+                winner=payload.get("winner_id"),
+                count=len(payload.get("results", [])),
+                metric=payload.get("primary_metric"),
             )
             story["model_comparison"] = [
                 {
@@ -2106,19 +2278,19 @@ class ControlPlane:
                 for item in payload.get("results", [])
             ]
         elif artifact_type == "model_experiment":
-            story["panels"] = [
-                model_experiment_panel(payload, linked_interpretations or [])
-            ]
-            story["suggestion"] = (
+            story["panels"] = [model_experiment_panel(payload, linked_interpretations or [])]
+            story["suggestion"] = i18n.t(
                 "Review this as a proposed development experiment; it did not use the "
                 "final holdout and cannot change the selected model."
             )
         elif artifact_type == "evaluation_report":
             story["panels"] = evaluation_panels(payload)
-            story["suggestion"] = (
-                f"The selected {payload.get('winner_display_name')} scored "
-                f"{payload.get('winner_holdout_score')} on holdout; baseline improvement "
-                f"was {payload.get('baseline_delta')}."
+            story["suggestion"] = i18n.t(
+                "The selected {winner} scored {score} on holdout; baseline improvement "
+                "was {delta}.",
+                winner=payload.get("winner_display_name"),
+                score=payload.get("winner_holdout_score"),
+                delta=payload.get("baseline_delta"),
             )
             gate_history = payload.get("gate_history", [])
             story["history_alerts"] = [
@@ -2134,9 +2306,7 @@ class ControlPlane:
                 for item in payload.get("alerts", [])
             ]
             story["warnings"] = [
-                item["detail"]
-                for item in story["history_alerts"]
-                if not item["resolved"]
+                item["detail"] for item in story["history_alerts"] if not item["resolved"]
             ]
             story["model_comparison"] = [
                 {
@@ -2151,37 +2321,41 @@ class ControlPlane:
             ]
             story["holdout_metrics"] = payload.get("holdout_metrics", [])
         elif artifact_type == "final_report":
-            story["suggestion"] = "The final report is ready for review and export."
+            story["suggestion"] = i18n.t("The final report is ready for review and export.")
             story["report_markdown"] = payload.get("markdown")
         elif artifact_type == "agent_audit":
-            story["suggestion"] = (
+            story["suggestion"] = i18n.t(
                 "Review panel agreement and validation evidence before trusting this "
                 "agent-authored contract."
             )
             row_access = bool(payload.get("raw_rows_shared", False))
-            row_access_authorized = (
-                not row_access or payload.get("agent_id") == "eda_investigator"
-            )
+            row_access_authorized = not row_access or payload.get("agent_id") == "eda_investigator"
             story["quality_checks"] = [
                 {
-                    "label": "Pydantic output contract",
+                    "label": i18n.t("Pydantic output contract"),
                     "passed": payload.get("pydantic_contract_enforced", False),
                     "detail": payload.get("output_contract"),
                 },
                 {
-                    "label": "Row access matches the agent role",
+                    "label": i18n.t("Row access matches the agent role"),
                     "passed": row_access_authorized,
                     "detail": (
-                        "Local investigator may read a read-only copy; output remains typed."
+                        i18n.t(
+                            "Local investigator may read a read-only copy; "
+                            "output remains typed."
+                        )
                         if row_access
-                        else "Planner context contains schema and aggregate measurements only."
+                        else i18n.t(
+                            "Planner context contains schema and "
+                            "aggregate measurements only."
+                        )
                     ),
                 },
                 {
-                    "label": "Evidence tools were allowlisted",
+                    "label": i18n.t("Evidence tools were allowlisted"),
                     "passed": set(payload.get("evidence_tools", []))
                     <= set(payload.get("allowed_tools", [])),
-                    "detail": ", ".join(payload.get("evidence_tools", [])) or "none",
+                    "detail": ", ".join(payload.get("evidence_tools", [])) or i18n.t("none"),
                 },
             ]
             story["panel"] = payload.get("members", [])
@@ -2262,9 +2436,7 @@ class ControlPlane:
         for artifact in artifacts:
             artifact["story"] = self._artifact_story(
                 artifact,
-                linked_interpretations=interpretations_by_source.get(
-                    artifact["artifact_id"], []
-                ),
+                linked_interpretations=interpretations_by_source.get(artifact["artifact_id"], []),
             )
         decisions = [item for item in self.gate_decisions(run_id) if item["stage_id"] == stage_id]
         questions = [decision["human_prompt"] for decision in decisions if decision["human_prompt"]]
@@ -2296,7 +2468,7 @@ class ControlPlane:
             "run_id": run_id,
             "stage": {
                 "id": definition.id,
-                "description": definition.description,
+                "description": i18n.t(definition.description),
                 "consumes": [item.value for item in definition.consumes],
                 "produces": [item.value for item in definition.produces],
             },
@@ -2324,11 +2496,11 @@ class ControlPlane:
             "human_view": {
                 "needs_human": active_question is not None,
                 "state_label": (
-                    "Your decision is needed"
+                    i18n.t("Your decision is needed")
                     if active_question
-                    else "In progress"
+                    else i18n.t("In progress")
                     if stage_status == "running"
-                    else "No action needed"
+                    else i18n.t("No action needed")
                 ),
                 "suggestion": latest_story.get("suggestion") if latest_story else None,
                 "question": active_question,
@@ -2587,7 +2759,7 @@ def create_app(
         return {"status": "ok", "auth": auth_config is not None}
 
     static_dir = Path(__file__).with_name("static")
-    if static_dir.is_dir():
+    if (static_dir / "assets").is_dir():
         # Serve the built React app. Hashed asset filenames make the bundle
         # cacheable; index.html is the SPA fallback so client-side routes
         # survive a hard refresh.
@@ -2601,11 +2773,10 @@ def create_app(
         def index() -> str:
             return (static_dir / "index.html").read_text(encoding="utf-8")
     else:
+
         @app.get("/", response_class=HTMLResponse)
         def index_missing() -> str:
-            return (
-                "<h1>UI not built</h1><p>Run <code>npm --prefix web run build</code>.</p>"
-            )
+            return "<h1>UI not built</h1><p>Run <code>npm --prefix web run build</code>.</p>"
 
     @app.get("/api/workflow")
     def workflow(run_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
@@ -2710,9 +2881,7 @@ def create_app(
     @app.post("/api/runs/{run_id}/stages/{stage_id}/direct")
     def direct_stage(run_id: str, stage_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
-            directives = plane.direct_stage(
-                run_id, stage_id, str(body.get("instruction", ""))
-            )
+            directives = plane.direct_stage(run_id, stage_id, str(body.get("instruction", "")))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "stage_id": stage_id, "directives": directives}
@@ -2724,9 +2893,7 @@ def create_app(
     @app.post("/api/runs/{run_id}/sensitivity")
     def override_sensitivity(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
-            applied = plane.apply_sensitivity_overrides(
-                run_id, dict(body.get("columns") or {})
-            )
+            applied = plane.apply_sensitivity_overrides(run_id, dict(body.get("columns") or {}))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "applied": applied}

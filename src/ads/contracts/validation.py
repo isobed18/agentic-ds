@@ -130,12 +130,8 @@ class ValidationStrategyProposal(FrozenModel):
     n_folds: int = Field(default=5, ge=2, le=20)
     test_size: float = Field(default=0.2, gt=0.0, lt=0.9)
 
-    group_column: str | None = Field(
-        default=None, description="Required for grouped strategies."
-    )
-    time_column: str | None = Field(
-        default=None, description="Required for temporal strategies."
-    )
+    group_column: str | None = Field(default=None, description="Required for grouped strategies.")
+    time_column: str | None = Field(default=None, description="Required for temporal strategies.")
     holdout_cutoff: str | None = Field(
         default=None, description="ISO date; rows at or after this go to holdout."
     )
@@ -229,6 +225,7 @@ class ValidationTrial(Artifact):
             "temporal_order_violation_count": self.temporal_order_violation_count,
         }
 
+
 class ValidationStrategy(Artifact):
     """How the data will be split for honest evaluation."""
 
@@ -239,12 +236,8 @@ class ValidationStrategy(Artifact):
     n_folds: int = Field(default=5, ge=2, le=20)
     test_size: float = Field(default=0.2, gt=0.0, lt=0.9)
 
-    group_column: str | None = Field(
-        default=None, description="Required for grouped strategies."
-    )
-    time_column: str | None = Field(
-        default=None, description="Required for temporal strategies."
-    )
+    group_column: str | None = Field(default=None, description="Required for grouped strategies.")
+    time_column: str | None = Field(default=None, description="Required for temporal strategies.")
     holdout_cutoff: str | None = Field(
         default=None, description="ISO date; rows at or after this go to holdout."
     )

@@ -75,9 +75,7 @@ class AgentRuntimePolicy(FrozenModel):
     @model_validator(mode="after")
     def _known_stages_only(self) -> AgentRuntimePolicy:
         unknown = (
-            set(self.budgets)
-            | set(self.code_execution_disabled)
-            | set(self.investigators_disabled)
+            set(self.budgets) | set(self.code_execution_disabled) | set(self.investigators_disabled)
         ) - set(ACTIVE_INVESTIGATION_STAGES)
         if unknown:
             raise ValueError(f"Unknown investigation stages: {sorted(unknown)}")

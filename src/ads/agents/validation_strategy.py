@@ -81,9 +81,7 @@ _PROTECTIONS: dict[SplitStrategy, frozenset[str]] = {
     SplitStrategy.STRATIFIED: frozenset({_CLASS_BALANCE}),
     SplitStrategy.TEMPORAL: frozenset({_TEMPORAL_ORDERING}),
     SplitStrategy.GROUPED: frozenset({_ENTITY_ISOLATION}),
-    SplitStrategy.GROUPED_TEMPORAL: frozenset(
-        {_ENTITY_ISOLATION, _TEMPORAL_ORDERING}
-    ),
+    SplitStrategy.GROUPED_TEMPORAL: frozenset({_ENTITY_ISOLATION, _TEMPORAL_ORDERING}),
 }
 
 
@@ -94,10 +92,10 @@ def build_context(abt_card: DataCard, signals: ValidationSignals) -> AgentContex
     temporal = {item.column: item for item in signals.temporal_spans}
     skills = select_skills("validation_strategy", [abt_card])
     sections = {
-            "Analytical base table": datacard_digest(abt_card),
-            "Validation signals": validation_signals_digest(signals),
-            "Task": "Choose the validation strategy and justify its business consequence.",
-        }
+        "Analytical base table": datacard_digest(abt_card),
+        "Validation signals": validation_signals_digest(signals),
+        "Task": "Choose the validation strategy and justify its business consequence.",
+    }
     if skills:
         sections["Applicable skills"] = render_skills(skills)
     return AgentContext(
@@ -157,19 +155,14 @@ def _containment_gaps(repeated: dict, columns: list[str] | None = None) -> list[
                 details.append(
                     f"grouping by {candidate_column}: {repeated_column} was not measured"
                 )
-            elif (
-                cell.spanning_value_count > 0
-                or cell.missing_group_value_count > 0
-            ):
+            elif cell.spanning_value_count > 0 or cell.missing_group_value_count > 0:
                 detail = (
                     f"grouping by {candidate_column} leaves "
                     f"{cell.spanning_value_count} of {cell.repeated_value_count} "
                     f"repeated values of {repeated_column} spanning groups"
                 )
                 if cell.missing_group_value_count:
-                    detail += (
-                        f" and {cell.missing_group_value_count} with a missing group value"
-                    )
+                    detail += f" and {cell.missing_group_value_count} with a missing group value"
                 details.append(detail)
     return details
 
@@ -195,14 +188,10 @@ def validate_group_column_repeats(
         return []
 
     if column not in repeated:
-        unique_rates: dict[str, float] = context.facts.get(
-            "unique_rate_by_column", {}
-        )
+        unique_rates: dict[str, float] = context.facts.get("unique_rate_by_column", {})
         unique_rate = unique_rates.get(column)
         measured = (
-            f" Its measured unique_rate is {unique_rate:.3f}."
-            if unique_rate is not None
-            else ""
+            f" Its measured unique_rate is {unique_rate:.3f}." if unique_rate is not None else ""
         )
         return [
             ValidationFailure(
@@ -223,10 +212,7 @@ def validate_group_column_repeats(
             ValidationFailure(
                 layer="consistency",
                 code="no_full_coverage_group_column",
-                detail=(
-                    "No single column protects every repeating identifier domain. "
-                    + matrix
-                ),
+                detail=("No single column protects every repeating identifier domain. " + matrix),
                 field_path="group_column",
             )
         ]
@@ -271,9 +257,7 @@ def validate_temporal_column_spans_periods(
     if span is not None:
         description = f"datetime with only a {span.span_days}-day span"
     alternatives = sorted(
-        name
-        for name, item in spans.items()
-        if item.span_days >= MIN_TEMPORAL_SPAN_DAYS
+        name for name, item in spans.items() if item.span_days >= MIN_TEMPORAL_SPAN_DAYS
     )
     return [
         ValidationFailure(
@@ -289,9 +273,7 @@ def validate_temporal_column_spans_periods(
     ]
 
 
-def missing_protections(
-    proposal: SplitStrategy, recommended: SplitStrategy
-) -> frozenset[str]:
+def missing_protections(proposal: SplitStrategy, recommended: SplitStrategy) -> frozenset[str]:
     """Protections the recommendation provides that the proposal does not.
 
     Entity isolation and temporal ordering are *independent* guarantees, so a
@@ -328,9 +310,7 @@ def validate_strategy_not_weaker(
     )
     reasons: list[str] = []
     if _ENTITY_ISOLATION in missing and repeated:
-        reasons.append(
-            f"repeating identifier domains in {repeated} require entity isolation"
-        )
+        reasons.append(f"repeating identifier domains in {repeated} require entity isolation")
     if _TEMPORAL_ORDERING in missing and temporal:
         reasons.append(f"multi-period dates in {temporal} require a temporal holdout")
     if _CLASS_BALANCE in missing:
@@ -389,9 +369,7 @@ def validate_holdout_cutoff(
             ValidationFailure(
                 layer="semantic",
                 code="invalid_holdout_cutoff",
-                detail=(
-                    f"holdout_cutoff {proposal.holdout_cutoff!r} is not a valid ISO date."
-                ),
+                detail=(f"holdout_cutoff {proposal.holdout_cutoff!r} is not a valid ISO date."),
                 field_path="holdout_cutoff",
             )
         ]

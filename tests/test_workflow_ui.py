@@ -105,9 +105,11 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
         "report",
     ]
     assert all(node["status"] == "pending" for node in graph["nodes"])
-    assert {
-        node["id"] for node in graph["nodes"] if node["kind"] == "planner_agent"
-    } == {"schema_discovery", "problem_discovery", "validation_strategy"}
+    assert {node["id"] for node in graph["nodes"] if node["kind"] == "planner_agent"} == {
+        "schema_discovery",
+        "problem_discovery",
+        "validation_strategy",
+    }
     assert {edge["condition"] for edge in graph["edges"]} == {
         "on_proceed",
         "on_retry",
@@ -519,9 +521,7 @@ def test_problem_card_explains_the_agents_suggestion_in_human_terms(tmp_path: Pa
 
     detail = plane.stage_detail("story-run", "problem_discovery")
     story = next(
-        item["story"]
-        for item in detail["outputs"]
-        if item["type"] == "problem_definition"
+        item["story"] for item in detail["outputs"] if item["type"] == "problem_definition"
     )
 
     assert "Forecast customer churn score" in story["suggestion"]

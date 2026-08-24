@@ -149,11 +149,7 @@ def build_context(
                 }
             ),
             "known_tables": sorted(
-                {
-                    subject.table
-                    for record in visible.values()
-                    for subject in record.subjects
-                }
+                {subject.table for record in visible.values() for subject in record.subjects}
             ),
         },
     )
@@ -195,9 +191,7 @@ def validate_measurement_binding(
                 ValidationFailure(
                     layer="evidence",
                     code="incompatible_measurement_kind",
-                    detail=(
-                        f"{item.kind.value} cannot cite measurement kinds {incompatible}."
-                    ),
+                    detail=(f"{item.kind.value} cannot cite measurement kinds {incompatible}."),
                     field_path=f"items[{index}].measurement_ids",
                 )
             )

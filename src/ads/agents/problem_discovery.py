@@ -66,16 +66,12 @@ Do not invent columns. Use exact names.\
 """
 
 
-def build_context(
-    abt_card: DataCard, *, user_intent: str | None = None
-) -> AgentContext:
+def build_context(abt_card: DataCard, *, user_intent: str | None = None) -> AgentContext:
     """Project the ABT profile into the agent's context."""
     sections = {
         "Analytical base table": datacard_digest(abt_card),
         "Candidate targets": support_digest(abt_card),
-        "Task": (
-            "Propose the ML problems this table could support, ranked best first."
-        ),
+        "Task": ("Propose the ML problems this table could support, ranked best first."),
     }
     if user_intent:
         sections["Stated user intent"] = (
@@ -240,9 +236,7 @@ def build_spec() -> AgentSpec[ProblemDiscoveryProposal]:
         ),
         max_attempts=3,
         rubric="problem_discovery.v1",
-        allowed_tools=frozenset(
-            {"cardinality", "column_profile", "null_rate", "value_counts"}
-        ),
+        allowed_tools=frozenset({"cardinality", "column_profile", "null_rate", "value_counts"}),
         max_tool_tier=PermissionTier.READ_DATA,
         column_fields=frozenset({"target_column", "evidence_columns"}),
         # How a candidate is explained to a human. Everything else --

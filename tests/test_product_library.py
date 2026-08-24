@@ -221,9 +221,7 @@ class TestAbandonedRunsAreNotReportedAsLive:
     cleared through the product at all.
     """
 
-    def test_in_flight_snapshot_without_a_worker_reads_as_interrupted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_in_flight_snapshot_without_a_worker_reads_as_interrupted(self, tmp_path: Path) -> None:
         plane = _plane(tmp_path)
         _snapshot(plane, "abandoned-run", "running")
         client = TestClient(create_app(plane=plane))
@@ -309,9 +307,7 @@ class TestAParkedRunCanBeCleared:
         snapshot = _snapshot(plane, "parked-run", "awaiting_human")
         client = TestClient(create_app(plane=plane))
 
-        deleted = client.post(
-            "/api/runs/parked-run/delete", json={"confirmation": "parked-run"}
-        )
+        deleted = client.post("/api/runs/parked-run/delete", json={"confirmation": "parked-run"})
 
         assert deleted.status_code == 200, deleted.text
         assert not snapshot.exists()
@@ -354,9 +350,7 @@ class TestAParkedRunCanBeCleared:
         )
         client = TestClient(create_app(plane=plane))
 
-        refused = client.post(
-            "/api/runs/live-run/delete", json={"confirmation": "live-run"}
-        )
+        refused = client.post("/api/runs/live-run/delete", json={"confirmation": "live-run"})
 
         assert refused.status_code == 409
         assert snapshot.exists()

@@ -279,21 +279,13 @@ def audit_leakage(
 
     if target_column and task_type in SUPERVISED_TASKS and target_column in frame.columns:
         findings.extend(
-            _audit_target_relationship(
-                card, frame, features, target_column, task_type, options
-            )
+            _audit_target_relationship(card, frame, features, target_column, task_type, options)
         )
         if task_type is not TaskType.REGRESSION:
-            findings.extend(
-                _audit_separation(card, frame, features, target_column, options)
-            )
-            findings.extend(
-                _audit_missingness(frame, features, target_column, options)
-            )
+            findings.extend(_audit_separation(card, frame, features, target_column, options))
+            findings.extend(_audit_missingness(frame, features, target_column, options))
 
-    findings.extend(
-        _audit_temporal(card, frame, features, validation_strategy, integration_plan)
-    )
+    findings.extend(_audit_temporal(card, frame, features, validation_strategy, integration_plan))
 
     # Two distinct confirmations, because they are two distinct domain claims.
     # "This value is recorded before the outcome" does not establish "whether
@@ -305,10 +297,7 @@ def audit_leakage(
         findings = [
             f
             for f in findings
-            if not (
-                f.column in confirmed_pre_outcome
-                and f.kind is LeakageKind.PERFECT_SEPARATOR
-            )
+            if not (f.column in confirmed_pre_outcome and f.kind is LeakageKind.PERFECT_SEPARATOR)
         ]
     if confirmed_missingness_pre_outcome:
         findings = [
@@ -461,9 +450,7 @@ def ordered_separation_information(
     candidate_bins = bin_ceiling
     while candidate_bins >= 2:
         try:
-            candidate = pd.qcut(
-                frame["f"], q=candidate_bins, duplicates="drop"
-            )
+            candidate = pd.qcut(frame["f"], q=candidate_bins, duplicates="drop")
         except (TypeError, ValueError):
             return None
         counts = candidate.value_counts()
@@ -589,9 +576,7 @@ def _audit_missingness(
         if not 0.0 < null_rate < 1.0:
             continue
 
-        score = normalised_mutual_information(
-            indicator.astype(int), target, options.max_bins
-        )
+        score = normalised_mutual_information(indicator.astype(int), target, options.max_bins)
         if score < options.mutual_information_threshold:
             continue
 
@@ -609,8 +594,7 @@ def _audit_missingness(
                     "values do not need to be read for the model to exploit it."
                 ),
                 suggested_action=(
-                    f"Drop {name!r}, or confirm the value is recorded before the "
-                    "outcome is known."
+                    f"Drop {name!r}, or confirm the value is recorded before the outcome is known."
                 ),
             )
         )
@@ -627,8 +611,7 @@ def _audit_identifier_proxies(
             continue
         if profile.semantic_type is SemanticType.IDENTIFIER or (
             profile.unique_rate >= options.identifier_unique_rate
-            and profile.semantic_type
-            in (SemanticType.CATEGORICAL, SemanticType.TEXT)
+            and profile.semantic_type in (SemanticType.CATEGORICAL, SemanticType.TEXT)
         ):
             findings.append(
                 LeakageFinding(

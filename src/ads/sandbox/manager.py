@@ -162,9 +162,7 @@ class SandboxManager:
             raise
         return session
 
-    def execute(
-        self, session: SandboxSession, code: str, timeout: float = 30.0
-    ) -> ExecutionResult:
+    def execute(self, session: SandboxSession, code: str, timeout: float = 30.0) -> ExecutionResult:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         command = [

@@ -428,9 +428,7 @@ def train_candidates(
         run_id=run_id,
         artifact_id=artifact_id,
     )
-    return report.model_copy(
-        update={"model_blob": ModelBlobReference(artifact_id=artifact_id)}
-    )
+    return report.model_copy(update={"model_blob": ModelBlobReference(artifact_id=artifact_id)})
 
 
 __all__ = ["TrainingError", "train_candidates"]

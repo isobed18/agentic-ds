@@ -125,10 +125,7 @@ def datacard_measurements(card: DataCard) -> list[MeasurementRecord]:
                 artifact_id=artifact_id,
                 path=f"/candidate_primary_keys/{index}",
                 kind=MeasurementKind.KEY_CARDINALITY,
-                subjects=[
-                    SubjectRef(table=card.table_name, column=column)
-                    for column in columns
-                ],
+                subjects=[SubjectRef(table=card.table_name, column=column) for column in columns],
                 value={"columns": columns, "is_unique": True, "null_rate": 0.0},
             )
         )
@@ -294,8 +291,7 @@ def measurement_digest(
         )
         value = json.dumps(record.value, sort_keys=True, separators=(",", ":"))
         lines.append(
-            f"{record.measurement_id} kind={record.kind.value} "
-            f"subjects=[{subjects}] value={value}"
+            f"{record.measurement_id} kind={record.kind.value} subjects=[{subjects}] value={value}"
         )
     return "\n".join(lines), {record.measurement_id: record for record in ordered}
 

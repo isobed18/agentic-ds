@@ -31,9 +31,7 @@ _PROMINENT_GATE_CODES = frozenset(
 def load_gate_decisions(store: ArtifactStore, run_id: str) -> list[GateDecision]:
     """Load a run's persisted gate history in chronological insertion order."""
     refs = store.list(run_id, artifact_type=ArtifactType.GATE_DECISION)
-    return [
-        store.load(reference.artifact_id, GateDecision) for reference in reversed(refs)
-    ]
+    return [store.load(reference.artifact_id, GateDecision) for reference in reversed(refs)]
 
 
 def _gate_alerts(decisions: Sequence[GateDecision]) -> list[EvaluationAlert]:
@@ -158,9 +156,7 @@ def build_evaluation_report(
         for finding in findings_by_key.values()
     ]
     authority = (
-        DecisionAuthority.HUMAN
-        if problem.confirmed_by == "human"
-        else DecisionAuthority.AUTONOMOUS
+        DecisionAuthority.HUMAN if problem.confirmed_by == "human" else DecisionAuthority.AUTONOMOUS
     )
     default_decisions = [
         DecisionRecord(
@@ -178,8 +174,7 @@ def build_evaluation_report(
         DecisionRecord(
             stage="model_selection",
             decision=(
-                f"Selected {training_report.winner.display_name!r} by inner-CV "
-                f"{primary.value}."
+                f"Selected {training_report.winner.display_name!r} by inner-CV {primary.value}."
             ),
             authority=DecisionAuthority.AUTONOMOUS,
             rationale="Candidate selection used recorded deterministic measurements.",
@@ -190,9 +185,7 @@ def build_evaluation_report(
         item for item in default_decisions if item.stage not in supplied_stages
     ] + list(decisions)
     human_approved_stages = {
-        item.stage
-        for item in recorded_decisions
-        if item.authority is DecisionAuthority.HUMAN
+        item.stage for item in recorded_decisions if item.authority is DecisionAuthority.HUMAN
     }
     gate_history = [
         GateHistoryRecord(

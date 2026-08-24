@@ -70,8 +70,7 @@ class AgentContext:
         sections = [f"## {title}\n{body}" for title, body in self.sections.items()]
         if self.evidence_tools:
             measured = "\n".join(
-                f"- {evidence.tool_id}: {evidence.summary}"
-                for evidence in self.evidence_tools
+                f"- {evidence.tool_id}: {evidence.summary}" for evidence in self.evidence_tools
             )
             sections.append(f"## Measured tool evidence\n{measured}")
         return "\n\n".join(sections)
@@ -144,8 +143,9 @@ class AgentResult[TOut: BaseModel]:
     def require(self) -> TOut:
         if self.output is None:
             failures = "; ".join(f"{f.code}: {f.detail}" for f in self.all_failures) or "unknown"
-            raise AgentFailedError(f"Agent {self.agent_id!r} failed after "
-                                   f"{self.n_attempts} attempt(s): {failures}")
+            raise AgentFailedError(
+                f"Agent {self.agent_id!r} failed after {self.n_attempts} attempt(s): {failures}"
+            )
         return self.output
 
 
@@ -178,8 +178,7 @@ class AgentPanelResult[TOut: BaseModel]:
         if self.output is None:
             failures = "; ".join(f"{f.code}: {f.detail}" for f in self.all_failures)
             raise AgentFailedError(
-                f"Agent panel {self.agent_id!r} produced no valid contract: "
-                f"{failures or 'unknown'}"
+                f"Agent panel {self.agent_id!r} produced no valid contract: {failures or 'unknown'}"
             )
         return self.output
 
@@ -390,9 +389,7 @@ def require_tool_evidence(*tool_ids: str) -> Validator:
     return validate
 
 
-def _validate_tool_evidence[TOut: BaseModel](
-    spec: AgentSpec[TOut], context: AgentContext
-) -> None:
+def _validate_tool_evidence[TOut: BaseModel](spec: AgentSpec[TOut], context: AgentContext) -> None:
     supplied_tools = {evidence.tool_id for evidence in context.evidence_tools}
     undeclared = supplied_tools - spec.allowed_tools
     if undeclared:
@@ -432,10 +429,7 @@ def run_agent_panel[TOut: BaseModel](
     """
     if not 1 <= panel_size <= 5:
         raise ValueError("panel_size must be between 1 and 5")
-    members = [
-        run_agent(spec, context, llm, auto_repair=auto_repair)
-        for _ in range(panel_size)
-    ]
+    members = [run_agent(spec, context, llm, auto_repair=auto_repair) for _ in range(panel_size)]
     valid = [member.output for member in members if member.output is not None]
     if not valid:
         return AgentPanelResult(spec.id, members, None, 0.0, 0.0)

@@ -87,9 +87,7 @@ def _outputs(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int 
             if "image/png" in data:
                 outputs.append({"kind": "figure", "png_base64": data["image/png"]})
             if _DATAFRAME_MIME not in data and "image/png" not in data and "text/plain" in data:
-                outputs.append(
-                    {"kind": "text", "stream": "display", "text": data["text/plain"]}
-                )
+                outputs.append({"kind": "text", "stream": "display", "text": data["text/plain"]})
     return outputs, execution_count
 
 

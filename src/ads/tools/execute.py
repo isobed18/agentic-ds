@@ -85,8 +85,7 @@ def execute_python(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPa
     raw_stdout = result.stdout
     truncated = len(raw_stdout) > STDOUT_CHAR_LIMIT
     stdout = (
-        raw_stdout[:STDOUT_CHAR_LIMIT]
-        + f"\n… truncated at {STDOUT_CHAR_LIMIT} characters "
+        raw_stdout[:STDOUT_CHAR_LIMIT] + f"\n… truncated at {STDOUT_CHAR_LIMIT} characters "
         f"({len(raw_stdout) - STDOUT_CHAR_LIMIT} more). "
         "Write large output to /artifacts and reference the file instead."
         if truncated
@@ -123,8 +122,8 @@ def register_execute_tool(registry: ToolRegistry) -> ToolRegistry:
         ToolDefinition(
             tool_id="execute_python",
             arguments={
-                'code': 'Python source to run in the sandbox',
-                'timeout': 'optional seconds, 0-120, default 30',
+                "code": "Python source to run in the sandbox",
+                "timeout": "optional seconds, 0-120, default 30",
             },
             tier=PermissionTier.EXECUTE,
             description="Execute Python in the isolated persistent Jupyter sandbox.",

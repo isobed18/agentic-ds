@@ -47,9 +47,7 @@ class TestLoaders:
         assert "header_row_inferred" in codes
         assert "physician_id" in master.column_names
 
-    def test_all_null_column_dropped_with_warning(
-        self, cards_by_name: dict[str, DataCard]
-    ) -> None:
+    def test_all_null_column_dropped_with_warning(self, cards_by_name: dict[str, DataCard]) -> None:
         master = cards_by_name[MASTER]
         assert "unused_column" not in master.column_names
         assert "empty_columns_dropped" in {i.code for i in master.issues}
@@ -215,9 +213,7 @@ class TestSensitivityAndRedaction:
                     assert col.sample_values == []
                     assert col.top_values == []
 
-    def test_pii_absent_from_llm_facing_digest(
-        self, cards_by_name: dict[str, DataCard]
-    ) -> None:
+    def test_pii_absent_from_llm_facing_digest(self, cards_by_name: dict[str, DataCard]) -> None:
         digest = datacard_digest(cards_by_name[MASTER])
         assert "example-clinic.test" not in digest
         assert "Dr. Physician" not in digest
@@ -279,9 +275,7 @@ class TestProfileStatistics:
         assert col is not None
         assert col.null_rate == pytest.approx(0.11, abs=0.005)
 
-    def test_rare_label_visible_in_top_values(
-        self, cards_by_name: dict[str, DataCard]
-    ) -> None:
+    def test_rare_label_visible_in_top_values(self, cards_by_name: dict[str, DataCard]) -> None:
         """Statistical support for 'fraud detection' must be inspectable."""
         col = cards_by_name[TRANSACTIONS].column("flagged")
         assert col is not None
@@ -295,9 +289,7 @@ class TestProfileStatistics:
         assert "annual_comp" in targets
         assert "physician_id" not in targets
 
-    def test_digest_is_small_enough_for_local_models(
-        self, cards: list[DataCard]
-    ) -> None:
+    def test_digest_is_small_enough_for_local_models(self, cards: list[DataCard]) -> None:
         total = sum(len(datacard_digest(c)) for c in cards)
         assert total < 8_000, f"digest grew to {total} chars; local context budget at risk"
 
@@ -422,15 +414,23 @@ class TestMeasureRelationship:
     def test_dtype_coercion_matches_int_to_string_keys(self) -> None:
         """Enterprise exports store the same id as 1234 and '1234'."""
         rel = measure_relationship(
-            "child", "ref", pd.Series([1, 2, 3]),
-            "parent", "key", pd.Series(["1", "2", "3"]),
+            "child",
+            "ref",
+            pd.Series([1, 2, 3]),
+            "parent",
+            "key",
+            pd.Series(["1", "2", "3"]),
         )
         assert rel.overlap_rate == 1.0
 
     def test_empty_child_is_not_a_relationship(self) -> None:
         rel = measure_relationship(
-            "child", "ref", pd.Series([], dtype="float64"),
-            "parent", "key", pd.Series([1, 2]),
+            "child",
+            "ref",
+            pd.Series([], dtype="float64"),
+            "parent",
+            "key",
+            pd.Series([1, 2]),
         )
         assert rel.overlap_rate == 0.0
 
