@@ -88,35 +88,57 @@ def _ayrac_sinyali(satirlar: list[str]) -> tuple[float, str]:
 
 
 def _sabit_genislik_sinyali(satirlar: list[str]) -> tuple[float, str]:
-    """Sutun araligi tespiti.
+    """Sutun araligi tespiti: satirlar boyunca tekrar eden BOSLUK SUTUNLARI.
 
-    Klasik yontem: iki veya daha fazla ardisik boslugun bittigi konumlar
-    sutun baslangicidir. Bu konumlar satirlar boyunca tekrar ediyorsa
-    metin sabit genisliklidir.
+    Ilk surum yalnizca sol kenari ariyordu ("iki+ bosluk sonrasi ilk
+    karakter"). Bu, SAGA HIZALI sayi sutunlarinda calismiyordu: baslik
+    sola, sayilar saga yaslandigi icin sol kenar satirdan satira kayiyor
+    ve hizalama goremiyorduk. Olcumde `hizali_rapor.txt` tam bu yuzden
+    kaciyordu.
+
+    Dogru degismez, sutunun kenari degil ARADAKI BOSLUK: gercek bir sabit
+    genislikli tabloda belirli karakter konumlari neredeyse her satirda
+    bosluktur. Hizalama yonunden bagimsizdir.
     """
     ornek = [s for s in satirlar if len(s) > 12][:60]
     if len(ornek) < 3:
         return 0.0, "satir yetersiz"
 
-    # her satirda "iki+ bosluk sonrasi karakter" konumlari
-    konumlar: list[set[int]] = []
-    for s in ornek:
-        konumlar.append({m.start() for m in re.finditer(r"(?<=\s{2})\S", s)})
+    genislik = min(len(s) for s in ornek)
+    if genislik < 8:
+        return 0.0, "satirlar cok kisa"
 
-    if not any(konumlar):
-        return 0.0, "coklu bosluk yok"
+    # Her karakter konumu icin: kac satirda bosluk?
+    bosluk_orani = [
+        sum(1 for s in ornek if s[i] == " ") / len(ornek)
+        for i in range(genislik)
+    ]
 
-    # kac satirda ayni konum tekrar ediyor
-    tum = set().union(*konumlar)
-    tekrar = {k: sum(1 for ks in konumlar if k in ks) for k in tum}
-    guclu = [k for k, adet in tekrar.items() if adet >= len(ornek) * 0.8]
+    # Neredeyse her satirda bosluk olan konumlar = ayirici sutunlar.
+    ayirici = [i for i, o in enumerate(bosluk_orani) if o >= 0.9]
+    if not ayirici:
+        return 0.0, "her satirda bosluk olan konum yok"
 
-    if len(guclu) < 1:
-        return 0.0, "hizali sutun sinir yok"
+    # Bitisik konumlari tek bir "bosluk blogu" say; 1 karakterlik tek
+    # bosluklar kelime arasi olabilir, en az 2 genisligindekiler sutun
+    # ayiricisidir.
+    bloklar: list[list[int]] = []
+    for i in ayirici:
+        if bloklar and i == bloklar[-1][-1] + 1:
+            bloklar[-1].append(i)
+        else:
+            bloklar.append([i])
+    gercek = [b for b in bloklar if len(b) >= 2]
 
-    oran = min(1.0, len(guclu) / 3)
-    return oran, (f"{len(guclu)} hizali sutun siniri, "
-                  f"satirlarin >=%80'inde ayni konumda")
+    # Satir basindaki girinti bir sutun ayiricisi degildir.
+    gercek = [b for b in gercek if b[0] != 0]
+
+    if not gercek:
+        return 0.0, "hizali sutun ayiricisi yok"
+
+    oran = min(1.0, len(gercek) / 2)
+    return oran, (f"{len(gercek)} sutun ayiricisi, "
+                  f"satirlarin >=%90'inda ayni konumda bosluk")
 
 
 def _log_sinyali(satirlar: list[str]) -> tuple[float, str]:
@@ -195,11 +217,26 @@ def sekil_tespit(metin: str) -> SekilSonuc:
                     key=lambda x: x[1], reverse=True)
     birinci, ikinci = siralı[0], siralı[1]
 
-    # Log ve tablo ayni anda yuksekse: log satirlari da ayrac icerebilir.
-    # Zaman damgasi daha ayirt edici oldugu icin log oncelenir.
+    # Log ile tablo ayni anda yuksek olabilir, iki ayri sebeple:
+    #   (a) log satirlari da ayrac (virgul, bosluk) icerebilir
+    #   (b) ILK SUTUNU TARIH olan bir CSV, zaman damgasiyla baslayan
+    #       satirlar uretir ve log gibi gorunur
+    # Ayirt eden kanit SEVIYE ETIKETI (INFO/WARN/ERROR): gercek log'da
+    # vardir, tarih sutunlu tabloda yoktur. Olcumde `satis_2024.csv`
+    # tam (b) yuzunden human feedback'e dusuyordu.
+    seviye_var = bool(LOG_SEVIYE.search("\n".join(satirlar)))
     if (olcumler[Sekil.LOG][0] >= 0.7
-            and birinci[0] is Sekil.TABLO):
+            and birinci[0] is Sekil.TABLO
+            and seviye_var):
         birinci, ikinci = (Sekil.LOG, olcumler[Sekil.LOG][0]), birinci
+    elif (birinci[0] is Sekil.TABLO
+            and olcumler[Sekil.TABLO][0] >= 0.95
+            and not seviye_var):
+        # Tutarli ayrac kesin: tarih sutunu log kanitti sayilmaz.
+        ikinci = max(
+            ((s, p) for s, p in siralı if s not in (Sekil.TABLO, Sekil.LOG)),
+            key=lambda x: x[1], default=(Sekil.BELIRSIZ, 0.0),
+        )
 
     if birinci[1] < ESIK_KARAR:
         return SekilSonuc(

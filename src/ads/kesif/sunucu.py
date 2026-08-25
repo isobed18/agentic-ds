@@ -23,26 +23,62 @@ from pathlib import Path
 
 from mcp.server import MCPServer
 
-from .formatlar import metin
-from .model import Onem, Rapor, ozet_satiri
-from .okuyucu import oku_tablo
+from .formatlar import goruntu, metin, pdf, tablolu
+from .model import Rapor, ozet_satiri
+from .okuyucu import oku_calisma_kitabi, oku_goruntu, oku_pdf, oku_tablo
 from .yonlendirici import (
-    Karar, envanter as _envanter, secenek_uret as _secenek_uret,
+    envanter as _envanter,
+)
+from .yonlendirici import (
+    secenek_uret as _secenek_uret,
+)
+from .yonlendirici import (
     yonlendir as _yonlendir,
 )
 
 KOK = Path(os.environ.get("KESIF_KOK", ".")).resolve()
 
-# Hangi uzanti hangi cozumleyiciye gider.
+# Hangi uzanti hangi cozumleyiciye (incele -> Rapor) gider.
+# dosya_incele() ve secenekler() burayi kullanir.
 COZUMLEYICILER = {
     ".csv": metin.incele,
     ".tsv": metin.incele,
     ".txt": metin.incele,
     ".dat": metin.incele,
+    ".pdf": pdf.incele,
+    # Goruntu: metin secilemez, OCR ile okunur.
+    ".png": goruntu.incele,
+    ".jpg": goruntu.incele,
+    ".jpeg": goruntu.incele,
+    ".bmp": goruntu.incele,
+    ".tiff": goruntu.incele,
+    ".webp": goruntu.incele,
+    # XLSX bir kapsayici degil, sayfalardan olusan tablo dosyasi.
+    ".xlsx": tablolu.incele,
+    ".xlsm": tablolu.incele,
+}
+
+# Hangi uzanti hangi okuyucuya (secim uygula -> onizleme) gider.
+# oku() burayi kullanir. CSV/TSV/TXT/DAT icin pandas okumasi, PDF icin
+# metin cikarimi farkli seyler oldugundan COZUMLEYICILER'den ayri tutulur.
+OKUYUCULAR = {
+    ".csv": oku_tablo,
+    ".tsv": oku_tablo,
+    ".txt": oku_tablo,
+    ".dat": oku_tablo,
+    ".pdf": oku_pdf,
+    ".png": oku_goruntu,
+    ".jpg": oku_goruntu,
+    ".jpeg": oku_goruntu,
+    ".bmp": oku_goruntu,
+    ".tiff": oku_goruntu,
+    ".webp": oku_goruntu,
+    ".xlsx": oku_calisma_kitabi,
+    ".xlsm": oku_calisma_kitabi,
 }
 
 # Henuz eklenmemis ama taninan formatlar (dogru davranis: yalan soyleme).
-PLANLI = {".json", ".xlsx", ".xlsm", ".pdf"}
+PLANLI = {".json"}
 
 sunucu = MCPServer(
     name="kesif",
@@ -74,7 +110,9 @@ def _guvenli_yol(yol: str) -> Path:
 )
 def formatlari_listele() -> dict[str, list[str]]:
     return {
-        "tam_destek": [".csv", ".tsv", ".txt", ".dat"],
+        "tam_destek": [".csv", ".tsv", ".txt", ".dat", ".pdf",
+                        ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp",
+                        ".xlsx", ".xlsm"],
         "planli": sorted(PLANLI),
         "olculen_konular": [
             "karakter kodlamasi (bayt kanitiyla, cp1252/cp1254 ayrimi dahil)",
@@ -82,6 +120,10 @@ def formatlari_listele() -> dict[str, list[str]]:
             "sayi bicimi (Turkce/Ingilizce ondalik ve binlik)",
             "tarih gorunumlu sutunlar",
             "tablo mu serbest metin mi",
+            "PDF'de metin katmani var mi, yoksa goruntu tabanli mi",
+            "goruntudeki tablo yapisi (OCR, kutu konumlarindan)",
+            "OCR modelinin Turkce uretip uretemeyecegi (sozluk olcumu)",
+            "XLSX sayfalari: hangileri gercekten tablo",
         ],
         "kok_dizin": [str(KOK)],
     }
@@ -162,10 +204,11 @@ def secenekler(yol: str) -> dict:
 )
 def oku(yol: str, secimler: dict[str, str] | None = None) -> dict:
     hedef = _guvenli_yol(yol)
-    if hedef.suffix.lower() not in COZUMLEYICILER:
+    okuyucu = OKUYUCULAR.get(hedef.suffix.lower())
+    if okuyucu is None:
         return {"basarili": False,
                 "hata": f"'{hedef.suffix}' icin okuyucu yok."}
-    return oku_tablo(hedef, secimler or {})
+    return okuyucu(hedef, secimler or {})
 
 
 

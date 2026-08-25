@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from .kanit import ayrac_tespit, kodlama_tespit
 
@@ -75,5 +77,109 @@ def oku_tablo(yol: Path, secimler: dict[str, str], satir: int = 5) -> dict[str, 
         "sayisal_sutunlar": [str(k) for k in sayisal],
         "metinsel_sutunlar": [str(k) for k in metinsel],
         "sayisal_ozet": ozet,
+        "onizleme": df.head(satir).astype(str).to_dict(orient="records"),
+    }
+
+
+# Onizlemede gosterilecek azami karakter. Ham metin toptan donmez.
+PDF_ONIZLEME_AZAMI_KARAKTER = 2000
+
+
+def oku_pdf(yol: Path, secimler: dict[str, str], sayfa: int = 3) -> dict[str, Any]:
+    """PDF'den metni cikarir ve ilk birkac sayfanin kucuk bir onizlemesini dondurur."""
+    try:
+        okuyucu = PdfReader(str(yol))
+    except (PdfReadError, OSError, ValueError) as hata:
+        return {"basarili": False, "hata": f"{type(hata).__name__}: {hata}"}
+
+    parcalar: list[str] = []
+    for s in okuyucu.pages:
+        try:
+            parcalar.append(s.extract_text() or "")
+        except Exception:  # noqa: BLE001 - bozuk tek sayfa, digerlerine devam
+            parcalar.append("")
+    metin = "\n".join(parcalar)
+
+    onizleme_sayfa = int(secimler.get("onizleme_sayfa", sayfa))
+    onizleme = "\n".join(parcalar[:onizleme_sayfa])[:PDF_ONIZLEME_AZAMI_KARAKTER]
+
+    return {
+        "basarili": True,
+        "sayfa_sayisi": len(okuyucu.pages),
+        "toplam_karakter": len(metin),
+        "onizleme": onizleme,
+    }
+
+
+def oku_goruntu(yol: Path, secimler: dict[str, str], satir: int = 8) -> dict[str, Any]:
+    """Goruntudeki tabloyu OCR ile okur ve kucuk bir onizleme dondurur.
+
+    `turkce_dogrulanmis` alani bilerek ciktinin bir parcasi: cagiran taraf
+    metnin dogrulanip dogrulanmadigini bilmeden kullanmasin.
+    """
+    from .formatlar import goruntu as _goruntu
+
+    s = _goruntu.oku(yol)
+    if s.hata:
+        return {"basarili": False, "hata": s.hata}
+
+    sadece_sayi = secimler.get("mod") == "sadece_sayi"
+    satirlar = s.satirlar[:satir]
+    if sadece_sayi:
+        satirlar = [[h for h in r if _goruntu.sayi_mi(h)] for r in satirlar]
+
+    return {
+        "basarili": True,
+        "satir_sayisi": len(s.satirlar),
+        "sutun_sayisi": s.sutun_sayisi,
+        "turkce_dogrulanmis": s.turkce_dogrulanmis,
+        "turkce_gerekce": _goruntu.turkce_sozlukte_var_mi()[1],
+        "onizleme": satirlar,
+    }
+
+
+def oku_calisma_kitabi(yol: Path, secimler: dict[str, str],
+                       satir: int = 5) -> dict[str, Any]:
+    """Secilen sayfayi okur ve kucuk bir onizleme dondurur.
+
+    Sayfa secilmemisse ve tek tablo sayfasi varsa o kullanilir; birden
+    fazlaysa hangisinin secilecegi bir TERCIH sorusudur ve secenekler
+    `secenekler()` ile sunulmustur.
+    """
+    from .formatlar import tablolu
+
+    yapi = tablolu.incele_yapi(yol)
+    if yapi.hata:
+        return {"basarili": False, "hata": yapi.hata}
+
+    tablolar = yapi.tablo_sayfalari
+    if not tablolar:
+        return {"basarili": False, "hata": "tablo yapisinda sayfa yok"}
+
+    istenen = secimler.get("sayfa")
+    if istenen:
+        secili = next((s for s in tablolar if s.ad == istenen), None)
+        if secili is None:
+            return {"basarili": False,
+                    "hata": f"'{istenen}' adli tablo sayfasi yok",
+                    "mevcut_sayfalar": [s.ad for s in tablolar]}
+    else:
+        secili = tablolar[0]
+
+    try:
+        df = pd.read_excel(yol, sheet_name=secili.ad)
+    except Exception as hata:  # noqa: BLE001 - sebebi cagirana gosterilecek
+        return {"basarili": False, "hata": f"{type(hata).__name__}: {hata}"}
+
+    sayisal = [k for k, t in df.dtypes.items() if str(t).startswith(("int", "float"))]
+    return {
+        "basarili": True,
+        "sayfa": secili.ad,
+        "secim_yapildi": bool(istenen),
+        "tum_tablo_sayfalari": [s.ad for s in tablolar],
+        "satir_sayisi": int(len(df)),
+        "sutun_sayisi": int(len(df.columns)),
+        "tipler": {str(k): str(v) for k, v in df.dtypes.items()},
+        "sayisal_sutunlar": [str(k) for k in sayisal],
         "onizleme": df.head(satir).astype(str).to_dict(orient="records"),
     }

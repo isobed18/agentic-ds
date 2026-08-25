@@ -9,8 +9,12 @@ butun akisi kosar:
     3. yonlendir       tek dosya detayi, kanitlariyla
     4. artik           deterministik cozulemeyen dosyalar
 
+Ornek parti verilmezse `ads.kesif.ornek_parti` ile gecici bir dizine
+uretilir; harici bir klasore bagimli degildir.
+
 Calistir:
-    KESIF_KOK=/tmp/karma .venv/bin/python scripts/kesif_demo.py
+    .venv/bin/python scripts/kesif_demo.py
+    KESIF_KOK=/baska/klasor .venv/bin/python scripts/kesif_demo.py
 """
 
 from __future__ import annotations
@@ -19,13 +23,22 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-KOK = Path(os.environ.get("KESIF_KOK", "/tmp/karma")).resolve()
 PROJE = Path(__file__).resolve().parent.parent
+
+_verilen = os.environ.get("KESIF_KOK")
+if _verilen:
+    KOK = Path(_verilen).resolve()
+else:
+    sys.path.insert(0, str(PROJE / "src"))
+    from ads.kesif.ornek_parti import yaz
+
+    KOK = yaz(Path(tempfile.mkdtemp(prefix="kesif_")) / "karma").resolve()
 
 
 def basli(n: str) -> None:

@@ -26,6 +26,18 @@ dependencies = [
 kesif = [
     "magika>=1.0",
     "mcp>=2.0",
+    "pypdf>=5.0",
+]
+# OCR: taranmis tablo ve ekran goruntusu okuma (src/ads/kesif/formatlar/goruntu).
+# Ayri tutuldu cunku KURULU BOYUT ~245 MB (opencv 125 + onnxruntime 82) ve
+# yalnizca goruntu/taranmis belge isleyenler ihtiyac duyar.
+# headless opencv bilincli tercih: sunucuda GUI kutuphaneleri gereksiz
+# (Linux'ta X11/GTK bagimliliklarini da dusurur).
+# Modeller pakete GOMULU gelir; calisma aninda indirme yapmaz (air-gap dogrulandi).
+kesif-ocr = [
+    "rapidocr-onnxruntime>=1.4,<2",
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
 ]
 api = [
     "fastapi>=0.115",

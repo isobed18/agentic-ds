@@ -20,51 +20,48 @@
     --ok:#4A7241;--warm:#8A6A2F;}
   body{background:var(--paper);color:var(--ink);
     font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,ui-serif,serif;
-    font-size:17.5px;line-height:1.64;-webkit-font-smoothing:antialiased;}
-  .wrap{max-width:56rem;margin:0 auto;padding:3.5rem 1.5rem 6rem;
-    display:flex;flex-direction:column;gap:3.25rem;}
+    font-size:17.5px;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:54rem;margin:0 auto;padding:3rem 1.5rem 5rem;
+    display:flex;flex-direction:column;gap:2.6rem;}
   .eyebrow,h1,h2,figcaption,th,.lbl,.meta,.mono{
     font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;}
-  h1{font-size:clamp(1.55rem,4.2vw,2.1rem);line-height:1.16;font-weight:600;
-    margin:.75rem 0 .5rem;letter-spacing:-.01em;}
-  .sub{font-size:1.02rem;color:var(--muted);max-width:54ch;}
-  h2{font-size:.76rem;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);
-    font-weight:600;margin:0 0 1.2rem;padding-bottom:.65rem;border-bottom:1px solid var(--rule);
+  h1{font-size:clamp(1.5rem,4vw,2rem);line-height:1.15;font-weight:600;
+    margin:.6rem 0 .5rem;letter-spacing:-.01em;}
+  .sub{font-size:1.02rem;color:var(--muted);max-width:56ch;}
+  h2{font-size:.74rem;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);
+    font-weight:600;margin:0 0 1rem;padding-bottom:.6rem;border-bottom:1px solid var(--rule);
     display:flex;align-items:baseline;gap:.85rem;}
   h2 .no{color:var(--muted);font-weight:400;}
-  h3{font-size:1.02rem;font-weight:600;margin:1.6rem 0 .55rem;}
-  h3:first-child{margin-top:0;}
-  p{margin:0 0 1rem;max-width:64ch;} p:last-child{margin-bottom:0;}
+  p{margin:0 0 .9rem;max-width:64ch;} p:last-child{margin-bottom:0;}
   strong{font-weight:700;color:var(--ink);
-    box-shadow:inset 0 -.4em 0 color-mix(in srgb,var(--accent) 14%,transparent);}
+    box-shadow:inset 0 -.4em 0 color-mix(in srgb,var(--accent) 16%,transparent);}
   section{display:flex;flex-direction:column;}
   code{font-family:ui-monospace,Menlo,monospace;font-size:.85em;background:var(--sunk);
     border:1px solid var(--hair);border-radius:3px;padding:.05em .34em;}
-  pre{font-family:ui-monospace,Menlo,monospace;font-size:.79rem;background:var(--surface);
-    border:1px solid var(--rule);border-left:3px solid var(--accent);padding:1rem 1.15rem;
-    overflow-x:auto;margin:0 0 1rem;line-height:1.7;}
+  pre{font-family:ui-monospace,Menlo,monospace;font-size:.78rem;background:var(--surface);
+    border:1px solid var(--rule);border-left:3px solid var(--accent);padding:.9rem 1.1rem;
+    overflow-x:auto;margin:0 0 .9rem;line-height:1.65;}
   pre.iyi{border-left-color:var(--ok);} pre.kotu{border-left-color:var(--risk);}
-  header.top{border-bottom:2px solid var(--ink);padding-bottom:1.75rem;}
+  header.top{border-bottom:2px solid var(--ink);padding-bottom:1.5rem;}
   .eyebrow{font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);
     font-weight:600;}
-  .meta{display:flex;flex-wrap:wrap;gap:.35rem 2.25rem;margin-top:1.5rem;padding-top:1.1rem;
+  .meta{display:flex;flex-wrap:wrap;gap:.35rem 2rem;margin-top:1.3rem;padding-top:1rem;
     border-top:1px solid var(--hair);font-size:.72rem;color:var(--muted);}
   .meta b{color:var(--ink);font-weight:600;}
   .ozet{background:var(--surface);border:1px solid var(--rule);
-    border-left:4px solid var(--accent);padding:1.45rem 1.65rem;margin-top:1.6rem;}
-  .ozet p{font-size:1.05rem;max-width:60ch;}
+    border-left:4px solid var(--accent);padding:1.3rem 1.5rem;margin-top:1.4rem;}
+  .ozet p{font-size:1.04rem;max-width:60ch;}
   .scroll{overflow-x:auto;}
-  table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:28rem;}
-  th,td{text-align:left;padding:.62rem 1.1rem .62rem 0;border-bottom:1px solid var(--hair);
+  table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:28rem;}
+  th,td{text-align:left;padding:.55rem 1rem .55rem 0;border-bottom:1px solid var(--hair);
     vertical-align:top;}
-  thead th{border-bottom:1px solid var(--rule);font-size:.65rem;letter-spacing:.12em;
+  thead th{border-bottom:1px solid var(--rule);font-size:.64rem;letter-spacing:.12em;
     text-transform:uppercase;color:var(--muted);font-weight:600;}
-  td:first-child{white-space:nowrap;}
-  td.y{color:var(--ok);font-weight:700;} td.n{color:var(--risk);font-weight:700;}
-  td.w{color:var(--warm);font-weight:700;}
-  figure{margin:1.4rem 0;display:flex;flex-direction:column;gap:.9rem;}
+  td.y{color:var(--ok);} td.w{color:var(--warm);}
+  .kucuk{color:var(--muted);font-size:.85em;}
+  figure{margin:1.2rem 0;display:flex;flex-direction:column;gap:.8rem;}
   svg.dg{display:block;width:100%;min-width:42rem;max-width:100%;height:auto;}
-  figcaption{font-size:.8rem;color:var(--muted);line-height:1.55;max-width:62ch;}
+  figcaption{font-size:.79rem;color:var(--muted);line-height:1.5;max-width:62ch;}
   .b{fill:var(--surface);stroke:currentColor;stroke-width:1.2;}
   .b-acc{fill:var(--surface);stroke:var(--accent);stroke-width:2;}
   .b-ok{fill:var(--surface);stroke:var(--ok);stroke-width:1.8;}
@@ -83,452 +80,320 @@
   .ln-acc{stroke:var(--accent);stroke-width:1.6;fill:none;}
   .ln-ok{stroke:var(--ok);stroke-width:1.7;fill:none;}
   .ln-risk{stroke:var(--risk);stroke-width:1.5;fill:none;stroke-dasharray:4 4;}
-  .mk{fill:currentColor;} .mk-acc{fill:var(--accent);}
-  .mk-ok{fill:var(--ok);} .mk-risk{fill:var(--risk);}
-  .bar-bg{fill:var(--sunk);} .bar-ok{fill:var(--ok);opacity:.8;}
-  .bar-warm{fill:var(--warm);opacity:.8;} .bar-risk{fill:var(--risk);opacity:.8;}
-  .kutu{background:var(--surface);border:1px solid var(--rule);padding:1.15rem 1.35rem;
-    margin:1.15rem 0;}
+  .mk{fill:currentColor;} .mk-ok{fill:var(--ok);} .mk-risk{fill:var(--risk);}
+  .kutu{background:var(--surface);border:1px solid var(--rule);padding:1rem 1.2rem;
+    margin:1rem 0;}
   .kutu.iyi{border-left:4px solid var(--ok);}
   .kutu.uyari{border-left:4px solid var(--risk);}
   .kutu.not{border-left:4px solid var(--warm);}
-  .kutu.vurgu{border-left:4px solid var(--accent);}
-  .lbl{font-size:.64rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);
-    display:block;margin-bottom:.55rem;font-weight:600;}
+  .lbl{font-size:.63rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    display:block;margin-bottom:.5rem;font-weight:600;}
   .kutu.iyi .lbl{color:var(--ok);} .kutu.uyari .lbl{color:var(--risk);}
-  .kutu.not .lbl{color:var(--warm);} .kutu.vurgu .lbl{color:var(--accent);}
+  .kutu.not .lbl{color:var(--warm);}
   .kutu p:last-child{margin-bottom:0;}
-  .liste{display:flex;flex-direction:column;gap:.75rem;}
-  .liste .sat{display:grid;grid-template-columns:1.7rem 1fr;gap:.85rem;}
+  .liste{display:flex;flex-direction:column;gap:.6rem;}
+  .liste .sat{display:grid;grid-template-columns:1.6rem 1fr;gap:.8rem;}
   .liste .sat .i{font-family:ui-monospace,Menlo,monospace;font-size:.76rem;
     color:var(--accent);font-weight:600;padding-top:.3em;}
   .liste .sat p{margin:0;}
-  .rakamlar{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));
-    gap:1.2rem;margin:1.3rem 0 .4rem;}
-  .rakam{border-left:3px solid var(--rule);padding-left:.9rem;}
-  .rakam .v{font-family:ui-monospace,Menlo,monospace;font-size:1.55rem;font-weight:600;
-    line-height:1.1;display:block;}
-  .rakam .k{font-family:ui-monospace,Menlo,monospace;font-size:.66rem;letter-spacing:.1em;
+  .anahtar{font-size:.98rem;font-weight:700;color:var(--ink);line-height:1.45;
+    margin:1rem 0 0;padding:.05rem 0 .05rem 1rem;border-left:3px solid var(--accent);
+    max-width:60ch;}
+  .rakamlar{display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));
+    gap:1.1rem;margin:1.3rem 0 .2rem;}
+  .rakam{border-left:3px solid var(--rule);padding-left:.85rem;}
+  .rakam .v{font-family:ui-monospace,Menlo,monospace;font-size:1.5rem;font-weight:600;
+    line-height:1.1;display:block;font-variant-numeric:tabular-nums;}
+  .rakam .k{font-family:ui-monospace,Menlo,monospace;font-size:.64rem;letter-spacing:.1em;
     text-transform:uppercase;color:var(--muted);margin-top:.3rem;display:block;}
   .rakam.o{border-left-color:var(--ok);} .rakam.o .v{color:var(--ok);}
-  .rakam.n{border-left-color:var(--risk);} .rakam.n .v{color:var(--risk);}
   .rakam.w{border-left-color:var(--warm);} .rakam.w .v{color:var(--warm);}
-  .kapanis{border-top:2px solid var(--ink);padding-top:1.6rem;font-size:1.04rem;}
+  .rakam.a{border-left-color:var(--accent);} .rakam.a .v{color:var(--accent);}
+  .satirlar{display:flex;flex-direction:column;gap:.7rem;margin:.2rem 0 0;}
+  .satirlar .r{display:grid;grid-template-columns:6.5rem 1fr;gap:1rem;align-items:baseline;}
+  .satirlar .e{font-family:ui-monospace,Menlo,monospace;font-size:.66rem;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600;
+    padding-top:.15em;}
+  .satirlar .r p{margin:0;font-size:.97rem;}
+  @media(max-width:34rem){.satirlar .r{grid-template-columns:1fr;gap:.15rem;}}
+  .kapanis{border-top:2px solid var(--ink);padding-top:1.4rem;font-size:1.04rem;}
   @media print{body{background:#fff;color:#000;font-size:10.5pt;}
-    .wrap{max-width:none;padding:0;gap:1.5rem;}
-    section,figure,.kutu{break-inside:avoid;} h2{break-after:avoid;}
+    .wrap{max-width:none;padding:0;gap:1.4rem;}
+    section,figure,.kutu,.anahtar{break-inside:avoid;} h2{break-after:avoid;}
     strong{box-shadow:none;text-decoration:underline;text-underline-offset:2px;}}
-  @media(max-width:44rem){.wrap{padding:2.25rem 1.15rem 4rem;gap:2.3rem;}
-    .meta{gap:.3rem 1.25rem;}}
+  @media(max-width:44rem){.wrap{padding:2rem 1.1rem 3.5rem;gap:2rem;}
+    .meta{gap:.3rem 1.2rem;}}
 </style>
 </head>
 <body>
 <div class="wrap">
 
 <header class="top">
-  <div class="eyebrow">Teknik özet · tasarım ve ölçüm</div>
+  <div class="eyebrow">Teknik özet</div>
   <h1>Keşif katmanı: türü bilinmeyen veriyi tanıma ve akışlara ayırma</h1>
-  <p class="sub">Dört katmanlı bir yönlendirici. Ölçebildiğini ölçer, ölçemediğini
-    işaretler, hiçbir zaman uydurmaz. Bütün sayılar gerçek koşumlardan alınmıştır.</p>
+  <p class="sub">Pipeline'ın girişinde duran katman. Gelen dosyanın ne olduğunu
+    <b>ölçer</b>, doğru akışa yönlendirir; emin olamadığında <b>tahmin etmez, sorar.</b></p>
   <div class="meta">
     <span><b>Hazırlayan</b> · Emre Keser</span>
-    <span><b>Tarih</b> · 20 Ağustos 2026</span>
+    <span><b>Tarih</b> · Ağustos 2026</span>
     <span><b>Kapsam</b> · tanıma ve yönlendirme katmanı</span>
   </div>
 
   <div class="ozet">
-    <p><strong>Özet.</strong> Boru hattına türü bilinmeyen dosyalar geliyor. Görev:
-      ne olduklarını anlamak ve <strong>doğru akışa yönlendirmek.</strong></p>
-    <p>Dört katman kuruldu. İlk üçü <strong>deterministik</strong>: ölçüm yapar, sonucu
-      kanıtıyla verir. Dördüncüsü <strong>yargı</strong> katmanıdır ve yalnızca ilk üçünün
-      çözemediği dosyalar için çalışır.</p>
-    <p>24 dosyalık karma bir parti üzerinde ölçüldü: <strong>117 milisaniyede 22 dosya
-      deterministik çözüldü, 2 dosya yargıya çıktı. Eskalasyon oranı %8.3.</strong></p>
-    <p>En önemli iki bulgu: <strong>Magika kısa dosyalarda yüksek güvenle yanlış cevap
-      verebiliyor</strong> (ölçüldü: 0.953 güvenle hatalı sınıflandırma), ve
-      <strong>format şekil demek değil</strong>, üç ayrı dosya da <code>txt</code>
-      etiketi alırken üçü ayrı akışa gitmeliydi.</p>
+    <div class="satirlar">
+      <div class="r"><span class="e">Sorun</span>
+        <p>Pipeline'a türü <strong>bilinmeyen</strong> dosyalar geliyor. Uzantı yalan
+          söyleyebilir, ad yanıltıcı olabilir.</p></div>
+
+      <div class="r"><span class="e">Çözüm</span>
+        <p>Dosyanın ne olduğu <strong>içerikten ölçülüyor</strong> — format, yapısal
+          şekil, kodlama. Sonra doğru akışa yönlendiriliyor.</p></div>
+
+      <div class="r"><span class="e">MCP</span>
+        <p><strong>7 tool</strong>, standart arayüz: herhangi bir ajan bu ölçümleri
+          çağırabiliyor. Sunucu <strong>hiç LLM çağırmıyor</strong> — ölçüyor,
+          kanıtı döndürüyor. Bulut bağımlılığı <strong>sıfır</strong>.</p></div>
+
+      <div class="r"><span class="e">Sonuç</span>
+        <p>25 dosyalık karma partide <strong>25/25 doğru</strong> yönlendirme.
+          <strong>%88'i otomatik</strong> çözülüyor; kalan <strong>%12</strong>
+          gerçekten belirsiz olduğu için <strong>human feedback</strong>'e çıkıyor.</p></div>
+
+      <div class="r"><span class="e">İlke</span>
+        <p>Emin olunamayan yerde <strong>tahmin edilmiyor.</strong> Sistem yanlış
+          cevap vermek yerine duruyor ve <strong>sebebini yazıyor</strong>.</p></div>
+    </div>
+
+    <div class="rakamlar">
+      <div class="rakam o"><span class="v">25/25</span><span class="k">doğru yönlendirme</span></div>
+      <div class="rakam a"><span class="v">%88</span><span class="k">otomatik çözülen</span></div>
+      <div class="rakam w"><span class="v">%12</span><span class="k">human feedback</span></div>
+      <div class="rakam o"><span class="v">8/8</span><span class="k">görülmemiş dosyada</span></div>
+      <div class="rakam o"><span class="v">770</span><span class="k">geçen test</span></div>
+    </div>
   </div>
 </header>
 
 <section>
-  <h2><span class="no">01</span> Problem</h2>
-  <p>Bir dosya geliyor. Uzantısına güvenilemez, adı yanıltıcı olabilir, içeriği
-    bilinmiyor. Yapılması gereken üç şey var:</p>
+  <h2><span class="no">01</span> Sorun</h2>
+  <p>Pipeline'a bir dosya geliyor. <strong>Uzantısına güvenilemez</strong>, adı
+    yanıltıcı olabilir, içeriği bilinmiyor. Üç şeyin cevaplanması gerekiyor:</p>
   <div class="liste">
-    <div class="sat"><span class="i">1</span><p><strong>Ne olduğunu anla.</strong> Format nedir?</p></div>
-    <div class="sat"><span class="i">2</span><p><strong>Nasıl okunacağını anla.</strong> Kodlama, ayraç, sayı biçimi.</p></div>
-    <div class="sat"><span class="i">3</span><p><strong>Nereye gideceğini belirle.</strong> Tablo akışı mı, belge akışı mı, ağaç mı?</p></div>
+    <div class="sat"><span class="i">1</span><p><strong>Ne bu?</strong> Format nedir?</p></div>
+    <div class="sat"><span class="i">2</span><p><strong>Nasıl okunur?</strong> Kodlama, ayraç, sayı biçimi.</p></div>
+    <div class="sat"><span class="i">3</span><p><strong>Nereye gider?</strong> Tablo akışı mı, belge mi, ağaç mı?</p></div>
   </div>
-  <p style="margin-top:1.1rem">Üçüncüsü en zoru, çünkü <strong>formattan çıkmıyor.</strong>
-    Bir <code>txt</code> dosyası log kaydı da olabilir, serbest metin de, hizalanmış bir
-    tablo da. Üçü üç ayrı akışa gider.</p>
+  <p style="margin-top:.9rem">Üçüncüsü zor, çünkü <strong>formattan çıkmıyor</strong>.
+    Bir <code>txt</code> dosyası log da olabilir, rapor da, hizalanmış bir tablo da —
+    üçü üç ayrı akışa gider.</p>
 </section>
 
 <section>
-  <h2><span class="no">02</span> Dört katmanlı mimari</h2>
-  <p>Her katman kendinden öncekinin çözemediğini alır. Maliyet aşağı doğru artar,
-    dolayısıyla <strong>ucuz olan herkese, pahalı olan sadece artığa</strong> uygulanır.</p>
+  <h2><span class="no">02</span> Pipeline</h2>
+  <p>Dört katman. Her katman öncekinin çözemediğini alır:
+    <strong>ucuz olan herkese, pahalı olan yalnızca gerektiğinde.</strong></p>
 
   <figure>
     <div class="scroll">
-      <svg class="dg" viewBox="0 0 840 420" role="img"
-        aria-label="Dört katmanlı yönlendirici. Dosya sırayla Magika, şekil tespiti ve kanıt katmanından geçer; her katman çözebildiğini akışa yollar, çözemediğini bir sonrakine devreder. Dördüncü katman olan yargı, MCP sunucusunun dışındadır ve sadece kalan artık üzerinde çalışır.">
+      <svg class="dg" viewBox="0 0 820 246" role="img"
+        aria-label="Dört katmanlı yönlendirici. Dosya sırayla Magika, şekil tespiti ve kanıt katmanından geçer; her katman çözebildiğini akışlara yollar, çözemediğini bir sonraki katmana devreder. İlk üç katman MCP sunucusunun içinde ve deterministiktir. Dördüncü katman olan human feedback, sunucunun dışındadır ve yalnızca kalan artık için çalışır.">
         <defs>
-          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <marker id="d1-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
             <polygon class="mk" points="0,0 10,5 0,10"/></marker>
-          <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <marker id="d1-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
             <polygon class="mk-ok" points="0,0 10,5 0,10"/></marker>
-          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <marker id="d1-risk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
             <polygon class="mk-risk" points="0,0 10,5 0,10"/></marker>
         </defs>
 
-        <rect x="16" y="30" width="512" height="300" rx="3" fill="none"
+        <rect x="16" y="26" width="514" height="196" rx="3" fill="none"
               stroke="var(--accent)" stroke-width="1" opacity=".35"/>
-        <text class="s-acc" x="26" y="24">MCP SUNUCUSU, DETERMİNİSTİK, LLM ÇAĞIRMAZ</text>
+        <text class="s-acc" x="26" y="20">MCP SUNUCUSU · DETERMİNİSTİK</text>
 
-        <rect class="b" x="32" y="46" width="120" height="46" rx="2"/>
-        <text class="t" x="92" y="66" text-anchor="middle">dosya</text>
-        <text class="s" x="92" y="82" text-anchor="middle">türü bilinmiyor</text>
+        <rect class="b" x="30" y="40" width="100" height="36" rx="2"/>
+        <text class="t" x="80" y="63" text-anchor="middle">dosya</text>
+        <line class="ln" x1="130" y1="58" x2="166" y2="58" marker-end="url(#d1-a)"/>
 
-        <line class="ln" x1="156" y1="69" x2="188" y2="69" marker-end="url(#a)"/>
+        <rect class="b-ok" x="170" y="40" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="63" text-anchor="middle">1 · MAGIKA</text>
+        <line class="ln-ok" x1="350" y1="52" x2="470" y2="52" marker-end="url(#d1-ok)"/>
+        <text class="s-ok" x="356" y="45">çözdüyse</text>
 
-        <rect class="b-ok" x="192" y="46" width="180" height="46" rx="2"/>
-        <text class="t-ok" x="282" y="66" text-anchor="middle">1. MAGIKA</text>
-        <text class="s-ok" x="282" y="82" text-anchor="middle">format · 4 ms</text>
-        <line class="ln-ok" x1="376" y1="69" x2="470" y2="69" marker-end="url(#ao)"/>
-        <text class="s-ok" x="392" y="62">çözdüyse</text>
+        <line class="ln" x1="260" y1="76" x2="260" y2="96" marker-end="url(#d1-a)"/>
+        <text class="s" x="268" y="90">çözemediyse</text>
 
-        <line class="ln" x1="282" y1="96" x2="282" y2="126" marker-end="url(#a)"/>
-        <text class="s" x="292" y="116">çözemediyse</text>
+        <rect class="b-ok" x="170" y="96" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="119" text-anchor="middle">2 · ŞEKİL TESPİTİ</text>
+        <line class="ln-ok" x1="350" y1="108" x2="470" y2="108" marker-end="url(#d1-ok)"/>
 
-        <rect class="b-ok" x="192" y="130" width="180" height="52" rx="2"/>
-        <text class="t-ok" x="282" y="150" text-anchor="middle">2. ŞEKİL TESPİTİ</text>
-        <text class="s-ok" x="282" y="166" text-anchor="middle">tablo · log · metin</text>
-        <text class="s-ok" x="282" y="178" text-anchor="middle">mikrosaniye</text>
-        <line class="ln-ok" x1="376" y1="156" x2="470" y2="156" marker-end="url(#ao)"/>
+        <line class="ln" x1="260" y1="132" x2="260" y2="152" marker-end="url(#d1-a)"/>
 
-        <line class="ln" x1="282" y1="186" x2="282" y2="216" marker-end="url(#a)"/>
+        <rect class="b-ok" x="170" y="152" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="175" text-anchor="middle">3 · KANIT KATMANI</text>
+        <line class="ln-ok" x1="350" y1="164" x2="470" y2="164" marker-end="url(#d1-ok)"/>
 
-        <rect class="b-ok" x="192" y="220" width="180" height="52" rx="2"/>
-        <text class="t-ok" x="282" y="240" text-anchor="middle">3. KANIT KATMANI</text>
-        <text class="s-ok" x="282" y="256" text-anchor="middle">kodlama · ayraç · tip</text>
-        <text class="s-ok" x="282" y="268" text-anchor="middle">mikrosaniye</text>
-        <line class="ln-ok" x1="376" y1="246" x2="470" y2="246" marker-end="url(#ao)"/>
+        <line class="ln-risk" x1="260" y1="188" x2="260" y2="200" marker-end="url(#d1-risk)"/>
 
-        <line class="ln-risk" x1="282" y1="276" x2="282" y2="304" marker-end="url(#ar)"/>
+        <rect class="b-risk" x="170" y="200" width="180" height="26" rx="2"/>
+        <text class="t-risk" x="260" y="217" text-anchor="middle">ARTIK · %12</text>
 
-        <rect class="b-risk" x="192" y="290" width="180" height="30" rx="2"/>
-        <text class="t-risk" x="282" y="310" text-anchor="middle">ARTIK · %8.3</text>
+        <rect class="b-acc" x="474" y="40" width="46" height="182" rx="2"/>
+        <text class="t-acc" x="497" y="100" text-anchor="middle" transform="rotate(-90 497 100)">AKIŞLAR</text>
+        <text class="s-acc" x="497" y="165" text-anchor="middle" transform="rotate(-90 497 165)">%88</text>
 
-        <rect class="b-acc" x="474" y="46" width="48" height="226" rx="2"/>
-        <text class="t-acc" x="498" y="140" text-anchor="middle" transform="rotate(-90 498 140)">AKIŞLAR</text>
-        <text class="s-acc" x="498" y="196" text-anchor="middle" transform="rotate(-90 498 196)">%91.7</text>
+        <line class="ln-risk" x1="350" y1="213" x2="560" y2="213" marker-end="url(#d1-risk)"/>
+        <text class="s-risk" x="366" y="206">sunucu dışına</text>
 
-        <line class="ln-risk" x1="376" y1="305" x2="580" y2="305" marker-end="url(#ar)"/>
-        <text class="s-risk" x="404" y="298">sunucudan çıkar</text>
+        <rect class="b-warm" x="564" y="196" width="220" height="40" rx="2"/>
+        <text class="t-warm" x="674" y="220" text-anchor="middle">4 · HUMAN FEEDBACK</text>
 
-        <rect class="b-warm" x="584" y="278" width="230" height="56" rx="2"/>
-        <text class="t-warm" x="699" y="300" text-anchor="middle">4. YARGI (LLM)</text>
-        <text class="s" x="699" y="316" text-anchor="middle">sunucunun DIŞINDA</text>
-        <text class="s" x="699" y="328" text-anchor="middle">kararı yorum olarak kaydedilir</text>
-
-        <rect class="b" x="584" y="46" width="230" height="46" rx="2"/>
-        <text class="t" x="699" y="66" text-anchor="middle">tablo · belge · ağaç</text>
-        <text class="s" x="699" y="82" text-anchor="middle">kapsayıcı · işlenemez</text>
-        <line class="ln-acc" x1="526" y1="69" x2="580" y2="69" marker-end="url(#ao)"/>
-
-        <text class="s" x="584" y="120">Ölçüm ile yargı ayrı kaydedilir:</text>
-        <text class="s" x="584" y="138">hangi kararın ölçümden, hangisinin</text>
-        <text class="s" x="584" y="156">modelden geldiği her zaman bellidir.</text>
-        <text class="s" x="584" y="184">Deterministik katmanın vetosu</text>
-        <text class="s" x="584" y="202">bu ayrım sayesinde korunur.</text>
-
-        <text class="s" x="16" y="360">MALİYET SIRASI</text>
-        <rect class="bar-bg" x="16" y="370" width="798" height="20" rx="2"/>
-        <rect class="bar-ok" x="16" y="370" width="620" height="20" rx="2"/>
-        <rect class="bar-warm" x="636" y="370" width="178" height="20" rx="2"/>
-        <text class="s-ok" x="26" y="384">deterministik: milisaniye altı, dosya başına bedava</text>
-        <text class="s" x="646" y="384">yargı: saniye</text>
-        <text class="s" x="16" y="408">Pahalı katman yalnızca %8.3'lük artığa uygulandığı için toplam maliyet düşük kalır.</text>
+        <line class="ln-acc" x1="640" y1="196" x2="519" y2="150" marker-end="url(#d1-ok)"/>
+        <text class="s-acc" x="556" y="176">seçilen akış</text>
       </svg>
     </div>
-    <figcaption>Her katman <strong>çözebildiğini akışa yollar, çözemediğini aşağı
-      devreder.</strong> Dördüncü katmanın sunucunun dışında olması bilinçli bir karardır:
-      sunucu deterministik kalır, yargı ayrı kaydedilir, eskalasyon oranı ölçülebilir olur.</figcaption>
+    <figcaption>Her katman çözebildiğini akışa yollar, çözemediğini aşağı devreder.
+      Dördüncü katman bilerek sunucunun dışında.</figcaption>
   </figure>
-</section>
 
-<section>
-  <h2><span class="no">03</span> Katman 1: Magika ve ölçülen sınırları</h2>
-  <p>Google'ın içerikten dosya türü belirleyen modeli. <strong>3.84 ms, çevrimdışı,
-    1 MB model.</strong> Uzantısı kasten yanlış dört dosyada dördünü de doğru bildi.</p>
-  <p>Ancak 19 zor vakalık testte <strong>üç zayıf nokta</strong> ölçüldü:</p>
-
-  <div class="kutu uyari">
-    <span class="lbl">Zayıf nokta 1 · kısa dosyalar</span>
-<pre class="kotu">tek sütun,  3 satır  ->  ignorefile   0.953   ← YANLIŞ, yüksek güvenle
-tek sütun, 10 satır  ->  txt          0.805
-tek sütun, 50 satır  ->  csv          0.995   ← aynı içerik, doğru</pre>
-    <p>Aynı veri, sadece satır sayısı farklı. <strong>Kısa dosyada tamamen yanlış bir
-      kategoriye atıyor.</strong> Tehlikeli olan güvenin yüksek olması: düşük güvene bakıp
-      filtreleyemiyorsun.</p>
-  </div>
-
-  <div class="kutu uyari">
-    <span class="lbl">Zayıf nokta 2 · format şekil demek değil</span>
-<pre class="kotu">i_log.txt      ->  txt   0.488    log kaydı
-j_rapor.txt    ->  txt   0.967    serbest metin
-k_sabit.txt    ->  txt   0.636    sabit genişlikli TABLO</pre>
-    <p>Üçü de <code>txt</code>. Ama üçü <strong>üç ayrı akışa</strong> gitmeli. Sonuncusu
-      belge akışına giderse tablo olduğu tamamen kaybolur.</p>
-  </div>
-
-  <p><strong>Zayıf nokta 3:</strong> JSON Lines gibi bazı formatları tanımıyor
-    (<code>txt</code>, güven 0.493). Ama burada güven düşük, yani dürüst.</p>
-</section>
-
-<section>
-  <h2><span class="no">04</span> Katman 2: şekil tespiti</h2>
-  <p>Magika'nın bıraktığı boşluğu kapatan yeni katman. Beş şekli ayırır ve
-    <strong>her şekil için bağımsız sinyaller ölçer.</strong> Hiçbir sinyal tek başına
-    karar vermez.</p>
-
-  <figure>
-    <div class="scroll">
-      <svg class="dg" viewBox="0 0 840 330" role="img"
-        aria-label="Şekil tespiti beş bağımsız sinyal ölçer: ayraç tutarlılığı, hizalı sütun sınırları, zaman damgası oranı, anahtar değer kalıbı ve cümle yapısı. Sinyaller karşılaştırılır; en yüksek sinyal eşiği geçmezse veya ikinciyle arasındaki fark azsa karar verilmez.">
-        <defs>
-          <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-            <polygon class="mk" points="0,0 10,5 0,10"/></marker>
-          <marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-            <polygon class="mk-ok" points="0,0 10,5 0,10"/></marker>
-          <marker id="b3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-            <polygon class="mk-risk" points="0,0 10,5 0,10"/></marker>
-        </defs>
-
-        <text class="s" x="16" y="20">BEŞ BAĞIMSIZ SİNYAL</text>
-        <rect class="b" x="16" y="30" width="250" height="34" rx="2"/>
-        <text class="t" x="28" y="52">ayraç tutarlılığı</text>
-        <text class="s" x="196" y="52">→ tablo</text>
-        <rect class="b" x="16" y="70" width="250" height="34" rx="2"/>
-        <text class="t" x="28" y="92">hizalı sütun sınırı</text>
-        <text class="s" x="180" y="92">→ sabit genişlik</text>
-        <rect class="b" x="16" y="110" width="250" height="34" rx="2"/>
-        <text class="t" x="28" y="132">zaman damgası oranı</text>
-        <text class="s" x="204" y="132">→ log</text>
-        <rect class="b" x="16" y="150" width="250" height="34" rx="2"/>
-        <text class="t" x="28" y="172">anahtar:değer kalıbı</text>
-        <text class="s" x="176" y="172">→ anahtar-değer</text>
-        <rect class="b" x="16" y="190" width="250" height="34" rx="2"/>
-        <text class="t" x="28" y="212">cümle ve uzunluk yapısı</text>
-        <text class="s" x="184" y="212">→ serbest metin</text>
-
-        <line class="ln" x1="270" y1="127" x2="326" y2="127" marker-end="url(#b1)"/>
-
-        <rect class="b-acc" x="330" y="86" width="190" height="82" rx="2"/>
-        <text class="t-acc" x="425" y="110" text-anchor="middle">KARŞILAŞTIR</text>
-        <text class="s-acc" x="425" y="130" text-anchor="middle">en yüksek ≥ 0.60 mu</text>
-        <text class="s-acc" x="425" y="146" text-anchor="middle">birinci ile ikinci arası</text>
-        <text class="s-acc" x="425" y="160" text-anchor="middle">fark ≥ 0.15 mi</text>
-
-        <line class="ln-ok" x1="524" y1="112" x2="592" y2="76" marker-end="url(#b2)"/>
-        <text class="s-ok" x="530" y="82">ikisi de evet</text>
-        <rect class="b-ok" x="596" y="52" width="222" height="48" rx="2"/>
-        <text class="t-ok" x="707" y="74" text-anchor="middle">ŞEKİL BELİRLENDİ</text>
-        <text class="s" x="707" y="90" text-anchor="middle">akışa yönlendirilir</text>
-
-        <line class="ln-risk" x1="524" y1="142" x2="592" y2="182" marker-end="url(#b3)"/>
-        <text class="s-risk" x="528" y="176">biri bile hayır</text>
-        <rect class="b-risk" x="596" y="158" width="222" height="48" rx="2"/>
-        <text class="t-risk" x="707" y="180" text-anchor="middle">KARAR VERİLMEZ</text>
-        <text class="s" x="707" y="196" text-anchor="middle">artık olarak işaretlenir</text>
-
-        <line class="ln" x1="16" y1="248" x2="824" y2="248" opacity=".25"/>
-        <text class="s" x="16" y="272">GERÇEK ÖRNEK, log dosyası ilk denemede karar verilemedi:</text>
-        <text class="s-ok" x="16" y="292">log 1.00   ·   anahtar_deger 1.00   ·   serbest_metin 0.23</text>
-        <text class="s-risk" x="16" y="312">çelişki: ilk iki sinyal eşit. Sebep: 10:22:01 içindeki iki nokta anahtar:değer sanıldı. Sinyal düzeltildi.</text>
-      </svg>
-    </div>
-    <figcaption>Sistem <strong>çelişkiyi kendisi tespit etti</strong> ve karar vermeyi
-      reddetti. Yanlış cevap üretmek yerine durması, tasarımın çalıştığının kanıtıdır.
-      Sinyal düzeltildikten sonra 10 test vakasında sıfır hata alındı.</figcaption>
-  </figure>
-</section>
-
-<section>
-  <h2><span class="no">05</span> Katman 3: kanıt katmanı</h2>
-  <p>Formattan ve şekilden sonra geriye kalan okuma parametrelerini ölçer:
-    <strong>kodlama, ayraç, sayı biçimi, tarih biçimi.</strong> Hiçbiri dosya türünden
-    anlaşılmaz.</p>
-  <p>Kodlama tespitindeki temel fikir şu ölçüme dayanır:</p>
-<pre>cp1252 ve cp1254 tam olarak 6 baytta ayrışır:  Ğ  İ  Ş  ğ  ı  ş
-Buna karşılık 6 Türkçe harf İKİSİNDE DE aynı:  Ç  Ö  Ü  ç  ö  ü</pre>
-  <p><strong>Uzlaşan harfler, ayrışan harflerin nasıl okunacağını söyler.</strong>
-    Dosyada hem <code>ç ö ü</code> hem de ayrışan baytlar varsa metnin Türkçe olduğu bayt
-    düzeyinde kanıtlanmış olur.</p>
-
-  <div class="kutu not">
-    <span class="lbl">Bu kural bir kez kırıldı ve düzeltildi</span>
-    <p>Araştırma sırasında bir karşı örnek çıktı: <strong>İzlandaca</strong> hem
-      <code>ö</code> hem <code>ð</code> hem <code>þ</code> kullanır. Kural, İzlandaca bir
-      metni Türkçe sanıp <code>ð</code> harfini <code>ğ</code> yapıyordu.</p>
-    <p>Düzeltme iki parçalı oldu: <strong>karşı kanıt</strong> eklendi (Türkçede
-      kullanılmayan 44 harf) ve daha önemlisi,
-      <strong>kanıtlar çeliştiğinde artık karar verilmiyor.</strong> Asıl kusur kuralın
-      yanlışlığı değil, yanlış kurala yüksek güven atamasıydı.</p>
-  </div>
-</section>
-
-<section>
-  <h2><span class="no">06</span> Katman 4: yargı, ve neden dışarıda</h2>
-  <p>Deterministik katmanlar çözemediğinde karar veren katman. <strong>MCP sunucusunun
-    içinde değil, dışında.</strong> Bu bilinçli bir mimari karar:</p>
   <div class="liste">
-    <div class="sat"><span class="i">1</span><p><strong>Deterministik katmanın vetosu korunur.</strong> Sunucu ölçer ve raporlar; model ölçümün üstüne yazamaz.</p></div>
-    <div class="sat"><span class="i">2</span><p><strong>Kaynak ayırt edilir.</strong> Hangi kararın ölçümden, hangisinin modelden geldiği her zaman bellidir.</p></div>
-    <div class="sat"><span class="i">3</span><p><strong>Eskalasyon oranı ölçülebilir kalır.</strong> Sayı olmadan maliyet tartışılamaz.</p></div>
-    <div class="sat"><span class="i">4</span><p><strong>Model ham dosya görmez.</strong> Yalnızca ölçülmüş kanıtlar ve kırpılmış küçük bir örnek gider; örnek içerik <strong>veri olarak etiketlenir</strong>, talimat olarak değil.</p></div>
+    <div class="sat"><span class="i">1</span><p><strong>Magika</strong> — Google'ın format tanıma modeli. Hızlı, ama kısa dosyada yanılabiliyor; <b>tek başına veto yetkisi yok</b>.</p></div>
+    <div class="sat"><span class="i">2</span><p><strong>Şekil tespiti</strong> — asıl katkı. Dosya tablo mu, log mu, serbest metin mi? <b>Format bunu söylemez.</b></p></div>
+    <div class="sat"><span class="i">3</span><p><strong>Kanıt katmanı</strong> — kodlama, ayraç, sayı ve tarih biçimi. Türkçe uyumluluğu burada.</p></div>
+    <div class="sat"><span class="i">4</span><p><strong>Human feedback</strong> — sadece ilk üçünün çözemediği için, sunucunun <b>dışında</b>.</p></div>
   </div>
 
-  <h3>Gerçek koşum</h3>
-<pre class="iyi">tek_sutun.csv
-  Magika        : ignorefile (0.953)   ← yanlış
-  kısa dosya koruması : karar reddedildi
-  şekil ölçümü  : belirsiz
-  YARGI         : tablo   (güven: orta)
-  gerekçe       : Başlık satırı ve üç şehir değerinden oluşan tek sütunlu
-                  CSV yapısı, ayraç içermese de tablo akışına işaret ediyor.
-  kaynak        : yargi  (ölçüm değil)
-  token         : 739 girdi / 151 çıktı</pre>
-  <p>Zincirin tamamı bir gerçek hata üzerinde çalıştı: model yanıldı, koruma reddetti,
-    ölçüm çözemedi, <strong>yargı doğru cevabı verdi ve yargı olduğu kaydedildi.</strong></p>
+  <p class="anahtar">Mavi çerçeve = MCP sunucusu, içinde LLM yok.
+    Dışındaki tek kutu = human feedback.</p>
 </section>
 
 <section>
-  <h2><span class="no">07</span> Ölçüm sonuçları</h2>
-  <p>24 dosyalık karma parti: CSV, TSV, TXT, JSON, JSONL, XML, HTML, Markdown, YAML,
-    log, hizalı rapor, XLSX, ZIP, PDF, ikili dosya, boş dosya.</p>
+  <h2><span class="no">03</span> Neden bu tasarım</h2>
+  <p><strong>MCP</strong> — ölçümleri herhangi bir ajanın standart bir arayüzden
+    çağırabilmesini sağlıyor. 7 tool var ve <strong>hiçbiri LLM çağırmıyor</strong>;
+    sadece ölçüp kanıtı döndürüyorlar.</p>
 
-  <div class="rakamlar">
-    <div class="rakam o"><span class="v">24/24</span><span class="k">doğru yönlendirme</span></div>
-    <div class="rakam o"><span class="v">117 ms</span><span class="k">toplam süre</span></div>
-    <div class="rakam o"><span class="v">22</span><span class="k">deterministik çözüm</span></div>
-    <div class="rakam w"><span class="v">%8.3</span><span class="k">eskalasyon oranı</span></div>
-  </div>
+  <p><strong>LLM yok.</strong> Dördüncü katman karar veremediğinde bir modele tahmin
+    ettirmiyoruz — çünkü bu çoğu zaman bir <b>olgu</b> sorusu değil, bir
+    <strong>tercih</strong> sorusu. Dosyanın ne olduğu değil, kullanıcının hangisini
+    istediği belirsiz. O yüzden <strong>kapalı bir seçenek listesiyle</strong> doğrudan
+    human feedback isteniyor.</p>
 
-  <h3>Eskalasyon oranı nasıl düştü</h3>
-  <figure>
-    <div class="scroll">
-      <svg class="dg" viewBox="0 0 820 200" role="img"
-        aria-label="Eskalasyon oranı üç aşamada düştü: ilk kurulumda yüzde 29.2, format önceliği eklendikten sonra yüzde 20.8, yapısal doğrulama eklendikten sonra yüzde 8.3.">
-        <text class="s" x="16" y="20">YARGIYA ÇIKAN DOSYA ORANI</text>
+<pre class="iyi">tek_sutun.csv — Magika: ignorefile (0.953 güvenle, YANLIŞ)
+  → HUMAN FEEDBACK: tablo / belge / ağaç / kapsayıcı / işlenemez
+  kaynak: human_feedback   (ölçüm değil, model yorumu değil)</pre>
 
-        <text class="t" x="16" y="52">ilk kurulum</text>
-        <rect class="bar-bg" x="200" y="38" width="600" height="20" rx="2"/>
-        <rect class="bar-risk" x="200" y="38" width="175" height="20" rx="2"/>
-        <text class="t-risk" x="386" y="53">%29.2</text>
-
-        <text class="t" x="16" y="102">format önceliği eklendi</text>
-        <rect class="bar-bg" x="200" y="88" width="600" height="20" rx="2"/>
-        <rect class="bar-warm" x="200" y="88" width="125" height="20" rx="2"/>
-        <text class="t-warm" x="336" y="103">%20.8</text>
-        <text class="s" x="440" y="103">markdown, html, xml gibi formatlarda akış zaten formattan belli</text>
-
-        <text class="t" x="16" y="152">yapısal doğrulama eklendi</text>
-        <rect class="bar-bg" x="200" y="138" width="600" height="20" rx="2"/>
-        <rect class="bar-ok" x="200" y="138" width="50" height="20" rx="2"/>
-        <text class="t-ok" x="261" y="153">%8.3</text>
-        <text class="s" x="440" y="153">json.loads ayrıştırıyorsa o metin JSON'dur, tahmin değil</text>
-
-        <text class="s" x="16" y="188">Kalan iki dosya gerçekten belirsiz: tek kelimelik metin, ve Magika'nın yanıldığı 4 satırlık dosya.</text>
-      </svg>
-    </div>
-    <figcaption>Düşüşün büyük kısmı <strong>tahmini ölçüme çevirmekten</strong> geldi.
-      Bir metnin JSON olup olmadığı tahmin edilecek bir şey değil; ayrıştırma denenir
-      ve kesin cevap alınır.</figcaption>
-  </figure>
+  <p class="anahtar">Bulut API bağımlılığı sıfır — <b>kapalı ağda sorun çıkarmaz.</b></p>
 </section>
 
 <section>
-  <h2><span class="no">08</span> Kurtarılan üç vaka</h2>
+  <h2><span class="no">04</span> Metni seçilemeyen tablo</h2>
+  <p>İnternetten alınmış bir <strong>ekran görüntüsü</strong> ya da
+    <strong>taranmış PDF</strong> — metin seçilemiyor. <strong>OCR ile okunuyor</strong>,
+    tablo yapısı kutu konumlarından yeniden kuruluyor. Ölçüm şunu verdi:</p>
+
+<pre class="kotu">15.840.900 → '15.840.900'   ✓  güven 1.000
+tablo yapısı: 5 satır × 4 sütun  ✓
+
+Şehir      → 'Sehir'        ✗
+Iğdır      → 'ngoa'         ✗  güven 0.828  ← YÜKSEK güvenle uydurdu</pre>
+
+  <p><strong>Sayılar ve yapı kusursuz, Türkçe harfler yok oluyor.</strong> Sebebini
+    tahmin etmedik, <strong>ölçtük</strong>: modelin 6623 karakterlik sözlüğünde
+    <code>ğ Ğ ı İ ş Ş ç Ç ö Ö</code> hiç yok. Ayar sorunu değil — model o harfleri
+    <b>fiziksel olarak üretemiyor</b>.</p>
+
+  <div class="kutu uyari">
+    <span class="lbl">Aynı hata sınıfı, üçüncü kez</span>
+    <p>Magika kısa dosyada <b>0.953</b> güvenle yanılmıştı. Kodlama katmanı İzlandaca
+      metni Türkçe sanmıştı. Şimdi OCR <b>0.828</b> güvenle şehir adı uyduruyor.
+      Üçünde de <strong>yanlış cevap yüksek güvenle geliyor</strong>; güven eşiğiyle
+      elenemiyor. Mimarinin tamamı bu yüzden <b>"ölç, tahmin etme"</b> üzerine kurulu.</p>
+  </div>
+
+  <p class="anahtar">Sözlük her çalıştırmada ölçülüyor. Türkçe doğrulanamıyorsa
+    <b>metin</b> human feedback'e çıkıyor; <b>sayılar ve yapı</b> etkilenmiyor.</p>
+</section>
+
+<section>
+  <h2><span class="no">05</span> Kanıt: görmediği 8 dosya</h2>
+  <p>Bir sistemin kendi test verisinde çalışması yeterli değil. Sisteme
+    <strong>özel olarak ayarlanmamış sekiz dosya</strong> verildi:</p>
+
   <div class="scroll">
     <table>
-      <thead><tr><th>Dosya</th><th>Tek başına Magika</th><th>Keşif katmanı</th></tr></thead>
+      <thead><tr><th>Verilen</th><th>Sonuç</th></tr></thead>
       <tbody>
-        <tr><td><code>hizali_rapor.txt</code></td>
-          <td class="n">txt (0.474) → belge akışı, tablo kaybolur</td>
-          <td class="y">sabit genişlik → TABLO akışı</td></tr>
-        <tr><td><code>tek_sutun.csv</code></td>
-          <td class="n">ignorefile (0.953) → yanlış akış</td>
-          <td class="y">kısa dosya, reddedildi → yargı → tablo</td></tr>
-        <tr><td><code>veri.json</code></td>
-          <td class="w">jsonl (0.581) → düşük güven</td>
-          <td class="y">json.loads doğruladı → json (1.000)</td></tr>
+        <tr><td><code>personel_eski.csv</code><br><span class="kucuk">eski sistem, cp1254</span></td>
+          <td class="y">Kodlamayı <b>bayt kanıtıyla</b> çözdü → <code>Ayşe · İstanbul · Müdür</code> birebir doğru</td></tr>
+        <tr><td><code>bütçe_2026.csv</code><br><span class="kucuk">noktalı virgül, TR sayı</span></td>
+          <td class="y">tablo → <code>12.500,00</code> Türkçe sayı biçimi tanındı</td></tr>
+        <tr><td><code>ocak_raporu.xlsx</code><br><span class="kucuk">birleşik hücre, başlık 4. satırda</span></td>
+          <td class="y">2 sayfa açıldı, tablo olan seçildi</td></tr>
+        <tr><td><code>tedarikci_sozlesme.pdf</code></td>
+          <td class="y">metin katmanı var → belge</td></tr>
+        <tr><td><code>fatura_tarali.pdf</code><br><span class="kucuk">taranmış</span></td>
+          <td class="w">0 karakter ölçüldü → OCR → 4×2 tablo → <b>Türkçe için soruldu</b></td></tr>
+        <tr><td><code>satis_ekran.png</code></td>
+          <td class="w">OCR → 4×3 tablo, sayılar doğru → <b>Türkçe için soruldu</b></td></tr>
+        <tr><td><code>api_cikti.json</code> · <code>uygulama.log</code></td>
+          <td class="y">ağaç ve belge akışlarına, doğru</td></tr>
       </tbody>
     </table>
   </div>
-</section>
 
-<section>
-  <h2><span class="no">09</span> Toplu seçenek sunma</h2>
-  <p>Bir parti geldiğinde önce <strong>ucuz geçiş herkese</strong> uygulanır, sonra
-    kullanıcıya <strong>ne bulunduğu bilinerek</strong> soru sorulur.</p>
-<pre>6 tablo, 5 ağaç, 7 belge, 2 kapsayıcı; 2 dosya karar bekliyor
+  <p class="anahtar">8/8 doğru. İkisi human feedback'e çıktı — <b>ikisi de gerçekten
+    belirsiz olduğu için</b>, ikisinde de sebebi yazılı.</p>
 
-A) Sadece tablo akışı (6 dosya)
-   + En hızlı sonuç; tiplenmiş sütunlar doğrudan analize girer
-   - Belge ve ağaç içeriği bu turda işlenmez
-B) Yapılandırılmış veri: tablo ve ağaç (11 dosya)
-C) Tümü, belge akışı dahil (18 dosya)</pre>
-
-  <div class="kutu vurgu">
-    <span class="lbl">Ayırt edilmesi gereken iki soru türü</span>
-    <p><strong>Olgu sorusu</strong>, "bu dosya hangi kodlamada?" Cevabı ölçümle bulunur.
-      Kural: <strong>ölçemezsen sor.</strong></p>
-    <p><strong>Tercih sorusu</strong>, "hangi dosyalarla ilgileniyorsun?" Cevabı hiçbir
-      ölçümde yazmaz. Kural: <strong>her zaman sor.</strong></p>
-    <p>Bu ayrım, "ne zaman insana soralım" tartışmasını çözer.</p>
+  <div class="kutu iyi">
+    <span class="lbl">Bu sınama bir hata yakaladı ve düzeltildi</span>
+    <p>Taranmış fatura önce <strong>"belge, çözüldü"</strong> diye geçiyordu — içinde
+      sıfır metin olmasına rağmen. Belge akışına gitseydi metin çıkarıcı boş dönecek,
+      bu <strong>sessizce</strong> olacaktı. Artık her PDF'in metin katmanı önce
+      ölçülüyor.</p>
   </div>
 </section>
 
 <section>
-  <h2><span class="no">10</span> Tasarım kuralları</h2>
+  <h2><span class="no">06</span> Artı ve eksi</h2>
+
+  <div class="kutu iyi">
+    <span class="lbl">Artı</span>
+    <div class="liste">
+      <div class="sat"><span class="i">+</span><p><strong>Sıfır bulut bağımlılığı</strong> — kapalı ağda çalışır, OCR modelleri pakete gömülü.</p></div>
+      <div class="sat"><span class="i">+</span><p><strong>Yanlış cevap yerine susuyor</strong>; emin olmadığında human feedback istiyor.</p></div>
+      <div class="sat"><span class="i">+</span><p><strong>Türkçe uyumluluğu</strong> — cp1254 ve TR sayı biçimi bayt kanıtıyla çözülüyor.</p></div>
+      <div class="sat"><span class="i">+</span><p><strong>Metni seçilemeyen tabloyu okuyor</strong> — ekran görüntüsü ve taranmış PDF dahil.</p></div>
+      <div class="sat"><span class="i">+</span><p><strong>Otomatik mod</strong> — gözetimsiz koşumda beklemiyor, sabit kuralla seçiyor ve <b>seçtiğini etiketliyor</b>.</p></div>
+    </div>
+  </div>
+
+  <div class="kutu uyari">
+    <span class="lbl">Eksi</span>
+    <div class="liste">
+      <div class="sat"><span class="i">−</span><p><strong>Türkçe destekli OCR modeli gerekiyor.</strong> İki aday ölçüldü, ikisi de yetersiz. Model takılabilir hale getirildi; eksik olan modelin kendisi.</p></div>
+      <div class="sat"><span class="i">−</span><p>OCR kurulumu <strong>~245 MB</strong> — yerel sinir ağının maliyeti. Ayrı bileşen, ihtiyacı olmayan kurmuyor.</p></div>
+      <div class="sat"><span class="i">−</span><p>Word (<code>.docx</code>) için çözümleyici henüz yok.</p></div>
+    </div>
+  </div>
+
+  <p class="anahtar">Otomatik mod <b>"tahmin yok"</b> ilkesini bozmuyor: seçim bir
+    modele değil sabit kurala dayanıyor, sonuç <code>kaynak: otomatik_varsayilan</code>
+    olarak etiketleniyor.</p>
+</section>
+
+<section>
+  <h2><span class="no">07</span> Durum</h2>
   <div class="liste">
-    <div class="sat"><span class="i">01</span><p><strong>Ölç, tahmin etme.</strong> Her sonuç kanıtıyla döner.</p></div>
-    <div class="sat"><span class="i">02</span><p><strong>Kanıt yetmezse karar verme.</strong> Artık olarak işaretle, sebebini yaz.</p></div>
-    <div class="sat"><span class="i">03</span><p><strong>Uzantıya güvenme.</strong> Karar içerikten üretilir.</p></div>
-    <div class="sat"><span class="i">04</span><p><strong>Ayrıştırılabilen şey ölçülür.</strong> Tahmini kanıta çevir.</p></div>
-    <div class="sat"><span class="i">05</span><p><strong>Ucuz geçiş herkese, pahalı geçiş seçilene.</strong></p></div>
-    <div class="sat"><span class="i">06</span><p><strong>Yargı ölçümün yerine geçmez.</strong> Kaynağı ayrı kaydedilir.</p></div>
-    <div class="sat"><span class="i">07</span><p><strong>Dönen içerik veri olarak etiketlenir</strong>, talimat olarak değil.</p></div>
+    <div class="sat"><span class="i">✓</span><p>Dört katman çalışıyor, <b>770 test</b> ile korunuyor.</p></div>
+    <div class="sat"><span class="i">✓</span><p>MCP sunucusu, 7 tool; CSV, TSV, TXT, PDF, XLSX ve görüntü destekli.</p></div>
+    <div class="sat"><span class="i">✓</span><p>25 dosyalık ölçüm partisi: <b>25/25 doğru</b>, %12 human feedback — sayı regresyon testine bağlı.</p></div>
+    <div class="sat"><span class="i">✓</span><p><strong>Canlı gösterim hazır</strong> — dosya bırak, kararı ve human feedback döngüsünü gör.</p></div>
+    <div class="sat"><span class="i">→</span><p>Sırada: Türkçe OCR modeli, Word desteği.</p></div>
   </div>
 </section>
 
-<section>
-  <h2><span class="no">11</span> Durum</h2>
-  <div class="scroll">
-    <table>
-      <thead><tr><th>Bileşen</th><th>Durum</th></tr></thead>
-      <tbody>
-        <tr><td>Magika entegrasyonu ve kısa dosya koruması</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>Şekil tespiti, beş şekil</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>Kanıt katmanı: kodlama, ayraç, sayı, tarih</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>Yapısal doğrulama: JSON, XML, TOML</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>Yargı katmanı, sunucu dışında</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>MCP sunucusu, 7 tool</td><td class="y">ÇALIŞIYOR</td></tr>
-        <tr><td>Dil regresyon testi</td><td class="y">8 VAKA, HATASIZ</td></tr>
-        <tr><td>Şekil regresyon testi</td><td class="y">10 VAKA, HATASIZ</td></tr>
-        <tr><td>XLSX sayfa çıkarımı, PDF metin katmanı</td><td class="w">SIRADA</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<p class="kapanis">Tek cümleyle: <strong>hazır bileşenler yolun büyük kısmını götürüyor,
-  ama Türkçe veride ve şekil kararında durdukları yer ölçüldü.</strong> Keşif katmanı o
-  boşluğu dolduruyor ve bunu <strong>tahmin ederek değil, kanıt üreterek</strong> yapıyor.
-  Kanıt yetmediğinde de susmayı biliyor.</p>
+<p class="kapanis">Tek cümleyle: <strong>tahmin etmiyoruz, ölçüyoruz — emin
+  olamadığımızda da human feedback istiyoruz.</strong></p>
 
 </div>
 </body>

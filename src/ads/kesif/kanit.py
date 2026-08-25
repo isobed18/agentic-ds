@@ -62,7 +62,7 @@ class KodlamaSonuc:
     adaylar: list[str] = field(default_factory=list)
     kanitlar: list[tuple[str, str]] = field(default_factory=list)
     belirsiz: bool = False           # birden fazla aday hatasiz coz(uyor)
-    karar_verilemedi: bool = False   # kanitlar celisiyor -> insana sor
+    karar_verilemedi: bool = False   # kanitlar celisiyor -> human feedback
 
 
 def kodlama_tespit(ham: bytes) -> KodlamaSonuc:
@@ -171,13 +171,13 @@ def kodlama_tespit(ham: bytes) -> KodlamaSonuc:
         kanitlar.append((
             "degerlendirme",
             f"kanitlar celisiyor (Turkce lehine {turkce_puan}, "
-            f"aleyhine {yabanci_puan}); karar insana birakiliyor",
+            f"aleyhine {yabanci_puan}); karar human feedback'e birakiliyor",
         ))
     else:
         kanitlar.append((
             "degerlendirme",
             "ayrisan baytlar var ama hangi dil oldugunu gosteren "
-            "yeterli kanit yok; karar insana birakiliyor",
+            "yeterli kanit yok; karar human feedback'e birakiliyor",
         ))
     return KodlamaSonuc(
         "cp1252", "dusuk", ["cp1252", "cp1254", "latin-1"], kanitlar,
