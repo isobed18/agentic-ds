@@ -114,7 +114,10 @@ def test_metin_katmanli_belge_otomatik_kalir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Gercek metin iceren bir PDF belge akisinda kalir."""
-    from tests.test_kesif_pdf import _basit_pdf
+    # 'tests.' onekli import yalnizca depo koku sys.path'te oldugunda
+    # calisir; CI duz `pytest` kostugu icin orada cokerdi. tests/ bir
+    # paket olmadigindan pytest bu dizini zaten sys.path'e ekler.
+    from test_kesif_pdf import _basit_pdf
 
     dosya = tmp_path / "guvenli.pdf"
     dosya.write_bytes(_basit_pdf([

@@ -213,7 +213,10 @@ def test_taranmis_pdf_yonlendiricide_de_ocr_yoluna_giriyor(tmp_path: Path) -> No
 
 def test_metin_katmanli_pdf_belge_akisinda_kaliyor(tmp_path: Path) -> None:
     """Duzeltme, normal PDF'leri bozmamali."""
-    from tests.test_kesif_pdf import _basit_pdf
+    # 'tests.' onekli import yalnizca depo koku sys.path'te oldugunda
+    # calisir; CI duz `pytest` kostugu icin orada cokerdi. tests/ bir
+    # paket olmadigindan pytest bu dizini zaten sys.path'e ekler.
+    from test_kesif_pdf import _basit_pdf
 
     p = tmp_path / "sozlesme.pdf"
     p.write_bytes(_basit_pdf([
