@@ -45,9 +45,7 @@ class TestImmutability:
     def test_extra_fields_rejected(self) -> None:
         """An LLM inventing a field must fail validation, not be silently kept."""
         with pytest.raises(ValidationError):
-            ValidationStrategy(
-                strategy=SplitStrategy.RANDOM, rationale="x", made_up_field=1
-            )
+            ValidationStrategy(strategy=SplitStrategy.RANDOM, rationale="x", made_up_field=1)
 
 
 class TestValidationStrategy:
@@ -87,16 +85,20 @@ class TestProblemCandidate:
         with pytest.raises(ValidationError, match="target_column"):
             ProblemCandidateProposal(
                 title="t",
+                title_tr="t",
                 task_type=task_type,
                 business_rationale="r",
+                business_rationale_tr="r",
                 primary_metric=Metric.ROC_AUC,
             )
 
     def test_anomaly_detection_needs_no_target(self) -> None:
         candidate = ProblemCandidateProposal(
             title="Anomaly detection",
+            title_tr="Anomali tespiti",
             task_type=TaskType.ANOMALY_DETECTION,
             business_rationale="no label available",
+            business_rationale_tr="etiket mevcut değil",
             primary_metric=Metric.SILHOUETTE,
         )
         assert candidate.target_column is None
@@ -106,9 +108,11 @@ class TestProblemCandidate:
         with pytest.raises(ValidationError, match="not valid for"):
             ProblemCandidateProposal(
                 title="t",
+                title_tr="t",
                 task_type=TaskType.REGRESSION,
                 target_column="annual_comp",
                 business_rationale="r",
+                business_rationale_tr="r",
                 primary_metric=Metric.ROC_AUC,
             )
 
@@ -150,15 +154,27 @@ class TestRelationshipCandidate:
 
     def test_confidence_rewards_coverage_and_names(self) -> None:
         weak = RelationshipCandidate(
-            from_table="a", from_columns=["x"], to_table="b", to_columns=["y"],
-            overlap_rate=0.9, orphan_rate=0.1, parent_coverage=0.05,
-            n_from_distinct=10, n_to_distinct=200,
+            from_table="a",
+            from_columns=["x"],
+            to_table="b",
+            to_columns=["y"],
+            overlap_rate=0.9,
+            orphan_rate=0.1,
+            parent_coverage=0.05,
+            n_from_distinct=10,
+            n_to_distinct=200,
         )
         strong = RelationshipCandidate(
-            from_table="a", from_columns=["physician_id"], to_table="b",
+            from_table="a",
+            from_columns=["physician_id"],
+            to_table="b",
             to_columns=["physician_id"],
-            overlap_rate=0.9, orphan_rate=0.1, parent_coverage=1.0, name_affinity=1.0,
-            n_from_distinct=10, n_to_distinct=10,
+            overlap_rate=0.9,
+            orphan_rate=0.1,
+            parent_coverage=1.0,
+            name_affinity=1.0,
+            n_from_distinct=10,
+            n_to_distinct=10,
         )
         assert strong.confidence > weak.confidence
 

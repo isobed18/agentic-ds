@@ -92,10 +92,13 @@ def _transaction_proposal(**overrides: Any) -> ValidationStrategyProposal:
             "Keep physicians isolated and simulate deployment by holding out "
             "their most recent transactions."
         ),
+        "rationale_tr": (
+            "Hekimleri ayrık tut ve en son işlemlerini dışarıda bırakarak "
+            "dağıtımı simüle et."
+        ),
     }
     payload.update(overrides)
     return ValidationStrategyProposal.model_validate(payload)
-
 
 
 def _crossing_identifier_signals() -> ValidationSignals:
@@ -152,9 +155,7 @@ def _crossing_identifier_signals() -> ValidationSignals:
 
 
 class TestDeterministicSignals:
-    def test_real_transactions_require_grouped_temporal(
-        self, cards_by_name, frames
-    ) -> None:
+    def test_real_transactions_require_grouped_temporal(self, cards_by_name, frames) -> None:
         signals = detect_validation_signals(
             cards_by_name[TRANSACTIONS],
             frames[TRANSACTIONS],
@@ -195,9 +196,7 @@ class TestDeterministicSignals:
         )
 
         entity = next(
-            item
-            for item in signals.repeated_entity_keys
-            if item.column == "physician_id"
+            item for item in signals.repeated_entity_keys if item.column == "physician_id"
         )
         assert len(entity.containment) == 1
         self_cell = entity.containment[0]
@@ -211,9 +210,7 @@ class TestDeterministicSignals:
         repeated_values = [f"customer_{index}" for index in range(3_000)]
         frame = pd.DataFrame(
             {
-                "customer_unique_id": [
-                    f"customer_{index}" for index in range(97_000)
-                ]
+                "customer_unique_id": [f"customer_{index}" for index in range(97_000)]
                 + repeated_values,
                 "order_id": [f"order_{index}" for index in range(100_000)],
                 "customer_state": ["SP", "RJ"] * 50_000,
@@ -228,21 +225,15 @@ class TestDeterministicSignals:
             task_type=TaskType.BINARY_CLASSIFICATION,
         )
 
-        assert [item.column for item in signals.repeated_entity_keys] == [
-            "customer_unique_id"
-        ]
+        assert [item.column for item in signals.repeated_entity_keys] == ["customer_unique_id"]
         entity = signals.repeated_entity_keys[0]
         assert entity.unique_rate == 0.97
         assert entity.repeated_value_count == 3_000
         assert entity.repeated_row_count == 6_000
         assert entity.repeated_row_rate == 0.06
         assert full_coverage_group_columns(signals) == ["customer_unique_id"]
-        assert "order_id" not in {
-            item.column for item in signals.repeated_entity_keys
-        }
-        assert "customer_state" not in {
-            item.column for item in signals.repeated_entity_keys
-        }
+        assert "order_id" not in {item.column for item in signals.repeated_entity_keys}
+        assert "customer_state" not in {item.column for item in signals.repeated_entity_keys}
 
     def test_precedence_without_entity_or_time(self) -> None:
         frame = pd.DataFrame(
@@ -294,8 +285,7 @@ class TestDeterministicSignals:
         )
         assert any("few_rows_per_fold" in item for item in signals.small_sample_warnings)
         assert any(
-            "few_minority_examples_per_fold" in item
-            for item in signals.small_sample_warnings
+            "few_minority_examples_per_fold" in item for item in signals.small_sample_warnings
         )
 
 
@@ -334,9 +324,7 @@ class TestProposalArtifactBoundary:
 
 
 class TestValidationVetoes:
-    def test_unique_row_key_cannot_be_used_for_grouping(
-        self, cards_by_name, frames
-    ) -> None:
+    def test_unique_row_key_cannot_be_used_for_grouping(self, cards_by_name, frames) -> None:
         signals = detect_validation_signals(
             cards_by_name[TRANSACTIONS],
             frames[TRANSACTIONS],
@@ -362,6 +350,7 @@ class TestValidationVetoes:
             strategy=SplitStrategy.GROUPED,
             group_column="high_repeat_id",
             rationale="Use the identifier with the largest repeated-row share.",
+            rationale_tr="En büyük yinelenen satır payına sahip tanımlayıcıyı kullan.",
         )
 
         assert signals.repeated_entity_keys[0].repeated_row_rate == 1.0
@@ -397,6 +386,7 @@ class TestValidationVetoes:
             "time_column": None,
             "holdout_cutoff": None,
             "rationale": "Use the most frequently repeating identifier.",
+            "rationale_tr": "En sık yinelenen tanımlayıcıyı kullan.",
         }
 
         result = run_agent(build_spec(), context, FakeLLM([proposal]))
@@ -404,10 +394,7 @@ class TestValidationVetoes:
         assert not result.succeeded
         assert result.n_attempts == 3
         assert all(
-            any(
-                failure.code == "no_full_coverage_group_column"
-                for failure in attempt.failures
-            )
+            any(failure.code == "no_full_coverage_group_column" for failure in attempt.failures)
             for attempt in result.attempts
         )
 
@@ -466,12 +453,11 @@ class TestValidationVetoes:
                 n_folds=3,
                 group_column=column,
                 rationale="Either alias produces the same safe entity partition.",
+                rationale_tr="Her iki takma ad da aynı güvenli varlık bölümünü üretir.",
             )
             assert validate_group_column_repeats(proposal, context) == []
 
-    def test_non_datetime_cannot_drive_temporal_split(
-        self, cards_by_name, frames
-    ) -> None:
+    def test_non_datetime_cannot_drive_temporal_split(self, cards_by_name, frames) -> None:
         signals = detect_validation_signals(
             cards_by_name[TRANSACTIONS],
             frames[TRANSACTIONS],
@@ -484,9 +470,7 @@ class TestValidationVetoes:
         assert failures[0].code == "time_column_not_multi_period"
         assert failures[0].repair_suggestion == "txn_date"
 
-    def test_random_split_is_vetoed_on_repeated_temporal_data(
-        self, cards_by_name, frames
-    ) -> None:
+    def test_random_split_is_vetoed_on_repeated_temporal_data(self, cards_by_name, frames) -> None:
         signals = detect_validation_signals(
             cards_by_name[TRANSACTIONS],
             frames[TRANSACTIONS],
@@ -497,6 +481,7 @@ class TestValidationVetoes:
         proposal = ValidationStrategyProposal(
             strategy=SplitStrategy.RANDOM,
             rationale="Use a conventional random holdout.",
+            rationale_tr="Geleneksel rastgele bir test kümesi kullan.",
         )
         failures = validate_strategy_not_weaker(proposal, context)
         assert failures[0].code == "strategy_weaker_than_detected_signals"
@@ -535,6 +520,7 @@ class TestAgentExecution:
             "time_column": None,
             "holdout_cutoff": None,
             "rationale": "Use the usual random holdout.",
+            "rationale_tr": "Standart rastgele test kümesini kullan.",
         }
         safe = _transaction_proposal().model_dump(mode="json")
         llm = FakeLLM([unsafe, safe])

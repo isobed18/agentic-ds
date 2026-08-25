@@ -113,9 +113,7 @@ def build_context(card: DataCard) -> AgentContext:
     )
 
 
-def investigate_sensitivity(
-    card: DataCard, llm: StructuredLLM
-) -> tuple[DataCard, list[str]]:
+def investigate_sensitivity(card: DataCard, llm: StructuredLLM) -> tuple[DataCard, list[str]]:
     """Return the card with agent-proposed sensitivity applied, and what changed.
 
     Failure is not fatal: if the agent errors or names a column that does not

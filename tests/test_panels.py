@@ -67,8 +67,15 @@ def _eda_payload(**overrides) -> dict:
             "total_count": 800,
             "non_null_count": 712,
             "null_rate": 0.11,
-            "numeric": {"min": 1.0, "max": 9.0, "mean": 5.0, "std": 2.0,
-                        "p25": 3.0, "p50": 5.0, "p75": 7.0},
+            "numeric": {
+                "min": 1.0,
+                "max": 9.0,
+                "mean": 5.0,
+                "std": 2.0,
+                "p25": 3.0,
+                "p50": 5.0,
+                "p75": 7.0,
+            },
             "histogram": [
                 {"lower": 1.0, "upper": 5.0, "count": 400},
                 {"lower": 5.0, "upper": 9.0, "count": 312},
@@ -83,15 +90,25 @@ def _eda_payload(**overrides) -> dict:
             "values": [[1.0, 0.995], [0.995, 1.0]],
         },
         "target_relationships": [
-            {"column": "total_comp_ytd", "pearson_correlation": 0.995,
-             "adjusted_mutual_information": 0.9},
-            {"column": "tenure", "pearson_correlation": 0.21,
-             "adjusted_mutual_information": 0.1},
+            {
+                "column": "total_comp_ytd",
+                "pearson_correlation": 0.995,
+                "adjusted_mutual_information": 0.9,
+            },
+            {"column": "tenure", "pearson_correlation": 0.21, "adjusted_mutual_information": 0.1},
         ],
         "outliers": [
-            {"column": "tenure", "lower_fence": 0.0, "upper_fence": 40.0,
-             "evaluated_count": 800, "outlier_count": 80, "outlier_rate": 0.10,
-             "p25": 5.0, "p50": 12.0, "p75": 20.0},
+            {
+                "column": "tenure",
+                "lower_fence": 0.0,
+                "upper_fence": 40.0,
+                "evaluated_count": 800,
+                "outlier_count": 80,
+                "outlier_rate": 0.10,
+                "p25": 5.0,
+                "p50": 12.0,
+                "p75": 20.0,
+            },
         ],
     }
     payload.update(overrides)
@@ -130,8 +147,7 @@ class TestSeverityReflectsMeasurement:
     def test_weak_relationships_are_not_flagged(self) -> None:
         payload = _eda_payload(
             target_relationships=[
-                {"column": "tenure", "pearson_correlation": 0.2,
-                 "adjusted_mutual_information": 0.1}
+                {"column": "tenure", "pearson_correlation": 0.2, "adjusted_mutual_information": 0.1}
             ]
         )
         assert _by_id(eda_panels(payload))["feature_relationships"]["severity"] == "review"
@@ -194,18 +210,30 @@ class TestSchemaGraph:
         plan = {
             "base_table": "physicians",
             "joins": [
-                {"left_table": "physicians", "right_table": "txn_by_physician",
-                 "left_columns": ["physician_id"], "right_columns": ["physician_id"],
-                 "how": "left"},
+                {
+                    "left_table": "physicians",
+                    "right_table": "txn_by_physician",
+                    "left_columns": ["physician_id"],
+                    "right_columns": ["physician_id"],
+                    "how": "left",
+                },
             ],
             "aggregations": [
-                {"source_table": "transactions", "output_name": "txn_by_physician",
-                 "group_by": ["physician_id"], "aggregations": {"total": "SUM(amount)"}},
+                {
+                    "source_table": "transactions",
+                    "output_name": "txn_by_physician",
+                    "group_by": ["physician_id"],
+                    "aggregations": {"total": "SUM(amount)"},
+                },
             ],
             "evidence": [
-                {"from_table": "transactions", "from_columns": ["physician_id"],
-                 "to_table": "physicians", "to_columns": ["physician_id"],
-                 "overlap_rate": 0.98},
+                {
+                    "from_table": "transactions",
+                    "from_columns": ["physician_id"],
+                    "to_table": "physicians",
+                    "to_columns": ["physician_id"],
+                    "overlap_rate": 0.98,
+                },
             ],
         }
         plan.update(overrides)
@@ -331,13 +359,20 @@ class TestSplitProtectionIsVisible:
 
     def _strategy(self, strategy: str, **signals) -> dict:
         base = {
-            "n_rows": 800, "n_usable_rows": 712, "repeated_entity_keys": [],
-            "temporal_spans": [], "minority_class_rate": None,
+            "n_rows": 800,
+            "n_usable_rows": 712,
+            "repeated_entity_keys": [],
+            "temporal_spans": [],
+            "minority_class_rate": None,
         }
         base.update(signals)
         return {
-            "strategy": strategy, "n_folds": 5, "test_size": 0.2,
-            "group_column": None, "time_column": None, "holdout_cutoff": None,
+            "strategy": strategy,
+            "n_folds": 5,
+            "test_size": 0.2,
+            "group_column": None,
+            "time_column": None,
+            "holdout_cutoff": None,
             "detected_signals": base,
         }
 
@@ -347,8 +382,14 @@ class TestSplitProtectionIsVisible:
     def test_covering_every_required_protection_is_not_an_issue(self) -> None:
         payload = self._strategy(
             "temporal",
-            temporal_spans=[{"column": "hire_date", "min_date": "2005-01-05",
-                             "max_date": "2022-10-11", "span_days": 6488}],
+            temporal_spans=[
+                {
+                    "column": "hire_date",
+                    "min_date": "2005-01-05",
+                    "max_date": "2022-10-11",
+                    "span_days": 6488,
+                }
+            ],
         )
         assert self._protection(payload)["severity"] == "info"
 
@@ -357,8 +398,14 @@ class TestSplitProtectionIsVisible:
         payload = self._strategy(
             "temporal",
             repeated_entity_keys=[{"column": "physician_id"}],
-            temporal_spans=[{"column": "hire_date", "min_date": "2005-01-05",
-                             "max_date": "2022-10-11", "span_days": 6488}],
+            temporal_spans=[
+                {
+                    "column": "hire_date",
+                    "min_date": "2005-01-05",
+                    "max_date": "2022-10-11",
+                    "span_days": 6488,
+                }
+            ],
         )
         panel = self._protection(payload)
         assert panel["severity"] == "issue"
@@ -368,8 +415,14 @@ class TestSplitProtectionIsVisible:
         """The specific confusion the protection model exists to prevent."""
         payload = self._strategy(
             "grouped",
-            temporal_spans=[{"column": "hire_date", "min_date": "2005-01-05",
-                             "max_date": "2022-10-11", "span_days": 6488}],
+            temporal_spans=[
+                {
+                    "column": "hire_date",
+                    "min_date": "2005-01-05",
+                    "max_date": "2022-10-11",
+                    "span_days": 6488,
+                }
+            ],
         )
         panel = self._protection(payload)
         assert panel["severity"] == "issue"
@@ -405,10 +458,20 @@ class TestSourcePanelsDescribeTheDataNotTheArtifact:
             "candidate_primary_keys": [["physician_id"]],
             "issues": [],
             "columns": [
-                {"name": "physician_id", "semantic_type": "identifier",
-                 "sensitivity": "internal", "null_rate": 0.0, "n_unique": 800},
-                {"name": "specialty", "semantic_type": "categorical",
-                 "sensitivity": "internal", "null_rate": 0.0, "n_unique": 8},
+                {
+                    "name": "physician_id",
+                    "semantic_type": "identifier",
+                    "sensitivity": "internal",
+                    "null_rate": 0.0,
+                    "n_unique": 800,
+                },
+                {
+                    "name": "specialty",
+                    "semantic_type": "categorical",
+                    "sensitivity": "internal",
+                    "null_rate": 0.0,
+                    "n_unique": 8,
+                },
             ],
         }
         payload.update(overrides)
@@ -430,14 +493,25 @@ class TestSourcePanelsDescribeTheDataNotTheArtifact:
         assert "one row's identity is unclear" in panel["description"]
 
     def test_two_tables_do_not_receive_the_same_description(self) -> None:
-        panels = source_panels([
-            self._card("physicians"),
-            self._card("ledger", n_rows=20_000,
-                       candidate_primary_keys=[["entry_id"]],
-                       columns=[{"name": "entry_id", "semantic_type": "identifier",
-                                 "sensitivity": "internal", "null_rate": 0.0,
-                                 "n_unique": 20_000}]),
-        ])
+        panels = source_panels(
+            [
+                self._card("physicians"),
+                self._card(
+                    "ledger",
+                    n_rows=20_000,
+                    candidate_primary_keys=[["entry_id"]],
+                    columns=[
+                        {
+                            "name": "entry_id",
+                            "semantic_type": "identifier",
+                            "sensitivity": "internal",
+                            "null_rate": 0.0,
+                            "n_unique": 20_000,
+                        }
+                    ],
+                ),
+            ]
+        )
         assert panels[0]["description"] != panels[1]["description"]
 
     def test_informational_notes_do_not_raise_severity(self) -> None:
@@ -449,8 +523,13 @@ class TestSourcePanelsDescribeTheDataNotTheArtifact:
         was wrong with either — a false positive of exactly the kind this
         project has been burned by before.
         """
-        notes = [{"severity": "info", "code": "column_renamed",
-                  "detail": "Renamed 'Physician ID' to physician_id"}] * 5
+        notes = [
+            {
+                "severity": "info",
+                "code": "column_renamed",
+                "detail": "Renamed 'Physician ID' to physician_id",
+            }
+        ] * 5
         panel = source_panels([self._card("physicians", issues=notes)])[0]
         assert panel["severity"] == "info"
         assert any("informational note" in text for text in panel["insights"])
@@ -459,8 +538,11 @@ class TestSourcePanelsDescribeTheDataNotTheArtifact:
         """The other direction. Suppressing info must not suppress real findings."""
         mixed = [
             {"severity": "info", "code": "column_renamed", "detail": "Renamed a column"},
-            {"severity": "warn", "code": "header_row_inferred",
-             "detail": "Header detected at row 2"},
+            {
+                "severity": "warn",
+                "code": "header_row_inferred",
+                "detail": "Header detected at row 2",
+            },
         ]
         panel = source_panels([self._card("physicians", issues=mixed)])[0]
         assert panel["severity"] == "issue"

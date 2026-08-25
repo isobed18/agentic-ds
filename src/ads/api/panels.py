@@ -176,17 +176,26 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
     severity = WARNING if null_rate >= HIGH_MISSING_RATE else REVIEW
     insights = []
     if null_rate:
+        missing_rows = target.get("total_count", 0) - target.get("non_null_count", 0)
         insights.append(
-            f"{_pct(null_rate)} of {column} is missing "
-            f"({target.get('total_count', 0) - target.get('non_null_count', 0):,} rows), "
-            "so those rows cannot be trained on or scored against."
+            _t(
+                "{pct} of {column} is missing ({missing_rows:,} rows), so those rows cannot "
+                "be trained on or scored against.",
+                pct=_pct(null_rate),
+                column=column,
+                missing_rows=missing_rows,
+            )
         )
 
     if values:
         total = sum(item["count"] for item in values) or 1
         top = values[0]
         insights.append(
-            f"The most frequent class is {top['value']!r} at {_pct(top['count'] / total)}."
+            _t(
+                "The most frequent class is {value} at {pct}.",
+                value=repr(top["value"]),
+                pct=_pct(top["count"] / total),
+            )
         )
         return _panel(
             "target_distribution",
@@ -194,22 +203,25 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
             {
                 "kind": "bar",
                 "x_label": column,
-                "y_label": "Count",
+                "y_label": _t("Count"),
                 "series": [
                     {"label": item["value"], "value": item["count"]} for item in values[:24]
                 ],
             },
             severity=severity,
             caption=f"{_pct(top['count'] / total)} {top['value']}",
-            description=f"How the target {column!r} is distributed across observed rows.",
+            description=_t(
+                "How the target {column} is distributed across observed rows.",
+                column=repr(column),
+            ),
             insights=insights,
             table={
-                "columns": ["Class", "Count", "Share"],
+                "columns": [_t("Class"), _t("Count"), _t("Share")],
                 "rows": [
                     [item["value"], f"{item['count']:,}", _pct(item["count"] / total)]
                     for item in values[:24]
                 ]
-                + [["Total", f"{total:,}", "100.0%"]],
+                + [[_t("Total"), f"{total:,}", "100.0%"]],
             },
         )
 
@@ -217,14 +229,18 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
     mean = numeric.get("mean")
     if spread and mean:
         insights.append(
-            f"Values range {_fmt(numeric.get('min'))} to {_fmt(numeric.get('max'))} "
-            f"with a standard deviation of {_fmt(spread)}."
+            _t(
+                "Values range {min_val} to {max_val} with a standard deviation of {spread}.",
+                min_val=_fmt(numeric.get("min")),
+                max_val=_fmt(numeric.get("max")),
+                spread=_fmt(spread),
+            )
         )
     # Artifacts are immutable, so runs recorded before binning was added carry
     # quantiles and nothing else. A box drawn from min/p25/p50/p75/max shows
     # real measured spread instead of an empty frame apologising for itself.
     chart = (
-        {"kind": "histogram", "x_label": column, "y_label": "Count", "bins": histogram}
+        {"kind": "histogram", "x_label": column, "y_label": _t("Count"), "bins": histogram}
         if histogram
         else {
             "kind": "box",
@@ -247,21 +263,24 @@ def _target_panel(target: dict[str, Any]) -> dict[str, Any]:
         _t("Target distribution"),
         chart,
         severity=severity,
-        caption=f"median {_fmt(numeric.get('p50'))}",
-        description=f"How the numeric target {column!r} is distributed across observed rows.",
+        caption=_t("median {val}", val=_fmt(numeric.get("p50"))),
+        description=_t(
+            "How the numeric target {column} is distributed across observed rows.",
+            column=repr(column),
+        ),
         insights=insights,
         table={
-            "columns": [_t("Statistic"), "Value"],
+            "columns": [_t("Statistic"), _t("Value")],
             "rows": [
-                ["Rows", f"{target.get('total_count', 0):,}"],
+                [_t("Rows"), f"{target.get('total_count', 0):,}"],
                 [_t("Observed"), f"{target.get('non_null_count', 0):,}"],
-                ["Missing", _pct(null_rate)],
-                ["Minimum", _fmt(numeric.get("min"))],
-                ["25th percentile", _fmt(numeric.get("p25"))],
-                ["Median", _fmt(numeric.get("p50"))],
-                ["75th percentile", _fmt(numeric.get("p75"))],
-                ["Maximum", _fmt(numeric.get("max"))],
-                ["Mean", _fmt(mean)],
+                [_t("Missing"), _pct(null_rate)],
+                [_t("Minimum"), _fmt(numeric.get("min"))],
+                [_t("25th percentile"), _fmt(numeric.get("p25"))],
+                [_t("Median"), _fmt(numeric.get("p50"))],
+                [_t("75th percentile"), _fmt(numeric.get("p75"))],
+                [_t("Maximum"), _fmt(numeric.get("max"))],
+                [_t("Mean"), _fmt(mean)],
                 [_t("Std deviation"), _fmt(spread)],
             ],
         },
@@ -274,19 +293,35 @@ def _missingness_panel(missingness: list[dict[str, Any]]) -> dict[str, Any]:
     severity = WARNING if high else (REVIEW if present else OK)
     insights = []
     if high:
+        cols_str = ", ".join(f"{m['column']} ({_pct(m['null_rate'])})" for m in high[:6])
         insights.append(
-            f"{len(high)} column(s) are at or above {_pct(HIGH_MISSING_RATE)} missing: "
-            + ", ".join(f"{m['column']} ({_pct(m['null_rate'])})" for m in high[:6])
-            + "."
+            _t(
+                "{count} column(s) are at or above {threshold} missing: {columns}.",
+                count=len(high),
+                threshold=_pct(HIGH_MISSING_RATE),
+                columns=cols_str,
+            )
         )
         insights.append(
-            "Decide per column whether to impute, drop the column, or drop the rows — "
-            "each choice changes what the model can be used for."
+            _t(
+                "Decide per column whether to impute, drop the column, or drop the rows — "
+                "each choice changes what the model can be used for."
+            )
         )
     elif present:
         insights.append(_t("Missingness is present but every column is below the 10% threshold."))
     else:
         insights.append(_t("No missing values were measured in any column."))
+
+    caption = (
+        _t(
+            "{count} column(s) over {threshold}",
+            count=len(high),
+            threshold=_pct(HIGH_MISSING_RATE),
+        )
+        if high
+        else (_t("all columns under 10%") if present else _t("no missing values"))
+    )
 
     return _panel(
         "missing_values",
@@ -296,20 +331,15 @@ def _missingness_panel(missingness: list[dict[str, Any]]) -> dict[str, Any]:
             "x_label": _t("Missing share"),
             "unit": "percent",
             "series": [
-                {"label": m["column"], "value": m.get("null_rate") or 0.0}
-                for m in missingness[:20]
+                {"label": m["column"], "value": m.get("null_rate") or 0.0} for m in missingness[:20]
             ],
         },
         severity=severity,
-        caption=(
-            f"{len(high)} column(s) over {_pct(HIGH_MISSING_RATE)}"
-            if high
-            else ("all columns under 10%" if present else "no missing values")
-        ),
+        caption=caption,
         description=_t("Share of rows with no value, per column."),
         insights=insights,
         table={
-            "columns": ["Column", _t("Missing rows"), _t("Missing share")],
+            "columns": [_t("Column"), _t("Missing rows"), _t("Missing share")],
             "rows": [
                 [m["column"], f"{m.get('null_count', 0):,}", _pct(m.get("null_rate"))]
                 for m in missingness[:24]
@@ -376,15 +406,21 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
 
     insights = []
     if flagged:
+        cols_str = ", ".join(f"{o['column']} ({_pct(o['outlier_rate'])})" for o in flagged[:6])
         insights.append(
-            f"{len(flagged)} column(s) have more than {_pct(HIGH_OUTLIER_RATE)} of values "
-            "outside the 1.5×IQR fences: "
-            + ", ".join(f"{o['column']} ({_pct(o['outlier_rate'])})" for o in flagged[:6])
-            + "."
+            _t(
+                "{count} column(s) have more than {threshold} of values outside "
+                "the 1.5×IQR fences: {columns}.",
+                count=len(flagged),
+                threshold=_pct(HIGH_OUTLIER_RATE),
+                columns=cols_str,
+            )
         )
         insights.append(
-            "Far values are not automatically errors. Confirm whether they are real "
-            "before clipping — removing genuine extremes biases the model toward the middle."
+            _t(
+                "Far values are not automatically errors. Confirm whether they are real "
+                "before clipping — removing genuine extremes biases the model toward the middle."
+            )
         )
     elif any_outliers:
         insights.append(_t("Some values sit outside the fences, but no column exceeds 5%."))
@@ -392,8 +428,6 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
         insights.append(_t("No values fall outside the 1.5×IQR fences."))
 
     boxes = [o for o in outliers[:12] if o.get("p25") is not None]
-    # Runs recorded before quartiles were carried on this artifact can still
-    # show which columns are affected and by how much, which is the finding.
     chart = (
         {
             "kind": "box",
@@ -416,27 +450,38 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
             "x_label": _t("Outlier share"),
             "unit": "percent",
             "series": [
-                {"label": o["column"], "value": o.get("outlier_rate") or 0.0}
-                for o in outliers[:20]
+                {"label": o["column"], "value": o.get("outlier_rate") or 0.0} for o in outliers[:20]
             ],
         }
+    )
+    caption = (
+        _t(
+            "{count} column(s) over {threshold}",
+            count=len(flagged),
+            threshold=_pct(HIGH_OUTLIER_RATE),
+        )
+        if flagged
+        else _t("{n} column(s) with outliers", n=len(any_outliers))
     )
     return _panel(
         "outliers",
         _t("Outliers"),
         chart,
         severity=severity,
-        caption=(
-            f"{len(flagged)} column(s) over {_pct(HIGH_OUTLIER_RATE)}"
-            if flagged
-            else _t("{n} column(s) with outliers").format(n=len(any_outliers))
+        caption=caption,
+        description=_t(
+            "Quartiles and 1.5×IQR fences per numeric column, with the share beyond them."
         ),
-        description=
-            _t("Quartiles and 1.5×IQR fences per numeric column, with the share beyond them."),
         insights=insights,
         table={
-            "columns": ["Column", 
-                _t("Lower fence"), "Median", _t("Upper fence"), _t("Outliers"), "Share"],
+            "columns": [
+                _t("Column"),
+                _t("Lower fence"),
+                _t("Median"),
+                _t("Upper fence"),
+                _t("Outliers"),
+                _t("Share"),
+            ],
             "rows": [
                 [
                     o["column"],
@@ -452,25 +497,29 @@ def _outlier_panel(outliers: list[dict[str, Any]]) -> dict[str, Any]:
     )
 
 
-def _relationship_panel(
-    relationships: list[dict[str, Any]], target: str | None
-) -> dict[str, Any]:
+def _relationship_panel(relationships: list[dict[str, Any]], target: str | None) -> dict[str, Any]:
     strong = [
-        r
-        for r in relationships
-        if abs(r.get("pearson_correlation") or 0.0) >= STRONG_CORRELATION
+        r for r in relationships if abs(r.get("pearson_correlation") or 0.0) >= STRONG_CORRELATION
     ]
     insights = [
-        "Ranked by absolute Pearson correlation with the target. Adjusted mutual "
-        "information is shown alongside because it also catches non-linear "
-        "association that correlation misses entirely.",
+        _t(
+            "Ranked by absolute Pearson correlation with the target. Adjusted mutual "
+            "information is shown alongside because it also catches non-linear "
+            "association that correlation misses entirely."
+        ),
     ]
     if strong:
+        target_name = target or _t("the target")
         insights.insert(
             0,
-            f"{len(strong)} feature(s) correlate with {target or 'the target'} at or above "
-            f"{STRONG_CORRELATION:.2f}. A feature that predicts the target almost perfectly "
-            "is usually leakage rather than a finding.",
+            _t(
+                "{count} feature(s) correlate with {target} at or above {threshold:.2f}. "
+                "A feature that predicts the target almost perfectly is usually leakage "
+                "rather than a finding.",
+                count=len(strong),
+                target=target_name,
+                threshold=STRONG_CORRELATION,
+            ),
         )
 
     return _panel(
@@ -478,7 +527,7 @@ def _relationship_panel(
         _t("Feature relationships"),
         {
             "kind": "hbar",
-            "x_label": f"|correlation| with {target or 'target'}",
+            "x_label": _t("|correlation| with {target}", target=target or "target"),
             "unit": "ratio",
             "signed": True,
             "series": [
@@ -492,9 +541,9 @@ def _relationship_panel(
         },
         severity=ISSUE if strong else REVIEW,
         caption=(
-            _t("{n} near-perfect predictor(s)").format(n=len(strong))
+            _t("{n} near-perfect predictor(s)", n=len(strong))
             if strong
-            else _t("{n} feature(s) measured").format(n=len(relationships))
+            else _t("{n} feature(s) measured", n=len(relationships))
         ),
         description=(
             _t(
@@ -504,7 +553,7 @@ def _relationship_panel(
         ),
         insights=insights,
         table={
-            "columns": ["Feature", "Pearson", _t("Adjusted MI")],
+            "columns": [_t("Feature"), "Pearson", _t("Adjusted MI")],
             "rows": [
                 [
                     r["column"],
@@ -523,14 +572,20 @@ def _balance_panel(balance: dict[str, Any]) -> dict[str, Any]:
     ratio = balance.get("majority_to_minority_ratio") or 1.0
     severity = WARNING if ratio >= IMBALANCE_RATIO else INFO
     insights = [
-        f"The majority class {balance.get('majority_class')!r} outnumbers "
-        f"{balance.get('minority_class')!r} by {ratio:.1f}:1.",
+        _t(
+            "The majority class {majority} outnumbers {minority} by {ratio:.1f}:1.",
+            majority=repr(balance.get("majority_class")),
+            minority=repr(balance.get("minority_class")),
+            ratio=ratio,
+        ),
     ]
     if ratio >= IMBALANCE_RATIO:
         insights.append(
-            "At this ratio accuracy is misleading — a model predicting the majority "
-            "class every time would score "
-            f"{_pct(balance.get('majority_rate'))}. Judge it on the minority class."
+            _t(
+                "At this ratio accuracy is misleading — a model predicting the majority "
+                "class every time would score {rate}. Judge it on the minority class.",
+                rate=_pct(balance.get("majority_rate")),
+            )
         )
 
     classes = balance.get("classes", [])
@@ -539,16 +594,14 @@ def _balance_panel(balance: dict[str, Any]) -> dict[str, Any]:
         _t("Class balance"),
         {
             "kind": "donut",
-            "series": [
-                {"label": c["value"], "value": c["count"]} for c in classes[:12]
-            ],
+            "series": [{"label": c["value"], "value": c["count"]} for c in classes[:12]],
         },
         severity=severity,
-        caption=_t("{r}:1 majority to minority").format(r=f"{ratio:.1f}"),
+        caption=_t("{r}:1 majority to minority", r=f"{ratio:.1f}"),
         description=_t("Share of each target class among observed rows."),
         insights=insights,
         table={
-            "columns": ["Class", "Count", "Share"],
+            "columns": [_t("Class"), _t("Count"), _t("Share")],
             "rows": [[c["value"], f"{c['count']:,}", _pct(c["rate"])] for c in classes[:12]],
         },
     )
@@ -558,31 +611,14 @@ def _balance_panel(balance: dict[str, Any]) -> dict[str, Any]:
 
 
 def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One panel per profiled source table, comparable side by side.
-
-    Intake emits a separate DataCard artifact per table, so each rendered as its
-    own isolated block and there was no way to see four tables next to each
-    other. The question a person actually has at this stage — which of these is
-    the messy one — needs them in the same strip.
-
-    Built from the stage's artifacts rather than from a single payload, which is
-    why this takes a list where the other builders take one.
-    """
+    """One panel per profiled source table, comparable side by side."""
     panels: list[dict[str, Any]] = []
     for card in cards:
         payload = card.get("payload") or {}
         name = payload.get("table_name") or card.get("name") or "table"
         columns = payload.get("columns", [])
-        # The field is `candidate_primary_keys`; reading `candidate_keys` made
-        # every source card report "0 candidate key(s) measured" on data whose
-        # keys had in fact been found.
         keys = payload.get("candidate_primary_keys", [])
 
-        # Intake records informational notes alongside real problems --
-        # "renamed 'Physician ID' to physician_id", "delimiter detected". Counting
-        # every entry made a tidy table with five successful renames read as five
-        # issues, and two of the four sample tables were shown as blocking when
-        # nothing was wrong with either. Only warn and above is a finding.
         all_notes = payload.get("quality_issues", []) or payload.get("issues", [])
         issues = [n for n in all_notes if n.get("severity") not in {"info", None}]
         notes = [n for n in all_notes if n.get("severity") in {"info", None}]
@@ -599,75 +635,98 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
 
         worst = missing[0]["value"] if missing else 0.0
-        severity = (
-            ISSUE
-            if issues
-            else WARNING
-            if worst >= HIGH_MISSING_RATE or sensitive
-            else INFO
-        )
+        severity = ISSUE if issues else WARNING if worst >= HIGH_MISSING_RATE or sensitive else INFO
 
-        # What one row of this table is, in the measured key's own words. Every
-        # source card used to carry the identical sentence "Schema, size and
-        # quality statistics for this source table", which describes the
-        # artifact rather than the data and is the same for every table in every
-        # dataset. The grain is the first thing a person needs and it was
-        # already measured.
         grain = (
-            _t("one row per {k}").format(k=" + ".join(keys[0]))
+            _t("one row per {k}", k=" + ".join(keys[0]))
             if keys and keys[0]
-            else "no column or combination was measured unique, so one row's identity is unclear"
+            else _t(
+                "no column or combination was measured unique, so one row's identity is unclear"
+            )
         )
         kinds = Counter(str(column.get("semantic_type", "unknown")) for column in columns)
         composition = ", ".join(
-            f"{count} {kind.replace('_', ' ')}" for kind, count in kinds.most_common()
+            f"{count} {_t(kind.replace('_', ' '))}" for kind, count in kinds.most_common()
         )
-        description = (
-            f"{payload.get('n_rows', 0):,} rows, {grain}. Columns: {composition}."
+        description = _t(
+            "{n_rows:,} rows, {grain}. Columns: {composition}.",
+            n_rows=payload.get("n_rows", 0),
+            grain=grain,
+            composition=composition,
         )
 
-        insights = [
-            f"Measured grain: {grain}."
-            + (
-                f" {len(keys)} candidate key(s) in total: "
-                + "; ".join(" + ".join(k) for k in keys[:4])
-                + "."
-                if len(keys) > 1
-                else ""
+        keys_str = "; ".join(" + ".join(k) for k in keys[:4])
+        measured_grain_insight = (
+            _t(
+                "Measured grain: {grain}. {count} candidate key(s) in total: {keys}.",
+                grain=grain,
+                count=len(keys),
+                keys=keys_str,
             )
-        ]
+            if len(keys) > 1
+            else _t("Measured grain: {grain}.", grain=grain)
+        )
+        insights = [measured_grain_insight]
         if sensitive:
+            sens_cols = ", ".join(c.get("name", "?") for c in sensitive[:6])
             insights.append(
-                f"{len(sensitive)} column(s) classified as sensitive: "
-                + ", ".join(c.get("name", "?") for c in sensitive[:6])
-                + ". Values from these are never shown or sent to a model."
+                _t(
+                    "{count} column(s) classified as sensitive: {columns}. "
+                    "Values from these are never shown or sent to a model.",
+                    count=len(sensitive),
+                    columns=sens_cols,
+                )
             )
         if issues:
+            issues_details = "; ".join(
+                str(n.get("detail") or _t(str(n.get("code", "?")).replace("_", " ")))[:120]
+                for n in issues[:3]
+            )
             insights.append(
-                f"{len(issues)} quality issue(s) recorded during load: "
-                + "; ".join(str(n.get("detail", n.get("code", "?")))[:120] for n in issues[:3])
-                + "."
+                _t(
+                    "{count} quality issue(s) recorded during load: {details}.",
+                    count=len(issues),
+                    details=issues_details,
+                )
             )
         if notes:
             insights.append(
-                f"{len(notes)} informational note(s) from loading — renames, inferred "
-                "headers, detected delimiters. Recorded for provenance, not problems."
+                _t(
+                    "{count} informational note(s) from loading — renames, inferred "
+                    "headers, detected delimiters. Recorded for provenance, not problems.",
+                    count=len(notes),
+                )
             )
         if missing:
             insights.append(
-                f"Highest missingness is {missing[0]['label']} at {_pct(worst)}."
+                _t(
+                    "Highest missingness is {column} at {rate}.",
+                    column=missing[0]["label"],
+                    rate=_pct(worst),
+                )
             )
         else:
             insights.append(_t("No missing values in any column."))
+
+        caption = (
+            _t(
+                "{n_rows:,} rows · {n_cols} cols · {n_issues} issue(s)",
+                n_rows=payload.get("n_rows", 0),
+                n_cols=len(columns),
+                n_issues=len(issues),
+            )
+            if issues
+            else _t(
+                "{n_rows:,} rows · {n_cols} cols",
+                n_rows=payload.get("n_rows", 0),
+                n_cols=len(columns),
+            )
+        )
 
         panels.append(
             _panel(
                 f"source_{name}",
                 name,
-                # A clean table has no missingness to plot, but "nothing to see"
-                # is not the same as "nothing measured". The column-type mix is
-                # always available and is what tells a reader at a glance
-                # whether a table is mostly identifiers or mostly measurements.
                 {
                     "kind": "hbar",
                     "x_label": _t("Missing share"),
@@ -678,11 +737,10 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 else {
                     "kind": "donut",
                     "series": [
-                        {"label": semantic, "value": count}
+                        {"label": _t(semantic.replace("_", " ")), "value": count}
                         for semantic, count in sorted(
                             Counter(
-                                str(column.get("semantic_type", "unknown"))
-                                for column in columns
+                                str(column.get("semantic_type", "unknown")) for column in columns
                             ).items(),
                             key=lambda item: -item[1],
                         )
@@ -691,19 +749,22 @@ def source_panels(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if columns
                 else {"kind": "empty"},
                 severity=severity,
-                caption=(
-                    f"{payload.get('n_rows', 0):,} rows · {len(columns)} cols"
-                    + (f" · {len(issues)} issue(s)" if issues else "")
-                ),
+                caption=caption,
                 description=description,
                 insights=insights,
                 table={
-                    "columns": ["Column", "Type", _t("Sensitivity"), "Missing", _t("Distinct")],
+                    "columns": [
+                        _t("Column"),
+                        _t("Type"),
+                        _t("Sensitivity"),
+                        _t("Missing"),
+                        _t("Distinct"),
+                    ],
                     "rows": [
                         [
                             column.get("name"),
-                            column.get("semantic_type", "—"),
-                            column.get("sensitivity", "—"),
+                            _t(str(column.get("semantic_type", "—")).replace("_", " ")),
+                            _t(str(column.get("sensitivity", "—"))),
                             _pct(column.get("null_rate")),
                             f"{column.get('n_unique', 0):,}",
                         ]
@@ -730,6 +791,7 @@ _PROTECTIONS: dict[str, set[str]] = {
     "grouped_temporal": {"entity_isolation", "temporal_ordering"},
 }
 
+
 # A function, not a dict literal: a module-level `_t()` is evaluated once at
 # import and would freeze every reader into whichever language happened to be
 # active then. Labels are looked up per request.
@@ -739,6 +801,7 @@ def _protection_labels() -> dict[str, str]:
         "temporal_ordering": _t("Temporal ordering"),
         "class_balance": _t("Class balance"),
     }
+
 
 _PROTECTION_MEANING = {
     "entity_isolation": (
@@ -804,15 +867,21 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     gaps = [r for r in rows if r["need"] and not r["have"]]
     insights = []
     if gaps:
+        gaps_str = ", ".join(_t(r["label"]).lower() for r in gaps)
         insights.append(
-            f"{strategy} does not provide "
-            + ", ".join(r["label"].lower() for r in gaps)
-            + ", which the measured data requires. Scores from this split would be "
-            "optimistic in a way no later stage can detect."
+            _t(
+                "{strategy} does not provide {gaps}, which the measured data requires. "
+                "Scores from this split would be optimistic in a way no later stage can detect.",
+                strategy=strategy,
+                gaps=gaps_str,
+            )
         )
     else:
         insights.append(
-            f"{strategy} provides every protection the measured data requires."
+            _t(
+                "{strategy} provides every protection the measured data requires.",
+                strategy=strategy,
+            )
         )
     for key in sorted(required):
         insights.append(f"{_protection_labels()[key]}: {_PROTECTION_MEANING[key]}")
@@ -825,6 +894,35 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     spans = signals.get("temporal_spans") or []
+    caption_protection = (
+        _t("{count} required protection(s) missing", count=len(gaps))
+        if gaps
+        else _t("{strategy} covers what the data requires", strategy=strategy)
+    )
+    caption_setup = _t(
+        "{folds} folds, {holdout} holdout",
+        folds=payload.get("n_folds"),
+        holdout=_pct(payload.get("test_size")),
+    )
+    insights_setup = [
+        _t(
+            "{usable:,} of {total:,} rows are usable; the rest have no target value "
+            "and cannot be trained on or scored against.",
+            usable=signals.get("n_usable_rows", 0),
+            total=signals.get("n_rows", 0),
+        )
+    ]
+    if spans:
+        insights_setup.append(
+            _t(
+                "Time column {column} spans {start} to {end} ({days:,} days).",
+                column=spans[0]["column"],
+                start=spans[0]["min_date"][:10],
+                end=spans[0]["max_date"][:10],
+                days=spans[0]["span_days"],
+            )
+        )
+
     return [
         _panel(
             "split_protection",
@@ -836,12 +934,8 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "series": [{"label": r["label"], "value": r["value"]} for r in rows],
             },
             severity=ISSUE if gaps else INFO,
-            caption=(
-                f"{len(gaps)} required protection(s) missing"
-                if gaps
-                else f"{strategy} covers what the data requires"
-            ),
-            description=(
+            caption=caption_protection,
+            description=_t(
                 "Strategies are not ranked. Each prevents a different leak, so the "
                 "question is whether the chosen one covers what the data measured."
             ),
@@ -849,7 +943,11 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             table={
                 "columns": [_t("Protection"), _t("Required by data"), _t("Provided by strategy")],
                 "rows": [
-                    [r["label"], "yes" if r["need"] else "no", "yes" if r["have"] else "no"]
+                    [
+                        r["label"],
+                        _t("yes") if r["need"] else _t("no"),
+                        _t("yes") if r["have"] else _t("no"),
+                    ]
                     for r in rows
                 ],
             },
@@ -859,7 +957,7 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
             _t("Split setup"),
             {
                 "kind": "bar",
-                "y_label": "Rows",
+                "y_label": _t("Rows"),
                 "series": [
                     {
                         "label": _t("Training"),
@@ -869,10 +967,9 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
                         ),
                     },
                     {
-                        "label": "Holdout",
+                        "label": _t("Holdout"),
                         "value": round(
-                            (signals.get("n_usable_rows") or 0)
-                            * (payload.get("test_size") or 0.2)
+                            (signals.get("n_usable_rows") or 0) * (payload.get("test_size") or 0.2)
                         ),
                     },
                 ],
@@ -882,27 +979,14 @@ def validation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 if (signals.get("n_usable_rows") or 0) < (signals.get("n_rows") or 0)
                 else INFO
             ),
-            caption=f"{payload.get('n_folds')} folds, {_pct(payload.get('test_size'))} holdout",
+            caption=caption_setup,
             description=_t("How the rows are divided, and how many survive the target filter."),
-            insights=[
-                f"{signals.get('n_usable_rows', 0):,} of {signals.get('n_rows', 0):,} rows "
-                "are usable; the rest have no target value and cannot be trained on or "
-                "scored against."
-            ]
-            + (
-                [
-                    f"Time column {spans[0]['column']} spans "
-                    f"{spans[0]['min_date'][:10]} to {spans[0]['max_date'][:10]} "
-                    f"({spans[0]['span_days']:,} days)."
-                ]
-                if spans
-                else []
-            ),
+            insights=insights_setup,
             table={
-                "columns": ["Setting", "Value"],
+                "columns": [_t("Setting"), _t("Value")],
                 "rows": [
                     [_t("Strategy"), str(strategy)],
-                    ["Folds", str(payload.get("n_folds"))],
+                    [_t("Folds"), str(payload.get("n_folds"))],
                     [_t("Holdout fraction"), _pct(payload.get("test_size"))],
                     [_t("Time column"), str(payload.get("time_column") or "—")],
                     [_t("Group column"), str(payload.get("group_column") or "—")],
@@ -958,7 +1042,7 @@ def model_experiment_panel(
         str(manifest.get("title") or _t("Agent-authored model experiment")),
         {
             "kind": "hbar",
-            "x_label": f"Development {metric}",
+            "x_label": _t("Development {metric}", metric=metric),
             "series": [
                 {"label": _t("Authored experiment"), "value": score or 0.0},
                 {"label": _t("Naive baseline"), "value": baseline or 0.0},
@@ -973,19 +1057,24 @@ def model_experiment_panel(
             )
         ),
         insights=[
-            f"Measured {metric} on {_fmt(payload.get('evaluation_row_count'))} "
-            "inner-development rows; the final holdout was not used.",
+            _t(
+                "Measured {metric} on {count} inner-development rows; "
+                "the final holdout was not used.",
+                metric=metric,
+                count=_fmt(payload.get("evaluation_row_count")),
+            ),
             _t("This experiment cannot replace the deterministic winner or affect a gate."),
         ],
         table={
-            "columns": ["Result", metric, _t("Evidence")],
+            "columns": [_t("Result"), metric, _t("Evidence")],
             "rows": [
                 [_t("Authored experiment"), _fmt(score), _t("Host measured")],
                 [_t("Naive baseline"), _fmt(baseline), _t("Host measured")],
                 [
                     _t("Model family"),
                     str(manifest.get("model_family") or "—"),
-                    _t("Agent declared")],
+                    _t("Agent declared"),
+                ],
             ],
         },
     ) | {
@@ -1011,40 +1100,56 @@ def _candidate_panel(results, primary, metric, winner_id, lower_is_better):
         )
     ordered = sorted(
         rows,
-        key=lambda r: (r["value"] if r["value"] is not None else 0),
+        key=lambda r: r["value"] if r["value"] is not None else 0,
         reverse=not lower_is_better,
     )
     winner_row = next((r for r in rows if r["selected"]), rows[0])
+    direction = _t("Lower is better") if lower_is_better else _t("Higher is better")
     return _panel(
         "candidate_comparison",
         _t("Candidate comparison"),
         {
             "kind": "hbar",
-            "x_label": f"Holdout {metric}",
+            "x_label": _t("Holdout {metric}", metric=metric),
             "unit": "ratio",
             "series": [{"label": r["label"], "value": r["value"] or 0.0} for r in ordered],
         },
         severity=INFO,
-        caption=f"{winner_row['label']} selected",
-        description=(
-            f"Every candidate's holdout {metric}. "
-            f"{'Lower is better' if lower_is_better else 'Higher is better'}."
+        caption=_t("{label} selected", label=winner_row["label"]),
+        description=_t(
+            "Every candidate's holdout {metric}. {direction}.",
+            metric=metric,
+            direction=direction,
         ),
         insights=[
-            f"{winner_row['label']} was selected on holdout {metric} "
-            f"{_fmt(winner_row['value'])}.",
-            "Holdout is scored once, after selection, so it is not the number the "
-            "candidates were chosen by — the cross-validation mean is.",
+            _t(
+                "{label} was selected on holdout {metric} {score}.",
+                label=winner_row["label"],
+                metric=metric,
+                score=_fmt(winner_row["value"]),
+            ),
+            _t(
+                "Holdout is scored once, after selection, so it is not the number the "
+                "candidates were chosen by — the cross-validation mean is."
+            ),
         ],
         table={
-            "columns": ["Model", f"CV mean ({metric})", "CV spread", f"Holdout ({metric})", "Role"],
+            "columns": [
+                _t("Model"),
+                _t("CV mean ({metric})", metric=metric),
+                _t("CV spread"),
+                _t("Holdout ({metric})", metric=metric),
+                _t("Role"),
+            ],
             "rows": [
                 [
                     r["label"],
                     _fmt(r["cv_mean"]),
                     _fmt(r["cv_std"]),
                     _fmt(r["value"]),
-                    "selected" if r["selected"] else ("baseline" if r["baseline"] else "candidate"),
+                    _t("selected")
+                    if r["selected"]
+                    else (_t("baseline") if r["baseline"] else _t("candidate")),
                 ]
                 for r in ordered
             ],
@@ -1062,33 +1167,42 @@ def _fold_panel(winner, stats, folds, metric):
         _t("Cross-validation stability"),
         {
             "kind": "bar",
-            "x_label": "Fold",
+            "x_label": _t("Fold"),
             "y_label": metric,
             "series": [
-                {"label": f"Fold {i + 1}", "value": score} for i, score in enumerate(folds)
+                {"label": _t("Fold {n}", n=i + 1), "value": score} for i, score in enumerate(folds)
             ],
         },
         severity=severity,
-        caption=f"spread {_pct(cov)} of mean",
-        description=(
-            f"{winner.get('display_name')} scored on each validation fold. Consistency "
-            "across folds is what makes a single holdout number believable."
+        caption=_t("spread {cov} of mean", cov=_pct(cov)),
+        description=_t(
+            "{name} scored on each validation fold. Consistency across folds is what makes "
+            "a single holdout number believable.",
+            name=winner.get("display_name"),
         ),
         insights=[
-            f"Fold scores range {_fmt(min(folds))} to {_fmt(max(folds))} around a mean of "
-            f"{_fmt(mean)}.",
+            _t(
+                "Fold scores range {min_val} to {max_val} around a mean of {mean_val}.",
+                min_val=_fmt(min(folds)),
+                max_val=_fmt(max(folds)),
+                mean_val=_fmt(mean),
+            ),
             (
-                "That spread is over a quarter of the mean, so the reported score is "
-                "unstable and the difference between candidates may be noise."
+                _t(
+                    "That spread is over a quarter of the mean, so the reported score is "
+                    "unstable and the difference between candidates may be noise."
+                )
                 if severity == WARNING
-                else "The spread is small relative to the mean, so the score is stable "
-                "across resampling."
+                else _t(
+                    "The spread is small relative to the mean, so the score is stable "
+                    "across resampling."
+                )
             ),
         ],
         table={
-            "columns": ["Fold", metric],
-            "rows": [[f"Fold {i + 1}", _fmt(s)] for i, s in enumerate(folds)]
-            + [["Mean", _fmt(mean)], [_t("Std deviation"), _fmt(spread)]],
+            "columns": [_t("Fold"), metric],
+            "rows": [[_t("Fold {n}", n=i + 1), _fmt(s)] for i, s in enumerate(folds)]
+            + [[_t("Mean"), _fmt(mean)], [_t("Std deviation"), _fmt(spread)]],
         },
     )
 
@@ -1113,19 +1227,32 @@ def _baseline_panel(winner, baseline, primary, metric, lower_is_better):
             ],
         },
         severity=INFO if beat else ISSUE,
-        caption=("beats baseline" if beat else "does not beat baseline"),
-        description=(
+        caption=(_t("beats baseline") if beat else _t("does not beat baseline")),
+        description=_t(
             "The selected model against a naive baseline on the same holdout. A model "
             "that cannot beat the baseline has learned nothing worth deploying."
         ),
         insights=[
-            f"Selected {_fmt(w_score)} versus baseline {_fmt(b_score)} on holdout {metric}."
+            _t(
+                "Selected {winner_score} versus baseline {baseline_score} on holdout {metric}.",
+                winner_score=_fmt(w_score),
+                baseline_score=_fmt(b_score),
+                metric=metric,
+            )
             if beat
-            else f"The selected model scored {_fmt(w_score)} against a baseline of "
-            f"{_fmt(b_score)}. It has not demonstrated value over guessing.",
+            else _t(
+                "The selected model scored {winner_score} against a baseline of "
+                "{baseline_score}. It has not demonstrated value over guessing.",
+                winner_score=_fmt(w_score),
+                baseline_score=_fmt(b_score),
+            )
         ],
         table={
-            "columns": ["Model", f"CV mean ({metric})", f"Holdout ({metric})"],
+            "columns": [
+                _t("Model"),
+                _t("CV mean ({metric})", metric=metric),
+                _t("Holdout ({metric})", metric=metric),
+            ],
             "rows": [
                 [baseline.get("display_name"), _fmt(b.get("cv_mean")), _fmt(b_score)],
                 [winner.get("display_name"), _fmt(w.get("cv_mean")), _fmt(w_score)],
@@ -1144,41 +1271,38 @@ def evaluation_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     alerts = payload.get("alerts", [])
     unresolved = [a for a in alerts if not a.get("resolved")]
     primary_name = payload.get("primary_metric")
-    primary_score = next(
-        (m.get("score") for m in metrics if m.get("metric") == primary_name), None
-    )
+    primary_score = next((m.get("score") for m in metrics if m.get("metric") == primary_name), None)
+    insights = [
+        _t("Primary metric {name} scored {score}.", name=primary_name, score=_fmt(primary_score)),
+        _t("Baseline improvement was {delta}.", delta=_fmt(payload.get("baseline_delta"))),
+    ]
+    if unresolved:
+        insights.append(
+            _t("{count} alert(s) remain unresolved on this run.", count=len(unresolved))
+        )
     return [
         _panel(
             "holdout_metrics",
             _t("Holdout performance"),
             {
                 "kind": "hbar",
-                "x_label": "Score",
+                "x_label": _t("Score"),
                 "unit": "ratio",
                 "series": [
-                    {"label": m.get("metric", "?"), "value": m.get("score") or 0.0}
-                    for m in metrics
+                    {"label": m.get("metric", "?"), "value": m.get("score") or 0.0} for m in metrics
                 ],
             },
             severity=WARNING if unresolved else INFO,
-            caption=f"{len(metrics)} metric(s) measured",
+            caption=_t("{count} metric(s) measured", count=len(metrics)),
             description=(
                 _t(
                     "Every metric measured on the held-out split, scored once after the model was "
                     "selected."
                 )
             ),
-            insights=[
-                f"Primary metric {primary_name} scored {_fmt(primary_score)}.",
-                f"Baseline improvement was {_fmt(payload.get('baseline_delta'))}.",
-            ]
-            + (
-                [f"{len(unresolved)} alert(s) remain unresolved on this run."]
-                if unresolved
-                else []
-            ),
+            insights=insights,
             table={
-                "columns": ["Metric", "Score"],
+                "columns": [_t("Metric"), _t("Score")],
                 "rows": [[m.get("metric"), _fmt(m.get("score"))] for m in metrics],
             },
         )
@@ -1209,8 +1333,11 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
     insights = []
     if blocking:
         insights.append(
-            f"{len(blocking)} feature(s) block training. Each would make holdout "
-            "results look better than anything achievable in production."
+            _t(
+                "{count} feature(s) block training. Each would make holdout "
+                "results look better than anything achievable in production.",
+                count=len(blocking),
+            )
         )
         for finding in blocking[:4]:
             insights.append(
@@ -1218,62 +1345,64 @@ def leakage_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 f"{_LEAKAGE_KINDS.get(finding.get('kind'), finding.get('kind'))}."
             )
     elif findings:
-        insights.append(f"{len(findings)} feature(s) were flagged but none block training.")
+        insights.append(
+            _t("{count} feature(s) were flagged but none block training.", count=len(findings))
+        )
     else:
         insights.append(
-            f"All {checked} feature(s) passed every leakage family checked: "
-            + ", ".join(_LEAKAGE_KINDS.values()).lower()
-            + "."
+            _t(
+                "All {checked} feature(s) passed every leakage family checked: {families}.",
+                checked=checked,
+                families=", ".join(_LEAKAGE_KINDS.values()).lower(),
+            )
         )
 
     for challenge in challenges:
         insights.append(str(challenge.get("result_summary") or ""))
 
     panel = _panel(
-            "leakage_findings",
-            _t("Leakage audit"),
-            {
-                "kind": "hbar",
-                "x_label": _t("Leakage score"),
-                "unit": "ratio",
-                "series": [
-                    {"label": f.get("column", "?"), "value": f.get("score") or 0.0}
-                    for f in sorted(
-                        findings, key=lambda f: f.get("score") or 0.0, reverse=True
-                    )[:20]
-                ],
-            }
-            if findings
-            else {"kind": "empty"},
-            severity=severity,
-            caption=(
-                f"{len(blocking)} blocking of {checked} checked"
-                if blocking
-                else f"{checked} feature(s) clean"
-            ),
-            description=(
-                "Four independent leakage families are measured against every feature. "
-                "A high score is not proof of leakage, but it is a reason not to trust "
-                "the result until someone confirms the feature is available at "
-                "prediction time."
-            ),
-            insights=insights,
-            table={
-                "columns": ["Feature", "Family", "Score", _t("Threshold"), _t("Blocking")],
-                "rows": [
-                    [
-                        f.get("column"),
-                        _LEAKAGE_KINDS.get(f.get("kind"), f.get("kind")),
-                        _fmt(f.get("score"), 3),
-                        _fmt(f.get("threshold"), 3),
-                        "yes" if f.get("blocking") else "no",
-                    ]
-                    for f in findings[:20]
-                ],
-            }
-            if findings
-            else None,
-        )
+        "leakage_findings",
+        _t("Leakage audit"),
+        {
+            "kind": "hbar",
+            "x_label": _t("Leakage score"),
+            "unit": "ratio",
+            "series": [
+                {"label": f.get("column", "?"), "value": f.get("score") or 0.0}
+                for f in sorted(findings, key=lambda f: f.get("score") or 0.0, reverse=True)[:20]
+            ],
+        }
+        if findings
+        else {"kind": "empty"},
+        severity=severity,
+        caption=(
+            _t("{count} blocking of {checked} checked", count=len(blocking), checked=checked)
+            if blocking
+            else _t("{checked} feature(s) clean", checked=checked)
+        ),
+        description=_t(
+            "Four independent leakage families are measured against every feature. "
+            "A high score is not proof of leakage, but it is a reason not to trust "
+            "the result until someone confirms the feature is available at "
+            "prediction time."
+        ),
+        insights=insights,
+        table={
+            "columns": [_t("Feature"), _t("Family"), _t("Score"), _t("Threshold"), _t("Blocking")],
+            "rows": [
+                [
+                    f.get("column"),
+                    _LEAKAGE_KINDS.get(f.get("kind"), f.get("kind")),
+                    _fmt(f.get("score"), 3),
+                    _fmt(f.get("threshold"), 3),
+                    _t("yes") if f.get("blocking") else _t("no"),
+                ]
+                for f in findings[:20]
+            ],
+        }
+        if findings
+        else None,
+    )
     panel["proposed_interpretations"] = [
         {
             "measurement_id": challenge.get("finding_fingerprint"),
@@ -1301,9 +1430,7 @@ def schema_graph(payload: dict[str, Any]) -> dict[str, Any]:
     base = payload.get("base_table")
     joins = payload.get("joins", [])
     aggregations = payload.get("aggregations", [])
-    evidence = {
-        (e.get("from_table"), e.get("to_table")): e for e in payload.get("evidence", [])
-    }
+    evidence = {(e.get("from_table"), e.get("to_table")): e for e in payload.get("evidence", [])}
 
     derived = {a.get("output_name"): a.get("source_table") for a in aggregations}
     nodes: list[dict[str, Any]] = []
@@ -1345,6 +1472,8 @@ def schema_graph(payload: dict[str, Any]) -> dict[str, Any]:
                 "right_columns": join.get("right_columns", []),
                 "how": join.get("how", "left"),
                 "overlap_rate": overlap,
+                "kind": "measured" if measured is not None else "suggested",
+                "rationale": join.get("rationale"),
                 "confidence": _confidence(overlap),
                 "via": ", ".join(join.get("right_columns", []) or []),
             }

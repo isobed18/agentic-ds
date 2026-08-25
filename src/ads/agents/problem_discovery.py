@@ -56,6 +56,9 @@ average_precision or roc_auc over accuracy.
 - `evidence_columns` must list real ABT columns that make the framing plausible.
 - `business_rationale` states who would use the model and for what decision. \
 Be concrete and avoid generic phrasing.
+- Write every human-facing field twice in the same response: canonical English
+  in `title` and `business_rationale`, and a faithful Turkish rendering in
+  `title_tr` and `business_rationale_tr`. Do not run a separate translation pass.
 - Do NOT assess feasibility, sample sizes or class balance. That is measured \
 separately. Propose the framing; the system will check whether the data \
 supports it.
@@ -66,16 +69,12 @@ Do not invent columns. Use exact names.\
 """
 
 
-def build_context(
-    abt_card: DataCard, *, user_intent: str | None = None
-) -> AgentContext:
+def build_context(abt_card: DataCard, *, user_intent: str | None = None) -> AgentContext:
     """Project the ABT profile into the agent's context."""
     sections = {
         "Analytical base table": datacard_digest(abt_card),
         "Candidate targets": support_digest(abt_card),
-        "Task": (
-            "Propose the ML problems this table could support, ranked best first."
-        ),
+        "Task": ("Propose the ML problems this table could support, ranked best first."),
     }
     if user_intent:
         sections["Stated user intent"] = (
@@ -240,15 +239,15 @@ def build_spec() -> AgentSpec[ProblemDiscoveryProposal]:
         ),
         max_attempts=3,
         rubric="problem_discovery.v1",
-        allowed_tools=frozenset(
-            {"cardinality", "column_profile", "null_rate", "value_counts"}
-        ),
+        allowed_tools=frozenset({"cardinality", "column_profile", "null_rate", "value_counts"}),
         max_tool_tier=PermissionTier.READ_DATA,
         column_fields=frozenset({"target_column", "evidence_columns"}),
         # How a candidate is explained to a human. Everything else --
         # target_column, task_type, primary_metric, evidence_columns -- commits
         # the pipeline to something and is compared.
-        narration_fields=frozenset({"title", "business_rationale"}),
+        narration_fields=frozenset(
+            {"title", "title_tr", "business_rationale", "business_rationale_tr"}
+        ),
     )
 
 

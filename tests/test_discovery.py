@@ -32,9 +32,7 @@ from ads.intake import LoadedTable, profile_table
 
 
 def _card(frame: pd.DataFrame, name: str = "abt") -> DataCard:
-    return profile_table(
-        LoadedTable(name=name, frame=frame, source_uri="mem", source_format="csv")
-    )
+    return profile_table(LoadedTable(name=name, frame=frame, source_uri="mem", source_format="csv"))
 
 
 #: Positives planted in `rare_flag`. Exact rather than sampled: at a 0.3% rate
@@ -93,9 +91,7 @@ class TestFeatureSelection:
         assert email.sensitivity is Sensitivity.PII
         assert comment.sensitivity is not Sensitivity.PII
 
-        features = {
-            item.name for item in usable_feature_columns(card, "target")
-        }
+        features = {item.name for item in usable_feature_columns(card, "target")}
         targets = {item.name for item in card.candidate_targets()}
         assert "contact_email" not in features
         assert "contact_email" not in targets
@@ -104,8 +100,7 @@ class TestFeatureSelection:
     def test_explicit_exclusions_respected(self, abt: pd.DataFrame) -> None:
         card = _card(abt)
         names = {
-            c.name
-            for c in usable_feature_columns(card, "annual_comp", frozenset({"specialty"}))
+            c.name for c in usable_feature_columns(card, "annual_comp", frozenset({"specialty"}))
         }
         assert "specialty" not in names
 
@@ -151,7 +146,9 @@ class TestBlockingReasons:
     def test_constant_target_blocked(self, abt: pd.DataFrame) -> None:
         card = _card(abt)
         support = compute_support(
-            card, abt, target_column="region_code",
+            card,
+            abt,
+            target_column="region_code",
             task_type=TaskType.MULTICLASS_CLASSIFICATION,
         )
         assert not support.is_viable
@@ -175,7 +172,9 @@ class TestBlockingReasons:
     def test_multiclass_target_blocked_for_binary(self, abt: pd.DataFrame) -> None:
         card = _card(abt)
         support = compute_support(
-            card, abt, target_column="specialty",
+            card,
+            abt,
+            target_column="specialty",
             task_type=TaskType.BINARY_CLASSIFICATION,
         )
         assert not support.is_viable
@@ -220,7 +219,9 @@ class TestWarnings:
             }
         )
         support = compute_support(
-            _card(frame), frame, target_column="label",
+            _card(frame),
+            frame,
+            target_column="label",
             task_type=TaskType.BINARY_CLASSIFICATION,
         )
         assert support.is_viable, "above the floor, so workable but hard"
@@ -239,9 +240,11 @@ class TestUnsupervised:
 def _proposal(**overrides) -> ProblemDiscoveryProposal:
     candidate = {
         "title": "Predict physician compensation",
+        "title_tr": "Hekim ücretini tahmin et",
         "task_type": "regression",
         "target_column": "annual_comp",
         "business_rationale": "HR benchmarking for offer decisions.",
+        "business_rationale_tr": "Teklif kararları için İK karşılaştırması.",
         "evidence_columns": ["years_experience", "specialty"],
         "primary_metric": "rmse",
     }
@@ -265,14 +268,13 @@ class TestProblemDiscoveryValidators:
         assert any(f.code == "unknown_target" for f in failures)
 
     def test_unknown_evidence_column_rejected(self, context) -> None:
-        failures = validate_targets_exist(
-            _proposal(evidence_columns=["nonexistent"]), context
-        )
+        failures = validate_targets_exist(_proposal(evidence_columns=["nonexistent"]), context)
         assert any(f.code == "unknown_column" for f in failures)
 
     def test_binary_on_multivalue_target_rejected(self, context) -> None:
         proposal = _proposal(
-            target_column="specialty", task_type="binary_classification",
+            target_column="specialty",
+            task_type="binary_classification",
             primary_metric="roc_auc",
         )
         failures = validate_task_matches_target_shape(proposal, context)
@@ -309,13 +311,12 @@ class TestAttachSupport:
         blocked = _proposal().candidates[0].model_dump(mode="json")
         blocked.update(
             target_column="rare_flag",
-            task_type="binary_classification", primary_metric="average_precision",
+            task_type="binary_classification",
+            primary_metric="average_precision",
             title="Fraud detection",
         )
         viable = _proposal().candidates[0].model_dump(mode="json")
-        proposal = ProblemDiscoveryProposal.model_validate(
-            {"candidates": [blocked, viable]}
-        )
+        proposal = ProblemDiscoveryProposal.model_validate({"candidates": [blocked, viable]})
         result = attach_support(proposal, _card(abt), abt)
 
         assert result.candidates[0].title == "Predict physician compensation"
@@ -326,7 +327,8 @@ class TestAttachSupport:
         """'Your fraud data has 2 labelled cases' is a finding, not noise."""
         proposal = _proposal(
             target_column="rare_flag",
-            task_type="binary_classification", primary_metric="average_precision",
+            task_type="binary_classification",
+            primary_metric="average_precision",
         )
         result = attach_support(proposal, _card(abt), abt)
         assert len(result.candidates) == 1

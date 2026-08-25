@@ -11,7 +11,15 @@ import yaml
 from ads.contracts.datacard import DataCard, SemanticType
 
 _STAGES = frozenset(
-    {"validation_strategy", "feature_investigation", "model_investigation"}
+    {
+        "validation_strategy",
+        "feature_investigation",
+        "model_investigation",
+        # Intake-side skills. The first stages are where a person knows least
+        # about their own data, so procedural guidance is worth the most there.
+        "schema_discovery",
+        "source_comprehension",
+    }
 )
 _TRIGGERS = frozenset({"always", "has_datetime", "has_high_cardinality_categorical"})
 

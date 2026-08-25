@@ -175,9 +175,7 @@ class TestIdentifierProxies:
         card = profile_table(
             LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
         )
-        report = audit_leakage(
-            card, frame, target_column="target", task_type=TaskType.REGRESSION
-        )
+        report = audit_leakage(card, frame, target_column="target", task_type=TaskType.REGRESSION)
         kinds = {f.column: f.kind for f in report.findings}
         assert kinds.get("note") is LeakageKind.IDENTIFIER_PROXY
         assert "signal" not in kinds
@@ -197,9 +195,7 @@ class TestIdentifierProxies:
 class TestTemporalLeakage:
     """Leakage that correlation analysis structurally cannot see."""
 
-    def test_unwindowed_aggregate_flagged_under_temporal_split(
-        self, abt_card, abt, plan
-    ) -> None:
+    def test_unwindowed_aggregate_flagged_under_temporal_split(self, abt_card, abt, plan) -> None:
         strategy = ValidationStrategy(
             strategy=SplitStrategy.TEMPORAL,
             time_column="hire_date",
@@ -214,9 +210,7 @@ class TestTemporalLeakage:
             validation_strategy=strategy,
             integration_plan=plan,
         )
-        flagged = {
-            f.column for f in report.findings if f.kind is LeakageKind.UNWINDOWED_AGGREGATE
-        }
+        flagged = {f.column for f in report.findings if f.kind is LeakageKind.UNWINDOWED_AGGREGATE}
         assert {"total_txn_amount", "txn_count"} <= flagged
 
     def test_aggregates_not_flagged_under_random_split(self, abt_card, abt, plan) -> None:
@@ -230,9 +224,7 @@ class TestTemporalLeakage:
             validation_strategy=strategy,
             integration_plan=plan,
         )
-        assert not any(
-            f.kind is LeakageKind.UNWINDOWED_AGGREGATE for f in report.findings
-        )
+        assert not any(f.kind is LeakageKind.UNWINDOWED_AGGREGATE for f in report.findings)
 
     def test_no_temporal_findings_without_a_strategy(self, abt_card, abt, plan) -> None:
         report = audit_leakage(
@@ -242,9 +234,7 @@ class TestTemporalLeakage:
             task_type=TaskType.REGRESSION,
             integration_plan=plan,
         )
-        assert not any(
-            f.kind is LeakageKind.UNWINDOWED_AGGREGATE for f in report.findings
-        )
+        assert not any(f.kind is LeakageKind.UNWINDOWED_AGGREGATE for f in report.findings)
 
 
 class TestCleanCase:
@@ -261,9 +251,7 @@ class TestCleanCase:
         card = profile_table(
             LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
         )
-        report = audit_leakage(
-            card, frame, target_column="target", task_type=TaskType.REGRESSION
-        )
+        report = audit_leakage(card, frame, target_column="target", task_type=TaskType.REGRESSION)
         assert report.is_clean
         assert report.max_target_correlation is None or report.max_target_correlation < 0.95
 
@@ -330,9 +318,7 @@ class TestOptions:
             abt_card, abt, target_column=None, task_type=TaskType.ANOMALY_DETECTION
         )
         assert report.target_column is None
-        assert not any(
-            f.kind is LeakageKind.TARGET_CORRELATION for f in report.findings
-        )
+        assert not any(f.kind is LeakageKind.TARGET_CORRELATION for f in report.findings)
 
 
 class TestHighCardinalityArtifact:
@@ -444,9 +430,7 @@ class TestOrderedSeparationCalibration:
     """Directional AMI controls for binary and multiclass ordered features."""
 
     @staticmethod
-    def _contiguous_copy(
-        n_classes: int, agreement: float
-    ) -> tuple[pd.Series, pd.Series]:
+    def _contiguous_copy(n_classes: int, agreement: float) -> tuple[pd.Series, pd.Series]:
         size = max(3_000, n_classes * 100)
         feature = pd.Series(np.arange(size, dtype=float))
         target = np.repeat(np.arange(n_classes), size // n_classes)
@@ -482,9 +466,7 @@ class TestOrderedSeparationCalibration:
     def test_binary_prevalence_controls(self, positive_rate: float) -> None:
         size = 10_000
         feature = pd.Series(np.arange(size, dtype=float))
-        target = pd.Series(
-            (np.arange(size) >= int(size * (1 - positive_rate))).astype(int)
-        )
+        target = pd.Series((np.arange(size) >= int(size * (1 - positive_rate))).astype(int))
         assert ordered_separation_information(feature, target) == pytest.approx(1.0)
 
     @pytest.mark.parametrize("size", [200, 600, 1_000, 5_000, 15_000])
@@ -505,9 +487,7 @@ class TestOrderedSeparationCalibration:
         unique_id = pd.Series(np.arange(size, dtype=float))
         near_unique_date = pd.Series(
             pd.Timestamp("2000-01-01")
-            + pd.to_timedelta(
-                np.arange(size) * 3 + rng.integers(0, 2, size), unit="D"
-            )
+            + pd.to_timedelta(np.arange(size) * 3 + rng.integers(0, 2, size), unit="D")
         )
 
         raw_score = adjusted_mutual_info_score(
@@ -534,16 +514,13 @@ class TestOrderedSeparationCalibration:
         finding = next(
             item
             for item in report.findings
-            if item.column == "ordered_result"
-            and item.kind is LeakageKind.PERFECT_SEPARATOR
+            if item.column == "ordered_result" and item.kind is LeakageKind.PERFECT_SEPARATOR
         )
         assert not finding.blocking
         assert "ordered_result" in report.separator_suspects
         assert "ordered_result" not in report.suspect_columns
 
-    def test_all_sample_ordered_features_are_calibrated(
-        self, abt: pd.DataFrame
-    ) -> None:
+    def test_all_sample_ordered_features_are_calibrated(self, abt: pd.DataFrame) -> None:
         frame = abt.copy()
         frame["senior_physician"] = (frame["years_experience"] >= 20).astype(int)
         target = frame["senior_physician"]
@@ -557,10 +534,7 @@ class TestOrderedSeparationCalibration:
             )
             and frame[name].notna().any()
         ]
-        scores = {
-            name: ordered_separation_information(frame[name], target)
-            for name in ordered
-        }
+        scores = {name: ordered_separation_information(frame[name], target) for name in ordered}
 
         assert scores["years_experience"] == pytest.approx(1.0)
         assert all(
@@ -581,15 +555,12 @@ class TestOrderedSeparationCalibration:
         finding = next(
             item
             for item in report.findings
-            if item.column == "years_experience"
-            and item.kind is LeakageKind.PERFECT_SEPARATOR
+            if item.column == "years_experience" and item.kind is LeakageKind.PERFECT_SEPARATOR
         )
         assert not finding.blocking
         assert report.is_clean
 
-    def test_sample_fraud_features_stay_at_chance(
-        self, frames: dict[str, pd.DataFrame]
-    ) -> None:
+    def test_sample_fraud_features_stay_at_chance(self, frames: dict[str, pd.DataFrame]) -> None:
         frame = frames["transactions"]
         target = frame["flagged"]
         ordered = [
@@ -601,13 +572,9 @@ class TestOrderedSeparationCalibration:
                 or pd.api.types.is_datetime64_any_dtype(frame[name])
             )
         ]
-        scores = {
-            name: ordered_separation_information(frame[name], target)
-            for name in ordered
-        }
+        scores = {name: ordered_separation_information(frame[name], target) for name in ordered}
         assert all(
-            score is None or score < LEAKAGE_SEPARATION_INFORMATION
-            for score in scores.values()
+            score is None or score < LEAKAGE_SEPARATION_INFORMATION for score in scores.values()
         ), scores
 
 
@@ -742,12 +709,8 @@ class TestPerfectSeparator:
         card = profile_table(
             LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
         )
-        report = audit_leakage(
-            card, frame, target_column="target", task_type=TaskType.REGRESSION
-        )
-        assert not any(
-            f.kind is LeakageKind.PERFECT_SEPARATOR for f in report.findings
-        )
+        report = audit_leakage(card, frame, target_column="target", task_type=TaskType.REGRESSION)
+        assert not any(f.kind is LeakageKind.PERFECT_SEPARATOR for f in report.findings)
 
 
 class TestMutualInformationCalibration:
@@ -858,9 +821,7 @@ class TestMalformedDateHandling:
         n = 200
         dates = [f"2024-01-{(i % 28) + 1:02d}" for i in range(n)]
         dates[0] = "not-a-date"
-        frame = pd.DataFrame(
-            {"event_date": dates, "target": [(i >= n - 20) * 1 for i in range(n)]}
-        )
+        frame = pd.DataFrame({"event_date": dates, "target": [(i >= n - 20) * 1 for i in range(n)]})
         card = profile_table(
             LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
         )
@@ -929,9 +890,7 @@ class TestConfirmationScope:
         )
 
     def test_missingness_confirmation_clears_missingness(self) -> None:
-        report = self._audit(
-            confirmed_missingness_pre_outcome=frozenset({"followup_score"})
-        )
+        report = self._audit(confirmed_missingness_pre_outcome=frozenset({"followup_score"}))
         assert report.is_clean
 
     def test_unconfirmed_stays_blocking(self) -> None:
@@ -948,9 +907,7 @@ class TestRareMissingnessIsScored:
         target[rng.choice(n, 39, replace=False)] = 1
         value = np.full(n, np.nan)
         value[target == 0] = rng.normal(size=int((target == 0).sum()))
-        frame = pd.DataFrame(
-            {"followup": value, "noise": rng.normal(size=n), "target": target}
-        )
+        frame = pd.DataFrame({"followup": value, "noise": rng.normal(size=n), "target": target})
         assert frame["followup"].isna().mean() < 0.01, "must sit under the old floor"
 
         card = profile_table(
@@ -964,15 +921,11 @@ class TestRareMissingnessIsScored:
 
     def test_fully_present_column_is_skipped(self) -> None:
         rng = np.random.default_rng(1)
-        frame = pd.DataFrame(
-            {"x": rng.normal(size=300), "target": rng.integers(0, 2, 300)}
-        )
+        frame = pd.DataFrame({"x": rng.normal(size=300), "target": rng.integers(0, 2, 300)})
         card = profile_table(
             LoadedTable(name="t", frame=frame, source_uri="mem", source_format="csv")
         )
         report = audit_leakage(
             card, frame, target_column="target", task_type=TaskType.BINARY_CLASSIFICATION
         )
-        assert not any(
-            f.kind is LeakageKind.MISSINGNESS_SEPARATOR for f in report.findings
-        )
+        assert not any(f.kind is LeakageKind.MISSINGNESS_SEPARATOR for f in report.findings)

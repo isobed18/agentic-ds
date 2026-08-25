@@ -23,6 +23,7 @@ from ads.contracts.integration import IntegrationPlanProposal, RelationshipCandi
 from ads.intake.keys import relationships_digest
 from ads.intake.profiler import datacard_digest
 from ads.llm.client import LARGE
+from ads.skills import render_skills, select_skills
 
 SYSTEM_PROMPT = """\
 You are a data integration specialist working on messy enterprise data.
@@ -57,6 +58,10 @@ source table, for example "SUM(amount)", "COUNT(*)", "AVG(amount)", "MAX(txn_dat
 - Use exact column names as given. Do not invent columns.
 - Record any concern a human should review in `warnings`, especially orphan rates \
 above 1% on a join.
+- Write all human-facing prose twice in this same response. Use canonical English
+  in `grain_description`, every `rationale`, and `warnings`; put faithful Turkish
+  in `grain_description_tr`, `rationale_tr`, and `warnings_tr`. Identifiers and
+  SQL expressions remain unchanged. Do not use a separate translation pass.
 
 Be concise. Every rationale must cite the measured evidence it relies on.\
 """
@@ -74,19 +79,25 @@ def build_context(
     known_columns = sorted({col.name for card in cards for col in card.columns})
     table_names = sorted(c.table_name for c in cards)
 
+    skills = select_skills("schema_discovery", cards)
+    sections = {
+        "Tables": tables_section,
+        "Measured relationships": relationships_digest(relationships),
+        "Task": (
+            "Produce an IntegrationPlan that builds one analytical base table "
+            "from these tables."
+        ),
+    }
+    if skills:
+        sections["Applicable skills"] = render_skills(skills)
+
     return AgentContext(
-        sections={
-            "Tables": tables_section,
-            "Measured relationships": relationships_digest(relationships),
-            "Task": (
-                "Produce an IntegrationPlan that builds one analytical base table "
-                "from these tables."
-            ),
-        },
+        sections=sections,
         facts={
             "known_columns": known_columns,
             "table_names": table_names,
             "columns_by_table": {c.table_name: c.column_names for c in cards},
+            "skill_ids": [skill.skill_id for skill in skills],
         },
     )
 
@@ -159,7 +170,7 @@ def validate_columns_exist(
                         layer="semantic",
                         code="unknown_column",
                         detail=f"Column {column!r} does not exist in {table!r}. "
-                               f"Available: {known[:12]}",
+                        f"Available: {known[:12]}",
                         field_path=path,
                         repair_suggestion=suggest_name(column, known),
                     )
@@ -260,13 +271,20 @@ def build_spec() -> AgentSpec[IntegrationPlanProposal]:
         rubric="schema_discovery.v1",
         allowed_tools=frozenset({"candidate_keys", "join_overlap"}),
         max_tool_tier=PermissionTier.READ_DATA,
-        column_fields=frozenset(
-            {"base_grain", "group_by", "left_columns", "right_columns"}
-        ),
+        column_fields=frozenset({"base_grain", "group_by", "left_columns", "right_columns"}),
         # `rationale` appears on every join and aggregation step; matching by
         # name covers all of them. Everything else changes the shape of the ABT,
         # including `how` -- an inner join drops rows a left join keeps.
-        narration_fields=frozenset({"grain_description", "rationale", "warnings"}),
+        narration_fields=frozenset(
+            {
+                "grain_description",
+                "grain_description_tr",
+                "rationale",
+                "rationale_tr",
+                "warnings",
+                "warnings_tr",
+            }
+        ),
     )
 
 
@@ -276,8 +294,7 @@ def build_context_with_evidence(
     """Context plus the derived facts the evidence validators need."""
     context = build_context(cards, relationships)
     context.facts["measured_pairs"] = {
-        (r.from_table, r.from_columns[0], r.to_table, r.to_columns[0])
-        for r in relationships
+        (r.from_table, r.from_columns[0], r.to_table, r.to_columns[0]) for r in relationships
     }
     context.facts["cardinality_by_pair"] = {
         (r.from_table, r.to_table): r.cardinality.value for r in relationships

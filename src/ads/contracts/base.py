@@ -47,6 +47,10 @@ class ArtifactType(StrEnum):
     AGENT_AUDIT = "agent_audit"
     MEASUREMENT_BUNDLE = "measurement_bundle"
     COMPREHENSION_BRIEF = "comprehension_brief"
+    STAGING_WORKSPACE = "staging_workspace"
+    STAGING_REPORT = "staging_report"
+    DOCUMENT_EXTRACTION = "document_extraction"
+    AUTOMATION_EXECUTION_PLAN = "automation_execution_plan"
     CRITIQUE = "critique"
     GATE_DECISION = "gate_decision"
 

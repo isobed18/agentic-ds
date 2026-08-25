@@ -54,7 +54,7 @@ COMPENSATION = "physicians__compensation"
 TRANSACTIONS = "transactions"
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="session")
 def _english_assertions():
     """Pin the suite to English.
 

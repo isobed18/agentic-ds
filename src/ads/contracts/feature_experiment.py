@@ -44,9 +44,7 @@ class FeatureExperiment(Artifact):
 
     source_feature_spec_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_class: Literal["exploratory"] = "exploratory"
-    evaluation_split: Literal["inner_development_holdout"] = (
-        "inner_development_holdout"
-    )
+    evaluation_split: Literal["inner_development_holdout"] = "inner_development_holdout"
     final_holdout_used: Literal[False] = False
     task_type: TaskType
     metric: Metric

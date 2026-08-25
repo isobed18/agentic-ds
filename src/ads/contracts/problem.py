@@ -51,8 +51,13 @@ class Metric(StrEnum):
 #: "accuracy" on a 0.3%-positive fraud target is how a useless model gets shipped.
 METRICS_BY_TASK: dict[TaskType, frozenset[Metric]] = {
     TaskType.BINARY_CLASSIFICATION: frozenset(
-        {Metric.ROC_AUC, Metric.AVERAGE_PRECISION, Metric.F1,
-         Metric.BALANCED_ACCURACY, Metric.ACCURACY}
+        {
+            Metric.ROC_AUC,
+            Metric.AVERAGE_PRECISION,
+            Metric.F1,
+            Metric.BALANCED_ACCURACY,
+            Metric.ACCURACY,
+        }
     ),
     TaskType.MULTICLASS_CLASSIFICATION: frozenset(
         {Metric.F1, Metric.BALANCED_ACCURACY, Metric.ACCURACY}
@@ -112,11 +117,13 @@ class ProblemCandidateProposal(FrozenModel):
     """
 
     title: str = Field(max_length=120)
+    title_tr: str = Field(max_length=120)
     task_type: TaskType
     target_column: str | None = Field(
         default=None, description="Required for supervised tasks; null otherwise."
     )
     business_rationale: str = Field(max_length=800)
+    business_rationale_tr: str = Field(max_length=800)
     evidence_columns: list[str] = Field(
         default_factory=list,
         description="Columns that justify this framing. Must exist in the ABT.",
@@ -178,9 +185,11 @@ class ProblemCandidate(FrozenModel):
 
     candidate_id: str
     title: str = Field(max_length=120)
+    title_tr: str = Field(default="", max_length=120)
     task_type: TaskType
     target_column: str | None = None
     business_rationale: str = Field(max_length=800)
+    business_rationale_tr: str = Field(default="", max_length=800)
     evidence_columns: list[str] = Field(default_factory=list)
     primary_metric: Metric
     support: ProblemSupport
@@ -234,7 +243,9 @@ class ProblemDefinition(Artifact):
     target_column: str | None = None
     primary_metric: Metric
     title: str = Field(max_length=120)
+    title_tr: str = Field(default="", max_length=120)
     description: str = Field(max_length=1000)
+    description_tr: str = Field(default="", max_length=1000)
     excluded_columns: list[str] = Field(
         default_factory=list,
         description="Columns barred from features (leakage, identifiers, policy).",

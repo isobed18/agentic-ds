@@ -12,7 +12,7 @@ import { PipelineRail } from "../components/PipelineRail";
 import { PlannerPanel } from "../components/PlannerPanel";
 import { StageWorkspace } from "../components/StageWorkspace";
 import { Badge, Spinner, cx, toneFor } from "../components/ui";
-import { api, type RunSummary, type WorkflowNode } from "../lib/api";
+import { api, type RunOptions, type RunSummary, type WorkflowNode } from "../lib/api";
 import { isActive, isRunActive, isSucceeded, statusLabel } from "../lib/status";
 
 
@@ -33,6 +33,10 @@ export function Workflows() {
   // later manual selection is not fought by the URL.
   const [params, setParams] = useSearchParams();
   const [presetSource, setPresetSource] = useState<string | null>(null);
+  const [options, setOptions] = useState<RunOptions | null>(null);
+  useEffect(() => {
+    api.runOptions().then(setOptions).catch(() => setOptions(null));
+  }, []);
   useEffect(() => {
     const source = params.get("source");
     const run = params.get("run");
@@ -77,6 +81,13 @@ export function Workflows() {
     [nodes, stageId],
   );
   const currentRun = runs.find((r) => r.run_id === runId) ?? null;
+  const staged = currentRun?.status === "staged" || currentRun?.status === "staging";
+  // A staged run exists to be looked at and configured, and intake is where
+  // both happen, so opening one lands there rather than on whatever stage
+  // happened to be selected for the previous run.
+  useEffect(() => {
+    if (staged) setStageId("intake");
+  }, [staged, runId]);
   // Sibling runs of the same project, so a branch is visible as a branch rather
   // than as an unrelated row that happens to share a dataset.
   const family = useMemo(() => {
@@ -185,14 +196,14 @@ export function Workflows() {
           </div>
 
           {currentRun && <Badge tone={toneFor(currentRun.status)}>{statusLabel(currentRun.status)}</Badge>}
-          {currentRun?.branch_label && <Badge tone="brand">branch: {currentRun.branch_label}</Badge>}
+          {currentRun?.branch_label && <Badge tone="brand">{t("branch")}: {currentRun.branch_label}</Badge>}
           {family.length > 1 && (
             <span className="flex items-center gap-1">
               {family.map((r) => (
                 <button
                   key={r.run_id}
                   onClick={() => setRunId(r.run_id)}
-                  title={r.branch_label ?? "original"}
+                  title={r.branch_label ?? t("original")}
                   className={cx(
                     "rounded-md border px-2 py-0.5 text-[11px]",
                     r.run_id === runId
@@ -200,12 +211,14 @@ export function Workflows() {
                       : "border-line text-ink-mute hover:bg-surface-sunken",
                   )}
                 >
-                  {r.branch_label ? r.branch_label.slice(0, 22) : "original"}
+                  {r.branch_label ? r.branch_label.slice(0, 22) : t("original")}
                 </button>
               ))}
             </span>
           )}
-          <span className="text-xs text-ink-mute">{done}/{nodes.length} stages complete</span>
+          <span className="text-xs text-ink-mute">
+            {done}/{nodes.length} {t("stages complete")}
+          </span>
           <div className="h-1.5 w-32 overflow-hidden rounded-full bg-line">
             <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${nodes.length ? (done / nodes.length) * 100 : 0}%` }} />
           </div>
@@ -216,7 +229,7 @@ export function Workflows() {
                 non-wrapping row of status widgets and was reported as missing
                 entirely, so it now keeps its width and says what it starts. */}
             <button onClick={() => setLaunching(true)} className="btn-primary !py-1.5 whitespace-nowrap text-xs">
-              + New run
+              + {t("New run")}
             </button>
           </div>
         </div>
@@ -228,8 +241,12 @@ export function Workflows() {
           runId={runId}
           node={selected}
           sourceId={currentRun?.dataset ?? null}
+          runStatus={currentRun?.status ?? null}
+          options={options}
           onAnswered={() => { void refresh(); void refreshRuns(); }}
           onBranched={(ids) => { void refreshRuns(); if (ids[0]) setRunId(ids[0]); }}
+          onStarted={() => { setLive(true); void refresh(); void refreshRuns(); }}
+          onDiscarded={() => { setRunId(null); setNodes([]); void refreshRuns(); }}
         />
       </div>
 
@@ -244,6 +261,7 @@ export function Workflows() {
       <PlannerPanel
         runId={runId}
         stageId={stageId}
+        sourceId={currentRun?.dataset ?? null}
         open={plannerOpen}
         onToggle={() => setPlannerOpen((o) => !o)}
       />

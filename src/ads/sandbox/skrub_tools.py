@@ -39,9 +39,7 @@ def fit_transform_feature_fold(
     if row_id_column not in training.columns or row_id_column not in validation.columns:
         raise ValueError("skrub_row_id_missing")
     source_columns = [
-        column
-        for column in training.columns
-        if column not in {target_column, row_id_column}
+        column for column in training.columns if column not in {target_column, row_id_column}
     ]
     if list(validation.columns) != [row_id_column, *source_columns]:
         raise ValueError("skrub_feature_schema_mismatch")
@@ -68,9 +66,10 @@ def fit_transform_feature_fold(
     validation_frame = pd.DataFrame(transformed_validation).reset_index(drop=True)
     if list(train_frame.columns) != list(validation_frame.columns):
         raise ValueError("skrub_transformed_schema_mismatch")
-    if not np.isfinite(train_frame.to_numpy(dtype=float)).all() or not np.isfinite(
-        validation_frame.to_numpy(dtype=float)
-    ).all():
+    if (
+        not np.isfinite(train_frame.to_numpy(dtype=float)).all()
+        or not np.isfinite(validation_frame.to_numpy(dtype=float)).all()
+    ):
         raise ValueError("skrub_non_finite_output")
     train_frame.insert(0, row_id_column, train_ids)
     validation_frame.insert(0, row_id_column, validation_ids)

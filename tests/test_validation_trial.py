@@ -59,6 +59,7 @@ def _proposal() -> ValidationStrategyProposal:
         test_size=0.2,
         group_column="entity_id",
         rationale="Keep every entity in exactly one partition.",
+        rationale_tr="Her varlığı tam olarak bir bölümde tut.",
     )
 
 
@@ -111,6 +112,7 @@ def test_splitting_rejects_strategy_changed_after_passing_trial(tmp_path: Path) 
             n_folds=3,
             test_size=0.2,
             rationale="Changed after the grouped trial.",
+            rationale_tr="Gruplu denemeden sonra değiştirildi.",
         ),
         signals,
         trial_artifact_id=compute_artifact_id(trial),

@@ -148,7 +148,14 @@ def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) ->
     shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
     app_routes = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
 
-    destinations = ("/workflows", "/datasets", "/experiments", "/models", "/reports", "/settings")
+    destinations = (
+        "/automation",
+        "/datasets",
+        "/experiments",
+        "/models",
+        "/reports",
+        "/settings",
+    )
     for destination in destinations:
         assert f'"{destination}"' in shell, f"{destination} is missing from the sidebar"
         assert f'path="{destination}"' in app_routes, f"{destination} has no route"
@@ -221,9 +228,7 @@ class TestAbandonedRunsAreNotReportedAsLive:
     cleared through the product at all.
     """
 
-    def test_in_flight_snapshot_without_a_worker_reads_as_interrupted(
-        self, tmp_path: Path
-    ) -> None:
+    def test_in_flight_snapshot_without_a_worker_reads_as_interrupted(self, tmp_path: Path) -> None:
         plane = _plane(tmp_path)
         _snapshot(plane, "abandoned-run", "running")
         client = TestClient(create_app(plane=plane))
@@ -292,3 +297,67 @@ class TestAbandonedRunsAreNotReportedAsLive:
 
         assert listed["abandoned-run"] == "interrupted"
         assert detail == "interrupted"
+
+
+class TestAParkedRunCanBeCleared:
+    """A run waiting for an answer nobody will give must still be removable.
+
+    `awaiting_human` is durable on purpose, and `progress` will never downgrade
+    it. That made it the one status with no exit: the run sits in the list
+    forever because the only thing that could end it is the answer nobody is
+    going to type. A parked run holds no worker thread, so removing it races
+    with nothing; the exact-id confirmation is what keeps it deliberate.
+    """
+
+    def test_a_parked_run_is_deleted(self, tmp_path: Path) -> None:
+        plane = _plane(tmp_path)
+        snapshot = _snapshot(plane, "parked-run", "awaiting_human")
+        client = TestClient(create_app(plane=plane))
+
+        deleted = client.post("/api/runs/parked-run/delete", json={"confirmation": "parked-run"})
+
+        assert deleted.status_code == 200, deleted.text
+        assert not snapshot.exists()
+
+    def test_it_still_needs_the_id_back(self, tmp_path: Path) -> None:
+        plane = _plane(tmp_path)
+        snapshot = _snapshot(plane, "parked-run", "awaiting_human")
+        client = TestClient(create_app(plane=plane))
+
+        refused = client.post("/api/runs/parked-run/delete", json={"confirmation": ""})
+
+        assert refused.status_code == 409
+        assert snapshot.exists(), "an unconfirmed delete must not remove anything"
+
+    def test_the_experiment_list_offers_it(self, tmp_path: Path) -> None:
+        """`deletable` drives the UI control, so it has to agree with the API."""
+        plane = _plane(tmp_path)
+        _snapshot(plane, "parked-run", "awaiting_human")
+
+        entry = next(e for e in plane.experiment_catalog() if e["run_id"] == "parked-run")
+
+        assert entry["deletable"] is True
+
+    def test_a_running_run_is_still_refused(self, tmp_path: Path) -> None:
+        """The relaxation must not reach a run a worker is advancing."""
+        plane = _plane(tmp_path)
+        snapshot = _snapshot(plane, "live-run", "running")
+        plane._runtime_runs["live-run"] = SimpleNamespace(  # noqa: SLF001
+            run_id="live-run",
+            status="running",
+            configuration={"mode": "manual"},
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:05:00+00:00",
+            current_stage="training",
+            events=[],
+            error=None,
+            source_id=None,
+            state=SimpleNamespace(attempts=[]),
+            outcome=None,
+        )
+        client = TestClient(create_app(plane=plane))
+
+        refused = client.post("/api/runs/live-run/delete", json={"confirmation": "live-run"})
+
+        assert refused.status_code == 409
+        assert snapshot.exists()

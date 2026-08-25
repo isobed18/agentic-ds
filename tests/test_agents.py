@@ -103,9 +103,7 @@ def context() -> AgentContext:
                 "transactions": ["txn_id", "physician_id", "amount"],
             },
             "known_columns": ["physician_id", "specialty", "txn_id", "amount"],
-            "measured_pairs": {
-                ("transactions", "physician_id", "physicians", "physician_id")
-            },
+            "measured_pairs": {("transactions", "physician_id", "physicians", "physician_id")},
             "cardinality_by_pair": {("transactions", "physicians"): "N:1"},
         },
     )
@@ -237,9 +235,7 @@ class TestAutoRepair:
     def test_repair_disabled_surfaces_failure(self, context: AgentContext) -> None:
         proposal = _valid_proposal()
         proposal["base_grain"] = ["physician_i"]
-        result = run_agent(
-            _spec(max_attempts=1), context, FakeLLM([proposal]), auto_repair=False
-        )
+        result = run_agent(_spec(max_attempts=1), context, FakeLLM([proposal]), auto_repair=False)
         assert not result.succeeded
 
     def test_suggest_name_threshold(self) -> None:
@@ -250,9 +246,7 @@ class TestAutoRepair:
 
 class TestValidators:
     def test_unknown_table_rejected(self, context: AgentContext) -> None:
-        plan = IntegrationPlanProposal.model_validate(
-            {**_valid_proposal(), "base_table": "ghost"}
-        )
+        plan = IntegrationPlanProposal.model_validate({**_valid_proposal(), "base_table": "ghost"})
         failures = validate_tables_exist(plan, context)
         assert any(f.code == "unknown_table" for f in failures)
 
@@ -291,9 +285,7 @@ class TestValidators:
         failures = validate_joins_supported_by_evidence(plan, context)
         assert any(f.code == "unsupported_join" for f in failures)
 
-    def test_join_via_aggregation_resolves_to_source_evidence(
-        self, context: AgentContext
-    ) -> None:
+    def test_join_via_aggregation_resolves_to_source_evidence(self, context: AgentContext) -> None:
         plan = IntegrationPlanProposal.model_validate(_valid_proposal())
         assert validate_joins_supported_by_evidence(plan, context) == []
 
@@ -388,9 +380,7 @@ class TestPanelAgreementMeasuresDecisions:
         proposal["joins"][0]["rationale"] = "Bring the aggregated metrics onto the base."
         return proposal
 
-    def test_rewording_the_same_plan_is_not_disagreement(
-        self, context: AgentContext
-    ) -> None:
+    def test_rewording_the_same_plan_is_not_disagreement(self, context: AgentContext) -> None:
         spec = build_spec()  # the real spec, which declares narration_fields
         panel = run_agent_panel(
             spec,
@@ -404,9 +394,7 @@ class TestPanelAgreementMeasuresDecisions:
         # The divergence is still recorded — it is just not gated on.
         assert panel.verbatim_agreement == pytest.approx(2 / 3)
 
-    def test_a_different_join_direction_is_disagreement(
-        self, context: AgentContext
-    ) -> None:
+    def test_a_different_join_direction_is_disagreement(self, context: AgentContext) -> None:
         """The counter-test. An inner join drops rows a left join keeps."""
         divergent = _valid_proposal()
         divergent["joins"][0]["how"] = "inner"
@@ -425,9 +413,7 @@ class TestPanelAgreementMeasuresDecisions:
         b["base_grain"] = ["physician_id", "specialty"]
         c["base_grain"] = ["specialty"]
 
-        panel = run_agent_panel(
-            build_spec(), context, FakeLLM([a, b, c]), panel_size=3
-        )
+        panel = run_agent_panel(build_spec(), context, FakeLLM([a, b, c]), panel_size=3)
 
         assert panel.agreement == pytest.approx(1 / 3)
 
@@ -450,9 +436,7 @@ class TestPanelAgreementMeasuresDecisions:
 
         assert panel.agreement == pytest.approx(2 / 3)
 
-    def test_an_invalid_member_counts_against_agreement(
-        self, context: AgentContext
-    ) -> None:
+    def test_an_invalid_member_counts_against_agreement(self, context: AgentContext) -> None:
         """A member that produced nothing valid is not a member that agreed."""
         panel = run_agent_panel(
             build_spec(),

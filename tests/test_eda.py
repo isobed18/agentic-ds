@@ -191,9 +191,7 @@ def test_shape_descriptors_report_peaks_multiples_and_period_concentration() -> 
     assert shape.candidate_peak_count == 2
     assert len(shape.candidate_peaks) == 2
     assert shape.peak_separation_bins == [12]
-    multiple_of_five = next(
-        item for item in shape.rounding_concentrations if item.step == 5.0
-    )
+    multiple_of_five = next(item for item in shape.rounding_concentrations if item.step == 5.0)
     assert multiple_of_five.rate == 1.0
 
     yearly = next(
@@ -204,6 +202,7 @@ def test_shape_descriptors_report_peaks_multiples_and_period_concentration() -> 
     assert yearly.parsed_count == 100
     assert yearly.dominant_period == "2024"
     assert yearly.dominant_period_rate == pytest.approx(0.8)
+
 
 def test_markdown_contains_numeric_tables_and_rubric_results(real_report) -> None:
     markdown = render_markdown(real_report)

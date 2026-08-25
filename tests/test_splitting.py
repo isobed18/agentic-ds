@@ -61,12 +61,8 @@ class TestConcreteSplitters:
         stratified = make_splitter(
             _strategy(SplitStrategy.STRATIFIED, detected_signals=signals), frame
         )
-        grouped = make_splitter(
-            _strategy(SplitStrategy.GROUPED, group_column="group"), frame
-        )
-        temporal = make_splitter(
-            _strategy(SplitStrategy.TEMPORAL, time_column="when"), frame
-        )
+        grouped = make_splitter(_strategy(SplitStrategy.GROUPED, group_column="group"), frame)
+        temporal = make_splitter(_strategy(SplitStrategy.TEMPORAL, time_column="when"), frame)
         grouped_temporal = make_splitter(
             _strategy(
                 SplitStrategy.GROUPED_TEMPORAL,
@@ -81,18 +77,19 @@ class TestConcreteSplitters:
         assert isinstance(grouped.fold_generator, GroupKFold)
         assert isinstance(temporal.fold_generator, TimeSeriesSplit)
         assert isinstance(grouped_temporal.fold_generator, TimeSeriesSplit)
-        assert all(len(list(splitter.iter_folds(frame))) == 3 for splitter in (
-            random,
-            stratified,
-            grouped,
-            temporal,
-            grouped_temporal,
-        ))
+        assert all(
+            len(list(splitter.iter_folds(frame))) == 3
+            for splitter in (
+                random,
+                stratified,
+                grouped,
+                temporal,
+                grouped_temporal,
+            )
+        )
 
     def test_outer_group_holdout_is_deterministic_and_isolated(self) -> None:
-        frame = pd.DataFrame(
-            {"group": [f"g{i // 3}" for i in range(60)], "value": range(60)}
-        )
+        frame = pd.DataFrame({"group": [f"g{i // 3}" for i in range(60)], "value": range(60)})
         strategy = _strategy(SplitStrategy.GROUPED, group_column="group")
 
         train_a, holdout_a = split_holdout(frame, strategy)
@@ -103,9 +100,7 @@ class TestConcreteSplitters:
         assert set(train_a["group"]).isdisjoint(holdout_a["group"])
 
     def test_temporal_holdout_uses_cutoff_not_n_folds(self) -> None:
-        frame = pd.DataFrame(
-            {"when": pd.date_range("2025-01-01", periods=20), "target": range(20)}
-        )
+        frame = pd.DataFrame({"when": pd.date_range("2025-01-01", periods=20), "target": range(20)})
         strategy = _strategy(
             SplitStrategy.TEMPORAL,
             n_folds=4,
@@ -152,18 +147,14 @@ class TestFoldOwnedFitting:
         assert set(frame.loc[results.holdout_index, "segment"]) == {"holdout_only"}
         assert frame.loc[results.holdout_index, "event_at"].min() >= cutoff
         for fitted in results.estimators:
-            bucketer = fitted.named_transformers_["categorical"].named_steps[
-                "rare_categories"
-            ]
+            bucketer = fitted.named_transformers_["categorical"].named_steps["rare_categories"]
             datetime = fitted.named_transformers_["datetime"].named_steps["features"]
             assert "holdout_only" not in bucketer.frequent_categories_[0]
             assert datetime.reference_date_ < cutoff
 
         # The negative control proves these assertions detect actual leakage.
         leaked = factory().fit(frame.drop(columns=["target"]), frame["target"])
-        leaked_bucketer = leaked.named_transformers_["categorical"].named_steps[
-            "rare_categories"
-        ]
+        leaked_bucketer = leaked.named_transformers_["categorical"].named_steps["rare_categories"]
         leaked_datetime = leaked.named_transformers_["datetime"].named_steps["features"]
         assert "holdout_only" in leaked_bucketer.frequent_categories_[0]
         assert leaked_datetime.reference_date_ >= cutoff
@@ -217,7 +208,5 @@ class TestSampleData:
         for train_index, validation_index in folds:
             fold_train = train.loc[train_index]
             fold_validation = train.loc[validation_index]
-            assert set(fold_train["physician_id"]).isdisjoint(
-                fold_validation["physician_id"]
-            )
+            assert set(fold_train["physician_id"]).isdisjoint(fold_validation["physician_id"])
             assert fold_train["txn_date"].max() < fold_validation["txn_date"].min()

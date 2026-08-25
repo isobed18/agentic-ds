@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ads.contracts.reporting import DecisionAuthority, EvaluationReport
+
+
+def _t(text: str, /, **params: Any) -> str:
+    from ads.api.i18n import t
+
+    return t(text, **params)
 
 
 def _number(value: float) -> str:
@@ -14,21 +22,31 @@ def _baseline_statement(report: EvaluationReport) -> str:
     baseline = _number(report.baseline_holdout_score)
     delta = _number(abs(report.baseline_delta))
     if report.baseline_delta > 0:
-        direction = "lower" if report.lower_is_better else "higher"
-        return (
-            f"On the untouched holdout, the winner scored **{winner}** versus "
-            f"**{baseline}** for the naive baseline: an improvement of **{delta}** "
-            f"({direction} is better for {report.primary_metric.value})."
+        direction = _t("lower") if report.lower_is_better else _t("higher")
+        return _t(
+            "On the untouched holdout, the winner scored **{winner}** versus "
+            "**{baseline}** for the naive baseline: an improvement of **{delta}** "
+            "({direction} is better for {metric}).",
+            winner=winner,
+            baseline=baseline,
+            delta=delta,
+            direction=direction,
+            metric=report.primary_metric.value,
         )
     if report.baseline_delta == 0:
-        return (
-            f"On the untouched holdout, the winner and naive baseline both scored "
-            f"**{winner}**. The model showed **no improvement over the baseline**."
+        return _t(
+            "On the untouched holdout, the winner and naive baseline both scored "
+            "**{winner}**. The model showed **no improvement over the baseline**.",
+            winner=winner,
         )
-    return (
-        f"On the untouched holdout, the selected model scored **{winner}** versus "
-        f"**{baseline}** for the naive baseline. It was **worse than the baseline by "
-        f"{delta}** on the oriented {report.primary_metric.value} scale."
+    return _t(
+        "On the untouched holdout, the selected model scored **{winner}** versus "
+        "**{baseline}** for the naive baseline. It was **worse than the baseline by "
+        "{delta}** on the oriented {metric} scale.",
+        winner=winner,
+        baseline=baseline,
+        delta=delta,
+        metric=report.primary_metric.value,
     )
 
 
@@ -38,20 +56,25 @@ def _alert_block(report: EvaluationReport) -> list[str]:
     unresolved = report.unresolved_blocking_leakage
     unconfirmed = report.unresolved_separator_confirmation
     if prominent or unresolved or unconfirmed or report.baseline_delta <= 0:
-        lines.extend(["> [!WARNING]", "> **This evaluation is not clear to ship.**"])
+        lines.extend(["> [!WARNING]", f"> **{_t('This evaluation is not clear to ship.')}**"])
         if report.baseline_delta <= 0:
-            lines.append("> The selected model did not demonstrate lift over the baseline.")
+            lines.append(
+                f"> {_t('The selected model did not demonstrate lift over the baseline.')}"
+            )
         for alert in prominent:
             lines.append(f"> **{alert.reason_code}**: {alert.detail}")
         if unresolved:
             columns = ", ".join(f"`{item.column}`" for item in unresolved)
-            lines.append(f"> Blocking leakage remains unresolved for {columns}.")
+            lines.append(
+                f"> {_t('Blocking leakage remains unresolved for {columns}.', columns=columns)}"
+            )
         if unconfirmed:
             columns = ", ".join(f"`{item.column}`" for item in unconfirmed)
-            lines.append(
-                "> Separator provenance remains unconfirmed for "
+            msg = (
+                "Separator provenance remains unconfirmed for "
                 f"{columns}; the model is not leakage-clean."
             )
+            lines.append(f"> {_t(msg, columns=columns)}")
         lines.append("")
     return lines
 
@@ -64,36 +87,38 @@ def _headline_metric_caveat(report: EvaluationReport) -> str:
     }
     if not caveats:
         return ""
-    details = " ".join(
-        f"**{reason_code}**: {detail}" for reason_code, detail in caveats.items()
-    )
+    details = " ".join(f"**{reason_code}**: {detail}" for reason_code, detail in caveats.items())
     return f" **Headline metric caveat:** {details}"
 
 
 def _gate_history_section(report: EvaluationReport) -> list[str]:
-    lines = ["## Decisions and escalations", ""]
+    lines = [f"## {_t('Decisions and escalations')}", ""]
     if not report.gate_history:
         lines.extend(
             [
-                "No gate decision history was attached to this evaluation artifact.",
+                _t("No gate decision history was attached to this evaluation artifact."),
                 "",
             ]
         )
         return lines
 
     authority_labels = {
-        DecisionAuthority.HUMAN: "human-approved",
-        DecisionAuthority.AUTONOMOUS: "autonomous",
-        DecisionAuthority.UNRECORDED: "human approval not recorded",
+        DecisionAuthority.HUMAN: _t("human-approved"),
+        DecisionAuthority.AUTONOMOUS: _t("autonomous"),
+        DecisionAuthority.UNRECORDED: _t("human approval not recorded"),
     }
+    header = (
+        f"| {_t('Stage')} | {_t('Attempt')} | {_t('Verdict')} | "
+        f"{_t('Reason code')} | {_t('Rules fired')} | {_t('Authority')} |"
+    )
     lines.extend(
         [
-            "| Stage | Attempt | Verdict | Reason code | Rules fired | Authority |",
+            header,
             "|---|---:|---|---|---|---|",
         ]
     )
     for decision in report.gate_history:
-        rules = ", ".join(f"`{rule}`" for rule in decision.triggered_rules) or "none"
+        rules = ", ".join(f"`{rule}`" for rule in decision.triggered_rules) or _t("none")
         lines.append(
             f"| `{decision.stage_id}` | {decision.attempt} | "
             f"**{decision.verdict.value}** | `{decision.reason_code}` | {rules} | "
@@ -105,114 +130,135 @@ def _gate_history_section(report: EvaluationReport) -> list[str]:
 
 def render_markdown(report: EvaluationReport) -> str:
     """Render a complete report while keeping gate escalations above the results."""
-    lines = [f"# Evaluation report: {report.problem_title}", ""]
+    lines = [f"# {_t('Evaluation report')}: {report.problem_title}", ""]
     lines.extend(_alert_block(report))
     lines.extend(_gate_history_section(report))
 
-    target = f"`{report.target_column}`" if report.target_column else "the defined outcome"
+    target = f"`{report.target_column}`" if report.target_column else _t("the defined outcome")
     if report.persisted_model_matches_measured_model is True:
-        persistence_statement = (
+        persistence_statement = _t(
             "The persisted model is the same fitted pipeline that produced the holdout "
             "measurement. It was not silently refit on the holdout rows."
         )
     elif report.persisted_model_matches_measured_model is False:
-        persistence_statement = (
+        persistence_statement = _t(
             "The persisted model was refit after holdout evaluation. The holdout metric "
             "does not directly measure that refitted artifact."
         )
     else:
-        persistence_statement = "No persisted model blob is referenced by this evaluation artifact."
+        persistence_statement = _t(
+            "No persisted model blob is referenced by this evaluation artifact."
+        )
     lines.extend(
         [
-            "## Problem and model",
+            f"## {_t('Problem and model')}",
             "",
             report.problem_description,
             "",
-            f"The model predicts {target} for a {report.task_type.value.replace('_', ' ')} "
-            f"problem. **{report.winner_display_name}** was selected from "
-            f"{len(report.candidate_comparisons)} candidates using "
-            f"{report.primary_metric.value}.",
+            _t(
+                "The model predicts {target} for a {task} "
+                "problem. **{winner}** was selected from "
+                "{count} candidates using "
+                "{metric}.",
+                target=target,
+                task=report.task_type.value.replace("_", " "),
+                winner=report.winner_display_name,
+                count=len(report.candidate_comparisons),
+                metric=report.primary_metric.value,
+            ),
             "",
             persistence_statement,
             "",
-            "## Performance against the baseline",
+            f"## {_t('Performance against the baseline')}",
             "",
             _baseline_statement(report) + _headline_metric_caveat(report),
             "",
-            f"Training received {report.input_row_count:,} rows, dropped "
-            f"{report.target_null_rows_dropped:,} rows with no target, and evaluated "
-            f"{report.training_row_count:,} labeled rows.",
+            _t(
+                "Training received {input_rows:,} rows, dropped "
+                "{dropped_rows:,} rows with no target, and evaluated "
+                "{train_rows:,} labeled rows.",
+                input_rows=report.input_row_count,
+                dropped_rows=report.target_null_rows_dropped,
+                train_rows=report.training_row_count,
+            ),
             "",
-            "### Candidate comparison",
+            f"### {_t('Candidate comparison')}",
             "",
-            "| Candidate | Baseline | Selected | CV mean | CV std | Holdout |",
+            (
+                f"| {_t('Candidate')} | {_t('Baseline')} | {_t('Selected')} | "
+                f"{_t('CV mean')} | {_t('CV std')} | {_t('Holdout')} |"
+            ),
             "|---|---:|---:|---:|---:|---:|",
         ]
     )
     for candidate in report.candidate_comparisons:
         lines.append(
-            f"| {candidate.display_name} | {'yes' if candidate.is_baseline else 'no'} | "
-            f"{'yes' if candidate.selected else 'no'} | {_number(candidate.cv_mean)} | "
+            f"| {candidate.display_name} | {_t('yes') if candidate.is_baseline else _t('no')} | "
+            f"{_t('yes') if candidate.selected else _t('no')} | {_number(candidate.cv_mean)} | "
             f"{_number(candidate.cv_std)} | {_number(candidate.holdout_score)} |"
         )
 
-    lines.extend(["", "### Winner holdout metrics", ""])
+    lines.extend(["", f"### {_t('Winner holdout metrics')}", ""])
     lines.extend(
-        f"- {metric.metric.value}: **{_number(metric.score)}**"
-        for metric in report.holdout_metrics
+        f"- {metric.metric.value}: **{_number(metric.score)}**" for metric in report.holdout_metrics
     )
 
     lines.extend(
         [
             "",
-            "## Validation strategy",
+            f"## {_t('Validation strategy')}",
             "",
-            f"The run used **{report.validation_strategy.value}** validation with "
-            f"{report.validation_n_folds} inner folds and a "
-            f"{report.validation_test_size:.0%} outer holdout.",
+            _t(
+                "The run used **{strategy}** validation with "
+                "{folds} inner folds and a "
+                "{holdout:.0%} outer holdout.",
+                strategy=report.validation_strategy.value,
+                folds=report.validation_n_folds,
+                holdout=report.validation_test_size,
+            ),
             "",
             report.validation_rationale,
         ]
     )
     validation_details = [
-        ("Group column", report.validation_group_column),
-        ("Time column", report.validation_time_column),
-        ("Holdout cutoff", report.validation_holdout_cutoff),
+        (_t("Group column"), report.validation_group_column),
+        (_t("Time column"), report.validation_time_column),
+        (_t("Holdout cutoff"), report.validation_holdout_cutoff),
     ]
     for label, value in validation_details:
         if value:
             lines.append(f"- {label}: `{value}`")
 
-    lines.extend(["", "## Leakage controls", ""])
+    lines.extend(["", f"## {_t('Leakage controls')}", ""])
     if report.cleared_leakage:
-        lines.append("The following audited leakage findings were cleared by exclusion:")
+        lines.append(_t("The following audited leakage findings were cleared by exclusion:"))
         lines.append("")
         for finding in report.cleared_leakage:
             lines.append(
                 f"- `{finding.column}` — {finding.kind.value} "
-                f"(score {_number(finding.score)}). {finding.action}"
+                f"({_t('score')} {_number(finding.score)}). {finding.action}"
             )
     else:
-        lines.append("No audited leakage finding was recorded as cleared by exclusion.")
+        lines.append(_t("No audited leakage finding was recorded as cleared by exclusion."))
     uncleared_warnings = [
         item for item in report.leakage_dispositions if not item.blocking and not item.cleared
     ]
     if uncleared_warnings:
-        lines.extend(["", "Non-blocking leakage-audit warnings remain:", ""])
+        lines.extend(["", _t("Non-blocking leakage-audit warnings remain:"), ""])
         lines.extend(
-            f"- `{item.column}` — {item.kind.value} (score {_number(item.score)})."
+            f"- `{item.column}` — {item.kind.value} ({_t('score')} {_number(item.score)})."
             for item in uncleared_warnings
         )
 
-    lines.extend(["", "## Decision provenance", ""])
+    lines.extend(["", f"## {_t('Decision provenance')}", ""])
     for authority in DecisionAuthority:
         matching = [item for item in report.decisions if item.authority is authority]
         if not matching:
             continue
         label = {
-            DecisionAuthority.HUMAN: "Human-approved",
-            DecisionAuthority.AUTONOMOUS: "Autonomous",
-            DecisionAuthority.UNRECORDED: "Approval not recorded",
+            DecisionAuthority.HUMAN: _t("Human-approved"),
+            DecisionAuthority.AUTONOMOUS: _t("Autonomous"),
+            DecisionAuthority.UNRECORDED: _t("Approval not recorded"),
         }[authority]
         lines.extend([f"### {label}", ""])
         for decision in matching:
@@ -222,7 +268,7 @@ def render_markdown(report: EvaluationReport) -> str:
 
     other_alerts = [item for item in report.alerts if item not in report.prominent_alerts]
     if other_alerts:
-        lines.extend(["## Other gate outcomes", ""])
+        lines.extend([f"## {_t('Other gate outcomes')}", ""])
         lines.extend(
             f"- **{item.reason_code}** ({item.verdict.value}, `{item.stage_id}`): {item.detail}"
             for item in other_alerts

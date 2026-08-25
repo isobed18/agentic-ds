@@ -12,9 +12,7 @@ from ads.tools.models import ToolPayload, ToolRuntime
 from ads.tools.registry import ToolDefinition, ToolRegistry
 
 
-def trial_validation_strategy(
-    runtime: ToolRuntime, arguments: Mapping[str, Any]
-) -> ToolPayload:
+def trial_validation_strategy(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
     table = str(arguments["table"])
     if table not in runtime.frames:
         raise ValueError(f"Unknown table {table!r}.")
@@ -41,10 +39,10 @@ def register_validation_tools(registry: ToolRegistry) -> ToolRegistry:
         ToolDefinition(
             tool_id="trial_validation_strategy",
             arguments={
-                'table': 'table name to split',
-                'proposal': (
-                    'ValidationStrategyProposal object: strategy, n_folds, '
-                    'test_size, group_column, time_column'
+                "table": "table name to split",
+                "proposal": (
+                    "ValidationStrategyProposal object: strategy, n_folds, "
+                    "test_size, group_column, time_column"
                 ),
             },
             tier=PermissionTier.READ_DATA,

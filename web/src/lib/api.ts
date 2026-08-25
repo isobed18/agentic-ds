@@ -23,6 +23,10 @@ export interface WorkflowNode {
   status: StageStatus;
   attempt_count: number;
   retry_count: number;
+  /** Wall time summed over this stage's attempts; null before it has run. */
+  elapsed_seconds?: number | null;
+  started_at?: string | null;
+  ended_at?: string | null;
   branch_of?: string | null;
   label?: string;
 }
@@ -49,6 +53,7 @@ export interface RunSummary {
   dataset?: string;
   parent_run_id?: string | null;
   branch_label?: string | null;
+  source_id?: string | null;
 }
 
 export interface GateDecision {
@@ -202,6 +207,16 @@ export interface Story {
     subjects?: string[];
   }[];
   report_markdown?: string;
+  quality_checks?: { label: string; passed: boolean; detail?: string }[];
+  panel?: {
+    member: number;
+    model: string;
+    attempts: number;
+    accepted: boolean;
+    validation_failures?: string[];
+    repairs?: string[];
+    latency_s?: number;
+  }[];
 }
 
 export interface StageOutput {
@@ -222,7 +237,18 @@ export interface StageAttempt {
   artifact_ids: string[];
   verdict?: string | null;
   error?: string | null;
-  critique?: string | null;
+  /**
+   * The orchestrator's rubric result. Typed as a string here for as long as
+   * anyone can remember, while the API has always sent the object -- so the
+   * one field that explains why an attempt was rejected could not be read.
+   */
+  critique?: StageCritique | null;
+}
+
+export interface StageCritique {
+  rubric_version?: string;
+  unmet_criteria?: string[];
+  findings?: { check_id: string; severity: string; evidence?: string | null }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */
@@ -237,6 +263,7 @@ export interface HumanView {
 export interface DataSource {
   source_id: string;
   label: string;
+  files?: string[];
 }
 
 export interface ProfiledColumn {
@@ -271,13 +298,30 @@ export interface MeasuredRelationship {
   parent_coverage: number;
   cardinality: string;
   name_affinity: number;
+  kind?: "measured" | "suggested";
+  rationale?: string;
 }
 
 export interface SourceProfile {
   source_id: string;
   tables: ProfiledTable[];
+  documents?: ProfiledDocument[];
   relationships?: MeasuredRelationship[];
   privacy: string;
+}
+
+export interface ProfiledDocument {
+  name: string;
+  format: "pdf";
+  pages: number;
+  text_pages: number;
+  text_characters: number;
+  image_count: number;
+  title?: string | null;
+  author?: string | null;
+  understanding_status: "text_ready" | "needs_ocr_or_vision";
+  training_status: "not_extracted";
+  issues: string[];
 }
 
 export interface RunOptions {
@@ -287,6 +331,216 @@ export interface RunOptions {
   defaults: { n_folds: number; test_size: number; candidate_limit: number };
   agent_panel_sizes: number[];
   execution_modes: { value: string; label: string; description: string }[];
+}
+
+export interface LocalizedText {
+  en: string;
+  tr: string;
+}
+
+export type PipelineDataType =
+  | "structured_files"
+  | "documents"
+  | "table_profiles"
+  | "relationship_graph"
+  | "document_content"
+  | "extracted_tables"
+  | "accepted_tables"
+  | "document_figures"
+  | "integrated_table"
+  | "reports"
+  | "runtime_plan"
+  | "problem_definition"
+  | "validation_strategy"
+  | "eda_artifacts"
+  | "leakage_report"
+  | "feature_spec"
+  | "split_manifest"
+  | "trained_models"
+  | "evaluation_report"
+  | "final_report"
+  | "model_artifacts";
+
+export interface PipelinePort {
+  id: string;
+  label: LocalizedText;
+  data_type: PipelineDataType;
+  required: boolean;
+  multiple: boolean;
+}
+
+export interface PipelineNodeControl {
+  execution: "auto" | "pause_after";
+  gate_handler: "human" | "planner";
+  max_retries?: number | null;
+}
+
+export interface PipelineComponent {
+  id: string;
+  kind: "data_source" | "intake" | "schema_discovery" | "document_understanding"
+    | "integration" | "report" | "planner" | "ml_pipeline" | "human_review"
+    | "problem_discovery" | "validation" | "analysis" | "feature_engineering"
+    | "splitting" | "training" | "evaluation" | "template";
+  title: LocalizedText;
+  description: LocalizedText;
+  inputs: PipelinePort[];
+  outputs: PipelinePort[];
+  settings: Record<string, unknown>;
+  control: PipelineNodeControl;
+  enabled: boolean;
+  optional: boolean;
+  evidence_layer: "measured" | "agent_proposal" | "human_decision" | "executor";
+  configured_by: "system" | "planner" | "human";
+  catalog_id?: string | null;
+  branch_id?: string | null;
+  group_id?: string | null;
+}
+
+export interface PipelineConnection {
+  id: string;
+  source_component: string;
+  source_port: string;
+  target_component: string;
+  target_port: string;
+}
+
+export interface PipelineBlueprint {
+  version: "1";
+  name: LocalizedText;
+  components: PipelineComponent[];
+  connections: PipelineConnection[];
+}
+
+export interface PipelineOutputReference {
+  component_id: string;
+  port_id: string;
+  data_type: PipelineDataType;
+  status: "ready" | "pending" | "needs_review" | "unavailable" | "not_started";
+  artifact_ids: string[];
+  summary: LocalizedText;
+}
+
+export interface AutomationExecutionPlan {
+  blueprint_fingerprint: string;
+  node_order: string[];
+  nodes: Array<{
+    component_id: string;
+    catalog_id: string;
+    executor: string;
+    stage_id?: string | null;
+    control: PipelineNodeControl;
+  }>;
+  pause_after_component?: string | null;
+  pause_after_stage?: string | null;
+}
+
+export interface DocumentEngine {
+  id: string;
+  label: string;
+  description: LocalizedText;
+  available: boolean;
+  install_extra?: string | null;
+  local: boolean;
+  selectable: boolean;
+  license: string;
+}
+
+export interface AutomationComponentDefinition {
+  catalog_id: string;
+  category: "source" | "understand" | "extract" | "review" | "transform"
+    | "agent" | "analyze" | "train" | "publish" | "template";
+  title: LocalizedText;
+  description: LocalizedText;
+  kind: PipelineComponent["kind"];
+  inputs: PipelinePort[];
+  outputs: PipelinePort[];
+  default_settings: Record<string, unknown>;
+  evidence_layer: PipelineComponent["evidence_layer"];
+  repeatable: boolean;
+}
+
+export interface DocumentExtractionSummary {
+  artifact_id: string;
+  engine: string;
+  engine_version?: string | null;
+  status: "ready" | "failed";
+  document_count: number;
+  page_count: number;
+  table_candidates: number;
+  figure_candidates: number;
+  warnings: string[];
+}
+
+export interface ArtifactPreview {
+  artifact_id: string;
+  artifact_type: string;
+  engine?: string;
+  engine_version?: string | null;
+  duration_seconds?: number;
+  producer_component_id?: string;
+  title?: LocalizedText;
+  summary?: LocalizedText;
+  findings?: LocalizedText[];
+  verification_questions?: LocalizedText[];
+  documents?: Array<{
+    source_file: string;
+    title?: string | null;
+    page_count: number;
+    text_characters: number;
+    tables: Array<Record<string, unknown>>;
+    figures: Array<Record<string, unknown>>;
+    warnings: string[];
+  }>;
+  [key: string]: unknown;
+}
+
+export interface StagingWorkspace {
+  artifact_id: string;
+  run_id: string;
+  source_id: string;
+  source_fingerprint: string;
+  intake_artifact_ids: string[];
+  schema_artifact_ids: string[];
+  cache_reused: boolean;
+  relationship_explanations: {
+    from_table: string;
+    from_columns: string[];
+    to_table: string;
+    to_columns: string[];
+    cardinality: string;
+    overlap_rate: number;
+    orphan_rate: number;
+    explanation: LocalizedText;
+    why_it_matters: LocalizedText;
+    verification_question: LocalizedText;
+    evidence_status: "measured_with_agent_interpretation";
+  }[];
+  reports: {
+    title: LocalizedText;
+    summary: LocalizedText;
+    findings: LocalizedText[];
+    verification_questions: LocalizedText[];
+  }[];
+  pipeline_blueprint?: PipelineBlueprint | null;
+  component_outputs?: PipelineOutputReference[];
+  document_extractions?: DocumentExtractionSummary[];
+  recommended_plan?: {
+    mode: "fully_auto";
+    configuration: Record<string, unknown>;
+    stage_directives: Record<string, string[]>;
+    checkpoint_stages: string[];
+    auto_proceed_stages: string[];
+    max_retries_by_stage: Record<string, number>;
+    rationale: LocalizedText[];
+    accepted: boolean;
+  } | null;
+  chat_history: {
+    role: "user" | "planner";
+    content: LocalizedText;
+    model?: string | null;
+  }[];
+  planner_model?: string | null;
+  planner_error?: string | null;
 }
 
 /**
@@ -326,7 +580,7 @@ export interface RunRequest {
    * `auto` lets the gate decide on its own signals; `manual` declares every
    * stage a checkpoint, so the run stops after each one for approval.
    */
-  run_mode?: "auto" | "manual";
+  run_mode?: "auto" | "manual" | "fully_auto";
   /** Set when this run explores an alternative problem alongside another run. */
   parent_run_id?: string;
   branch_label?: string;
@@ -413,10 +667,66 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+
+  /**
+   * Choosing a dataset starts a run immediately and stops it after intake and
+   * schema discovery. What comes back is a real run id and the profile, so the
+   * pipeline can be drawn before anything has been configured.
+   */
+  stageRun: (sourceId: string, reuseCache = false, pipelineBlueprint?: PipelineBlueprint | null) =>
+    request<{ run_id: string; status: string; profile: SourceProfile }>("/api/runs/staged", {
+      method: "POST",
+      body: JSON.stringify({
+        source_id: sourceId,
+        reuse_cache: reuseCache,
+        configuration: pipelineBlueprint ? { pipeline_blueprint: pipelineBlueprint } : undefined,
+      }),
+    }),
+  stagingWorkspace: (runId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/staging`),
+  stagingComponents: () =>
+    request<{ document_engines: DocumentEngine[]; automation_components: AutomationComponentDefinition[] }>("/api/staging/components"),
+  automationComponents: () =>
+    request<{ document_engines: DocumentEngine[]; components: AutomationComponentDefinition[] }>("/api/automation/components"),
+  updateStagingPipeline: (runId: string, baseArtifactId: string, blueprint: PipelineBlueprint) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/staging/pipeline`, {
+      method: "PUT",
+      body: JSON.stringify({ base_artifact_id: baseArtifactId, blueprint }),
+    }),
+  compileAutomation: (runId: string) =>
+    request<{ artifact_id: string; workspace_artifact_id: string; plan: AutomationExecutionPlan }>(
+      `/api/runs/${runId}/automation/compile`,
+      { method: "POST" },
+    ),
+  startAutomationBranches: (runId: string) =>
+    request<{ parent_run_id: string; branches: Array<{ branch_id: string; run_id: string }> }>(
+      `/api/runs/${runId}/automation/branches/start`,
+      { method: "POST" },
+    ),
+  runDocumentUnderstanding: (runId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/staging/documents/run`, { method: "POST" }),
+  artifactPreview: (artifactId: string) =>
+    request<ArtifactPreview>(`/api/artifacts/${encodeURIComponent(artifactId)}/preview`),
+  /** Amend a staged run's configuration. Accepted while it is still staging. */
+  updateStaged: (runId: string, configuration: Record<string, unknown>) =>
+    request<{ configuration: Record<string, unknown> }>(`/api/runs/${runId}/staged`, {
+      method: "PATCH",
+      body: JSON.stringify(configuration),
+    }),
+  /** Continue a staged run through the rest of the pipeline. Same run id. */
+  startStaged: (runId: string, configuration: Record<string, unknown>) =>
+    request<{ run_id: string; status: string }>(`/api/runs/${runId}/start`, {
+      method: "POST",
+      body: JSON.stringify(configuration),
+    }),
+  discardStaged: (runId: string) =>
+    request<{ run_id: string; status: string }>(`/api/runs/${runId}/discard`, { method: "POST" }),
   runOptions: () => request<RunOptions>("/api/run-options"),
   dataSources: () => request<DataSource[]>("/api/data-sources"),
   sourceProfile: (id: string) =>
     request<SourceProfile>(`/api/data-sources/${encodeURIComponent(id)}/profile`),
+  defaultStagingPipeline: (id: string) =>
+    request<PipelineBlueprint>(`/api/data-sources/${encodeURIComponent(id)}/pipeline-blueprint`),
   datasets: () => request<DatasetSummary[]>("/api/catalog/datasets"),
 
   /**

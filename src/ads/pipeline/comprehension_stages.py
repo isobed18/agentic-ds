@@ -130,11 +130,12 @@ def _interpret(
     scope: ComprehensionScope,
     bundle: MeasurementBundle,
     llm: StructuredLLM,
+    cards: list[DataCard] | None = None,
 ) -> StageResult:
     """Return a healthy or explicitly degraded brief; never raise an LLM failure."""
     spec = build_spec()
     bundle_id = compute_artifact_id(bundle)
-    context = build_context(bundle, scope)
+    context = build_context(bundle, scope, cards)
     try:
         result = run_agent(spec, context, llm)
     except Exception as exc:  # noqa: BLE001 - this entire component is advisory
@@ -225,9 +226,7 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
         # add, never clear a checksum, and it is given no values.
         reviewed: list[DataCard] = []
         renamed: list[str] = []
-        enabled = agent_runtime_policy(state).investigator_enabled(
-            "sensitivity_investigation"
-        )
+        enabled = agent_runtime_policy(state).investigator_enabled("sensitivity_investigation")
         for card in cards if enabled else []:
             updated, changed = investigate_sensitivity(card, llm)
             reviewed.append(updated)
@@ -241,6 +240,7 @@ def augment_schema_discovery_stage(stage, llm: StructuredLLM):
             scope=ComprehensionScope.SOURCE,
             bundle=source_measurement_bundle(cards, plan),
             llm=llm,
+            cards=cards,
         )
         return _merge(primary, advisory)
 

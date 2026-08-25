@@ -112,9 +112,11 @@ def acceptance_run(sample_dir: Path, tmp_path_factory: pytest.TempPathFactory) -
 
     problem_proposal = ProblemCandidateProposal(
         title="Predict annual physician compensation",
+        title_tr="Yıllık hekim ücretini tahmin et",
         task_type=TaskType.REGRESSION,
         target_column="annual_comp",
         business_rationale="Estimate compensation from pre-outcome physician attributes.",
+        business_rationale_tr="Sonuç öncesi hekim özelliklerinden ücreti tahmin et.",
         evidence_columns=["years_experience", "specialty", "city", "hire_date"],
         primary_metric=Metric.RMSE,
     )
@@ -159,6 +161,10 @@ def acceptance_run(sample_dir: Path, tmp_path_factory: pytest.TempPathFactory) -
             rationale=(
                 "Hiring date defines a temporal deployment boundary; later hires form "
                 "the untouched holdout."
+            ),
+            rationale_tr=(
+                "İşe giriş tarihi zamansal dağıtım sınırını tanımlar; sonraki işe alımlar "
+                "dokunulmamış test kümesini oluşturur."
             ),
         ),
         validation_signals,

@@ -47,12 +47,8 @@ abt = execute_plan(PLAN, frames).frame
 # filtering and records it, which is what makes the export reproducible.
 abt = abt.drop(columns=["total_comp_ytd"])
 
-card = profile_table(
-    LoadedTable(name="abt", frame=abt, source_uri="mem", source_format="csv")
-)
-strategy = ValidationStrategy(
-    strategy=SplitStrategy.RANDOM, n_folds=5, rationale="probe"
-)
+card = profile_table(LoadedTable(name="abt", frame=abt, source_uri="mem", source_format="csv"))
+strategy = ValidationStrategy(strategy=SplitStrategy.RANDOM, n_folds=5, rationale="probe")
 
 report = train_candidates(
     abt,

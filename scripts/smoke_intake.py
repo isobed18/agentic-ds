@@ -28,8 +28,10 @@ def main() -> None:
     tables = load_directory(args.data)
     print(f"LOADED {len(tables)} table(s):")
     for t in tables:
-        print(f"  {t.name:32s} {t.frame.shape[0]:>7,} x {t.frame.shape[1]:<3} "
-              f"({t.source_format}{', sheet=' + t.sheet_name if t.sheet_name else ''})")
+        print(
+            f"  {t.name:32s} {t.frame.shape[0]:>7,} x {t.frame.shape[1]:<3} "
+            f"({t.source_format}{', sheet=' + t.sheet_name if t.sheet_name else ''})"
+        )
 
     cards = profile_tables(tables)
     frames = {t.name: t.frame for t in tables}
@@ -51,8 +53,10 @@ def main() -> None:
         keys = detect_primary_keys(card, frames[card.table_name])
         if keys:
             for k in keys:
-                print(f"  {k.table}.{'+'.join(k.columns)}  distinct={k.n_distinct:,} "
-                      f"clean={k.is_clean_key}")
+                print(
+                    f"  {k.table}.{'+'.join(k.columns)}  distinct={k.n_distinct:,} "
+                    f"clean={k.is_clean_key}"
+                )
         else:
             print(f"  {card.table_name}: (none found)")
 

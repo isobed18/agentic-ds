@@ -76,9 +76,7 @@ class RowsPerParentStats(FrozenModel):
             else 0.0
         )
         expected_all_mean = (
-            self.matched_child_rows / self.all_parent_count
-            if self.all_parent_count
-            else 0.0
+            self.matched_child_rows / self.all_parent_count if self.all_parent_count else 0.0
         )
         if abs(self.mean_rows_per_referenced_parent - expected_referenced_mean) > 1e-6:
             raise ValueError("Referenced-parent mean does not match its named denominator.")
@@ -171,6 +169,7 @@ class JoinStep(FrozenModel):
     right_columns: list[str] = Field(min_length=1)
     how: str = Field(default="left", pattern="^(inner|left|right|outer)$")
     rationale: str = Field(max_length=500)
+    rationale_tr: str = Field(default="", max_length=500)
 
     @model_validator(mode="after")
     def _check_widths(self) -> JoinStep:
@@ -192,14 +191,13 @@ class AggregationStep(FrozenModel):
     """
 
     source_table: str
-    output_name: str = Field(
-        description="Name for the aggregated result; reference this in joins."
-    )
+    output_name: str = Field(description="Name for the aggregated result; reference this in joins.")
     group_by: list[str] = Field(min_length=1)
     aggregations: dict[str, str] = Field(
         description="Mapping of output column name -> SQL aggregate expression."
     )
     rationale: str = Field(max_length=500)
+    rationale_tr: str = Field(default="", max_length=500)
 
     def output_columns(self) -> list[str]:
         """Columns available on the derived table: the grain plus the aggregates."""
@@ -221,10 +219,12 @@ class IntegrationPlanProposal(FrozenModel):
         min_length=1, description="Columns defining one row of the output ABT."
     )
     grain_description: str = Field(max_length=300)
+    grain_description_tr: str = Field(default="", max_length=300)
 
     aggregations: list[AggregationStep] = Field(default_factory=list)
     joins: list[JoinStep] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
 
     def derived_tables(self) -> dict[str, list[str]]:
         """Aggregation outputs and the columns each exposes."""
@@ -354,12 +354,14 @@ class IntegrationPlan(Artifact):
     base_table: str
     base_grain: list[str] = Field(min_length=1)
     grain_description: str = Field(max_length=300)
+    grain_description_tr: str = Field(default="", max_length=300)
 
     aggregations: list[AggregationStep] = Field(default_factory=list)
     joins: list[JoinStep] = Field(default_factory=list)
 
     evidence: list[RelationshipCandidate] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
     trial_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
@@ -375,10 +377,12 @@ class IntegrationPlan(Artifact):
             base_table=proposal.base_table,
             base_grain=proposal.base_grain,
             grain_description=proposal.grain_description,
+            grain_description_tr=proposal.grain_description_tr,
             aggregations=proposal.aggregations,
             joins=proposal.joins,
             evidence=evidence,
             warnings=proposal.warnings,
+            warnings_tr=proposal.warnings_tr,
             trial_artifact_id=trial_artifact_id,
         )
 
@@ -396,9 +400,11 @@ class IntegrationPlan(Artifact):
             base_table=self.base_table,
             base_grain=self.base_grain,
             grain_description=self.grain_description,
+            grain_description_tr=self.grain_description_tr,
             aggregations=self.aggregations,
             joins=self.joins,
             warnings=self.warnings,
+            warnings_tr=self.warnings_tr,
         )
 
     def summary(self) -> dict[str, Any]:

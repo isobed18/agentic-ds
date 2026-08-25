@@ -57,9 +57,11 @@ def test_agent_authored_analysis_cannot_supply_problem_support() -> None:
             "candidates": [
                 {
                     "title": "Churn prediction",
+                    "title_tr": "Müşteri kaybı tahmini",
                     "task_type": TaskType.BINARY_CLASSIFICATION,
                     "target_column": "churned",
                     "business_rationale": "Identify accounts likely to churn.",
+                    "business_rationale_tr": "Kaybetme olasılığı yüksek hesapları belirle.",
                     "evidence_columns": ["feature"],
                     "primary_metric": Metric.ROC_AUC,
                 }
@@ -84,9 +86,7 @@ def test_live_problem_scout_chooses_tools_and_executes_read_only_code(
     artifacts_dir = tmp_path / "artifacts"
     data_dir.mkdir()
     artifacts_dir.mkdir()
-    backend = SandboxManager(
-        SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir)
-    )
+    backend = SandboxManager(SandboxConfig(data_dir=data_dir, artifacts_dir=artifacts_dir))
     if not backend.docker_available():
         pytest.skip("Docker daemon is unavailable")
     if not backend.image_available():

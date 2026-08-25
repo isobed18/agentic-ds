@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 /**
  * The stage-status vocabulary, stated once.
  *
@@ -32,23 +33,25 @@ export const isAttention = (s?: string | null) => s === "blocked" || s === "fail
  * state was introduced to end.
  */
 export const isRunActive = (s?: string | null) =>
-  s === "queued" || s === "running" || s === "resuming";
+  s === "queued" || s === "running" || s === "resuming" || s === "staging";
 
 /** Human-facing label. The backend vocabulary is precise but not prose. */
 export const statusLabel = (s?: string | null) =>
-  ({
-    pending: "bekliyor",
-    queued: "sırada",
-    running: "çalışıyor",
-    resuming: "devam ediyor",
-    retry: "yeniden deniyor",
-    blocked: "onay bekliyor",
-    failed: "başarısız",
-    succeeded: "tamamlandı",
-    completed: "tamamlandı",
-    interrupted: "yarıda kaldı",
-    awaiting_human: "sizi bekliyor",
-  })[s ?? ""] ?? (s ?? "").replace(/_/g, " ");
+  t(({
+    pending: "pending",
+    queued: "queued",
+    staging: "reading the data",
+    staged: "ready to run",
+    running: "running",
+    resuming: "resuming",
+    retry: "retrying",
+    blocked: "needs approval",
+    failed: "failed",
+    succeeded: "complete",
+    completed: "complete",
+    interrupted: "interrupted",
+    awaiting_human: "needs you",
+  })[s ?? ""] ?? (s ?? "").replace(/_/g, " "));
 
 /**
  * Gate verdicts and reason codes are internal vocabulary. They stay in the API
@@ -56,39 +59,54 @@ export const statusLabel = (s?: string | null) =>
  * enum values a reader has to decode.
  */
 const VERDICT_LABELS: Record<string, string> = {
-  auto_proceed: "Devam etti",
-  retry: "Geri gönderildi",
-  escalate: "Size soruldu",
-  abort: "Durduruldu",
+  auto_proceed: "Continued",
+  retry: "Sent back",
+  escalate: "Asked you",
+  abort: "Stopped",
 };
 
 export const verdictLabel = (v: string): string =>
-  VERDICT_LABELS[v] ?? titleCase(v);
+  t(VERDICT_LABELS[v] ?? titleCase(v));
 
 const REASON_LABELS: Record<string, string> = {
-  profile_checkpoint: "Bu adımı gözden geçirmek istediniz",
-  leakage_detected: "Bir öznitelik cevabı sızdırıyor olabilir",
-  leakage_unresolved: "Düzeltmeden sonra da sızıntı sürüyor",
-  leakage_challenge_needs_confirmation: "Agent sızıntı bulgusuna itiraz etti",
-  retry_budget_exhausted: "Deneme hakkı kalmadı",
-  repeated_identical_failure: "Aynı hata tekrarlandı",
-  pii_egress_requested: "Kişisel veri makineden çıkacaktı",
-  destructive_operation: "Bir adım kaynak veriyi değiştirecekti",
-  model_below_baseline: "Model referans modeli geçemedi",
-  lift_within_noise: "İyileşme gürültü sınırları içinde",
-  high_cv_variance: "Katlamalar arası skorlar çok değişken",
-  candidate_disagreement: "Öneriler birbirini tutmadı",
-  statistical_support_low: "Bunu destekleyecek kadar veri yok",
-  degenerate_split: "Bölme bir katlamayı kullanılamaz bıraktı",
-  unmet_mandatory_criteria: "Zorunlu bir kontrol geçmedi",
-  risk_class_gate: "Bu adım yüksek riskli",
-  clean: "İşaretlenecek bir şey yok",
+  profile_checkpoint: "You asked to review this step",
+  leakage_detected: "A feature may leak the answer",
+  leakage_unresolved: "Leakage still present after rework",
+  leakage_challenge_needs_confirmation: "Agent challenged the leakage finding",
+  retry_budget_exhausted: "No attempts left",
+  repeated_identical_failure: "The same failure repeated",
+  pii_egress_requested: "Personal data would leave the machine",
+  destructive_operation: "A step would modify the source data",
+  model_below_baseline: "The model did not beat the baseline",
+  lift_within_noise: "The improvement is within noise",
+  high_cv_variance: "Fold-to-fold scores vary widely",
+  candidate_disagreement: "The proposals disagreed",
+  statistical_support_low: "Not enough data to support this",
+  degenerate_split: "The split left a fold unusable",
+  unmet_mandatory_criteria: "A required check did not pass",
+  risk_class_gate: "This step is high risk",
+  clean: "Nothing to flag",
 };
 
 export const reasonLabel = (code: string): string =>
-  REASON_LABELS[code] ?? titleCase(code);
+  t(REASON_LABELS[code] ?? titleCase(code));
 
 function titleCase(s: string): string {
   const words = s.replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * A stage duration, at the precision a person actually reads. Seconds below a
+ * minute, minutes and seconds below an hour: "3m 12s" answers "is this stuck?"
+ * and "192.4 seconds" makes you do the arithmetic yourself.
+ */
+export function elapsedLabel(seconds?: number | null): string | null {
+  if (seconds === null || seconds === undefined) return null;
+  if (seconds < 1) return "<1s";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  if (minutes < 60) return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

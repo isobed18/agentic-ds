@@ -7,11 +7,12 @@ also written beside the artifact store so completed and interrupted runs remain
 inspectable after the server restarts.
 """
 
+import hashlib
 import json
 import re
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,15 +34,49 @@ from ads.api.panels import (
     training_panels,
     validation_panels,
 )
+from ads.automation import (
+    add_problem_branches,
+    apply_planner_graph_operations,
+    automation_component_catalog,
+    compile_automation_plan,
+    instantiate_component,
+)
 from ads.contracts.base import ArtifactType
+from ads.contracts.documents import DocumentExtraction, DocumentExtractionSummary
 from ads.contracts.gates import BUILTIN_PROFILES
 from ads.contracts.integration import IntegrationPlan
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
+from ads.contracts.staging import (
+    LocalizedText,
+    PipelineBlueprint,
+    PipelineOutputReference,
+    RelationshipExplanation,
+    RuntimeConfigurationPlan,
+    StagingMessage,
+    StagingReport,
+    StagingReportArtifact,
+    StagingWorkspace,
+)
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
+from ads.documents import (
+    PDF_SUFFIXES,
+    document_extraction_prompt_context,
+    extract_document_directory,
+    load_pdf_directory,
+    pdf_prompt_context,
+)
 from ads.gates import GatePolicy
 from ads.intake import detect_relationships, load_directory, profile_tables
+from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
 from ads.llm import LARGE, OllamaClient, StructuredLLM
-from ads.orchestration import RunState, resume_workflow, run_workflow
+from ads.orchestration import (
+    EdgeCondition,
+    RunOutcome,
+    RunState,
+    RunStatus,
+    resume_workflow,
+    run_workflow,
+)
 from ads.pipeline import (
     build_default_registry,
     build_default_spec,
@@ -51,12 +86,20 @@ from ads.pipeline import (
     configure_full_pipeline_state,
     configure_pipeline_state,
 )
+from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
 from ads.sandbox import SandboxConfig, SandboxManager
+from ads.skills import render_skills, select_skills
+from ads.staging import (
+    apply_component_updates,
+    build_default_blueprint,
+    document_engine_catalog,
+    validate_executable_blueprint,
+)
 from ads.store import ArtifactStore
 
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
-_UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq"}
+_UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
 _PLANNER_AGENTS = {"schema_discovery", "problem_discovery", "validation_strategy"}
 _PIPELINE_STAGES = {
     "intake",
@@ -74,10 +117,85 @@ _PIPELINE_STAGES = {
 }
 
 
+class _PlannerLocalizedText(BaseModel):
+    """A bilingual fragment emitted in one local-model response."""
+
+    en: str = Field(min_length=1, max_length=20_000)
+    tr: str = Field(min_length=1, max_length=20_000)
+
+
+class _PlannerRelationshipExplanation(BaseModel):
+    from_table: str
+    from_columns: list[str] = Field(min_length=1)
+    to_table: str
+    to_columns: list[str] = Field(min_length=1)
+    explanation_en: str = Field(min_length=1, max_length=20_000)
+    explanation_tr: str = Field(min_length=1, max_length=20_000)
+    why_it_matters_en: str = Field(min_length=1, max_length=20_000)
+    why_it_matters_tr: str = Field(min_length=1, max_length=20_000)
+    verification_question_en: str = Field(min_length=1, max_length=20_000)
+    verification_question_tr: str = Field(min_length=1, max_length=20_000)
+
+
+class _PlannerReport(BaseModel):
+    component_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]*$")
+    title_en: str = Field(min_length=1, max_length=500)
+    title_tr: str = Field(min_length=1, max_length=500)
+    summary_en: str = Field(min_length=1, max_length=20_000)
+    summary_tr: str = Field(min_length=1, max_length=20_000)
+    findings: list[_PlannerLocalizedText] = Field(default_factory=list)
+    verification_questions: list[_PlannerLocalizedText] = Field(default_factory=list)
+
+
+class _PlannerProblemBranch(BaseModel):
+    branch_id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$", max_length=40)
+    title: str = Field(min_length=1, max_length=200)
+    target_column: str = Field(min_length=1, max_length=500)
+    task_type: Literal[
+        "binary_classification",
+        "multiclass_classification",
+        "regression",
+        "anomaly_detection",
+    ]
+    primary_metric: Literal[
+        "roc_auc",
+        "average_precision",
+        "f1",
+        "balanced_accuracy",
+        "accuracy",
+        "rmse",
+        "mae",
+        "r2",
+        "mape",
+        "silhouette",
+    ]
+
+
+class _PlannerComponentAddition(BaseModel):
+    catalog_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$")
+    component_id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    settings: dict[str, Any] = Field(default_factory=dict)
+    control: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    branch_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]*$")
+    group_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]*$")
+
+
+class _PlannerConnection(BaseModel):
+    id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]+$")
+    source_component: str
+    source_port: str
+    target_component: str
+    target_port: str
+
+
 class _PlannerChatReply(BaseModel):
     """Grammar-constrained, UI-safe response from the planner chat."""
 
     reply: str
+    relationship_explanations: list[_PlannerRelationshipExplanation] = Field(default_factory=list)
+    reports: list[_PlannerReport] = Field(default_factory=list)
+    plan_rationale: list[_PlannerLocalizedText] = Field(default_factory=list)
     configuration_patch: dict[str, Any] = Field(default_factory=dict)
     rules_to_remember: list[str] = Field(default_factory=list)
     checkpoint_stages: list[str] = Field(default_factory=list)
@@ -91,6 +209,15 @@ class _PlannerChatReply(BaseModel):
     #: planner, and the planner decides which stage it belongs to. The direct
     #: route is the instruction box on the stage itself.
     stage_directives: dict[str, list[str]] = Field(default_factory=dict)
+    #: Bounded updates to known component settings. The host validates these
+    #: against the persisted blueprint; this is not arbitrary graph execution.
+    pipeline_component_updates: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    pipeline_component_additions: list[_PlannerComponentAddition] = Field(
+        default_factory=list, max_length=12
+    )
+    pipeline_connections: list[_PlannerConnection] = Field(default_factory=list, max_length=24)
+    pipeline_component_disables: list[str] = Field(default_factory=list, max_length=12)
+    problem_branches: list[_PlannerProblemBranch] = Field(default_factory=list, max_length=3)
 
 
 def _now() -> str:
@@ -114,12 +241,18 @@ class RunSummary:
     #: is no longer true for both sides.
     parent_run_id: str | None = None
     branch_label: str | None = None
+    #: Which dataset this run is working on. The frontend has been reading a
+    #: `dataset` field off this object since it was written; nothing ever put
+    #: one there, so every screen that needed the source got `undefined`.
+    source_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "parent_run_id": self.parent_run_id,
             "branch_label": self.branch_label,
+            "source_id": self.source_id,
+            "dataset": self.source_id,
             "artifact_count": self.artifact_count,
             "stages": self.stages,
             "status": self.status,
@@ -141,6 +274,10 @@ class _RuntimeRun:
     events: list[dict[str, Any]] = field(default_factory=list)
     outcome: Any | None = None
     error: str | None = None
+    #: Continues a staged run from where it stopped. Held rather than rebuilt
+    #: so the second half executes against the same state and the artifacts
+    #: intake and schema discovery already produced are not recomputed.
+    resume: Any | None = None
 
 
 @dataclass
@@ -153,6 +290,14 @@ class ControlPlane:
     llm_factory: Callable[[], StructuredLLM] | None = None
     workflow_runner: Callable[..., Any] | None = None
     _runtime_runs: dict[str, _RuntimeRun] = field(default_factory=dict)
+    #: source_id -> (file fingerprint, profile). Invalidated by the fingerprint
+    #: rather than by a timer, so a changed file is re-profiled immediately and
+    #: an unchanged one is never re-read.
+    _profile_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
+    #: source_id -> (file fingerprint, cached staged outcome data).
+    #: Staging runs Intake and Schema Discovery (which takes ~7 min on local 27B model).
+    #: When unchanged data is staged again, the staged state & artifacts are reused.
+    _staged_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
@@ -177,31 +322,51 @@ class ControlPlane:
         """Return the fixed pipeline graph, optionally annotated with run state."""
         progress = self.progress(run_id) if run_id else None
         if progress:
-            mode = progress.get("configuration", {}).get("mode", "manual")
+            mode = self._mode_of(progress)
         spec = build_full_spec_definition() if mode == "agent" else build_default_spec()
         raw = spec.to_dict()
         attempts = progress["attempts"] if progress else []
         current = progress.get("current_stage") if progress else None
         run_status = progress.get("status") if progress else None
+        human_approved_stages = {
+            event.get("stage")
+            for event in (progress.get("events", []) if progress else [])
+            if event.get("event") == "human_decision_recorded"
+            and event.get("decision") == "approve"
+        }
 
         nodes = []
         for index, stage in enumerate(raw["stages"], start=1):
             own = [item for item in attempts if item["stage_id"] == stage["id"]]
             latest = own[-1] if own else None
-            status = self._stage_status(latest, current, run_status)
+            status = self._stage_status(
+                latest,
+                current,
+                run_status,
+                human_approved=stage["id"] in human_approved_stages,
+            )
             nodes.append(
                 {
                     **stage,
+                    "description": i18n.t(stage["description"]),
                     "order": index,
                     "kind": "planner_agent" if stage["id"] in _PLANNER_AGENTS else "deterministic",
                     "owner": (
-                        "Local planning agent"
+                        i18n.t("Local planning agent")
                         if stage["id"] in _PLANNER_AGENTS
-                        else "Python executor"
+                        else i18n.t("Python executor")
                     ),
                     "status": status,
                     "attempt_count": len(own),
                     "retry_count": sum(item.get("verdict") == "retry" for item in own),
+                    # Wall time across every attempt of this stage, and the
+                    # moment the last one started. A stage that took four
+                    # minutes and one that took four seconds looked identical
+                    # before this, which is most of what a person wants to know
+                    # while watching a run they cannot otherwise see inside.
+                    "elapsed_seconds": self._elapsed(own),
+                    "started_at": own[0]["started_at"] if own else None,
+                    "ended_at": own[-1]["ended_at"] if own else None,
                 }
             )
         return {
@@ -219,14 +384,18 @@ class ControlPlane:
 
     @staticmethod
     def _stage_status(
-        latest: dict[str, Any] | None, current: str | None, run_status: str | None
+        latest: dict[str, Any] | None,
+        current: str | None,
+        run_status: str | None,
+        *,
+        human_approved: bool = False,
     ) -> str:
         if latest is None:
             return "pending"
         stage_id = latest["stage_id"]
         if (
             current == stage_id
-            and run_status in {"queued", "running"}
+            and run_status in {"queued", "running", "staging"}
             and not latest.get("ended_at")
         ):
             return "running"
@@ -235,6 +404,12 @@ class ControlPlane:
         verdict = latest.get("verdict")
         if verdict == "retry":
             return "retry"
+        # An escalation describes the automated gate result, not the terminal
+        # stage state. Once a person explicitly accepts it, execution resumes
+        # along the proceed edge and the stage is complete. The original
+        # escalation remains in gate_decisions/events as the audit trail.
+        if verdict == "escalate" and human_approved:
+            return "succeeded"
         if verdict == "escalate":
             return "blocked"
         if verdict == "abort":
@@ -254,16 +429,21 @@ class ControlPlane:
             "split_strategies": [item.value for item in SplitStrategy],
             "defaults": {"n_folds": 5, "test_size": 0.2, "candidate_limit": 3},
             "agent_panel_sizes": [1, 2, 3],
+            "document_engines": document_engine_catalog(),
             "execution_modes": [
                 {
                     "value": "agent",
-                    "label": "Agent-planned",
-                    "description": "Planner agents discover schema, problem, and validation.",
+                    "label": i18n.t("Agent-planned"),
+                    "description": i18n.t(
+                        "Planner agents discover schema, problem, and validation."
+                    ),
                 },
                 {
                     "value": "manual",
-                    "label": "Manual plan",
-                    "description": "Use the problem and validation choices configured here.",
+                    "label": i18n.t("Manual plan"),
+                    "description": i18n.t(
+                        "Use the problem and validation choices configured here."
+                    ),
                 },
             ],
         }
@@ -278,7 +458,7 @@ class ControlPlane:
         run_id: str | None = None,
         stage_id: str | None = None,
     ) -> dict[str, Any]:
-        """Let the local planner explain and propose UI/run changes without mutating a run."""
+        """Explain staged evidence and safely author the executable automation graph."""
         if not message.strip():
             raise ValueError("planner message cannot be empty")
         llm = self.llm_factory() if self.llm_factory else OllamaClient()
@@ -287,8 +467,23 @@ class ControlPlane:
             raise ValueError("Planner chat needs the local Ollama service to be running")
 
         safe_source: dict[str, Any] | None = None
+        document_context: list[dict[str, Any]] | None = None
         if source_id:
             safe_source = self.source_profile(source_id)
+            if safe_source.get("documents"):
+                extraction_ref = (
+                    self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+                    if run_id
+                    else None
+                )
+                if extraction_ref is not None:
+                    extraction = self.store.load(
+                        extraction_ref.artifact_id, DocumentExtraction
+                    )
+                    document_context = document_extraction_prompt_context(extraction, message)
+                else:
+                    documents = load_pdf_directory(self.source_path(source_id))
+                    document_context = pdf_prompt_context(documents, message)
         run_context: dict[str, Any] | None = None
         if run_id:
             try:
@@ -332,9 +527,67 @@ class ControlPlane:
             except KeyError:
                 stage_context = {"stage_id": stage_id, "status": "unknown"}
 
+        # The pre-pipeline planner needs one coherent understanding surface,
+        # not whichever half of intake/schema discovery happens to be selected
+        # in the rail. Both projections are row-free artifact stories.
+        understanding_context: dict[str, Any] | None = None
+        if run_id and stage_id in {None, "intake", "schema_discovery"}:
+            understanding_context = {}
+            for understanding_stage in ("intake", "schema_discovery"):
+                try:
+                    detail = self.stage_detail(run_id, understanding_stage)
+                except KeyError:
+                    continue
+                understanding_context[understanding_stage] = {
+                    "status": detail["status"],
+                    "human_view": detail["human_view"],
+                    "outputs": [
+                        {
+                            "type": item["type"],
+                            "summary": item["summary"],
+                            "story": item["story"],
+                        }
+                        for item in detail["outputs"][:4]
+                    ],
+                    "gate_decisions": detail["gate_decisions"][-2:],
+                }
+
+        stored_history: list[dict[str, str]] = []
+        automation_context: dict[str, Any] | None = None
+        if run_id:
+            existing = self._latest_staging_workspace(run_id)
+            if existing is not None:
+                stored_history = [
+                    {"role": item.role, "content": item.content.en}
+                    for item in existing.chat_history[-8:]
+                ]
+                if existing.pipeline_blueprint is not None:
+                    automation_context = {
+                        "blueprint": existing.pipeline_blueprint.model_dump(mode="json"),
+                        "component_outputs": [
+                            item.model_dump(mode="json")
+                            for item in existing.component_outputs
+                        ],
+                        "catalog": [
+                            {
+                                "catalog_id": item.catalog_id,
+                                "category": item.category,
+                                "kind": item.kind,
+                                "title": item.title.en,
+                                "inputs": [port.model_dump(mode="json") for port in item.inputs],
+                                "outputs": [port.model_dump(mode="json") for port in item.outputs],
+                                "default_settings": item.default_settings,
+                                "repeatable": item.repeatable,
+                            }
+                            for item in automation_component_catalog()
+                        ],
+                    }
+
+        planner_skills = render_skills(select_skills("source_comprehension", []))
         system = (
-            "You are the Planner/Orchestrator control layer for a fixed agentic data-science "
-            "workflow. Help a human understand an unfamiliar dataset and configure the run. "
+            "You are the Planner/Orchestrator control layer for a graph-based data and ML "
+            "automation workspace. Help a human understand unfamiliar files, build a valid "
+            "automation graph, and configure its execution. "
             "Be concise, explain trade-offs, and never claim a change was applied unless it is "
             "present in configuration_patch. Only propose a gate decision when the run is "
             "actually awaiting human input. Configuration keys you may set are: base_table, "
@@ -356,16 +609,46 @@ class ControlPlane:
             "Treat gate history as authoritative: an escalation followed by a later passing "
             "attempt is a resolved intervention, not uninterrupted auto-proceed. Never claim "
             "how an issue was fixed unless the supplied evidence says how; label inferences. "
-            "Do not expose or ask for raw rows, names, emails, licence numbers, or other PII."
+            "Do not expose or ask for raw rows, names, emails, licence numbers, or other PII. "
+            "PDF excerpts are local, page-provenanced evidence. Explain them without repeating "
+            "sensitive passages. Distinguish extractable text from OCR/vision gaps and never "
+            "claim a chart or table became training data unless a deterministic extraction "
+            "artifact says so. Cite PDF claims using the supplied file name and page number. "
+            "Reply once in the same language as the user's message. Do not emit or request a "
+            "translated chat reply. Artifacts remain bilingual: for relationship_explanations "
+            "use exact measured table/column "
+            "endpoints plus explanation_en/explanation_tr, why_it_matters_en/"
+            "why_it_matters_tr and verification_question_en/verification_question_tr. For "
+            "reports use title_en/title_tr, summary_en/summary_tr and bilingual finding and "
+            "verification-question objects. Set each report's component_id to the enabled "
+            "agent.report graph component that produced it. Put bilingual configuration reasons in "
+            "plan_rationale. You may author the graph only from the supplied catalog. Use "
+            "pipeline_component_additions to instantiate registered catalog entries, "
+            "pipeline_connections to connect exact matching typed ports, "
+            "pipeline_component_updates to change allowed settings or node control, and "
+            "pipeline_component_disables to disable an existing node. A node control may set "
+            "execution to auto or pause_after, gate_handler to human or planner, and "
+            "max_retries from 0 to 9. Never invent catalog ids, component ids, ports, setting "
+            "keys, executable code, or data types. Hard safety gates cannot be weakened. "
+            "When the human explicitly asks to compare multiple valid ML "
+            "problems, return up to three problem_branches. Each branch must use an existing "
+            "target column, a compatible task_type and primary_metric. The host expands each "
+            "branch into fresh problem, validation, EDA, leakage, feature, split, training, "
+            "evaluation and report nodes so agents do not share branch-specific state. Do not "
+            "translate identifiers, column names, metrics, or code."
+            "\n\n## Runtime data-understanding skills\n" + planner_skills
         )
         prompt = json.dumps(
             {
                 "message": message.strip(),
                 "configuration": configuration or {},
-                "remembered_conversation": (history or [])[-8:],
+                "remembered_conversation": ((history or []) + stored_history)[-8:],
                 "safe_source_profile": safe_source,
+                "local_pdf_context": document_context,
+                "intake_and_schema_discovery": understanding_context,
                 "run_context": run_context,
                 "selected_stage_evidence": stage_context,
+                "automation_graph": automation_context,
             },
             default=str,
         )
@@ -420,6 +703,31 @@ class ControlPlane:
             for stage, retries in reply.max_retries_by_stage.items()
             if stage in _PIPELINE_STAGES
         }
+        if run_id:
+            workspace = self._latest_staging_workspace(run_id)
+            if workspace and workspace.pipeline_blueprint:
+                updated_blueprint = apply_planner_graph_operations(
+                    workspace.pipeline_blueprint,
+                    additions=[item.model_dump() for item in reply.pipeline_component_additions],
+                    connections=[item.model_dump() for item in reply.pipeline_connections],
+                    updates=result["pipeline_component_updates"],
+                    disable_components=result["pipeline_component_disables"],
+                )
+                known_columns = {
+                    column["name"]
+                    for table in (safe_source or {}).get("tables", [])
+                    for column in table.get("columns", [])
+                }
+                valid_branches = [
+                    item.model_dump()
+                    for item in reply.problem_branches
+                    if item.target_column in known_columns
+                    and Metric(item.primary_metric) in METRICS_BY_TASK[TaskType(item.task_type)]
+                ]
+                updated_blueprint = add_problem_branches(
+                    updated_blueprint, valid_branches, configured_by="planner"
+                )
+                result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
         # Applied here rather than returned for the UI to apply, so the planner
         # route and the direct route end in the same place. A directive the user
         # never sees applied is the failure mode worth avoiding: they asked the
@@ -438,7 +746,972 @@ class ControlPlane:
 
         result["model"] = response.model
         result["latency_s"] = response.latency_s
+        if run_id and run_id in self._runtime_runs:
+            self._persist_staging_workspace(
+                self._runtime_runs[run_id],
+                planner_result=result,
+                user_message=message.strip(),
+            )
         return result
+
+    @staticmethod
+    def _localized(en: Any, tr: Any = None) -> LocalizedText:
+        english = str(en or "").strip() or "No explanation was returned."
+        turkish = str(tr or "").strip() or english
+        return LocalizedText(en=english, tr=turkish)
+
+    def _latest_staging_workspace(self, run_id: str) -> StagingWorkspace | None:
+        ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        return self.store.load(ref.artifact_id, StagingWorkspace) if ref else None
+
+    def _staging_report_artifact_ids(self, run_id: str) -> dict[str, list[str]]:
+        attached: dict[str, list[str]] = {}
+        for report_ref in self.store.list(run_id, artifact_type=ArtifactType.STAGING_REPORT):
+            report = self.store.load(report_ref.artifact_id, StagingReportArtifact)
+            attached.setdefault(report.producer_component_id, []).append(
+                report_ref.artifact_id
+            )
+        return attached
+
+    def staging_workspace(self, run_id: str) -> dict[str, Any]:
+        ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        if ref is None:
+            raise KeyError(run_id)
+        workspace = self.store.load(ref.artifact_id, StagingWorkspace)
+        branch_outputs = self._branch_component_outputs(run_id, workspace)
+        branch_component_ids = {
+            component.id
+            for component in (
+                workspace.pipeline_blueprint.components if workspace.pipeline_blueprint else []
+            )
+            if component.branch_id
+        }
+        projected_outputs = [
+            item
+            for item in workspace.component_outputs
+            if item.component_id not in branch_component_ids
+        ]
+        projected_outputs.extend(branch_outputs)
+        return {
+            "artifact_id": ref.artifact_id,
+            "run_id": run_id,
+            **workspace.model_dump(mode="json", exclude={"component_outputs"}),
+            "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
+        }
+
+    def _branch_component_outputs(
+        self, parent_run_id: str, workspace: StagingWorkspace
+    ) -> list[PipelineOutputReference]:
+        if workspace.pipeline_blueprint is None:
+            return []
+        children = {
+            item.branch_label: item
+            for item in self.list_runs()
+            if item.parent_run_id == parent_run_id and item.branch_label
+        }
+        output_types: dict[str, set[ArtifactType]] = {
+            "agent.define_problem": {ArtifactType.PROBLEM_DEFINITION},
+            "agent.plan_validation": {ArtifactType.VALIDATION_STRATEGY},
+            "analysis.eda": {ArtifactType.EDA_REPORT, ArtifactType.EXPLORATORY_ANALYSIS},
+            "analysis.leakage": {ArtifactType.LEAKAGE_REPORT},
+            "data.features": {ArtifactType.FEATURE_SPEC},
+            "ml.train": {ArtifactType.TRAINED_MODEL, ArtifactType.MODEL_EXPERIMENT},
+            "ml.evaluate": {ArtifactType.EVALUATION_REPORT},
+            "report.final": {ArtifactType.FINAL_REPORT},
+        }
+        projected: list[PipelineOutputReference] = []
+        for component in workspace.pipeline_blueprint.components:
+            if not component.branch_id:
+                continue
+            child = children.get(component.branch_id)
+            refs = self.store.list(child.run_id) if child else []
+            allowed_types = output_types.get(component.catalog_id or "", set())
+            artifact_ids = [
+                item.artifact_id for item in refs if item.artifact_type in allowed_types
+            ]
+            if artifact_ids:
+                status = "ready"
+            elif child and child.status in {"failed", "aborted"}:
+                status = "unavailable"
+            elif child:
+                status = "pending"
+            else:
+                status = "not_started"
+            for port in component.outputs:
+                projected.append(
+                    PipelineOutputReference(
+                        component_id=component.id,
+                        port_id=port.id,
+                        data_type=port.data_type,
+                        status=status,
+                        artifact_ids=artifact_ids,
+                        summary=LocalizedText(
+                            en=f"Independent branch {component.branch_id}: "
+                            f"{status.replace('_', ' ')}.",
+                            tr=(
+                                f"Bağımsız dal {component.branch_id}: {status.replace('_', ' ')}."
+                            ),
+                        ),
+                    )
+                )
+        return projected
+
+    def compile_automation(self, run_id: str) -> dict[str, Any]:
+        """Freeze the saved visual graph into an immutable execution plan."""
+        workspace_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        if workspace_ref is None:
+            raise KeyError(run_id)
+        workspace = self.store.load(workspace_ref.artifact_id, StagingWorkspace)
+        if workspace.pipeline_blueprint is None:
+            raise ValueError("the staging workspace has no automation graph")
+        plan = compile_automation_plan(workspace.pipeline_blueprint)
+        plan_ref = self.store.put(
+            plan,
+            run_id=run_id,
+            stage_exec_id="automation",
+            name="execution_plan",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            runtime.configuration.update(
+                {
+                    "automation_execution_plan_id": plan_ref.artifact_id,
+                    "automation_blueprint_fingerprint": plan.blueprint_fingerprint,
+                    "pipeline_blueprint": workspace.pipeline_blueprint.model_dump(mode="json"),
+                }
+            )
+            runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+        return {
+            "artifact_id": plan_ref.artifact_id,
+            "workspace_artifact_id": workspace_ref.artifact_id,
+            "plan": plan.model_dump(mode="json"),
+        }
+
+    def start_automation_branches(self, run_id: str) -> list[dict[str, str]]:
+        """Launch each configured ML problem branch as an isolated agent run."""
+        workspace = self._latest_staging_workspace(run_id)
+        if workspace is None or workspace.pipeline_blueprint is None:
+            raise KeyError(run_id)
+        validate_executable_blueprint(workspace.pipeline_blueprint)
+        integration_plan: IntegrationPlan | None = None
+        for artifact_id in workspace.schema_artifact_ids:
+            try:
+                integration_plan = self.store.load(artifact_id, IntegrationPlan)
+                break
+            except (KeyError, TypeError, ValueError):
+                continue
+        if integration_plan is None:
+            raise ValueError("problem branches need a completed integration plan")
+
+        plan = workspace.recommended_plan
+        supervision = (
+            {
+                "checkpoint_stages": plan.checkpoint_stages,
+                "auto_proceed_stages": plan.auto_proceed_stages,
+                "max_retries_by_stage": plan.max_retries_by_stage,
+            }
+            if plan
+            else {}
+        )
+        branch_runs: list[dict[str, str]] = []
+        problem_nodes = [
+            item
+            for item in workspace.pipeline_blueprint.components
+            if item.enabled and item.branch_id and item.catalog_id == "agent.define_problem"
+        ]
+        for node in sorted(problem_nodes, key=lambda item: item.branch_id or ""):
+            branch_id = str(node.branch_id)
+            settings = node.settings
+            task_type = TaskType(str(settings.get("task_type")))
+            metric = Metric(str(settings.get("primary_metric")))
+            if metric not in METRICS_BY_TASK[task_type]:
+                raise ValueError(f"metric {metric.value!r} is incompatible with {task_type.value}")
+            problem = ProblemDefinition(
+                task_type=task_type,
+                target_column=str(settings.get("target_column") or "") or None,
+                primary_metric=metric,
+                title=str(settings.get("problem_title") or branch_id),
+                description=(
+                    f"Independent automation branch {branch_id!r}, configured before execution."
+                ),
+                excluded_columns=list(
+                    (plan.configuration.get("excluded_columns") if plan else []) or []
+                ),
+                confirmed_by="auto",
+            )
+            validation_node = next(
+                (
+                    item
+                    for item in workspace.pipeline_blueprint.components
+                    if item.enabled
+                    and item.branch_id == branch_id
+                    and item.catalog_id == "agent.plan_validation"
+                ),
+                None,
+            )
+            n_folds = int(
+                (validation_node.settings.get("n_folds") if validation_node else None)
+                or (plan.configuration.get("n_folds") if plan else 5)
+                or 5
+            )
+            validation = ValidationStrategy(
+                strategy=SplitStrategy.STRATIFIED,
+                n_folds=n_folds,
+                test_size=0.2,
+                rationale="Initial branch preference; the branch agent must validate it.",
+            )
+            directives = (
+                "\n".join(
+                    f"{stage}: {line}"
+                    for stage, lines in plan.stage_directives.items()
+                    for line in lines
+                )
+                if plan
+                else None
+            )
+            child_run_id = self.start_run(
+                source_id=workspace.source_id,
+                integration_plan=integration_plan,
+                problem=problem,
+                validation_strategy=validation,
+                candidate_limit=int(plan.configuration.get("candidate_limit", 2)) if plan else 2,
+                instructions=directives,
+                mode="agent",
+                supervision=supervision,
+                agent_panel_size=1,
+                run_mode="fully_auto",
+                parent_run_id=run_id,
+                branch_label=branch_id,
+            )
+            branch_runs.append({"branch_id": branch_id, "run_id": child_run_id})
+        if not branch_runs:
+            raise ValueError("the automation graph has no enabled ML problem branches")
+        return branch_runs
+
+    def default_staging_pipeline(self, source_id: str) -> dict[str, Any]:
+        profile = self.source_profile(source_id)
+        return build_default_blueprint(
+            has_tables=bool(profile.get("tables")),
+            has_documents=bool(profile.get("documents")),
+        ).model_dump(mode="json")
+
+    def update_staging_pipeline(
+        self,
+        run_id: str,
+        raw_blueprint: dict[str, Any],
+        *,
+        base_artifact_id: str,
+    ) -> dict[str, Any]:
+        """Persist a human-edited component graph as a new immutable snapshot."""
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status not in {"staging", "staged"}:
+            raise ValueError("this run is not staged")
+        latest_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        if latest_ref is None:
+            raise ValueError("the staging workspace is not ready")
+        if latest_ref.artifact_id != base_artifact_id:
+            raise ValueError("the staging workspace changed; reload before saving this pipeline")
+        previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
+        if previous.pipeline_blueprint is None:
+            raise ValueError("the staging pipeline is not ready")
+        candidate = PipelineBlueprint.model_validate(raw_blueprint)
+        candidate.validate_connections()
+        blueprint = self._validate_human_blueprint(previous.pipeline_blueprint, candidate)
+        previous_document_ids = list(
+            dict.fromkeys(
+                artifact_id
+                for output in previous.component_outputs
+                if output.component_id == "understand-documents"
+                for artifact_id in output.artifact_ids
+            )
+        )
+        previous_document_summary = (
+            previous.document_extractions[-1] if previous.document_extractions else None
+        )
+        saved = previous.model_copy(
+            update={
+                "pipeline_blueprint": blueprint,
+                "component_outputs": self._staging_component_outputs(
+                    blueprint,
+                    intake_ids=previous.intake_artifact_ids,
+                    schema_ids=previous.schema_artifact_ids,
+                    document_ids=previous_document_ids,
+                    document_summary=previous_document_summary,
+                    reports_ready=bool(previous.reports),
+                    report_artifact_ids=self._staging_report_artifact_ids(run_id),
+                    plan_ready=previous.recommended_plan is not None,
+                    plan_accepted=bool(
+                        previous.recommended_plan and previous.recommended_plan.accepted
+                    ),
+                ),
+            }
+        )
+        ref = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="staging",
+            name="data_understanding",
+        )
+        runtime.configuration["pipeline_blueprint"] = blueprint.model_dump(mode="json")
+        runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        return {"artifact_id": ref.artifact_id, **saved.model_dump(mode="json")}
+
+    @staticmethod
+    def _validate_human_blueprint(
+        baseline: PipelineBlueprint,
+        candidate: PipelineBlueprint,
+    ) -> PipelineBlueprint:
+        """Accept graph composition while keeping component capabilities host-owned."""
+        baseline_by_id = {component.id: component for component in baseline.components}
+        candidate_by_id = {component.id: component for component in candidate.components}
+        if "data-source" not in candidate_by_id:
+            raise ValueError("the uploaded-data source component cannot be removed")
+        if sum(component.kind == "data_source" for component in candidate.components) != 1:
+            raise ValueError("an automation must contain exactly one uploaded-data source")
+
+        structural_fields = (
+            "kind",
+            "title",
+            "description",
+            "inputs",
+            "outputs",
+            "optional",
+            "evidence_layer",
+            "catalog_id",
+            "branch_id",
+            "group_id",
+        )
+        existing_updates = {
+            component.id: {
+                "enabled": component.enabled,
+                "settings": component.settings,
+                "control": component.control,
+            }
+            for component in candidate.components
+            if component.id in baseline_by_id
+        }
+        validated_existing = apply_component_updates(
+            baseline,
+            existing_updates,
+            configured_by="human",
+        )
+        validated_by_id = {component.id: component for component in validated_existing.components}
+
+        for component in candidate.components:
+            original = baseline_by_id.get(component.id)
+            if original is not None:
+                for field_name in structural_fields:
+                    if getattr(component, field_name) != getattr(original, field_name):
+                        raise ValueError(
+                            f"component capability {component.id}.{field_name} cannot be changed"
+                        )
+                continue
+
+            if component.catalog_id is None:
+                raise ValueError(f"new component {component.id!r} must come from the catalog")
+            canonical = instantiate_component(
+                component.catalog_id,
+                component.id,
+                branch_id=component.branch_id,
+                group_id=component.group_id,
+                configured_by="human",
+            )
+            for field_name in structural_fields:
+                if getattr(component, field_name) != getattr(canonical, field_name):
+                    raise ValueError(
+                        f"new component {component.id!r} does not match its catalog definition"
+                    )
+            one_node = PipelineBlueprint(
+                name=candidate.name,
+                components=[canonical],
+                connections=[],
+            )
+            validated_new = apply_component_updates(
+                one_node,
+                {
+                    component.id: {
+                        "enabled": component.enabled,
+                        "settings": component.settings,
+                        "control": component.control,
+                    }
+                },
+                configured_by="human",
+            )
+            validated_by_id[component.id] = validated_new.components[0]
+
+        validated = candidate.model_copy(
+            update={
+                "components": [validated_by_id[item.id] for item in candidate.components],
+            }
+        )
+        validated.validate_connections()
+        return validated
+
+    def run_document_understanding(self, run_id: str) -> dict[str, Any]:
+        """Execute the selected document node and persist its normalized outputs."""
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status not in {"staging", "staged"}:
+            raise ValueError("this run is not available for document understanding")
+        self._execute_document_understanding(runtime)
+        return self.staging_workspace(run_id)
+
+    def _measured_relationship_explanations(self, source_id: str) -> list[RelationshipExplanation]:
+        explanations: list[RelationshipExplanation] = []
+        for item in self.source_profile(source_id).get("relationships", []):
+            left = ", ".join(item["from_columns"])
+            right = ", ".join(item["to_columns"])
+            overlap = float(item["overlap_rate"])
+            orphan = float(item["orphan_rate"])
+            explanations.append(
+                RelationshipExplanation(
+                    from_table=item["from_table"],
+                    from_columns=list(item["from_columns"]),
+                    to_table=item["to_table"],
+                    to_columns=list(item["to_columns"]),
+                    cardinality=str(item["cardinality"]),
+                    overlap_rate=overlap,
+                    orphan_rate=orphan,
+                    explanation=LocalizedText(
+                        en=(
+                            f"{item['from_table']}.{left} overlaps {item['to_table']}.{right} "
+                            f"for {overlap:.1%} of dependent rows."
+                        ),
+                        tr=(
+                            f"{item['from_table']}.{left}, bağımlı satırların %{overlap * 100:.1f} "
+                            f"kadarı için {item['to_table']}.{right} ile örtüşüyor."
+                        ),
+                    ),
+                    why_it_matters=LocalizedText(
+                        en=f"A join would leave {orphan:.1%} of dependent rows unmatched.",
+                        tr=(
+                            f"Birleştirme, bağımlı satırların %{orphan * 100:.1f} kadarını "
+                            "eşleşmeden bırakır."
+                        ),
+                    ),
+                    verification_question=LocalizedText(
+                        en="Do these columns represent the same business identifier?",
+                        tr="Bu sütunlar aynı iş tanımlayıcısını mı temsil ediyor?",
+                    ),
+                )
+            )
+        return explanations
+
+    def _persist_staging_workspace(
+        self,
+        runtime: _RuntimeRun,
+        *,
+        planner_result: dict[str, Any] | None = None,
+        user_message: str | None = None,
+        planner_error: str | None = None,
+    ) -> StagingWorkspace:
+        """Append an immutable snapshot of staging evidence, chat, and plan."""
+        previous = self._latest_staging_workspace(runtime.run_id)
+        intake_ids = [
+            artifact_id
+            for attempt in runtime.state.attempts
+            if attempt.stage_id == "intake"
+            for artifact_id in attempt.artifact_ids
+        ]
+        schema_ids = [
+            artifact_id
+            for attempt in runtime.state.attempts
+            if attempt.stage_id == "schema_discovery"
+            for artifact_id in attempt.artifact_ids
+        ]
+        relationships = (
+            list(previous.relationship_explanations)
+            if previous
+            else self._measured_relationship_explanations(runtime.source_id)
+        )
+        reports = list(previous.reports) if previous else []
+        report_artifact_ids = self._staging_report_artifact_ids(runtime.run_id)
+        history = list(previous.chat_history) if previous else []
+        plan = previous.recommended_plan if previous else None
+        model = previous.planner_model if previous else None
+        profile = self.source_profile(runtime.source_id)
+        document_ref = self.store.latest(runtime.run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        document_ids: list[str] = []
+        document_summaries: list[DocumentExtractionSummary] = []
+        document_summary: DocumentExtractionSummary | None = None
+        if document_ref is not None:
+            extraction = self.store.load(document_ref.artifact_id, DocumentExtraction)
+            document_ids = [document_ref.artifact_id]
+            document_summary = extraction.extraction_summary()
+            document_summaries = [document_summary]
+        elif runtime.configuration.get("document_extraction_error"):
+            selected_engine = str(
+                runtime.configuration.get("document_extraction_engine") or "docling"
+            )
+            document_summary = DocumentExtractionSummary(
+                engine=selected_engine,
+                status="failed",
+                document_count=0,
+                page_count=0,
+                text_characters=0,
+                table_candidates=0,
+                figure_candidates=0,
+                duration_seconds=float(
+                    runtime.configuration.get("document_extraction_duration_seconds") or 0.0
+                ),
+                warnings=[str(runtime.configuration["document_extraction_error"])[:1_000]],
+            )
+            document_summaries = [document_summary]
+        configured_blueprint = runtime.configuration.get("pipeline_blueprint")
+        blueprint = previous.pipeline_blueprint if previous else None
+        if blueprint is None and isinstance(configured_blueprint, dict):
+            configured = PipelineBlueprint.model_validate(configured_blueprint)
+            configured.validate_connections()
+            default = build_default_blueprint(
+                has_tables=bool(profile.get("tables")),
+                has_documents=bool(profile.get("documents")),
+            )
+            blueprint = self._validate_human_blueprint(default, configured)
+        if blueprint is None:
+            blueprint = build_default_blueprint(
+                has_tables=bool(profile.get("tables")),
+                has_documents=bool(profile.get("documents")),
+            )
+
+        if planner_result is not None:
+            measured = {
+                (
+                    item.from_table,
+                    tuple(item.from_columns),
+                    item.to_table,
+                    tuple(item.to_columns),
+                ): item
+                for item in relationships
+            }
+            interpreted: list[RelationshipExplanation] = []
+            for raw in planner_result.get("relationship_explanations", []):
+                key = (
+                    str(raw.get("from_table", "")),
+                    tuple(raw.get("from_columns") or []),
+                    str(raw.get("to_table", "")),
+                    tuple(raw.get("to_columns") or []),
+                )
+                fact = measured.get(key)
+                if fact is None:
+                    continue
+                interpreted.append(
+                    fact.model_copy(
+                        update={
+                            "explanation": self._localized(
+                                raw.get("explanation_en"), raw.get("explanation_tr")
+                            ),
+                            "why_it_matters": self._localized(
+                                raw.get("why_it_matters_en"), raw.get("why_it_matters_tr")
+                            ),
+                            "verification_question": self._localized(
+                                raw.get("verification_question_en"),
+                                raw.get("verification_question_tr"),
+                            ),
+                        }
+                    )
+                )
+            if interpreted:
+                explained_keys = {
+                    (x.from_table, tuple(x.from_columns), x.to_table, tuple(x.to_columns))
+                    for x in interpreted
+                }
+                relationships = interpreted + [
+                    item for key, item in measured.items() if key not in explained_keys
+                ]
+
+            parsed_reports: list[StagingReport] = []
+            report_components = {
+                item.id
+                for item in blueprint.components
+                if item.enabled and item.kind == "report"
+            }
+            for raw in planner_result.get("reports", []):
+                if not raw.get("title_en") or not raw.get("summary_en"):
+                    continue
+                parsed = StagingReport(
+                    title=self._localized(raw.get("title_en"), raw.get("title_tr")),
+                    summary=self._localized(raw.get("summary_en"), raw.get("summary_tr")),
+                    findings=[
+                        self._localized(item.get("en"), item.get("tr"))
+                        for item in raw.get("findings", [])
+                        if isinstance(item, dict) and item.get("en")
+                    ],
+                    verification_questions=[
+                        self._localized(item.get("en"), item.get("tr"))
+                        for item in raw.get("verification_questions", [])
+                        if isinstance(item, dict) and item.get("en")
+                    ],
+                )
+                parsed_reports.append(parsed)
+                if not report_components:
+                    continue
+                producer = str(raw.get("component_id") or "understanding-synthesis")
+                if producer not in report_components:
+                    producer = (
+                        "understanding-synthesis"
+                        if "understanding-synthesis" in report_components
+                        else sorted(report_components)[0]
+                    )
+                report_ref = self.store.put(
+                    StagingReportArtifact(
+                        producer_component_id=producer,
+                        title=parsed.title,
+                        summary_text=parsed.summary,
+                        findings=parsed.findings,
+                        verification_questions=parsed.verification_questions,
+                    ),
+                    run_id=runtime.run_id,
+                    stage_exec_id="staging-reports",
+                    name=producer,
+                )
+                report_artifact_ids.setdefault(producer, []).append(report_ref.artifact_id)
+            if parsed_reports:
+                reports = parsed_reports
+
+            plan_configuration = dict(planner_result.get("configuration_patch") or {})
+            if not (
+                isinstance(plan_configuration.get("base_grain"), list)
+                and all(
+                    isinstance(item, str) and item.strip()
+                    for item in plan_configuration["base_grain"]
+                )
+            ):
+                plan_configuration.pop("base_grain", None)
+            if plan_configuration.get("validation_strategy") not in {
+                item.value for item in SplitStrategy
+            }:
+                plan_configuration.pop("validation_strategy", None)
+            if plan_configuration.get("task_type") not in {item.value for item in TaskType}:
+                plan_configuration.pop("task_type", None)
+            for artifact_id in schema_ids:
+                try:
+                    integration_plan = self.store.load(artifact_id, IntegrationPlan)
+                except Exception:
+                    continue
+                plan_configuration.setdefault("base_table", integration_plan.base_table)
+                plan_configuration.setdefault("base_grain", integration_plan.base_grain)
+                break
+            plan_configuration.setdefault("candidate_limit", 2)
+            plan_configuration.setdefault("n_folds", 5)
+            plan = RuntimeConfigurationPlan(
+                configuration=plan_configuration,
+                stage_directives={
+                    key: list(value)
+                    for key, value in (planner_result.get("stage_directives") or {}).items()
+                },
+                checkpoint_stages=list(planner_result.get("checkpoint_stages") or []),
+                auto_proceed_stages=list(planner_result.get("auto_proceed_stages") or []),
+                max_retries_by_stage=dict(planner_result.get("max_retries_by_stage") or {}),
+                rationale=[
+                    self._localized(item.get("en"), item.get("tr"))
+                    for item in planner_result.get("plan_rationale", [])
+                    if isinstance(item, dict) and item.get("en")
+                ],
+            )
+            model = str(planner_result.get("model") or "") or model
+            raw_blueprint = planner_result.get("pipeline_blueprint")
+            if isinstance(raw_blueprint, dict):
+                blueprint = PipelineBlueprint.model_validate(raw_blueprint)
+                blueprint.validate_connections()
+            if user_message:
+                history.append(
+                    StagingMessage(
+                        role="user",
+                        content=LocalizedText(en=user_message, tr=user_message),
+                    )
+                )
+            history.append(
+                StagingMessage(
+                    role="planner",
+                    content=self._localized(
+                        planner_result.get("reply"), planner_result.get("reply")
+                    ),
+                    model=model,
+                )
+            )
+
+        workspace = StagingWorkspace(
+            source_id=runtime.source_id,
+            source_fingerprint=self._source_fingerprint(runtime.source_id),
+            intake_artifact_ids=intake_ids,
+            schema_artifact_ids=schema_ids,
+            cache_reused=bool(runtime.configuration.get("reuse_cache", False)),
+            relationship_explanations=relationships,
+            reports=reports,
+            pipeline_blueprint=blueprint,
+            component_outputs=self._staging_component_outputs(
+                blueprint,
+                intake_ids=intake_ids,
+                schema_ids=schema_ids,
+                document_ids=document_ids,
+                document_summary=document_summary,
+                reports_ready=bool(reports),
+                report_artifact_ids=report_artifact_ids,
+                plan_ready=plan is not None,
+                plan_accepted=bool(plan and plan.accepted),
+            ),
+            document_extractions=document_summaries,
+            recommended_plan=plan,
+            chat_history=history,
+            planner_model=model,
+            planner_error=planner_error,
+        )
+        self.store.put(
+            workspace,
+            run_id=runtime.run_id,
+            stage_exec_id="staging",
+            name="data_understanding",
+        )
+        return workspace
+
+    @staticmethod
+    def _staging_component_outputs(
+        blueprint: PipelineBlueprint,
+        *,
+        intake_ids: list[str],
+        schema_ids: list[str],
+        document_ids: list[str],
+        document_summary: DocumentExtractionSummary | None,
+        reports_ready: bool,
+        report_artifact_ids: dict[str, list[str]],
+        plan_ready: bool,
+        plan_accepted: bool,
+    ) -> list[PipelineOutputReference]:
+        """Project artifact lineage onto exact component output ports."""
+        ready: dict[tuple[str, str], tuple[str, list[str], LocalizedText]] = {
+            ("data-source", "structured_files"): (
+                "ready",
+                [],
+                LocalizedText(
+                    en="Uploaded structured files are available.",
+                    tr="Yüklenen yapısal dosyalar hazır.",
+                ),
+            ),
+            ("data-source", "documents"): (
+                "ready",
+                [],
+                LocalizedText(
+                    en="Uploaded documents are available.", tr="Yüklenen belgeler hazır."
+                ),
+            ),
+            ("intake", "table_profiles"): (
+                "ready" if intake_ids else "pending",
+                intake_ids,
+                LocalizedText(en="Measured table profiles.", tr="Ölçülen tablo profilleri."),
+            ),
+            ("schema-discovery", "relationship_graph"): (
+                "ready" if schema_ids else "pending",
+                schema_ids,
+                LocalizedText(en="Measured relationship evidence.", tr="Ölçülen ilişki kanıtı."),
+            ),
+        }
+        for report_component in (
+            "structured-brief",
+            "document-brief",
+            "understanding-synthesis",
+        ):
+            ready[(report_component, "reports")] = (
+                "ready" if reports_ready else "pending",
+                report_artifact_ids.get(report_component, []),
+                LocalizedText(
+                    en=(
+                        "Agent-created understanding reports and runtime recommendations."
+                        if plan_ready
+                        else "Agent-created understanding reports."
+                    ),
+                    tr=(
+                        "Ajan tarafından oluşturulan anlama raporları ve çalışma önerileri."
+                        if plan_ready
+                        else "Ajan tarafından oluşturulan anlama raporları."
+                    ),
+                ),
+            )
+        outputs: list[PipelineOutputReference] = []
+        for component in blueprint.components:
+            for port in component.outputs:
+                status, artifact_ids, summary = ready.get(
+                    (component.id, port.id),
+                    (
+                        "not_started" if component.enabled else "unavailable",
+                        [],
+                        LocalizedText(
+                            en="This output has not been created yet.",
+                            tr="Bu çıktı henüz oluşturulmadı.",
+                        ),
+                    ),
+                )
+                if component.id == "understand-documents" and component.enabled:
+                    engine = str(component.settings.get("engine", "docling"))
+                    available = next(
+                        (
+                            item["available"]
+                            for item in document_engine_catalog()
+                            if item["id"] == engine
+                        ),
+                        False,
+                    )
+                    if document_summary is not None:
+                        status = "ready" if document_summary.status == "ready" else "unavailable"
+                        artifact_ids = document_ids
+                        if document_summary.status == "ready":
+                            summary_en = (
+                                f"{engine} produced {document_summary.table_candidates} table and "
+                                f"{document_summary.figure_candidates} figure candidates."
+                            )
+                            summary_tr = (
+                                f"{engine}, {document_summary.table_candidates} tablo ve "
+                                f"{document_summary.figure_candidates} şekil adayı üretti."
+                            )
+                        else:
+                            summary_en = (
+                                f"{engine} failed; inspect the document output and try an "
+                                "alternative."
+                            )
+                            summary_tr = (
+                                f"{engine} başarısız oldu; belge çıktısını inceleyip alternatif "
+                                "deneyin."
+                            )
+                    else:
+                        status = "not_started" if available else "unavailable"
+                        summary_en = (
+                            f"{engine} is ready to run."
+                            if available
+                            else f"{engine} must be installed before this output can run."
+                        )
+                        summary_tr = (
+                            f"{engine} çalıştırılmaya hazır."
+                            if available
+                            else f"Bu çıktı çalışmadan önce {engine} kurulmalıdır."
+                        )
+                    summary = LocalizedText(en=summary_en, tr=summary_tr)
+                outputs.append(
+                    PipelineOutputReference(
+                        component_id=component.id,
+                        port_id=port.id,
+                        data_type=port.data_type,
+                        status=status,
+                        artifact_ids=artifact_ids,
+                        summary=summary,
+                    )
+                )
+        return outputs
+
+    def _execute_document_understanding(self, runtime: _RuntimeRun) -> None:
+        """Run the extractor without letting one engine failure erase schema evidence."""
+        workspace = self._latest_staging_workspace(runtime.run_id)
+        if workspace is None or workspace.pipeline_blueprint is None:
+            workspace = self._persist_staging_workspace(runtime)
+        component = next(
+            (
+                item
+                for item in workspace.pipeline_blueprint.components
+                if item.id == "understand-documents"
+            ),
+            None,
+        )
+        if component is None or not component.enabled:
+            return
+        if not self.source_profile(runtime.source_id).get("documents"):
+            return
+        engine = str(component.settings.get("engine") or "docling")
+        allowed = {item["id"] for item in document_engine_catalog()}
+        if engine not in allowed:
+            raise ValueError(f"unknown document engine {engine!r}")
+        started = datetime.now(UTC)
+        runtime.configuration["document_extraction_engine"] = engine
+        runtime.events.append(
+            {"event": "document_understanding_started", "at": _now(), "engine": engine}
+        )
+        try:
+            extraction = extract_document_directory(
+                self.source_path(runtime.source_id),
+                source_id=runtime.source_id,
+                source_fingerprint=self._source_fingerprint(runtime.source_id),
+                engine=engine,
+                settings=dict(component.settings),
+                output_dir=(
+                    self.store.root.parent
+                    / "document-assets"
+                    / runtime.run_id
+                    / uuid.uuid4().hex[:8]
+                ),
+            )
+            ref = self.store.put(
+                extraction,
+                run_id=runtime.run_id,
+                stage_exec_id="document_understanding",
+                name=f"document_{engine}",
+            )
+            runtime.configuration.pop("document_extraction_error", None)
+            runtime.configuration["document_extraction_artifact_id"] = ref.artifact_id
+            runtime.configuration["document_extraction_duration_seconds"] = (
+                extraction.duration_seconds
+            )
+            runtime.events.append(
+                {
+                    "event": "document_understanding_ready",
+                    "at": _now(),
+                    "engine": engine,
+                    "artifact_id": ref.artifact_id,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - persisted so another engine can be chosen
+            elapsed = (datetime.now(UTC) - started).total_seconds()
+            runtime.configuration["document_extraction_error"] = (
+                f"{type(exc).__name__}: {str(exc)[:900]}"
+            )
+            runtime.configuration["document_extraction_duration_seconds"] = elapsed
+            runtime.events.append(
+                {
+                    "event": "document_understanding_failed",
+                    "at": _now(),
+                    "engine": engine,
+                }
+            )
+        runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        self._persist_staging_workspace(runtime)
+
+    def _generate_staging_analysis(self, runtime: _RuntimeRun) -> None:
+        """Create reports and a ready-to-accept plan with the same local planner."""
+        self._persist_staging_workspace(runtime)
+        self._execute_document_understanding(runtime)
+        llm = self.llm_factory() if self.llm_factory else OllamaClient()
+        usable = isinstance(llm, StructuredLLM)
+        if isinstance(llm, OllamaClient):
+            llm.close()
+        if not usable:
+            return
+        requests = (
+            (
+                "Create the durable staging analysis now. Explain every high-value measured "
+                "relationship using exact endpoints, create a source briefing, a join-risk "
+                "report, and a pipeline-readiness report, then propose a complete fully-auto "
+                "runtime configuration with evidence-based stage directives and retry limits."
+            ),
+            (
+                "Create two concise bilingual reports and a complete bounded fully-auto plan. "
+                "Explain only the highest-value measured relationships. Keep every field short."
+            ),
+        )
+        last_error: Exception | None = None
+        for message in requests:
+            try:
+                self.planner_chat(
+                    message=message,
+                    source_id=runtime.source_id,
+                    run_id=runtime.run_id,
+                    stage_id="schema_discovery",
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - one bounded retry is intentional
+                last_error = exc
+        assert last_error is not None
+        self._persist_staging_workspace(
+            runtime,
+            planner_error=f"{type(last_error).__name__}: {last_error}",
+        )
 
     # ------------------------------------------------------------------- runs
 
@@ -465,8 +1738,8 @@ class ControlPlane:
                 else "no_gate_record"
             )
             runtime = self._runtime_runs.get(run_id)
-            configuration = runtime.configuration if runtime else (progress or {}).get(
-                "configuration", {}
+            configuration = (
+                runtime.configuration if runtime else (progress or {}).get("configuration", {})
             )
             stages = {ref.stage_exec_id for ref in refs if ref.stage_exec_id}
             if progress:
@@ -487,9 +1760,54 @@ class ControlPlane:
                     pending_question=pending,
                     parent_run_id=configuration.get("parent_run_id"),
                     branch_label=configuration.get("branch_label"),
+                    source_id=(runtime.source_id if runtime else configuration.get("source_id")),
                 )
             )
         return sorted(summaries, key=lambda item: item.last_activity, reverse=True)
+
+    @staticmethod
+    def _mode_of(progress: dict[str, Any]) -> str:
+        """Which spec this run is executing.
+
+        Staging records `agent` when it starts, because that is the spec it
+        builds. The fallback covers a run whose snapshot predates that: it had
+        no mode, every reader inferred `manual`, and the rail drew a nine-stage
+        pipeline for a run that had already executed schema discovery -- a
+        stage that pipeline does not contain -- while the stage endpoint
+        answered 404 for whatever the person was looking at.
+        """
+        configured = progress.get("configuration") or {}
+        if configured.get("mode"):
+            return str(configured["mode"])
+        staged_states = {"staging", "staged"}
+        has_agent_stage = any(
+            attempt.get("stage_id") in _PLANNER_AGENTS for attempt in progress.get("attempts") or []
+        )
+        if has_agent_stage or progress.get("status") in staged_states:
+            return "agent"
+        return "manual"
+
+    @staticmethod
+    def _elapsed(attempts: list[dict[str, Any]]) -> float | None:
+        """Seconds spent in a stage, summed over its attempts.
+
+        Summed rather than measured end to end, because a retried stage sits
+        idle between attempts while the gate and any human decide, and counting
+        that as execution time would report a stage as slow when it was waiting.
+        A running attempt has no end yet and is measured against now.
+        """
+        total = 0.0
+        counted = False
+        for attempt in attempts:
+            started = attempt.get("started_at")
+            if not started:
+                continue
+            begin = datetime.fromisoformat(started)
+            ended = attempt.get("ended_at")
+            finish = datetime.fromisoformat(ended) if ended else datetime.now(UTC)
+            total += max(0.0, (finish - begin).total_seconds())
+            counted = True
+        return round(total, 1) if counted else None
 
     def _artifact_run_ids(self) -> list[str]:
         with self.store._connect() as conn:  # noqa: SLF001 - read-only index projection
@@ -507,7 +1825,11 @@ class ControlPlane:
             if not root.exists():
                 continue
             for child in sorted(root.iterdir()):
-                if child.is_dir() and not self._reserved_path(child) and any(child.iterdir()):
+                if (
+                    child.is_dir()
+                    and not self._reserved_path(child)
+                    and self._holds_loadable_files(child)
+                ):
                     sources.append({"source_id": child.name, "label": child.name})
         if self.upload_root is not None and self.upload_root.exists():
             for child in sorted(self.upload_root.iterdir()):
@@ -539,8 +1861,7 @@ class ControlPlane:
                         "candidate_keys": sum(len(table["candidate_keys"]) for table in tables),
                         "quality_issues": sum(len(table["issues"]) for table in tables),
                         "sensitive_columns": sum(
-                            column["sensitivity"] == "pii"
-                            for column in columns
+                            column["sensitivity"] == "pii" for column in columns
                         ),
                         "table_summaries": [
                             {
@@ -576,6 +1897,21 @@ class ControlPlane:
                 return resolved
         raise KeyError(source_id)
 
+    @staticmethod
+    def _holds_loadable_files(directory: Path) -> bool:
+        """Whether this folder is a dataset rather than a folder that exists.
+
+        `data/` also holds working directories -- another run's artifact store,
+        a sandbox, an export probe -- and offering them as datasets put five
+        rows on the chooser of which three answered "source contains no
+        supported data files" when clicked. A directory the loader cannot read
+        anything from is not a dataset, whatever else it is.
+        """
+        supported = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES | PDF_SUFFIXES
+        return any(
+            path.is_file() and path.suffix.lower() in supported for path in directory.rglob("*")
+        )
+
     def _reserved_path(self, path: Path) -> bool:
         resolved = path.resolve()
         reserved = {self.store.root.resolve(), self._run_state_root.resolve()}
@@ -591,7 +1927,7 @@ class ControlPlane:
         if not safe_name or safe_name in {".", ".."}:
             raise ValueError("filename must contain a file name")
         if Path(safe_name).suffix.lower() not in _UPLOAD_SUFFIXES:
-            raise ValueError("supported uploads are CSV/TSV, Excel, or Parquet")
+            raise ValueError("supported uploads are CSV/TSV, Excel, Parquet, or PDF")
         if not content:
             raise ValueError("uploaded file is empty")
 
@@ -619,11 +1955,43 @@ class ControlPlane:
             "files": files,
         }
 
+    def _source_fingerprint(self, source_id: str) -> str:
+        """Identify a source by what its files are, not by when we last looked.
+
+        Name, size and modification time of every file. Content hashing would be
+        stronger and would mean reading 121 MB to answer "has this changed",
+        which is the cost the cache exists to avoid. A file edited within the
+        same mtime tick and to the identical byte length would be missed; that
+        is the accepted gap and it is written down rather than assumed away.
+        """
+        root = Path(self.source_path(source_id))
+        parts = []
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                stat = path.stat()
+                parts.append(f"{path.relative_to(root)}:{stat.st_size}:{stat.st_mtime_ns}")
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
     def source_profile(self, source_id: str) -> dict[str, Any]:
-        """Profile source files into a schema-only browser projection."""
-        loaded = load_directory(self.source_path(source_id))
+        """Profile source files into a schema-only browser projection.
+
+        Cached on the source's file fingerprint. Profiling re-reads and
+        re-measures every file, and the dataset list calls this once per source
+        on every request: measured through the tunnel, listing three sources took
+        5.22s, of which 4.91s was one 121 MB dataset being re-profiled for a
+        screen that had already shown it.
+        """
+        fingerprint = self._source_fingerprint(source_id)
+        with self._lock:
+            cached = self._profile_cache.get(source_id)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+
+        source_path = self.source_path(source_id)
+        loaded = load_directory(source_path)
+        documents = load_pdf_directory(source_path)
         cards = profile_tables(loaded)
-        if not cards:
+        if not cards and not documents:
             raise ValueError("source contains no supported data files")
         # Measured before any run exists. This is what makes the pre-run screen
         # honest: the relationships shown are the same ones schema discovery
@@ -644,9 +2012,10 @@ class ControlPlane:
                 cards, {table.name: table.frame for table in loaded}
             )
         ]
-        return {
+        profile: dict[str, Any] = {
             "source_id": source_id,
             "relationships": relationships,
+            "documents": [document.public_summary() for document in documents],
             "tables": [
                 {
                     "name": card.table_name,
@@ -671,10 +2040,565 @@ class ControlPlane:
                 }
                 for card in cards
             ],
-            "privacy": "Schema and aggregate statistics only; source rows and values are omitted.",
+            "privacy": (
+                "Schema and aggregate statistics only; document metadata may also be shown. "
+                "Source rows, values, and PDF text are omitted from this API response."
+            ),
         }
+        with self._lock:
+            self._profile_cache[source_id] = (fingerprint, profile)
+        return profile
 
     # --------------------------------------------------------------- execution
+
+    #: Staging stops here. Intake measures the data and schema discovery reads
+    #: what it means; between them they produce everything a person needs on
+    #: screen before deciding anything, and neither depends on a stated problem.
+    STAGE_UNTIL = "schema_discovery"
+
+    def stage_run(
+        self,
+        source_id: str,
+        configuration: dict[str, Any] | None = None,
+        *,
+        reuse_cache: bool = False,
+    ) -> dict[str, Any]:
+        """Start a run and stop it after intake and schema discovery.
+
+        This is a real run from its first moment -- same id, same state, same
+        artifact lineage -- that has been asked to stop early. It was a
+        reservation holding a cached profile before, which meant the pipeline
+        showed nothing until the user had already committed to a configuration,
+        and the intake they were looking at was not the intake the run would
+        later perform. Continuing it resumes the same state at the next stage,
+        so nothing measured here is measured twice.
+        """
+        source_path = self.source_path(source_id)
+        profile = self.source_profile(source_id)
+        if not profile.get("tables"):
+            if not profile.get("documents"):
+                raise ValueError("the source contains no supported tables or documents")
+            run_id = f"run-{uuid.uuid4().hex[:8]}"
+            state = RunState(
+                run_id=run_id,
+                store=self.store,
+                profile=BUILTIN_PROFILES["full_auto"],
+            )
+            runtime = _RuntimeRun(
+                run_id=run_id,
+                source_id=source_id,
+                state=state,
+                configuration={
+                    "source_id": source_id,
+                    "mode": "agent",
+                    "reuse_cache": reuse_cache,
+                    "document_only": True,
+                    **(configuration or {}),
+                },
+                status="staged",
+                current_stage="document_understanding",
+            )
+            runtime.events.append(
+                {"event": "document_staging_ready", "at": _now(), "source": source_id}
+            )
+            with self._lock:
+                self._runtime_runs[run_id] = runtime
+            self._persist_runtime(runtime)
+            self._persist_staging_workspace(runtime)
+            return {"run_id": run_id, "status": "staged", "profile": profile}
+        fingerprint = self._source_fingerprint(source_id)
+        with self._lock:
+            cached_staged = self._staged_cache.get(source_id)
+        if reuse_cache and cached_staged is not None and cached_staged[0] == fingerprint:
+            cached_data = cached_staged[1]
+            run_id = f"run-{uuid.uuid4().hex[:8]}"
+            state = RunState(
+                run_id=run_id,
+                store=self.store,
+                profile=BUILTIN_PROFILES["full_auto"],
+            )
+            llm: StructuredLLM | None = self.llm_factory() if self.llm_factory else OllamaClient()
+            if isinstance(llm, OllamaClient) and not llm.is_available():
+                llm.close()
+                raise ValueError(
+                    "Reading the schema needs Ollama at http://localhost:11434. "
+                    "Start Ollama and choose the dataset again."
+                )
+            spec, registry = build_full_spec(llm, panel_size=1)
+            sandbox_root = self.store.root.parent / "sandbox" / run_id
+            (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+            (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+            configure_full_pipeline_state(
+                state,
+                source_path=source_path,
+                execution_backend=SandboxManager(
+                    SandboxConfig(
+                        data_dir=sandbox_root / "data",
+                        artifacts_dir=sandbox_root / "artifacts",
+                    )
+                ),
+                agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+            )
+            for k, v in cached_data.get("blackboard", {}).items():
+                state.blackboard[k] = v
+
+            for item in cached_data.get("artifacts", []):
+                try:
+                    art = self.store.load(item["artifact_id"])
+                    state.put(art, stage_id=item.get("stage_id") or "intake", name=item.get("name"))
+                except Exception:
+                    pass
+
+            for att_data in cached_data.get("attempts", []):
+                new_att = state.begin_attempt(att_data["stage_id"])
+                new_att.started_at = att_data.get("started_at")
+                new_att.ended_at = att_data.get("ended_at")
+                new_att.input_bindings = dict(att_data.get("input_bindings", {}))
+                new_att.artifact_ids = list(att_data.get("artifact_ids", []))
+                new_att.decision = att_data.get("decision")
+                new_att.critique = att_data.get("critique")
+                new_att.error = att_data.get("error")
+                state.active_attempt = None
+
+            runtime = _RuntimeRun(
+                run_id=run_id,
+                source_id=source_id,
+                state=state,
+                configuration={
+                    "source_id": source_id,
+                    "mode": "agent",
+                    "reuse_cache": True,
+                    **(configuration or {}),
+                },
+                status="staging",
+            )
+            runtime.outcome = RunOutcome(
+                run_id=run_id,
+                status=RunStatus.STAGED,
+                final_stage=self.STAGE_UNTIL,
+                decisions=list(cached_data.get("decisions", [])),
+            )
+            runtime.events = [
+                {"event": "run_staged", "at": _now(), "source": source_id},
+                *[dict(e) for e in cached_data.get("events", []) if e.get("event") != "run_staged"],
+            ]
+            runtime.resume = (spec, registry, state, llm)
+            with self._lock:
+                self._runtime_runs[run_id] = runtime
+            self._persist_runtime(runtime)
+
+            def analyse_cached() -> None:
+                self._generate_staging_analysis(runtime)
+                with self._lock:
+                    runtime.status = "staged"
+                    runtime.updated_at = _now()
+                self._persist_runtime(runtime)
+
+            threading.Thread(
+                target=analyse_cached,
+                name=f"ads-stage-analysis-{run_id}",
+                daemon=True,
+            ).start()
+            return {
+                "run_id": run_id,
+                "status": "staging",
+                "profile": self.source_profile(source_id),
+            }
+
+        run_id = f"run-{uuid.uuid4().hex[:8]}"
+        state = RunState(
+            run_id=run_id,
+            store=self.store,
+            profile=BUILTIN_PROFILES["full_auto"],
+        )
+        llm = self.llm_factory() if self.llm_factory else OllamaClient()
+        if isinstance(llm, OllamaClient) and not llm.is_available():
+            llm.close()
+            raise ValueError(
+                "Reading the schema needs Ollama at http://localhost:11434. "
+                "Start Ollama and choose the dataset again."
+            )
+        spec, registry = build_full_spec(llm, panel_size=1)
+        sandbox_root = self.store.root.parent / "sandbox" / run_id
+        (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+        (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+        configure_full_pipeline_state(
+            state,
+            source_path=source_path,
+            execution_backend=SandboxManager(
+                SandboxConfig(
+                    data_dir=sandbox_root / "data",
+                    artifacts_dir=sandbox_root / "artifacts",
+                )
+            ),
+            agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+        )
+        runtime = _RuntimeRun(
+            run_id=run_id,
+            source_id=source_id,
+            state=state,
+            configuration={
+                "source_id": source_id,
+                # Staging builds and runs the agent spec, so the run is an
+                # agent run from this moment. Leaving it unset meant every
+                # reader inferred "manual" and looked the run up in a
+                # nine-stage pipeline that does not contain the stage it had
+                # just executed.
+                "mode": "agent",
+                "reuse_cache": False,
+                **(configuration or {}),
+            },
+            status="staging",
+        )
+        with self._lock:
+            self._runtime_runs[run_id] = runtime
+            runtime.events.append({"event": "run_staged", "at": _now(), "source": source_id})
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+        runner = self.workflow_runner or run_workflow
+
+        def execute() -> None:
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=GatePolicy.load(),
+                    on_event=event,
+                    stop_after=self.STAGE_UNTIL,
+                )
+                with self._lock:
+                    runtime.status = (
+                        "staging"
+                        if runtime.outcome.status in {RunStatus.STAGED, "staged"}
+                        else runtime.outcome.status
+                    )
+                    runtime.error = runtime.outcome.error
+                    runtime.updated_at = _now()
+                    if runtime.outcome.status in {RunStatus.STAGED, "staged"}:
+                        from ads.pipeline.stages import (  # noqa: PLC0415
+                            LOADED_TABLES_KEY,
+                            SOURCE_CARDS_KEY,
+                            SOURCE_FRAMES_KEY,
+                        )
+
+                        self._staged_cache[source_id] = (
+                            fingerprint,
+                            {
+                                "attempts": [
+                                    {
+                                        "stage_id": att.stage_id,
+                                        "attempt": att.attempt,
+                                        "started_at": att.started_at,
+                                        "ended_at": att.ended_at,
+                                        "input_bindings": dict(att.input_bindings),
+                                        "artifact_ids": list(att.artifact_ids),
+                                        "decision": att.decision,
+                                        "critique": att.critique,
+                                        "error": att.error,
+                                    }
+                                    for att in state.attempts
+                                ],
+                                "artifacts": [
+                                    {
+                                        "artifact_id": a.artifact_id,
+                                        "stage_id": a.stage_exec_id,
+                                        "name": a.name,
+                                    }
+                                    for a in self.store.list(run_id=state.run_id)
+                                ],
+                                "blackboard": {
+                                    k: v
+                                    for k, v in state.blackboard.items()
+                                    if k
+                                    in {
+                                        SOURCE_CARDS_KEY,
+                                        SOURCE_FRAMES_KEY,
+                                        LOADED_TABLES_KEY,
+                                    }
+                                },
+                                "decisions": list(runtime.outcome.decisions),
+                                "events": list(runtime.events),
+                            },
+                        )
+                if runtime.outcome.status in {RunStatus.STAGED, "staged"}:
+                    runtime.events.append({"event": "staging_analysis_started", "at": _now()})
+                    self._persist_runtime(runtime)
+                    self._generate_staging_analysis(runtime)
+                    with self._lock:
+                        runtime.status = "staged"
+                        runtime.events.append({"event": "staging_analysis_ready", "at": _now()})
+                        runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+
+        # Held so the second half runs on this state rather than a fresh one.
+        runtime.resume = (spec, registry, state, llm)
+        threading.Thread(target=execute, name=f"ads-stage-{run_id}", daemon=True).start()
+        return {
+            "run_id": run_id,
+            "status": "staging",
+            "profile": self.source_profile(source_id),
+        }
+
+    def update_staged_run(self, run_id: str, configuration: dict[str, Any]) -> dict[str, Any]:
+        """Amend a staged run's configuration before it is started.
+
+        Accepted while the first stages are still executing as well as after:
+        a person reading the schema and setting a target at the same time is
+        the normal case, and making them wait would be an artificial race.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status not in {"staging", "staged"}:
+            raise ValueError("this run is not staged")
+        with self._lock:
+            runtime.configuration.update(configuration)
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+        return dict(runtime.configuration)
+
+    def start_staged_run(self, run_id: str, configuration: dict[str, Any] | None = None) -> str:
+        """Continue a staged run through the rest of the pipeline.
+
+        The run keeps its id. It was replaced by a freshly started one before,
+        which threw away the intake and schema discovery the person had just
+        spent their attention reading and re-ran both against the same files.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.status != "staged":
+            raise ValueError("this run is not staged")
+        if runtime.resume is None:
+            raise ValueError(
+                "this staged run did not survive a restart and cannot be continued; "
+                "choose the dataset again"
+            )
+        body = {**runtime.configuration, **(configuration or {})}
+        spec, registry, state, llm = runtime.resume
+        workspace = self._latest_staging_workspace(run_id)
+        if workspace is None or workspace.pipeline_blueprint is None:
+            raise ValueError("the staged run has no saved automation graph")
+        compiled = self.compile_automation(run_id)["plan"]
+        prior_pause = str(runtime.configuration.get("automation_completed_pause") or "") or None
+        pause_after_stage = compiled.get("pause_after_stage")
+        if prior_pause == pause_after_stage:
+            pause_after_stage = None
+
+        graph_checkpoints = {
+            str(node["stage_id"])
+            for node in compiled["nodes"]
+            if node.get("stage_id") and node["control"].get("gate_handler") == "human"
+        }
+        graph_retries = {
+            str(node["stage_id"]): int(node["control"]["max_retries"])
+            for node in compiled["nodes"]
+            if node.get("stage_id") and node["control"].get("max_retries") is not None
+        }
+
+        run_mode = str(body.get("run_mode", "auto"))
+        if run_mode not in {"auto", "manual", "fully_auto"}:
+            raise ValueError("run_mode must be 'auto', 'manual', or 'fully_auto'")
+        if run_mode == "fully_auto":
+            if workspace is None or workspace.recommended_plan is None:
+                raise ValueError("fully_auto needs a completed planner recommendation")
+            plan = workspace.recommended_plan
+            if workspace.pipeline_blueprint is not None:
+                validate_executable_blueprint(workspace.pipeline_blueprint)
+                enabled_document_components = {
+                    component.id
+                    for component in workspace.pipeline_blueprint.components
+                    if component.kind == "document_understanding" and component.enabled
+                }
+                unfinished_document_outputs = [
+                    output
+                    for output in workspace.component_outputs
+                    if output.component_id in enabled_document_components
+                    and output.status != "ready"
+                ]
+                if unfinished_document_outputs:
+                    raise ValueError(
+                        "document understanding outputs are not ready; run the component "
+                        "or disable it before starting the ML pipeline"
+                    )
+            body = {
+                **body,
+                **plan.configuration,
+                "run_mode": "fully_auto",
+                "supervision": {
+                    "checkpoint_stages": plan.checkpoint_stages,
+                    "auto_proceed_stages": plan.auto_proceed_stages,
+                    "max_retries_by_stage": plan.max_retries_by_stage,
+                },
+            }
+            directives = dict(state.blackboard.get(STAGE_DIRECTIVES_KEY) or {})
+            for stage, lines in plan.stage_directives.items():
+                directives.setdefault(stage, []).extend(
+                    line for line in lines if line not in directives.get(stage, [])
+                )
+            state.blackboard[STAGE_DIRECTIVES_KEY] = directives
+            accepted = workspace.model_copy(
+                update={
+                    "recommended_plan": plan.model_copy(update={"accepted": True}),
+                    "component_outputs": [
+                        output.model_copy(update={"status": "ready"})
+                        if output.component_id == "planner" and output.port_id == "runtime_plan"
+                        else output
+                        for output in workspace.component_outputs
+                    ],
+                }
+            )
+            self.store.put(
+                accepted,
+                run_id=run_id,
+                stage_exec_id="staging",
+                name="data_understanding",
+            )
+        supervision = self._normalise_supervision(body.get("supervision") or {})
+        checkpoints = sorted(set(supervision["checkpoint_stages"]) | graph_checkpoints)
+        supervision["max_retries_by_stage"] = {
+            **supervision["max_retries_by_stage"],
+            **graph_retries,
+        }
+        if run_mode == "manual":
+            checkpoints = sorted(set(checkpoints) | _PIPELINE_STAGES)
+        # The problem has not been chosen yet at this point in the pipeline --
+        # the agent chooses it two stages from here -- so the checkpoint that
+        # start_run derives from an unstated problem applies here always.
+        if run_mode != "fully_auto" and "problem_discovery" not in checkpoints:
+            checkpoints.append("problem_discovery")
+        supervision["checkpoint_stages"] = sorted(checkpoints)
+        state.profile = BUILTIN_PROFILES["full_auto"].model_copy(
+            update={"checkpoint_stages": sorted(checkpoints)}
+        )
+        intent = _as_intent(body.get("instructions"))
+        preferences = self._staged_preferences(body)
+        state.user_intent = "\n\n".join(part for part in (intent, preferences) if part) or None
+        candidate_limit = body.get("candidate_limit")
+        if candidate_limit is not None:
+            candidate_limit = int(candidate_limit)
+            if candidate_limit < 1:
+                raise ValueError("candidate_limit must be positive")
+        state.blackboard[CANDIDATE_LIMIT_KEY] = candidate_limit
+        folds = int(body.get("n_folds", state.blackboard.get(VALIDATION_FOLDS_KEY, 3)))
+        if not 2 <= folds <= 20:
+            raise ValueError("n_folds must be between 2 and 20")
+        state.blackboard[VALIDATION_FOLDS_KEY] = folds
+
+        runtime.configuration.update(
+            {
+                **body,
+                "supervision": supervision,
+                "run_mode": run_mode,
+                "instructions": state.user_intent,
+            }
+        )
+        with self._lock:
+            runtime.status = "running"
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+        runner = self.workflow_runner or run_workflow
+        resume_from = prior_pause or self.STAGE_UNTIL
+        resume_at = spec.next_stage(resume_from, EdgeCondition.ON_PROCEED)
+
+        def execute() -> None:
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=self._policy_for_supervision(supervision),
+                    on_event=event,
+                    start_at=resume_at,
+                    stop_after=pause_after_stage,
+                )
+                with self._lock:
+                    runtime.status = runtime.outcome.status
+                    runtime.error = runtime.outcome.error
+                    runtime.current_stage = getattr(runtime.outcome, "final_stage", None)
+                    if runtime.outcome.status in {RunStatus.STAGED, "staged"}:
+                        runtime.configuration["automation_completed_pause"] = pause_after_stage
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.updated_at = _now()
+            finally:
+                if isinstance(llm, OllamaClient):
+                    llm.close()
+            self._persist_runtime(runtime)
+
+        threading.Thread(target=execute, name=f"ads-run-{run_id}", daemon=True).start()
+        return run_id
+
+    @staticmethod
+    def _staged_preferences(body: dict[str, Any]) -> str | None:
+        """Render whatever the person chose on the staged screen as guidance.
+
+        These are preferences, not contracts: the agent still discovers the
+        problem from measured evidence, and stating a target it cannot support
+        must not silently override what the data says.
+        """
+        stated = {
+            "target": body.get("target_column"),
+            "task": body.get("task_type"),
+            "primary metric": body.get("primary_metric"),
+            "base table": body.get("base_table"),
+            "excluded columns": body.get("excluded_columns") or None,
+        }
+        chosen = [f"{name} {value!r}" for name, value in stated.items() if value]
+        if not chosen:
+            return None
+        return (
+            "User-configured planning preferences (honour when compatible with "
+            "measured evidence): " + "; ".join(chosen) + "."
+        )
+
+    def _event_recorder(self, runtime: _RuntimeRun) -> Callable[[str, dict[str, Any]], None]:
+        """Record a stage event on the run and persist it."""
+
+        def event(name: str, payload: dict[str, Any]) -> None:
+            with self._lock:
+                runtime.events.append({"event": name, "at": _now(), **payload})
+                runtime.updated_at = _now()
+                if name == "stage_started":
+                    runtime.current_stage = payload.get("stage")
+            self._persist_runtime(runtime)
+
+        return event
+
+    def discard_staged_run(self, run_id: str) -> None:
+        """Drop a staged run from memory *and* from disk.
+
+        Staging persists a snapshot so a reserved run survives a restart, which
+        means forgetting the in-memory copy alone does not discard anything --
+        the run reappears in the list from `run-state/` the next time it is
+        read. Observed on the deployment: a discarded staged run was still
+        there, still `staged`, after the API said `discarded`.
+        """
+        with self._lock:
+            runtime = self._runtime_runs.get(run_id)
+            if runtime is not None and runtime.status != "staged":
+                raise ValueError(f"run {run_id!r} is not staged; it is {runtime.status}")
+            self._runtime_runs.pop(run_id, None)
+            if _SAFE_RUN_ID.fullmatch(run_id) is None:
+                raise ValueError("run_id contains unsafe characters")
+            snapshot = (self._run_state_root / f"{run_id}.json").resolve()
+            if self._run_state_root.resolve() not in snapshot.parents:
+                raise RuntimeError("refusing to remove a snapshot outside run-state")
+            snapshot.unlink(missing_ok=True)
+            # Staging now owns durable workspace artifacts (reports, chat and
+            # the recommendation), so discarding it must remove their index
+            # entries as well or the run remains visible in the library.
+            self.store.delete_run(run_id)
 
     def start_run(
         self,
@@ -712,8 +2636,8 @@ class ControlPlane:
                 f"{problem.excluded_columns!r}."
             )
             run_intent = f"{run_intent}\n\n{preferences}" if run_intent else preferences
-        if run_mode not in {"auto", "manual"}:
-            raise ValueError("run_mode must be 'auto' or 'manual'")
+        if run_mode not in {"auto", "manual", "fully_auto"}:
+            raise ValueError("run_mode must be 'auto', 'manual', or 'fully_auto'")
         supervision = self._normalise_supervision(supervision or {})
         checkpoints = list(supervision["checkpoint_stages"])
         # Manual is not a second control path: it is every stage declared a
@@ -727,7 +2651,11 @@ class ControlPlane:
         # decision a person has to see before the rest of the pipeline is built
         # on top of it, so the checkpoint is not optional here — it is implied
         # by the absence of a stated problem, not by a supervision preference.
-        if problem.confirmed_by == "auto" and "problem_discovery" not in checkpoints:
+        if (
+            run_mode != "fully_auto"
+            and problem.confirmed_by == "auto"
+            and "problem_discovery" not in checkpoints
+        ):
             checkpoints.append("problem_discovery")
         profile = BUILTIN_PROFILES["full_auto"].model_copy(
             update={"checkpoint_stages": sorted(checkpoints)}
@@ -813,13 +2741,7 @@ class ControlPlane:
             self._runtime_runs[run_id] = runtime
         self._persist_runtime(runtime)
 
-        def event(name: str, payload: dict[str, Any]) -> None:
-            with self._lock:
-                runtime.events.append({"event": name, "at": _now(), **payload})
-                runtime.updated_at = _now()
-                if name == "stage_started":
-                    runtime.current_stage = payload.get("stage")
-            self._persist_runtime(runtime)
+        event = self._event_recorder(runtime)
 
         def execute() -> None:
             with self._lock:
@@ -885,9 +2807,7 @@ class ControlPlane:
             stages[stage_id] = replace(current, max_attempts=int(retries) + 1)
         return replace(policy, stages=stages)
 
-    def apply_sensitivity_overrides(
-        self, run_id: str, overrides: dict[str, str]
-    ) -> dict[str, str]:
+    def apply_sensitivity_overrides(self, run_id: str, overrides: dict[str, str]) -> dict[str, str]:
         """Let a person correct the machine's PII classification before it is used.
 
         The classifier decides which columns are dropped from the feature pool.
@@ -1042,13 +2962,7 @@ class ControlPlane:
         else:
             spec, registry = build_default_spec(), build_default_registry()
 
-        def event(name: str, payload: dict[str, Any]) -> None:
-            with self._lock:
-                runtime.events.append({"event": name, "at": _now(), **payload})
-                runtime.updated_at = _now()
-                if name == "stage_started":
-                    runtime.current_stage = payload.get("stage")
-            self._persist_runtime(runtime)
+        event = self._event_recorder(runtime)
 
         def execute() -> None:
             with self._lock:
@@ -1205,6 +3119,12 @@ class ControlPlane:
                 "events": list(runtime.events),
                 "error": runtime.error,
                 "attempts": self._attempts(runtime),
+                # The question the run stopped to ask. It lived only on the
+                # in-memory outcome, so `progress` -- the endpoint the run
+                # screen polls -- reported `awaiting_human` and carried nothing
+                # to show, and a run that had stopped for a person displayed no
+                # way to answer it.
+                "pending_question": _pending_question(runtime),
             }
 
     def _persist_runtime(self, runtime: _RuntimeRun) -> None:
@@ -1217,7 +3137,7 @@ class ControlPlane:
     #: Snapshot states that only a live worker in this process can be making
     #: progress on. `awaiting_human` is deliberately absent: it is durable by
     #: design and is meant to be resumed after a restart.
-    _IN_FLIGHT = frozenset({"queued", "running"})
+    _IN_FLIGHT = frozenset({"queued", "running", "staging"})
 
     def progress(self, run_id: str) -> dict[str, Any]:
         runtime = self._runtime_runs.get(run_id)
@@ -1333,138 +3253,147 @@ class ControlPlane:
         artifact_type: str, name: str | None, summary: dict[str, Any]
     ) -> dict[str, Any]:
         """Turn compact machine summaries into stable, non-technical UI copy."""
-        title = (name or artifact_type).replace("_", " ").title()
-        description = "A durable result produced by this stage."
+        title = i18n.t((name or artifact_type).replace("_", " ").title())
+        description = i18n.t("A durable result produced by this stage.")
         preferred: list[tuple[str, str]] = []
         if artifact_type == "data_card":
-            title = f"Profiled table: {summary.get('table_name', name or 'dataset')}"
-            description = "Schema, size, and quality statistics; no source rows are shown."
+            title = i18n.t(
+                "Profiled table: {name}",
+                name=summary.get("table_name", name or i18n.t("dataset")),
+            )
+            description = i18n.t("Schema, size, and quality statistics; no source rows are shown.")
             preferred = [
-                ("Rows", "n_rows"),
-                ("Columns", "n_columns"),
-                ("Candidate keys", "n_candidate_keys"),
+                (i18n.t("Rows"), "n_rows"),
+                (i18n.t("Columns"), "n_columns"),
+                (i18n.t("Candidate keys"), "n_candidate_keys"),
             ]
         elif artifact_type == "integration_plan":
-            title = "Data integration plan"
-            description = "How source tables are aggregated and joined into one analytical table."
+            title = i18n.t("Data integration plan")
+            description = i18n.t(
+                "How source tables are aggregated and joined into one analytical table."
+            )
             preferred = [
-                ("Base table", "base_table"),
-                ("Joins", "n_joins"),
-                ("Aggregations", "n_aggregations"),
+                (i18n.t("Base table"), "base_table"),
+                (i18n.t("Joins"), "n_joins"),
+                (i18n.t("Aggregations"), "n_aggregations"),
             ]
         elif artifact_type == "integration_trial":
-            title = "Integration plan trial"
-            description = (
+            title = i18n.t("Integration plan trial")
+            description = i18n.t(
                 "Measured result of executing the proposed joins and aggregations on a copy."
             )
             preferred = [
-                ("Base rows", "base_rows"),
-                ("Result rows", "result_rows"),
-                ("Grain preserved", "grain_preserved"),
-                ("Result columns", "n_columns"),
+                (i18n.t("Base rows"), "base_rows"),
+                (i18n.t("Result rows"), "result_rows"),
+                (i18n.t("Grain preserved"), "grain_preserved"),
+                (i18n.t("Result columns"), "n_columns"),
             ]
         elif artifact_type == "problem_candidates":
-            title = "Candidate analysis problems"
-            description = "Problems proposed by the planner and checked against measured support."
-            preferred = [("Candidates", "n_candidates"), ("Viable", "n_viable")]
+            title = i18n.t("Candidate analysis problems")
+            description = i18n.t(
+                "Problems proposed by the planner and checked against measured support."
+            )
+            preferred = [(i18n.t("Candidates"), "n_candidates"), (i18n.t("Viable"), "n_viable")]
         elif artifact_type == "problem_definition":
-            title = str(summary.get("title") or "Selected problem")
-            description = "The target, task, and success metric used downstream."
+            title = str(summary.get("title") or i18n.t("Selected problem"))
+            description = i18n.t("The target, task, and success metric used downstream.")
             preferred = [
-                ("Task", "task_type"),
-                ("Target", "target_column"),
-                ("Metric", "primary_metric"),
+                (i18n.t("Task"), "task_type"),
+                (i18n.t("Target"), "target_column"),
+                (i18n.t("Metric"), "primary_metric"),
             ]
         elif artifact_type == "validation_strategy":
-            title = "Validation plan"
-            description = "How training and holdout data are separated to keep evaluation honest."
+            title = i18n.t("Validation plan")
+            description = i18n.t(
+                "How training and holdout data are separated to keep evaluation honest."
+            )
             preferred = [
-                ("Strategy", "strategy"),
-                ("Folds", "n_folds"),
-                ("Group", "group_column"),
-                ("Time", "time_column"),
+                (i18n.t("Strategy"), "strategy"),
+                (i18n.t("Folds"), "n_folds"),
+                (i18n.t("Group"), "group_column"),
+                (i18n.t("Time"), "time_column"),
             ]
         elif artifact_type == "leakage_report":
-            title = "Leakage audit"
-            description = (
+            title = i18n.t("Leakage audit")
+            description = i18n.t(
                 "Features checked for information that would make model results "
                 "unrealistically good."
             )
             preferred = [
-                ("Features checked", "n_features_checked"),
-                ("Findings", "n_findings"),
-                ("Blocking", "n_blocking"),
-                ("Clean", "is_clean"),
+                (i18n.t("Features checked"), "n_features_checked"),
+                (i18n.t("Findings"), "n_findings"),
+                (i18n.t("Blocking"), "n_blocking"),
+                (i18n.t("Clean"), "is_clean"),
             ]
         elif artifact_type == "trained_model":
-            title = "Model comparison"
-            description = (
+            title = i18n.t("Model comparison")
+            description = i18n.t(
                 "Candidate models compared by cross-validation and untouched holdout performance."
             )
             preferred = [
-                ("Winner", "winner_id"),
-                ("Metric", "primary_metric"),
-                ("Holdout score", "winner_holdout_score"),
-                ("Training rows", "training_row_count"),
+                (i18n.t("Winner"), "winner_id"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Holdout score"), "winner_holdout_score"),
+                (i18n.t("Training rows"), "training_row_count"),
             ]
         elif artifact_type == "model_experiment":
-            title = str(summary.get("title") or "Agent-authored model experiment")
-            description = (
+            title = str(summary.get("title") or i18n.t("Agent-authored model experiment"))
+            description = i18n.t(
                 "An isolated development experiment scored by the host on withheld labels."
             )
             preferred = [
-                ("Model family", "model_family"),
-                ("Metric", "metric"),
-                ("Score", "score"),
-                ("Baseline", "baseline_score"),
-                ("Evaluation rows", "evaluation_rows"),
+                (i18n.t("Model family"), "model_family"),
+                (i18n.t("Metric"), "metric"),
+                (i18n.t("Score"), "score"),
+                (i18n.t("Baseline"), "baseline_score"),
+                (i18n.t("Evaluation rows"), "evaluation_rows"),
             ]
         elif artifact_type == "evaluation_report":
-            title = "Evaluation result"
-            description = (
+            title = i18n.t("Evaluation result")
+            description = i18n.t(
                 "The selected model compared with its baseline, including alerts "
                 "and decision history."
             )
             preferred = [
-                ("Winner", "winner_id"),
-                ("Metric", "primary_metric"),
-                ("Holdout score", "winner_holdout_score"),
-                ("Baseline improvement", "baseline_delta"),
-                ("Alerts", "n_alerts"),
+                (i18n.t("Winner"), "winner_id"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Holdout score"), "winner_holdout_score"),
+                (i18n.t("Baseline improvement"), "baseline_delta"),
+                (i18n.t("Alerts"), "n_alerts"),
             ]
         elif artifact_type == "final_report":
-            title = "Final auditable report"
-            description = (
+            title = i18n.t("Final auditable report")
+            description = i18n.t(
                 "The human-readable handoff tying conclusions to the exact evaluation evidence."
             )
-            preferred = [("Report length", "n_characters")]
+            preferred = [(i18n.t("Report length"), "n_characters")]
         elif artifact_type == "agent_audit":
-            title = "Agent execution audit"
-            description = (
+            title = i18n.t("Agent execution audit")
+            description = i18n.t(
                 "Contract validation, panel agreement, and deterministic tool provenance."
             )
             preferred = [
-                ("Agent", "agent_id"),
-                ("Panel", "panel_size"),
-                ("Valid", "valid_members"),
-                ("Agreement", "agreement"),
-                ("Pydantic", "pydantic_validated"),
-                ("Tools", "tool_count"),
-                ("Skills", "skill_count"),
+                (i18n.t("Agent"), "agent_id"),
+                (i18n.t("Panel"), "panel_size"),
+                (i18n.t("Valid"), "valid_members"),
+                (i18n.t("Agreement"), "agreement"),
+                (i18n.t("Pydantic"), "pydantic_validated"),
+                (i18n.t("Tools"), "tool_count"),
+                (i18n.t("Skills"), "skill_count"),
             ]
         elif artifact_type == "eda_report":
-            title = "Exploratory data findings"
-            description = (
+            title = i18n.t("Exploratory data findings")
+            description = i18n.t(
                 "Measured distributions, missingness, and relationships relevant to the problem."
             )
-            preferred = [(key.replace("_", " ").title(), key) for key in summary][:4]
+            preferred = [(i18n.t(key.replace("_", " ").title()), key) for key in summary][:4]
         elif artifact_type == "exploratory_analysis":
-            title = str(summary.get("title") or "Agent-authored exploratory analysis")
-            description = "Validated exploratory output produced by locally executed code."
+            title = str(summary.get("title") or i18n.t("Agent-authored exploratory analysis"))
+            description = i18n.t("Validated exploratory output produced by locally executed code.")
             preferred = [
-                ("Evidence class", "evidence_class"),
-                ("Chart", "chart_kind"),
-                ("Tool calls", "tool_calls"),
+                (i18n.t("Evidence class"), "evidence_class"),
+                (i18n.t("Chart"), "chart_kind"),
+                (i18n.t("Tool calls"), "tool_calls"),
             ]
         facts = [
             {"label": label, "value": summary[key]}
@@ -1490,10 +3419,13 @@ class ControlPlane:
             return story
         payload = self.artifact_payload(artifact["artifact_id"])
         if artifact_type == "integration_plan":
-            story["suggestion"] = (
-                f"Use {payload['base_table']} at one row per "
-                f"{', '.join(payload['base_grain'])}; apply {len(payload['aggregations'])} "
-                f"aggregation(s) before {len(payload['joins'])} join(s)."
+            story["suggestion"] = i18n.t(
+                "Use {base_table} at one row per {base_grain}; apply {n_aggs} "
+                "aggregation(s) before {n_joins} join(s).",
+                base_table=payload["base_table"],
+                base_grain=", ".join(payload["base_grain"]),
+                n_aggs=len(payload["aggregations"]),
+                n_joins=len(payload["joins"]),
             )
             story["warnings"] = payload.get("warnings", [])
             # The join plan as a picture. The brief asks that the schema not be
@@ -1504,14 +3436,28 @@ class ControlPlane:
             # the beginning and never rendered, so the half of the product that
             # exists to help a person understand their data was invisible.
             items = payload.get("items", [])
+            # Both languages are stored; the reader's choice picks one here, and
+            # falls back to English when the model did not produce the Turkish
+            # half rather than showing an empty card.
+            turkish = i18n.current() == "tr"
+
+            def _pick(item: dict[str, Any], field: str) -> Any:
+                if turkish and item.get(f"{field}_tr"):
+                    return item[f"{field}_tr"]
+                return item.get(field)
+
             story["insights"] = [
                 {
                     "kind": item.get("kind"),
-                    "interpretation": item.get("interpretation"),
-                    "why_it_matters": item.get("why_it_matters"),
-                    "verification_question": (item.get("verification") or {}).get("question")
-                    if isinstance(item.get("verification"), dict)
-                    else item.get("verification"),
+                    "interpretation": _pick(item, "interpretation"),
+                    "why_it_matters": _pick(item, "why_it_matters"),
+                    "verification_question": (
+                        item.get("verification_question_tr")
+                        if turkish and item.get("verification_question_tr")
+                        else (item.get("verification") or {}).get("question")
+                        if isinstance(item.get("verification"), dict)
+                        else item.get("verification")
+                    ),
                     "confidence": item.get("confidence"),
                     "epistemic_state": item.get("epistemic_state", "proposed"),
                     "subjects": [
@@ -1527,16 +3473,19 @@ class ControlPlane:
                 # Say that the agent could not produce an explanation, rather
                 # than showing an empty section that reads as "nothing to say".
                 story["warnings"] = [
-                    str(payload.get("degradation_reason") or "Interpretation was not produced.")
+                    str(
+                        payload.get("degradation_reason")
+                        or i18n.t("Interpretation was not produced.")
+                    )
                 ]
         elif artifact_type == "integration_trial":
-            story["suggestion"] = (
+            story["suggestion"] = i18n.t(
                 "The proposed plan was executed by the deterministic integration engine "
                 "before it was accepted."
             )
             story["warnings"] = payload.get("warnings", [])
         elif artifact_type == "problem_candidates":
-            story["suggestion"] = "The planner ranked these analysis problems."
+            story["suggestion"] = i18n.t("The planner ranked these analysis problems.")
             story["choices"] = [
                 {
                     "title": item.get("title"),
@@ -1549,37 +3498,36 @@ class ControlPlane:
                 for item in payload.get("candidates", [])
             ]
         elif artifact_type == "problem_definition":
-            story["suggestion"] = (
-                f"Proceed with “{payload.get('title')}” as a {payload.get('task_type')} "
-                f"problem, predicting {payload.get('target_column')} and measuring "
-                f"{payload.get('primary_metric')}."
+            story["suggestion"] = i18n.t(
+                "Proceed with “{title}” as a {task_type} problem, predicting "
+                "{target_column} and measuring {primary_metric}.",
+                title=payload.get("title"),
+                task_type=payload.get("task_type"),
+                target_column=payload.get("target_column"),
+                primary_metric=payload.get("primary_metric"),
             )
             story["rationale"] = payload.get("description")
             story["excluded_columns"] = payload.get("excluded_columns", [])
         elif artifact_type == "validation_strategy":
             story["panels"] = validation_panels(payload)
-            story["suggestion"] = (
-                f"Use {payload.get('strategy')} validation with {payload.get('n_folds')} folds"
-                + (
-                    f", grouped by {payload.get('group_column')}"
-                    if payload.get("group_column")
-                    else ""
-                )
-                + (
-                    f", ordered by {payload.get('time_column')}"
-                    if payload.get("time_column")
-                    else ""
-                )
-                + "."
+            story["suggestion"] = i18n.t(
+                "Use {strategy} validation with {n_folds} folds"
+                + (", grouped by {group_column}" if payload.get("group_column") else "")
+                + (", ordered by {time_column}" if payload.get("time_column") else "")
+                + ".",
+                strategy=payload.get("strategy"),
+                n_folds=payload.get("n_folds"),
+                group_column=payload.get("group_column"),
+                time_column=payload.get("time_column"),
             )
             story["rationale"] = payload.get("rationale")
         elif artifact_type == "leakage_report":
             blocking = [item for item in payload.get("findings", []) if item.get("blocking")]
             story["panels"] = leakage_panels(payload)
             story["suggestion"] = (
-                "Do not train yet; correct or exclude the blocking features."
+                i18n.t("Do not train yet; correct or exclude the blocking features.")
                 if blocking
-                else "No blocking leakage was detected; training may proceed."
+                else i18n.t("No blocking leakage was detected; training may proceed.")
             )
             story["findings"] = [
                 {
@@ -1614,11 +3562,16 @@ class ControlPlane:
             )
             target_name = payload.get("target_column")
             story["suggestion"] = (
-                f"Start by understanding {target_name}: inspect its distribution, then "
-                "review missing fields and the strongest measured relationships before "
-                "accepting any modelling direction."
+                i18n.t(
+                    "Start by understanding {target}: inspect its distribution, then "
+                    "review missing fields and the strongest measured relationships before "
+                    "accepting any modelling direction.",
+                    target=target_name,
+                )
                 if target_name
-                else "Review coverage, missingness, correlations, and outliers before modelling."
+                else i18n.t(
+                    "Review coverage, missingness, correlations, and outliers before modelling."
+                )
             )
             story["visuals"] = {
                 "target": {
@@ -1639,10 +3592,11 @@ class ControlPlane:
             # analysis, each with its own chart, severity and insights.
             story["panels"] = eda_panels(payload)
             story["criteria"] = {
-                "Target distribution measured": bool(target_name is None or target),
-                "Every feature covered": set(payload.get("feature_columns", []))
-                .issubset(payload.get("covered_columns", [])),
-                "Missingness measured": {
+                i18n.t("Target distribution measured"): bool(target_name is None or target),
+                i18n.t("Every feature covered"): set(payload.get("feature_columns", [])).issubset(
+                    payload.get("covered_columns", [])
+                ),
+                i18n.t("Missingness measured"): {
                     item.get("column") for item in missingness
                 }.issuperset(
                     set(payload.get("covered_columns", []))
@@ -1650,37 +3604,39 @@ class ControlPlane:
                 ),
             }
             warnings = []
-            high_missing = [
-                item for item in missingness if (item.get("null_rate") or 0.0) >= 0.1
-            ]
+            high_missing = [item for item in missingness if (item.get("null_rate") or 0.0) >= 0.1]
             if high_missing:
                 warnings.append(
-                    f"{len(high_missing)} column(s) have at least 10% missing values; "
-                    "confirm how they should be handled."
+                    i18n.t(
+                        "{count} column(s) have at least 10% missing values; "
+                        "confirm how they should be handled.",
+                        count=len(high_missing),
+                    )
                 )
             strong = [
-                item
-                for item in relationships
-                if abs(item.get("pearson_correlation") or 0.0) >= 0.9
+                item for item in relationships if abs(item.get("pearson_correlation") or 0.0) >= 0.9
             ]
             if strong:
                 warnings.append(
-                    f"{len(strong)} feature(s) have |correlation| at or above 0.90; "
-                    "treat these as leakage candidates until audited."
+                    i18n.t(
+                        "{count} feature(s) have |correlation| at or above 0.90; "
+                        "treat these as leakage candidates until audited.",
+                        count=len(strong),
+                    )
                 )
             story["warnings"] = warnings
         elif artifact_type == "exploratory_analysis":
-            story["panels"] = [
-                exploratory_panel(payload, linked_interpretations or [])
-            ]
-            story["suggestion"] = (
+            story["panels"] = [exploratory_panel(payload, linked_interpretations or [])]
+            story["suggestion"] = i18n.t(
                 "Treat this as a proposed extension to the mandatory EDA, not as gate evidence."
             )
         elif artifact_type == "trained_model":
             story["panels"] = training_panels(payload)
-            story["suggestion"] = (
-                f"Select {payload.get('winner_id')} from {len(payload.get('results', []))} "
-                f"compared candidates using {payload.get('primary_metric')}."
+            story["suggestion"] = i18n.t(
+                "Select {winner} from {count} compared candidates using {metric}.",
+                winner=payload.get("winner_id"),
+                count=len(payload.get("results", [])),
+                metric=payload.get("primary_metric"),
             )
             story["model_comparison"] = [
                 {
@@ -1715,19 +3671,19 @@ class ControlPlane:
                 for item in payload.get("results", [])
             ]
         elif artifact_type == "model_experiment":
-            story["panels"] = [
-                model_experiment_panel(payload, linked_interpretations or [])
-            ]
-            story["suggestion"] = (
+            story["panels"] = [model_experiment_panel(payload, linked_interpretations or [])]
+            story["suggestion"] = i18n.t(
                 "Review this as a proposed development experiment; it did not use the "
                 "final holdout and cannot change the selected model."
             )
         elif artifact_type == "evaluation_report":
             story["panels"] = evaluation_panels(payload)
-            story["suggestion"] = (
-                f"The selected {payload.get('winner_display_name')} scored "
-                f"{payload.get('winner_holdout_score')} on holdout; baseline improvement "
-                f"was {payload.get('baseline_delta')}."
+            story["suggestion"] = i18n.t(
+                "The selected {winner} scored {score} on holdout; baseline improvement "
+                "was {delta}.",
+                winner=payload.get("winner_display_name"),
+                score=payload.get("winner_holdout_score"),
+                delta=payload.get("baseline_delta"),
             )
             gate_history = payload.get("gate_history", [])
             story["history_alerts"] = [
@@ -1743,9 +3699,7 @@ class ControlPlane:
                 for item in payload.get("alerts", [])
             ]
             story["warnings"] = [
-                item["detail"]
-                for item in story["history_alerts"]
-                if not item["resolved"]
+                item["detail"] for item in story["history_alerts"] if not item["resolved"]
             ]
             story["model_comparison"] = [
                 {
@@ -1760,37 +3714,39 @@ class ControlPlane:
             ]
             story["holdout_metrics"] = payload.get("holdout_metrics", [])
         elif artifact_type == "final_report":
-            story["suggestion"] = "The final report is ready for review and export."
+            story["suggestion"] = i18n.t("The final report is ready for review and export.")
             story["report_markdown"] = payload.get("markdown")
         elif artifact_type == "agent_audit":
-            story["suggestion"] = (
+            story["suggestion"] = i18n.t(
                 "Review panel agreement and validation evidence before trusting this "
                 "agent-authored contract."
             )
             row_access = bool(payload.get("raw_rows_shared", False))
-            row_access_authorized = (
-                not row_access or payload.get("agent_id") == "eda_investigator"
-            )
+            row_access_authorized = not row_access or payload.get("agent_id") == "eda_investigator"
             story["quality_checks"] = [
                 {
-                    "label": "Pydantic output contract",
+                    "label": i18n.t("Pydantic output contract"),
                     "passed": payload.get("pydantic_contract_enforced", False),
                     "detail": payload.get("output_contract"),
                 },
                 {
-                    "label": "Row access matches the agent role",
+                    "label": i18n.t("Row access matches the agent role"),
                     "passed": row_access_authorized,
                     "detail": (
-                        "Local investigator may read a read-only copy; output remains typed."
+                        i18n.t(
+                            "Local investigator may read a read-only copy; output remains typed."
+                        )
                         if row_access
-                        else "Planner context contains schema and aggregate measurements only."
+                        else i18n.t(
+                            "Planner context contains schema and aggregate measurements only."
+                        )
                     ),
                 },
                 {
-                    "label": "Evidence tools were allowlisted",
+                    "label": i18n.t("Evidence tools were allowlisted"),
                     "passed": set(payload.get("evidence_tools", []))
                     <= set(payload.get("allowed_tools", [])),
-                    "detail": ", ".join(payload.get("evidence_tools", [])) or "none",
+                    "detail": ", ".join(payload.get("evidence_tools", [])) or i18n.t("none"),
                 },
             ]
             story["panel"] = payload.get("members", [])
@@ -1801,6 +3757,81 @@ class ControlPlane:
         if not path.exists():
             raise KeyError(artifact_id)
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def artifact_preview(self, artifact_id: str) -> dict[str, Any]:
+        """Return a graph-inspector preview without exposing rows or document passages."""
+        payload = self.artifact_payload(artifact_id)
+        if "producer_component_id" in payload and "summary_text" in payload:
+            return {
+                "artifact_id": artifact_id,
+                "artifact_type": "staging_report",
+                "producer_component_id": payload.get("producer_component_id"),
+                "title": payload.get("title"),
+                "summary": payload.get("summary_text"),
+                "findings": payload.get("findings", []),
+                "verification_questions": payload.get("verification_questions", []),
+            }
+        if "engine" in payload and isinstance(payload.get("documents"), list):
+            documents = []
+            for document in payload["documents"]:
+                tables = [
+                    {
+                        "candidate_id": item.get("candidate_id"),
+                        "page_number": item.get("page_number"),
+                        "title": item.get("title"),
+                        "columns": item.get("columns", []),
+                        "row_count": len(item.get("rows", [])),
+                        "review_status": item.get("review_status"),
+                    }
+                    for item in document.get("tables", [])
+                ]
+                figures = [
+                    {
+                        "candidate_id": item.get("candidate_id"),
+                        "page_number": item.get("page_number"),
+                        "caption": item.get("caption"),
+                        "kind": item.get("kind"),
+                        "review_status": item.get("review_status"),
+                    }
+                    for item in document.get("figures", [])
+                ]
+                documents.append(
+                    {
+                        "source_file": document.get("source_file"),
+                        "title": document.get("title"),
+                        "page_count": document.get("page_count", 0),
+                        "text_characters": len(document.get("markdown", "")),
+                        "tables": tables,
+                        "figures": figures,
+                        "warnings": document.get("warnings", []),
+                    }
+                )
+            return {
+                "artifact_id": artifact_id,
+                "artifact_type": "document_extraction",
+                "engine": payload.get("engine"),
+                "engine_version": payload.get("engine_version"),
+                "duration_seconds": payload.get("duration_seconds"),
+                "documents": documents,
+                "warnings": payload.get("warnings", []),
+            }
+
+        scalar = {
+            key: value
+            for key, value in payload.items()
+            if isinstance(value, str | int | float | bool) and key not in {"markdown", "text"}
+        }
+        collections = {
+            key: len(value)
+            for key, value in payload.items()
+            if isinstance(value, list | dict)
+        }
+        return {
+            "artifact_id": artifact_id,
+            "artifact_type": "artifact",
+            "fields": scalar,
+            "collection_sizes": collections,
+        }
 
     # ---------------------------------------------------------------- gates
 
@@ -1831,7 +3862,7 @@ class ControlPlane:
                 progress = self.progress(run_id)
             except KeyError:
                 progress = {"events": [], "attempts": [], "status": None, "current_stage": None}
-            mode = progress.get("configuration", {}).get("mode", "manual")
+            mode = self._mode_of(progress)
             spec = build_full_spec_definition() if mode == "agent" else build_default_spec()
             definition = spec.stage(stage_id)
         except KeyError:
@@ -1871,9 +3902,7 @@ class ControlPlane:
         for artifact in artifacts:
             artifact["story"] = self._artifact_story(
                 artifact,
-                linked_interpretations=interpretations_by_source.get(
-                    artifact["artifact_id"], []
-                ),
+                linked_interpretations=interpretations_by_source.get(artifact["artifact_id"], []),
             )
         decisions = [item for item in self.gate_decisions(run_id) if item["stage_id"] == stage_id]
         questions = [decision["human_prompt"] for decision in decisions if decision["human_prompt"]]
@@ -1899,13 +3928,19 @@ class ControlPlane:
             attempts[-1] if attempts else None,
             progress.get("current_stage"),
             progress.get("status"),
+            human_approved=any(
+                event.get("event") == "human_decision_recorded"
+                and event.get("stage") == stage_id
+                and event.get("decision") == "approve"
+                for event in progress.get("events", [])
+            ),
         )
         active_question = questions[-1] if questions and stage_status == "blocked" else None
         return {
             "run_id": run_id,
             "stage": {
                 "id": definition.id,
-                "description": definition.description,
+                "description": i18n.t(definition.description),
                 "consumes": [item.value for item in definition.consumes],
                 "produces": [item.value for item in definition.produces],
             },
@@ -1933,11 +3968,11 @@ class ControlPlane:
             "human_view": {
                 "needs_human": active_question is not None,
                 "state_label": (
-                    "Your decision is needed"
+                    i18n.t("Your decision is needed")
                     if active_question
-                    else "In progress"
+                    else i18n.t("In progress")
                     if stage_status == "running"
-                    else "No action needed"
+                    else i18n.t("No action needed")
                 ),
                 "suggestion": latest_story.get("suggestion") if latest_story else None,
                 "question": active_question,
@@ -1978,8 +4013,7 @@ class ControlPlane:
                     "retries": sum(item.get("verdict") == "retry" for item in attempts),
                     "human_stops": sum(item.get("verdict") == "escalate" for item in attempts),
                     "latest_gate": decisions[-1] if decisions else None,
-                    "deletable": summary.status
-                    not in {"queued", "running", "awaiting_human"},
+                    "deletable": summary.status not in {"queued", "running", "staging"},
                 }
             )
         return catalog
@@ -2100,11 +4134,19 @@ class ControlPlane:
             status = "archived"
         # `progress` has already downgraded an abandoned in-flight run to
         # `interrupted`, so what reaches here as active really is active.
-        if status in {"queued", "running", "awaiting_human"}:
+        #
+        # `awaiting_human` is deliberately not in this set. A parked run has no
+        # worker thread -- the one that raised the question returned, and
+        # answering spawns a fresh one -- so nothing is mutating its artifacts
+        # underneath the delete. Refusing it meant a run whose question nobody
+        # intends to answer could never be cleared from the product, which is
+        # the exact dead end this guard exists to prevent for crashed runs.
+        # Typing the run id back is the deliberate act that protects it.
+        if status in {"queued", "running", "staging"}:
             raise ValueError(f"cannot delete an active run with status {status!r}")
         with self._lock:
             runtime = self._runtime_runs.get(run_id)
-            if runtime and runtime.status in {"queued", "running", "awaiting_human"}:
+            if runtime and runtime.status in {"queued", "running", "staging"}:
                 raise ValueError("cannot delete a live in-memory run")
             self._runtime_runs.pop(run_id, None)
             deleted = self.store.delete_run(run_id)
@@ -2115,6 +4157,12 @@ class ControlPlane:
             if snapshot_deleted:
                 snapshot.unlink()
         return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
+
+
+def _pending_question(runtime: Any) -> dict[str, Any] | None:
+    """The escalation a run stopped on, ready for the wire."""
+    question = getattr(getattr(runtime, "outcome", None), "pending_question", None)
+    return question.model_dump(mode="json") if question is not None else None
 
 
 def _as_intent(value: Any) -> str | None:
@@ -2129,14 +4177,29 @@ def _as_intent(value: Any) -> str | None:
     raise ValueError("instructions must be a string or a list of strings")
 
 
-def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPlane | None = None):
-    """Build the lightweight local FastAPI application."""
+def create_app(
+    artifacts_dir: str | Path = "data/artifacts",
+    *,
+    plane: ControlPlane | None = None,
+    source_roots: Sequence[str | Path] | None = None,
+):
+    """Build the lightweight local FastAPI application.
+
+    `source_roots` is worth passing explicitly whenever the process is not
+    launched from the repository. It defaults to `data/` *relative to the
+    working directory*, so a server started from a deployment checkout looked
+    for datasets inside that checkout -- where `data/` is gitignored and
+    therefore absent -- and served an empty list with no error anywhere.
+    """
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse, Response
     from fastapi.staticfiles import StaticFiles
 
     store = ArtifactStore(artifacts_dir)
-    plane = plane or ControlPlane(store=store)
+    plane = plane or ControlPlane(
+        store=store,
+        source_roots=tuple(Path(root) for root in source_roots or ()),
+    )
     app = FastAPI(title="Agentic DS workflow", version="0.2.0")
 
     # Password gate. Installed only when a credential is configured, so the
@@ -2168,7 +4231,7 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
         return {"status": "ok", "auth": auth_config is not None}
 
     static_dir = Path(__file__).with_name("static")
-    if static_dir.is_dir():
+    if (static_dir / "assets").is_dir():
         # Serve the built React app. Hashed asset filenames make the bundle
         # cacheable; index.html is the SPA fallback so client-side routes
         # survive a hard refresh.
@@ -2182,11 +4245,10 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
         def index() -> str:
             return (static_dir / "index.html").read_text(encoding="utf-8")
     else:
+
         @app.get("/", response_class=HTMLResponse)
         def index_missing() -> str:
-            return (
-                "<h1>UI not built</h1><p>Run <code>npm --prefix web run build</code>.</p>"
-            )
+            return "<h1>UI not built</h1><p>Run <code>npm --prefix web run build</code>.</p>"
 
     @app.get("/api/workflow")
     def workflow(run_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
@@ -2291,9 +4353,7 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
     @app.post("/api/runs/{run_id}/stages/{stage_id}/direct")
     def direct_stage(run_id: str, stage_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
-            directives = plane.direct_stage(
-                run_id, stage_id, str(body.get("instruction", ""))
-            )
+            directives = plane.direct_stage(run_id, stage_id, str(body.get("instruction", "")))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "stage_id": stage_id, "directives": directives}
@@ -2305,12 +4365,116 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
     @app.post("/api/runs/{run_id}/sensitivity")
     def override_sensitivity(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
-            applied = plane.apply_sensitivity_overrides(
-                run_id, dict(body.get("columns") or {})
-            )
+            applied = plane.apply_sensitivity_overrides(run_id, dict(body.get("columns") or {}))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "applied": applied}
+
+    @app.post("/api/runs/staged")
+    def stage_run(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.stage_run(
+                str(body["source_id"]),
+                body.get("configuration"),
+                reuse_cache=bool(body.get("reuse_cache", False)),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/data-sources/{source_id}/pipeline-blueprint")
+    def default_staging_pipeline(source_id: str) -> dict[str, Any]:
+        try:
+            return plane.default_staging_pipeline(source_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown source") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/runs/{run_id}/staging")
+    def staging_workspace(run_id: str) -> dict[str, Any]:
+        try:
+            return plane.staging_workspace(run_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"staging workspace for {run_id!r} is not ready"
+            ) from None
+
+    @app.get("/api/staging/components")
+    def staging_components() -> dict[str, Any]:
+        return {
+            "document_engines": document_engine_catalog(),
+            "automation_components": [
+                item.model_dump(mode="json") for item in automation_component_catalog()
+            ],
+        }
+
+    @app.get("/api/automation/components")
+    def automation_components() -> dict[str, Any]:
+        return {
+            "components": [
+                item.model_dump(mode="json") for item in automation_component_catalog()
+            ],
+            "document_engines": document_engine_catalog(),
+        }
+
+    @app.put("/api/runs/{run_id}/staging/pipeline")
+    def update_staging_pipeline(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.update_staging_pipeline(
+                run_id,
+                dict(body["blueprint"]),
+                base_artifact_id=str(body["base_artifact_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/automation/compile")
+    def compile_automation(run_id: str) -> dict[str, Any]:
+        try:
+            return plane.compile_automation(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="staging workspace not found") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/automation/branches/start")
+    def start_automation_branches(run_id: str) -> dict[str, Any]:
+        try:
+            return {"parent_run_id": run_id, "branches": plane.start_automation_branches(run_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="staging workspace not found") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/staging/documents/run")
+    def run_document_understanding(run_id: str) -> dict[str, Any]:
+        try:
+            return plane.run_document_understanding(run_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.patch("/api/runs/{run_id}/staged")
+    def update_staged(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return {"configuration": plane.update_staged_run(run_id, body)}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/start")
+    def start_staged(run_id: str, body: dict[str, Any]) -> dict[str, str]:
+        try:
+            started = plane.start_staged_run(run_id, body or None)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"run_id": started, "status": "running"}
+
+    @app.post("/api/runs/{run_id}/discard")
+    def discard_staged(run_id: str) -> dict[str, str]:
+        try:
+            plane.discard_staged_run(run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return {"run_id": run_id, "status": "discarded"}
 
     @app.post("/api/runs/{run_id}/answer")
     def answer_run(run_id: str, body: dict[str, Any]) -> dict[str, str]:
@@ -2366,6 +4530,13 @@ def create_app(artifacts_dir: str | Path = "data/artifacts", *, plane: ControlPl
     def artifact(artifact_id: str) -> dict[str, Any]:
         try:
             return plane.artifact_payload(artifact_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown artifact") from None
+
+    @app.get("/api/artifacts/{artifact_id}/preview")
+    def artifact_preview(artifact_id: str) -> dict[str, Any]:
+        try:
+            return plane.artifact_preview(artifact_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown artifact") from None
 

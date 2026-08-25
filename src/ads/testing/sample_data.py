@@ -36,8 +36,14 @@ N_TRANSACTIONS = 15_000
 LEDGER_MATCH_RATE = 0.942
 
 SPECIALTIES = [
-    "cardiology", "oncology", "pediatrics", "radiology",
-    "orthopedics", "neurology", "dermatology", "general practice",
+    "cardiology",
+    "oncology",
+    "pediatrics",
+    "radiology",
+    "orthopedics",
+    "neurology",
+    "dermatology",
+    "general practice",
 ]
 CITIES = ["istanbul", "ankara", "izmir", "bursa", "antalya", "adana"]
 MERCHANT_CATEGORIES = ["equipment", "pharma", "travel", "consulting", "lab services", "software"]
@@ -50,9 +56,7 @@ def build_physicians(rng: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFra
     specialty = rng.choice(SPECIALTIES, N_PHYSICIANS)
     years_exp = rng.integers(1, 35, N_PHYSICIANS)
 
-    specialty_premium = dict(
-        zip(SPECIALTIES, rng.normal(0, 40_000, len(SPECIALTIES)), strict=True)
-    )
+    specialty_premium = dict(zip(SPECIALTIES, rng.normal(0, 40_000, len(SPECIALTIES)), strict=True))
     base = 220_000 + years_exp * 8_500
     premium = np.array([specialty_premium[s] for s in specialty])
     annual_comp = base + premium + rng.normal(0, 25_000, N_PHYSICIANS)
@@ -71,8 +75,8 @@ def build_physicians(rng: np.random.Generator) -> tuple[pd.DataFrame, pd.DataFra
             "License No": [f"LIC{rng.integers(10**8, 10**9)}" for _ in range(N_PHYSICIANS)],
             "Hire Date": pd.to_datetime("2005-01-01")
             + pd.to_timedelta(rng.integers(0, 6500, N_PHYSICIANS), unit="D"),
-            "Region Code": "TR",          # constant column
-            "Unused Column": np.nan,      # all-null column
+            "Region Code": "TR",  # constant column
+            "Unused Column": np.nan,  # all-null column
         }
     )
 

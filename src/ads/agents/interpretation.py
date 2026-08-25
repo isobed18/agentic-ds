@@ -11,6 +11,7 @@ from ads.contracts.comprehension import (
 from ads.contracts.evidence import MeasurementKind, MeasurementRecord, SubjectRef
 from ads.discovery.measurements import measurement_digest
 from ads.llm.client import LARGE
+from ads.skills import render_skills, select_skills
 
 SYSTEM_PROMPT = """\
 You help a human understand an unfamiliar dataset without seeing source rows.
@@ -32,6 +33,13 @@ what the measured descriptors suggest and ask how to verify it.
 
 Use exact table and column names in structured subjects. A relationship item must name both
 tables and cite a single relationship measurement that contains both tables.
+
+Write every item twice: in English, and in Turkish in the `_tr` fields. This
+deployment has readers in both languages and they may be looking at the same run
+at the same time, so both are stored and the interface picks one. Write the
+Turkish as Turkish rather than as a word-for-word rendering of the English --
+same finding, same number, natural sentence. Keep table and column names exactly
+as they appear; they are identifiers, not words to translate.
 """
 
 
@@ -109,18 +117,27 @@ def _citation_rules() -> str:
 def build_context(
     bundle,
     scope: ComprehensionScope,
+    cards: list | None = None,
 ) -> AgentContext:
     rendered, visible = measurement_digest(bundle)
+    # Procedural guidance for the stage where the reader knows least about their
+    # own data: what to say about an unfamiliar dataset, and how to read a schema
+    # that declares nothing. Loaded through the skill registry so it is auditable
+    # and versioned rather than buried in a prompt string.
+    skills = select_skills("source_comprehension", cards or [])
+    sections = {
+        "Scope": scope.value,
+        "Measured catalog": rendered,
+        "Citation rules": _citation_rules(),
+        "Task": (
+            "Select only consequential interpretations that save a human time. "
+            "Return no item that lacks measured support and a verification question."
+        ),
+    }
+    if skills:
+        sections["How to describe this"] = render_skills(skills)
     return AgentContext(
-        sections={
-            "Scope": scope.value,
-            "Measured catalog": rendered,
-            "Citation rules": _citation_rules(),
-            "Task": (
-                "Select only consequential interpretations that save a human time. "
-                "Return no item that lacks measured support and a verification question."
-            ),
-        },
+        sections=sections,
         facts={
             "measurement_by_id": visible,
             "known_columns": sorted(
@@ -132,11 +149,7 @@ def build_context(
                 }
             ),
             "known_tables": sorted(
-                {
-                    subject.table
-                    for record in visible.values()
-                    for subject in record.subjects
-                }
+                {subject.table for record in visible.values() for subject in record.subjects}
             ),
         },
     )
@@ -178,9 +191,7 @@ def validate_measurement_binding(
                 ValidationFailure(
                     layer="evidence",
                     code="incompatible_measurement_kind",
-                    detail=(
-                        f"{item.kind.value} cannot cite measurement kinds {incompatible}."
-                    ),
+                    detail=(f"{item.kind.value} cannot cite measurement kinds {incompatible}."),
                     field_path=f"items[{index}].measurement_ids",
                 )
             )

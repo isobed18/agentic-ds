@@ -50,11 +50,20 @@ class InterpretationProposal(FrozenModel):
     measurement_ids: list[str] = Field(min_length=1, max_length=4)
     interpretation: str = Field(min_length=10, max_length=800)
     why_it_matters: str = Field(min_length=10, max_length=800)
+    #: The same interpretation in Turkish. Written in the same pass rather than
+    #: translated afterwards: the agent already holds the measurements and the
+    #: reasoning, and a later translation of composed prose loses the thread
+    #: between a sentence and the number it came from. Optional because a model
+    #: that cannot produce it should still deliver the English half rather than
+    #: failing validation and leaving the reader with nothing.
+    interpretation_tr: str | None = Field(default=None, max_length=800)
+    why_it_matters_tr: str | None = Field(default=None, max_length=800)
     verification_question: str = Field(
         min_length=10,
         max_length=500,
         description="Mandatory human check because every model interpretation is proposed.",
     )
+    verification_question_tr: str | None = Field(default=None, max_length=500)
     confidence: ModelConfidence = Field(
         description=(
             "Model self-assessment only. It is not calibrated evidence and must never "
@@ -89,7 +98,13 @@ class InterpretationItem(FrozenModel):
     citations: list[MeasurementRecord] = Field(min_length=1, max_length=4)
     interpretation: str
     why_it_matters: str
+    #: Turkish alongside English rather than instead of it. The reader's
+    #: language is chosen per request and can change between two people looking
+    #: at the same run, so both are stored and the edge picks one.
+    interpretation_tr: str | None = None
+    why_it_matters_tr: str | None = None
     verification: VerificationQuestion
+    verification_question_tr: str | None = None
     confidence: ModelConfidence
     epistemic_state: Literal["proposed"] = "proposed"
 
@@ -119,6 +134,12 @@ class InterpretationItem(FrozenModel):
             subjects=proposal.subjects,
             citations=citations,
             interpretation=proposal.interpretation,
+            # Deliberately outside the canonical payload above: a translation of
+            # the same interpretation is the same interpretation, so adding it
+            # would give one finding two different content-addressed ids.
+            interpretation_tr=proposal.interpretation_tr,
+            why_it_matters_tr=proposal.why_it_matters_tr,
+            verification_question_tr=proposal.verification_question_tr,
             why_it_matters=proposal.why_it_matters,
             verification=VerificationQuestion(question=proposal.verification_question),
             confidence=proposal.confidence,

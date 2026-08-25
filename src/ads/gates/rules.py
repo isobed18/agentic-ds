@@ -93,17 +93,12 @@ class Rule:
 def _leakage(ctx: RuleContext) -> RuleOutcome | None:
     correlation = ctx.signals.max_target_correlation
     correlation_active = (
-        correlation is not None
-        and correlation > ctx.policy.thresholds.leakage_correlation
+        correlation is not None and correlation > ctx.policy.thresholds.leakage_correlation
     )
     correlation_columns = (
-        ctx.signals.target_relationship_suspect_columns
-        if correlation_active
-        else []
+        ctx.signals.target_relationship_suspect_columns if correlation_active else []
     )
-    columns = sorted(
-        set(correlation_columns) | set(ctx.signals.structural_leakage_suspect_columns)
-    )
+    columns = sorted(set(correlation_columns) | set(ctx.signals.structural_leakage_suspect_columns))
     # Compatibility for pre-v2 signal producers that only populated the original
     # aggregate field. A measured above-threshold correlation remains enforceable.
     if not columns and correlation_active:
@@ -130,8 +125,7 @@ def _leakage(ctx: RuleContext) -> RuleOutcome | None:
         measured = (
             f"Feature correlates with the target at {correlation:.3f}, above the "
             f"{ctx.policy.thresholds.leakage_correlation} limit."
-            if correlation is not None
-            and correlation > ctx.policy.thresholds.leakage_correlation
+            if correlation is not None and correlation > ctx.policy.thresholds.leakage_correlation
             else "The deterministic audit found blocking leakage."
         )
         correction_columns = unresolved or columns
@@ -139,16 +133,11 @@ def _leakage(ctx: RuleContext) -> RuleOutcome | None:
             verdict=GateVerdict.RETRY,
             reason_code="leakage_detected",
             message=(
-                f"{measured} Suspects requiring correction: "
-                f"{correction_columns or 'unidentified'}."
+                f"{measured} Suspects requiring correction: {correction_columns or 'unidentified'}."
             ),
             instructions=tuple(
                 f"drop_feature: {column}  # "
-                + (
-                    "target leakage"
-                    if column in correlation_columns
-                    else "blocking leakage"
-                )
+                + ("target leakage" if column in correlation_columns else "blocking leakage")
                 for column in correction_columns
             )
             or ("Remove the leaking feature(s) identified in the leakage report.",),
@@ -162,8 +151,7 @@ def _leakage(ctx: RuleContext) -> RuleOutcome | None:
         verdict=GateVerdict.ESCALATE,
         reason_code="leakage_unresolved",
         message=(
-            f"{measured} persists after "
-            f"{ctx.history.attempts} attempts. Human review required."
+            f"{measured} persists after {ctx.history.attempts} attempts. Human review required."
         ),
     )
 
@@ -397,13 +385,11 @@ def _statistical_support_low(ctx: RuleContext) -> RuleOutcome | None:
     reasons: list[str] = []
     if minority is not None and minority < thresholds.min_minority_class_count:
         reasons.append(
-            f"minority class has {minority} examples "
-            f"(floor {thresholds.min_minority_class_count})"
+            f"minority class has {minority} examples (floor {thresholds.min_minority_class_count})"
         )
     if rows_per_feature is not None and rows_per_feature < thresholds.min_rows_per_feature:
         reasons.append(
-            f"{rows_per_feature:.1f} rows per feature "
-            f"(floor {thresholds.min_rows_per_feature})"
+            f"{rows_per_feature:.1f} rows per feature (floor {thresholds.min_rows_per_feature})"
         )
     if not reasons:
         return None
@@ -631,11 +617,7 @@ def detect_failure(context: RuleContext) -> bool:
         context,
         stage=replace(context.stage, max_attempts=context.history.attempts + 1),
     )
-    return any(
-        rule(probe) is not None
-        for rule in RULES
-        if rule.id not in NON_SUBSTANTIVE_RULES
-    )
+    return any(rule(probe) is not None for rule in RULES if rule.id not in NON_SUBSTANTIVE_RULES)
 
 
 def applicable_rules(profile: AutonomyProfile) -> tuple[Rule, ...]:

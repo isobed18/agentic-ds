@@ -138,11 +138,7 @@ class EvaluationReport(Artifact):
 
     @property
     def unresolved_blocking_leakage(self) -> list[LeakageDisposition]:
-        return [
-            item
-            for item in self.leakage_dispositions
-            if item.blocking and not item.cleared
-        ]
+        return [item for item in self.leakage_dispositions if item.blocking and not item.cleared]
 
     @property
     def unresolved_separator_confirmation(self) -> list[LeakageDisposition]:

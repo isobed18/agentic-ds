@@ -117,9 +117,7 @@ class TestHardConstraintsAreUnbypassable:
         assert decision.human_prompt is not None
 
     def test_pii_egress_stops_even_in_full_auto(self) -> None:
-        decision = _decide(
-            signals=QualitySignals(pii_columns_in_context=1), profile=FULL_AUTO
-        )
+        decision = _decide(signals=QualitySignals(pii_columns_in_context=1), profile=FULL_AUTO)
         assert decision.verdict is GateVerdict.ESCALATE
         assert decision.reason_code == "pii_egress_requested"
 
@@ -157,9 +155,7 @@ class TestPrecedence:
         """A tier-4 escalation must not pre-empt a tier-1 automatic fix."""
         decision = _decide(
             stage=_stage(id="problem_discovery"),
-            signals=QualitySignals(
-                max_target_correlation=0.99, leakage_suspect_columns=["x"]
-            ),
+            signals=QualitySignals(max_target_correlation=0.99, leakage_suspect_columns=["x"]),
             profile=SUPERVISED,
         )
         assert decision.verdict is GateVerdict.RETRY
@@ -268,15 +264,11 @@ class TestQualitySignals:
         assert decision.verdict is GateVerdict.AUTO_PROCEED
 
     def test_unstable_cv_escalates(self) -> None:
-        decision = _decide(
-            signals=QualitySignals(cv_mean=0.80, cv_std=0.30), profile=CHECKPOINTED
-        )
+        decision = _decide(signals=QualitySignals(cv_mean=0.80, cv_std=0.30), profile=CHECKPOINTED)
         assert decision.reason_code == "high_cv_variance"
 
     def test_stable_cv_proceeds(self) -> None:
-        decision = _decide(
-            signals=QualitySignals(cv_mean=0.80, cv_std=0.02), profile=CHECKPOINTED
-        )
+        decision = _decide(signals=QualitySignals(cv_mean=0.80, cv_std=0.02), profile=CHECKPOINTED)
         assert decision.verdict is GateVerdict.AUTO_PROCEED
 
     def test_disagreement_escalates(self) -> None:
@@ -293,9 +285,7 @@ class TestQualitySignals:
         assert decision.verdict is GateVerdict.AUTO_PROCEED
 
     def test_weak_statistical_support_escalates(self) -> None:
-        decision = _decide(
-            signals=QualitySignals(minority_class_count=12), profile=CHECKPOINTED
-        )
+        decision = _decide(signals=QualitySignals(minority_class_count=12), profile=CHECKPOINTED)
         assert decision.reason_code == "statistical_support_low"
 
     def test_signal_rules_are_opt_in(self) -> None:
@@ -373,9 +363,7 @@ class TestCritiqueDrivenRetries:
         assert decision.reason_code == "repeated_identical_failure"
 
     def test_different_failure_keeps_retrying(self) -> None:
-        critique = CritiqueResult(
-            stage_id="eda", rubric_version="eda.v1", unmet_criteria=["eda.b"]
-        )
+        critique = CritiqueResult(stage_id="eda", rubric_version="eda.v1", unmet_criteria=["eda.b"])
         decision = _decide(
             stage=_stage(max_attempts=5, mandatory_criteria=frozenset({"eda.a", "eda.b"})),
             critique=critique,
@@ -481,9 +469,7 @@ class TestPolicyLoading:
 
     def test_thresholds_are_configurable(self) -> None:
         policy = GatePolicy.from_dict({"thresholds": {"leakage_correlation": 0.5}})
-        decision = _decide(
-            signals=QualitySignals(max_target_correlation=0.6), policy=policy
-        )
+        decision = _decide(signals=QualitySignals(max_target_correlation=0.6), policy=policy)
         assert decision.reason_code == "leakage_detected"
 
     def test_declared_mandatory_criteria_are_enforced(self) -> None:
@@ -649,9 +635,7 @@ class TestRetryBudgetRequiresAFailure:
     """
 
     def test_clean_last_attempt_proceeds(self) -> None:
-        decision = _decide(
-            stage=_stage(max_attempts=1), history=StageHistory(attempts=1)
-        )
+        decision = _decide(stage=_stage(max_attempts=1), history=StageHistory(attempts=1))
         assert decision.verdict is GateVerdict.AUTO_PROCEED
 
     def test_failed_last_attempt_still_escalates(self) -> None:
@@ -764,8 +748,7 @@ class TestFailureDetectionIsDerived:
     def test_policy_checkpoints_are_not_failures(self) -> None:
         """A checkpoint means "a human should look", not "the artifact is bad"."""
         decision = _decide(
-            stage=_stage(id="problem_discovery", risk_class=RiskClass.CRITICAL,
-                         max_attempts=1),
+            stage=_stage(id="problem_discovery", risk_class=RiskClass.CRITICAL, max_attempts=1),
             profile=CHECKPOINTED,
             history=StageHistory(attempts=1),
         )

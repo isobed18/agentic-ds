@@ -34,15 +34,11 @@ def client(tmp_path) -> TestClient:
 
 
 def _card(frame: pd.DataFrame):
-    return profile_table(
-        LoadedTable(name="t", frame=frame, source_uri="x", source_format="csv")
-    )
+    return profile_table(LoadedTable(name="t", frame=frame, source_uri="x", source_format="csv"))
 
 
 def _resident(plane: ControlPlane, run_id: str, **blackboard) -> str:
-    state = RunState(
-        run_id=run_id, store=plane.store, profile=BUILTIN_PROFILES["full_auto"]
-    )
+    state = RunState(run_id=run_id, store=plane.store, profile=BUILTIN_PROFILES["full_auto"])
     state.blackboard.update(blackboard)
     plane._runtime_runs[run_id] = _RuntimeRun(
         run_id=run_id, source_id="s", state=state, configuration={}
@@ -77,9 +73,7 @@ class TestRunMode:
 
 
 class TestSensitivityOverride:
-    def test_override_changes_what_the_pipeline_reads_next(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_override_changes_what_the_pipeline_reads_next(self, plane: ControlPlane) -> None:
         """Uses a column the classifier gets *wrong*, deliberately.
 
         The first version of this test used `musteri_adi`, which the classifier
@@ -115,33 +109,25 @@ class TestSensitivityOverride:
         stored = plane._runtime_runs[run_id].state.blackboard[SOURCE_CARDS_KEY]
         assert stored[0].columns[0].sensitivity is Sensitivity.INTERNAL
 
-    def test_an_unknown_column_is_refused_rather_than_ignored(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_an_unknown_column_is_refused_rather_than_ignored(self, plane: ControlPlane) -> None:
         run_id = _resident(plane, "r1", **{SOURCE_CARDS_KEY: [_card(pd.DataFrame({"a": [1]}))]})
         with pytest.raises(ValueError, match="unknown column"):
             plane.apply_sensitivity_overrides(run_id, {"typo_name": "pii"})
 
-    def test_only_the_two_sensitivity_values_are_accepted(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_only_the_two_sensitivity_values_are_accepted(self, plane: ControlPlane) -> None:
         run_id = _resident(plane, "r1", **{SOURCE_CARDS_KEY: [_card(pd.DataFrame({"a": [1]}))]})
         with pytest.raises(ValueError, match="sensitivity must be"):
             plane.apply_sensitivity_overrides(run_id, {"a": "secret"})
 
 
 class TestStageDirectives:
-    def test_a_directive_reaches_the_blackboard_the_stage_reads(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_a_directive_reaches_the_blackboard_the_stage_reads(self, plane: ControlPlane) -> None:
         run_id = _resident(plane, "r2")
         plane.direct_stage(run_id, "training", "Prefer a linear model.")
         stored = plane._runtime_runs[run_id].state.blackboard[STAGE_DIRECTIVES_KEY]
         assert stored == {"training": ["Prefer a linear model."]}
 
-    def test_directives_accumulate_rather_than_overwrite(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_directives_accumulate_rather_than_overwrite(self, plane: ControlPlane) -> None:
         run_id = _resident(plane, "r2")
         plane.direct_stage(run_id, "training", "First.")
         plane.direct_stage(run_id, "training", "Second.")
@@ -156,9 +142,7 @@ class TestStageDirectives:
         plane.direct_stage(run_id, "evaluation", "Report calibration too.")
         assert "evaluation" in plane.stage_directives(run_id)
 
-    def test_unknown_stage_and_empty_instruction_are_refused(
-        self, plane: ControlPlane
-    ) -> None:
+    def test_unknown_stage_and_empty_instruction_are_refused(self, plane: ControlPlane) -> None:
         run_id = _resident(plane, "r2")
         with pytest.raises(ValueError, match="unknown stage"):
             plane.direct_stage(run_id, "not_a_stage", "hello")

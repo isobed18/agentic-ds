@@ -90,9 +90,7 @@ class TestRunListing:
         assert run.pending_question is not None
         assert run.pending_question["reason_code"] == "risk_class_gate"
 
-    def test_clean_run_is_not_flagged(
-        self, plane: ControlPlane, store: ArtifactStore
-    ) -> None:
+    def test_clean_run_is_not_flagged(self, plane: ControlPlane, store: ArtifactStore) -> None:
         store.put(_decision(), run_id="run1", stage_exec_id="problem_discovery")
         run = plane.list_runs()[0]
         assert run.status == "auto_proceed"
@@ -120,9 +118,7 @@ class TestGateHistory:
         assert [d["attempt"] for d in decisions] == [1, 2]
         assert decisions[1]["reason_code"] == "leakage_detected"
 
-    def test_triggered_rules_are_exposed(
-        self, plane: ControlPlane, store: ArtifactStore
-    ) -> None:
+    def test_triggered_rules_are_exposed(self, plane: ControlPlane, store: ArtifactStore) -> None:
         """The audit trail is the point; a verdict without its rules is not one."""
         store.put(_escalation(), run_id="run1")
         assert plane.gate_decisions("run1")[0]["triggered_rules"] == [
@@ -146,9 +142,7 @@ class TestGateHistory:
 
 
 class TestArtifactAccess:
-    def test_metadata_lists_summaries_only(
-        self, plane: ControlPlane, store: ArtifactStore
-    ) -> None:
+    def test_metadata_lists_summaries_only(self, plane: ControlPlane, store: ArtifactStore) -> None:
         store.put(
             ValidationStrategy(strategy=SplitStrategy.RANDOM, rationale="iid"),
             run_id="run1",
@@ -158,9 +152,7 @@ class TestArtifactAccess:
         assert entry["name"] == "validation"
         assert entry["summary"]["strategy"] == "random"
 
-    def test_payload_is_fetched_explicitly(
-        self, plane: ControlPlane, store: ArtifactStore
-    ) -> None:
+    def test_payload_is_fetched_explicitly(self, plane: ControlPlane, store: ArtifactStore) -> None:
         ref = store.put(
             ValidationStrategy(strategy=SplitStrategy.RANDOM, rationale="iid"),
             run_id="run1",

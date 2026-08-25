@@ -83,8 +83,7 @@ def main() -> None:
     for card in cards:
         store.put(card, run_id=run_id, stage_exec_id="s0", name=card.table_name)
         flagged = sum(1 for i in card.issues if i.severity in ("warn", "error"))
-        print(f"  {card.table_name:34s} {card.n_rows:>7,} x {card.n_columns:<3} "
-              f"issues={flagged}")
+        print(f"  {card.table_name:34s} {card.n_rows:>7,} x {card.n_columns:<3} issues={flagged}")
 
     relationships = detect_relationships(cards, frames)
     print(f"  measured {len(relationships)} candidate relationship(s)")
@@ -93,14 +92,21 @@ def main() -> None:
     _banner("STAGE 1  Schema discovery  (agent)")
     spec = sd_agent.build_spec()
     spec = type(spec)(
-        id=spec.id, system_prompt=spec.system_prompt, output_contract=spec.output_contract,
-        profile=profile, validators=spec.validators, max_attempts=spec.max_attempts,
-        rubric=spec.rubric, column_fields=spec.column_fields,
+        id=spec.id,
+        system_prompt=spec.system_prompt,
+        output_contract=spec.output_contract,
+        profile=profile,
+        validators=spec.validators,
+        max_attempts=spec.max_attempts,
+        rubric=spec.rubric,
+        column_fields=spec.column_fields,
     )
     context = sd_agent.build_context_with_evidence(cards, relationships)
     result = run_agent(spec, context, client)
-    print(f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
-          f"latency={result.total_latency_s:.1f}s")
+    print(
+        f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
+        f"latency={result.total_latency_s:.1f}s"
+    )
     for attempt in result.attempts:
         for failure in attempt.failures:
             print(f"    [{attempt.attempt}] {failure.code}: {failure.detail[:110]}")
@@ -108,8 +114,10 @@ def main() -> None:
 
     plan = IntegrationPlan.from_proposal(proposal, evidence=relationships)
     store.put(plan, run_id=run_id, stage_exec_id="s1", name="integration_plan")
-    print(f"  base={plan.base_table} grain={plan.base_grain} "
-          f"joins={len(plan.joins)} aggregations={len(plan.aggregations)}")
+    print(
+        f"  base={plan.base_table} grain={plan.base_grain} "
+        f"joins={len(plan.joins)} aggregations={len(plan.aggregations)}"
+    )
     for warning in plan.warnings:
         print(f"  warning: {warning[:150]}")
 
@@ -117,8 +125,10 @@ def main() -> None:
     _banner("STAGE 2  Integration  (deterministic, grain-verified)")
     integration = execute_plan(proposal, frames)
     abt = integration.frame
-    print(f"  ABT: {integration.result_rows:,} rows x {len(abt.columns)} cols "
-          f"(base was {integration.base_rows:,})")
+    print(
+        f"  ABT: {integration.result_rows:,} rows x {len(abt.columns)} cols "
+        f"(base was {integration.base_rows:,})"
+    )
     print(f"  grain preserved: {integration.grain_preserved}")
     for warning in integration.warnings:
         print(f"  warning: {warning}")
@@ -132,14 +142,21 @@ def main() -> None:
     _banner("STAGE 3  Problem discovery  (agent proposes, Python measures)")
     spec = pd_agent.build_spec()
     spec = type(spec)(
-        id=spec.id, system_prompt=spec.system_prompt, output_contract=spec.output_contract,
-        profile=profile, validators=spec.validators, max_attempts=spec.max_attempts,
-        rubric=spec.rubric, column_fields=spec.column_fields,
+        id=spec.id,
+        system_prompt=spec.system_prompt,
+        output_contract=spec.output_contract,
+        profile=profile,
+        validators=spec.validators,
+        max_attempts=spec.max_attempts,
+        rubric=spec.rubric,
+        column_fields=spec.column_fields,
     )
     context = pd_agent.build_context(abt_card, user_intent=args.intent)
     result = run_agent(spec, context, client)
-    print(f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
-          f"latency={result.total_latency_s:.1f}s")
+    print(
+        f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
+        f"latency={result.total_latency_s:.1f}s"
+    )
     for attempt in result.attempts:
         for failure in attempt.failures:
             print(f"    [{attempt.attempt}] {failure.code}: {failure.detail[:110]}")
@@ -190,8 +207,10 @@ def main() -> None:
     for i, candidate in enumerate(candidate_set.candidates, 1):
         mark = "VIABLE  " if candidate.support.is_viable else "BLOCKED "
         print(f"\n[{i}] {mark} {candidate.title}")
-        print(f"      task={candidate.task_type.value}  target={candidate.target_column}  "
-              f"metric={candidate.primary_metric.value}")
+        print(
+            f"      task={candidate.task_type.value}  target={candidate.target_column}  "
+            f"metric={candidate.primary_metric.value}"
+        )
         print(f"      why: {candidate.business_rationale[:150]}")
         support = candidate.support
         facts = [f"rows={support.n_rows:,}", f"features={support.n_usable_features}"]
@@ -221,30 +240,43 @@ def main() -> None:
     recommended = recommend_strategy(signals_v)
     print(f"  deterministic minimum: {recommended.value}")
     for entity in signals_v.repeated_entity_keys:
-        print(f"  repeated entity      : {entity.column} "
-              f"({entity.n_entities:,} entities, {entity.rows_per_entity:.1f} rows each)")
+        print(
+            f"  repeated entity      : {entity.column} "
+            f"({entity.n_entities:,} entities, {entity.rows_per_entity:.1f} rows each)"
+        )
     for span in signals_v.temporal_spans:
-        print(f"  temporal span        : {span.column} "
-              f"{span.min_date[:10]}..{span.max_date[:10]} ({span.span_days:,}d)")
+        print(
+            f"  temporal span        : {span.column} "
+            f"{span.min_date[:10]}..{span.max_date[:10]} ({span.span_days:,}d)"
+        )
 
     spec = vs_agent.build_spec()
     spec = type(spec)(
-        id=spec.id, system_prompt=spec.system_prompt, output_contract=spec.output_contract,
-        profile=profile, validators=spec.validators, max_attempts=spec.max_attempts,
-        rubric=spec.rubric, column_fields=spec.column_fields,
+        id=spec.id,
+        system_prompt=spec.system_prompt,
+        output_contract=spec.output_contract,
+        profile=profile,
+        validators=spec.validators,
+        max_attempts=spec.max_attempts,
+        rubric=spec.rubric,
+        column_fields=spec.column_fields,
     )
     result = run_agent(spec, vs_agent.build_context(abt_card, signals_v), client)
-    print(f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
-          f"latency={result.total_latency_s:.1f}s")
+    print(
+        f"  attempts={result.n_attempts} first_pass={result.first_pass_valid} "
+        f"latency={result.total_latency_s:.1f}s"
+    )
     for attempt in result.attempts:
         for failure in attempt.failures:
             print(f"    [{attempt.attempt}] {failure.code}: {failure.detail[:110]}")
 
     strategy = ValidationStrategy.from_proposal(result.require(), signals_v)
     store.put(strategy, run_id=run_id, stage_exec_id="s4", name="validation_strategy")
-    print(f"  chosen               : {strategy.strategy.value} "
-          f"group={strategy.group_column} time={strategy.time_column} "
-          f"cutoff={strategy.holdout_cutoff}")
+    print(
+        f"  chosen               : {strategy.strategy.value} "
+        f"group={strategy.group_column} time={strategy.time_column} "
+        f"cutoff={strategy.holdout_cutoff}"
+    )
     print(f"  why                  : {strategy.rationale[:150]}")
 
     # --------------------------------------------------------------- stage 7
@@ -299,13 +331,16 @@ def main() -> None:
     # agent never suggested it.
     if "flagged" in abt.columns:
         flagged = compute_support(
-            abt_card, abt,
+            abt_card,
+            abt,
             target_column="flagged",
             task_type=TaskType.BINARY_CLASSIFICATION,
         )
         if not flagged.is_viable:
-            print(f"  note        : 'flagged' checked independently -> "
-                  f"{flagged.blocking_reasons[0][:100]}")
+            print(
+                f"  note        : 'flagged' checked independently -> "
+                f"{flagged.blocking_reasons[0][:100]}"
+            )
 
 
 if __name__ == "__main__":

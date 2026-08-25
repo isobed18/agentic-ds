@@ -99,9 +99,7 @@ def test_resolved_retry_keeps_prior_leakage_finding_and_human_authority(
     reporting_inputs,
 ) -> None:
     training, prior_leakage, strategy, problem = reporting_inputs
-    clean = prior_leakage.model_copy(
-        update={"n_features_checked": 1, "findings": []}
-    )
+    clean = prior_leakage.model_copy(update={"n_features_checked": 1, "findings": []})
     report = build_evaluation_report(
         training,
         clean,
@@ -136,9 +134,7 @@ def test_resolved_retry_keeps_prior_leakage_finding_and_human_authority(
     assert "No audited leakage finding was recorded" not in render_markdown(report)
 
 
-def test_evaluation_report_round_trips_through_artifact_store(
-    reporting_inputs, tmp_path
-) -> None:
+def test_evaluation_report_round_trips_through_artifact_store(reporting_inputs, tmp_path) -> None:
     training, leakage, strategy, problem = reporting_inputs
     report = build_evaluation_report(training, leakage, strategy, problem)
     store = ArtifactStore(tmp_path / "artifacts")
@@ -204,9 +200,7 @@ def test_gate_escalations_are_prominent(reason_code: str, reporting_inputs) -> N
     assert "not clear to ship" in markdown
 
 
-def test_stored_gate_history_cannot_render_as_a_clean_run(
-    reporting_inputs, tmp_path
-) -> None:
+def test_stored_gate_history_cannot_render_as_a_clean_run(reporting_inputs, tmp_path) -> None:
     training, leakage, strategy, problem = reporting_inputs
     store = ArtifactStore(tmp_path / "artifacts")
     run_id = "escalated-run"
@@ -283,13 +277,9 @@ def test_unconfirmed_separator_is_prominent_without_a_gate_projection(
         detail="The feature perfectly separates the target.",
         suggested_action="Confirm pre-outcome availability.",
     )
-    leakage_with_separator = leakage.model_copy(
-        update={"findings": [*leakage.findings, separator]}
-    )
+    leakage_with_separator = leakage.model_copy(update={"findings": [*leakage.findings, separator]})
 
-    report = build_evaluation_report(
-        training, leakage_with_separator, strategy, problem
-    )
+    report = build_evaluation_report(training, leakage_with_separator, strategy, problem)
     markdown = render_markdown(report)
 
     assert [item.column for item in report.unresolved_separator_confirmation] == [

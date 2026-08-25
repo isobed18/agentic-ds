@@ -7,7 +7,9 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 
 from ads.api import ControlPlane, create_app
 from ads.contracts import (
@@ -73,6 +75,40 @@ def test_sources_and_uploads_are_selectable_without_path_traversal(tmp_path: Pat
         pass
     else:
         raise AssertionError("source selection escaped the configured root")
+
+
+def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
+    tmp_path: Path,
+) -> None:
+    plane = _plane(tmp_path)
+    pdf_path = tmp_path / "brief.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=400)
+    writer.add_metadata({"/Title": "Local briefing"})
+    with pdf_path.open("wb") as stream:
+        writer.write(stream)
+
+    uploaded = plane.upload("brief.pdf", pdf_path.read_bytes())
+    profile = plane.source_profile(uploaded["source_id"])
+
+    assert profile["tables"] == []
+    assert profile["documents"][0]["name"] == "brief.pdf"
+    assert profile["documents"][0]["understanding_status"] == "needs_ocr_or_vision"
+    assert "Local briefing" in str(profile["documents"])
+    assert "PDF text are omitted" in profile["privacy"]
+
+    staged = plane.stage_run(uploaded["source_id"])
+    workspace = plane.staging_workspace(staged["run_id"])
+    enabled = {
+        item["id"]
+        for item in workspace["pipeline_blueprint"]["components"]
+        if item["enabled"]
+    }
+    assert staged["status"] == "staged"
+    assert "understand-documents" in enabled
+    assert "default-ml-pipeline" not in enabled
+    with pytest.raises(ValueError, match="cannot be continued"):
+        plane.start_staged_run(staged["run_id"])
 
 
 def test_http_start_and_progress_vertical_slice(tmp_path: Path, monkeypatch) -> None:

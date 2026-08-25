@@ -108,9 +108,7 @@ def leakage_challenge_fingerprint(proposal: LeakageChallengeProposal) -> str:
     import hashlib
     import json
 
-    canonical = json.dumps(
-        proposal.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    )
+    canonical = json.dumps(proposal.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -160,9 +158,7 @@ class LeakageChallenge(FrozenModel):
     never clear a gate without that human.
     """
 
-    evidence_class: Literal["deterministic_registered_test"] = (
-        "deterministic_registered_test"
-    )
+    evidence_class: Literal["deterministic_registered_test"] = "deterministic_registered_test"
     gate_effect: Literal["human_review_required"] = "human_review_required"
     finding_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     finding_column: str
@@ -196,9 +192,7 @@ class LeakageReport(Artifact):
 
     @model_validator(mode="after")
     def _challenges_bind_to_exact_findings(self) -> LeakageReport:
-        findings = {
-            leakage_finding_fingerprint(finding): finding for finding in self.findings
-        }
+        findings = {leakage_finding_fingerprint(finding): finding for finding in self.findings}
         seen: set[str] = set()
         for challenge in self.challenges:
             finding = findings.get(challenge.finding_fingerprint)
@@ -284,13 +278,7 @@ class LeakageReport(Artifact):
         Only a human knows whether a column is recorded before the outcome, so
         these escalate for confirmation rather than blocking automatically.
         """
-        return sorted(
-            {
-                f.column
-                for f in self.findings
-                if f.kind is LeakageKind.PERFECT_SEPARATOR
-            }
-        )
+        return sorted({f.column for f in self.findings if f.kind is LeakageKind.PERFECT_SEPARATOR})
 
     def to_quality_signals(self) -> QualitySignals:
         """Project into the signal shape the Gate Evaluator consumes.
@@ -308,17 +296,14 @@ class LeakageReport(Artifact):
                 {
                     challenge.finding_column
                     for challenge in self.challenges
-                    if challenge.outcome
-                    is LeakageChallengeOutcome.SUPPORTS_HUMAN_REVIEW
+                    if challenge.outcome is LeakageChallengeOutcome.SUPPORTS_HUMAN_REVIEW
                 }
             ),
         )
 
     def drop_recommendations(self) -> list[str]:
         """Machine-generated correction instructions for the retry loop."""
-        return [
-            f"drop_feature: {f.column}  # {f.kind.value}" for f in self.blocking_findings
-        ]
+        return [f"drop_feature: {f.column}  # {f.kind.value}" for f in self.blocking_findings]
 
     def summary(self) -> dict[str, Any]:
         return {

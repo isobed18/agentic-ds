@@ -78,6 +78,7 @@ from ads.pipeline.stages import (
     agent_runtime_policy,
 )
 from ads.sandbox import ExecutionBackend, materialize_frame_copies
+from ads.skills import select_skills
 from ads.splitting import execute_validation_trial
 from ads.store import compute_artifact_id
 from ads.tools import PermissionBroker, ToolRuntime, build_tool_registry
@@ -116,9 +117,7 @@ def _with_directives(context: AgentContext, state: RunState, stage_id: str) -> A
     directives = (state.blackboard.get(STAGE_DIRECTIVES_KEY) or {}).get(stage_id)
     if not directives:
         return context
-    context.sections["Instruction from the human"] = "\n".join(
-        f"- {line}" for line in directives
-    )
+    context.sections["Instruction from the human"] = "\n".join(f"- {line}" for line in directives)
     return context
 
 
@@ -258,9 +257,14 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 "schema_investigation"
             )
 
+        skills = select_skills("schema_discovery", cards)
         members: list[SchemaMemberResult] = []
         for member_index in range(panel_size):
             context = build_context_with_evidence(cards, relationships)
+            if skills:
+                context.sections["Relevant schema skills"] = "\n\n".join(
+                    skill.body for skill in skills
+                )
             if state.user_intent:
                 context.sections["User planning preferences"] = state.user_intent
             context = _with_directives(context, state, "schema_discovery")
@@ -419,7 +423,9 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
             target_column=selected.target_column,
             primary_metric=selected.primary_metric,
             title=selected.title,
+            title_tr=selected.title_tr,
             description=selected.business_rationale,
+            description_tr=selected.business_rationale_tr,
             excluded_columns=[],
             confirmed_by="auto",
             source_candidate_id=selected.candidate_id,

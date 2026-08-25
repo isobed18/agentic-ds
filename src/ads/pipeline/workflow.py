@@ -185,15 +185,11 @@ def build_full_registry(llm: StructuredLLM, *, panel_size: int = 1) -> Component
         make_validation_strategy_stage(llm, panel_size=panel_size),
     )
     registry.components["pipeline.profiling"] = augment_eda_stage(profiling_stage, llm)
-    registry.components["pipeline.leakage_audit"] = augment_leakage_stage(
-        leakage_audit_stage, llm
-    )
+    registry.components["pipeline.leakage_audit"] = augment_leakage_stage(leakage_audit_stage, llm)
     registry.components["pipeline.feature_pipeline"] = augment_feature_pipeline_stage(
         feature_pipeline_stage, llm
     )
-    registry.components["pipeline.training"] = augment_training_stage(
-        training_stage, llm
-    )
+    registry.components["pipeline.training"] = augment_training_stage(training_stage, llm)
     return registry
 
 
