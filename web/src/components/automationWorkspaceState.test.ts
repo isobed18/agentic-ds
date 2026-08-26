@@ -1,0 +1,95 @@
+import { describe, expect, it } from "vitest";
+import { automationView, sourceCounts } from "./automationWorkspaceState";
+
+describe("automation progressive disclosure", () => {
+  it("never shows a graph before data exists", () => {
+    expect(automationView({
+      sourceId: "", runId: null, runStatus: null, workspace: null, advancedGraph: false,
+    })).toBe("empty");
+  });
+
+  it("shows understanding instead of internal staging nodes", () => {
+    expect(automationView({
+      sourceId: "pdfs", runId: "run-1", runStatus: "staging", workspace: null,
+      advancedGraph: false,
+    })).toBe("understanding");
+  });
+
+  it("keeps a failed staging run on its inspectable understanding canvas", () => {
+    expect(automationView({
+      sourceId: "pdfs", runId: "run-1", runStatus: "failed", workspace: null,
+      advancedGraph: false,
+    })).toBe("understanding");
+  });
+
+  it("does not claim a staged workspace has a proposal when no plan exists", () => {
+    expect(automationView({
+      sourceId: "pdfs", runId: "run-1", runStatus: "staged",
+      workspace: {
+        artifact_id: "workspace", run_id: "run-1", source_id: "pdfs",
+        source_fingerprint: "fingerprint", intake_artifact_ids: [], schema_artifact_ids: [],
+        cache_reused: false, relationship_explanations: [], reports: [],
+        pipeline_layout: { version: "1", nodes: [], collapsed_branches: [] },
+        component_outputs: [], document_extractions: [], chat_history: [],
+        recommended_plan: null, planner_error: "Claude output decoding failed",
+      },
+      advancedGraph: false,
+    })).toBe("understanding");
+  });
+
+  it("keeps the accepted proposal in the guided pipeline unless advanced editing is requested", () => {
+    const base = {
+      artifact_id: "workspace",
+      run_id: "run-1",
+      source_id: "source",
+      source_fingerprint: "fingerprint",
+      intake_artifact_ids: [],
+      schema_artifact_ids: [],
+      cache_reused: false,
+      relationship_explanations: [],
+      reports: [],
+      pipeline_layout: { version: "1" as const, nodes: [], collapsed_branches: [] },
+      component_outputs: [],
+      document_extractions: [],
+      chat_history: [],
+      recommended_plan: {
+        proposal_id: "plan-1",
+        status: "proposed" as const,
+        mode: "fully_auto" as const,
+        configuration: {},
+        stage_directives: {},
+        checkpoint_stages: [],
+        auto_proceed_stages: [],
+        max_retries_by_stage: {},
+        rationale: [],
+        accepted: false,
+      },
+    };
+    expect(automationView({
+      sourceId: "source", runId: "run-1", runStatus: "staged", workspace: base,
+      advancedGraph: false,
+    })).toBe("proposal");
+    expect(automationView({
+      sourceId: "source", runId: "run-1", runStatus: "staged",
+      workspace: { ...base, recommended_plan: { ...base.recommended_plan, status: "accepted", accepted: true } },
+      advancedGraph: false,
+    })).toBe("guided_pipeline");
+    expect(automationView({
+      sourceId: "source", runId: "run-1", runStatus: "staged",
+      workspace: { ...base, recommended_plan: { ...base.recommended_plan, status: "accepted", accepted: true } },
+      advancedGraph: true,
+    })).toBe("workflow");
+  });
+
+  it("summarizes four PDFs without inventing structured data", () => {
+    const documents = Array.from({ length: 4 }, (_, index) => ({
+      name: `report-${index}.pdf`, format: "pdf" as const, pages: 10 + index,
+      text_pages: 10, text_characters: 100, image_count: 0,
+      understanding_status: "text_ready" as const, training_status: "not_extracted" as const,
+      issues: [],
+    }));
+    expect(sourceCounts({ source_id: "pdfs", tables: [], documents, privacy: "safe" })).toEqual({
+      files: 4, pdfs: 4, structured: 0, pages: 46, rows: 0,
+    });
+  });
+});

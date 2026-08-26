@@ -12,6 +12,10 @@ from ads.documents.pdf import (
     load_pdf_directory,
     pdf_prompt_context,
 )
+from ads.documents.promotion import (
+    create_document_table_review,
+    promote_reviewed_document_tables,
+)
 
 __all__ = [
     "PDF_SUFFIXES",
@@ -20,6 +24,8 @@ __all__ = [
     "load_pdf",
     "load_pdf_directory",
     "pdf_prompt_context",
+    "create_document_table_review",
+    "promote_reviewed_document_tables",
     "document_extraction_prompt_context",
     "extract_document_directory",
 ]

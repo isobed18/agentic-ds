@@ -13,6 +13,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from ads.contracts.registry import canonical_contract_id
 from ads.contracts.staging import (
     LocalizedText,
     PipelineBlueprint,
@@ -39,7 +42,7 @@ def _port(
     return PipelinePort(
         id=port_id,
         label=_text(en, tr),
-        data_type=data_type,
+        data_type=canonical_contract_id(data_type),
         required=required,
         multiple=multiple,
     )
@@ -103,8 +106,11 @@ def document_engine_catalog() -> list[dict[str, Any]]:
 
     def available(engine_id: str, module: str) -> bool:
         if engine_id in {"marker", "mineru"}:
-            executable = worker_root / engine_id / "Scripts" / (
-                "python.exe" if engine_id == "marker" else "mineru.exe"
+            executable = (
+                worker_root
+                / engine_id
+                / "Scripts"
+                / ("python.exe" if engine_id == "marker" else "mineru.exe")
             )
             return executable.exists()
         return importlib.util.find_spec(module) is not None
@@ -227,19 +233,50 @@ def build_default_blueprint(*, has_tables: bool, has_documents: bool) -> Pipelin
                 "Belge değerleri veriye girmeden önce tablo şeması ve sayfa kaynağını kabul edin.",
             ),
             inputs=[
-                _port(
-                    "extracted_tables", "Candidate tables", "Aday tablolar", "extracted_tables"
-                )
+                _port("extracted_tables", "Candidate tables", "Aday tablolar", "extracted_tables")
             ],
             outputs=[
                 _port(
-                    "accepted_tables", "Accepted tables", "Kabul edilen tablolar", "accepted_tables"
+                    "review_decisions",
+                    "Review decisions",
+                    "İnceleme kararları",
+                    "review_decisions",
                 )
             ],
             enabled=has_documents,
             optional=True,
             evidence_layer="human_decision",
             catalog_id="document.review_tables",
+        ),
+        PipelineComponent(
+            id="promote-document-tables",
+            kind="integration",
+            title=_text("Promote document tables", "Belge tablolarını veri yap"),
+            description=_text(
+                "Create immutable tables only from explicitly accepted candidates.",
+                "Yalnızca açıkça kabul edilen adaylardan değişmez tablolar üretir.",
+            ),
+            inputs=[
+                _port("extracted_tables", "Candidate tables", "Aday tablolar", "extracted_tables"),
+                _port(
+                    "review_decisions",
+                    "Review decisions",
+                    "İnceleme kararları",
+                    "review_decisions",
+                ),
+            ],
+            outputs=[
+                _port(
+                    "accepted_tables",
+                    "Promoted tables",
+                    "Veriye alınan tablolar",
+                    "accepted_tables",
+                )
+            ],
+            enabled=has_documents,
+            optional=True,
+            evidence_layer="executor",
+            catalog_id="document.promote_tables",
         ),
         PipelineComponent(
             id="integrate-data",
@@ -293,9 +330,7 @@ def build_default_blueprint(*, has_tables: bool, has_documents: bool) -> Pipelin
                     required=False,
                 ),
             ],
-            outputs=[
-                _port("reports", "Structured briefing", "Yapısal veri özeti", "reports")
-            ],
+            outputs=[_port("reports", "Structured briefing", "Yapısal veri özeti", "reports")],
             settings={"report_kind": "data_understanding", "instructions": ""},
             enabled=has_tables,
             evidence_layer="agent_proposal",
@@ -411,8 +446,22 @@ def build_default_blueprint(*, has_tables: bool, has_documents: bool) -> Pipelin
             "extracted_tables",
         ),
         (
-            "review-to-integrate",
+            "review-to-promote",
             "review-document-tables",
+            "review_decisions",
+            "promote-document-tables",
+            "review_decisions",
+        ),
+        (
+            "docs-to-promote",
+            "understand-documents",
+            "extracted_tables",
+            "promote-document-tables",
+            "extracted_tables",
+        ),
+        (
+            "promote-to-integrate",
+            "promote-document-tables",
             "accepted_tables",
             "integrate-data",
             "accepted_tables",
@@ -486,7 +535,7 @@ def build_default_blueprint(*, has_tables: bool, has_documents: bool) -> Pipelin
     return blueprint
 
 
-_SETTING_RULES: dict[str, dict[str, Any]] = {
+_LEGACY_SETTING_RULES: dict[str, dict[str, Any]] = {
     "document_understanding": {
         "engine": {item["id"] for item in document_engine_catalog() if item["selectable"]},
         "ocr": {"auto", "always", "never"},
@@ -557,21 +606,27 @@ def apply_component_updates(
         if raw is None:
             changed.append(component)
             continue
-        allowed = _SETTING_RULES.get(component.kind, {})
+        allowed = _LEGACY_SETTING_RULES.get(component.kind, {})
         settings = dict(component.settings)
-        for key, value in dict(raw.get("settings") or {}).items():
-            rule = allowed.get(key)
-            if rule is None:
-                raise ValueError(f"setting {key!r} is not allowed for {component.kind}")
-            if (
-                isinstance(rule, set)
-                and value not in rule
-                and not (value is None and settings.get(key) is None)
-            ):
-                raise ValueError(f"invalid value for {component.id}.{key}")
-            if isinstance(rule, (type, tuple)) and not isinstance(value, rule):
-                raise ValueError(f"invalid type for {component.id}.{key}")
-            settings[key] = value
+        settings.update(dict(raw.get("settings") or {}))
+        if component.catalog_id:
+            from ads.automation.settings import validate_component_settings
+
+            try:
+                settings = validate_component_settings(component.catalog_id, settings)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"one or more settings are not allowed for {component.catalog_id}"
+                ) from exc
+        else:
+            for key, value in settings.items():
+                rule = allowed.get(key)
+                if rule is None:
+                    raise ValueError(f"setting {key!r} is not allowed for {component.kind}")
+                if isinstance(rule, set) and value not in rule:
+                    raise ValueError(f"invalid value for {component.id}.{key}")
+                if isinstance(rule, (type, tuple)) and not isinstance(value, rule):
+                    raise ValueError(f"invalid type for {component.id}.{key}")
         enabled = raw.get("enabled", component.enabled)
         if not isinstance(enabled, bool):
             raise ValueError(f"enabled must be boolean for {component.id}")

@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".auth.env"
+RUNTIME_ENV_PATH = ROOT / ".runtime.env"
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -56,13 +57,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    values = load_env_file(ENV_PATH)
-    if not values.get("ADS_AUTH_USERNAME") or not values.get("ADS_AUTH_PASSWORD_HASH"):
+    auth_values = load_env_file(ENV_PATH)
+    if not auth_values.get("ADS_AUTH_USERNAME") or not auth_values.get("ADS_AUTH_PASSWORD_HASH"):
         raise SystemExit(
             f"No credential found in {ENV_PATH}.\n"
             "This launcher will not expose the control plane without one. Run:\n"
             "  python scripts/set_password.py --username <name>"
         )
+    values = {**auth_values, **load_env_file(RUNTIME_ENV_PATH)}
     os.environ.update(values)
     if args.insecure_cookie:
         os.environ["ADS_AUTH_SECURE_COOKIE"] = "0"
@@ -87,7 +89,8 @@ def main() -> None:
         )
     print(f"Artifacts: {args.artifacts.resolve()}")
     print(f"Data:      {args.data.resolve()}")
-    print(f"User:      {values['ADS_AUTH_USERNAME']}")
+    print(f"User:      {auth_values['ADS_AUTH_USERNAME']}")
+    print(f"LLM:       {values.get('ADS_LLM_BACKEND', 'ollama')}")
     print(f"Bound to:  127.0.0.1:{args.port}  (loopback only -- not on the LAN)")
     print("Password gate: ON")
 

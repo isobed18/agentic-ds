@@ -8,6 +8,8 @@ artifact.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import ClassVar, Final
@@ -17,6 +19,7 @@ import pandas as pd
 from ads.agents.runtime import DEFAULT_AGENT_RUNTIME_POLICY, AgentRuntimePolicy
 from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.datacard import DataCard, Sensitivity
+from ads.contracts.dataflow import FoldSelection, RowSelection, SplitManifest, TableAsset
 from ads.contracts.features import FeatureSpec
 from ads.contracts.gates import QualitySignals
 from ads.contracts.integration import (
@@ -33,6 +36,7 @@ from ads.contracts.validation import (
     ValidationTrial,
     validation_strategy_fingerprint,
 )
+from ads.dataflow import persist_table_asset
 from ads.discovery import audit_leakage
 from ads.ds_toolkit import build_preprocessor
 from ads.eda import profile_for_eda
@@ -41,7 +45,7 @@ from ads.integration import execute_plan
 from ads.orchestration import RunState, StageResult
 from ads.reporting import build_evaluation_report, render_markdown
 from ads.sandbox import ExecutionBackend
-from ads.splitting import describe_split
+from ads.splitting import describe_split, make_splitter, split_holdout
 from ads.store import compute_artifact_id, register_artifact_type
 from ads.training import default_candidates, train_candidates
 
@@ -233,9 +237,19 @@ def integration_stage(state: RunState, correction: list[str] | None = None) -> S
     abt_card = profile_table(
         LoadedTable(name="abt", frame=result.frame, source_uri="derived", source_format="duckdb")
     )
+    table_asset, _ = persist_table_asset(
+        state.store,
+        result.frame,
+        run_id=state.run_id,
+        producer_component_id="integrate-data",
+        stage_exec_id="integration",
+        name="integrated_table",
+        source_artifact_ids=[compute_artifact_id(plan)],
+        transformation="execute_approved_integration_plan",
+    )
     return StageResult(
-        artifacts=[abt_card],
-        names={0: "abt"},
+        artifacts=[abt_card, table_asset],
+        names={0: "abt", 1: "integrated_table"},
         signals=QualitySignals(n_rows=len(result.frame)),
     )
 
@@ -339,7 +353,76 @@ def splitting_stage(state: RunState, correction: list[str] | None = None) -> Sta
         labeled = frame.loc[frame[problem.target_column].notna()]
     diagnostics = describe_split(labeled, strategy)
     state.blackboard[SPLIT_DIAGNOSTICS_KEY] = diagnostics
-    return StageResult(signals=diagnostics.to_quality_signals())
+    table_asset = state.require(ArtifactType.TABLE_ASSET, TableAsset)
+    manifest = _build_split_manifest(
+        labeled,
+        strategy,
+        target_column=problem.target_column or "",
+        table_asset=table_asset,
+        table_frame=frame,
+    )
+    return StageResult(
+        artifacts=[manifest],
+        names={0: "split_manifest"},
+        signals=diagnostics.to_quality_signals(),
+    )
+
+
+def _row_selection(positions: list[int]) -> RowSelection:
+    normalized = [int(position) for position in positions]
+    fingerprint = hashlib.sha256(json.dumps(normalized, separators=(",", ":")).encode()).hexdigest()
+    return RowSelection(
+        count=len(normalized),
+        fingerprint=fingerprint,
+        positions=normalized,
+    )
+
+
+def _build_split_manifest(
+    frame: pd.DataFrame,
+    strategy: ValidationStrategy,
+    *,
+    target_column: str,
+    table_asset: TableAsset,
+    table_frame: pd.DataFrame,
+) -> SplitManifest:
+    if not frame.index.is_unique or not table_frame.index.is_unique:
+        raise ValueError("SplitManifest requires a unique integrated-table row index.")
+    index_positions = {index: position for position, index in enumerate(table_frame.index)}
+
+    def positions(index: pd.Index) -> list[int]:
+        try:
+            return [index_positions[value] for value in index]
+        except KeyError as exc:
+            raise ValueError("split references a row outside the integrated table") from exc
+
+    outer_train, holdout = split_holdout(
+        frame,
+        strategy,
+        target_column=target_column,
+    )
+    splitter = make_splitter(
+        strategy,
+        outer_train,
+        target_column=target_column,
+    )
+    folds = [
+        FoldSelection(
+            fold=fold,
+            train=_row_selection(positions(train_index)),
+            validation=_row_selection(positions(validation_index)),
+        )
+        for fold, (train_index, validation_index) in enumerate(splitter.iter_folds(outer_train))
+    ]
+    return SplitManifest(
+        table_asset_id=compute_artifact_id(table_asset),
+        table_fingerprint=table_asset.fingerprint,
+        validation_strategy_artifact_id=compute_artifact_id(strategy),
+        target_column=target_column,
+        outer_train=_row_selection(positions(outer_train.index)),
+        holdout=_row_selection(positions(holdout.index)),
+        folds=folds,
+    )
 
 
 def _excluded_feature_columns(state: RunState, problem, card) -> set[str]:
@@ -459,6 +542,30 @@ def training_stage(state: RunState, correction: list[str] | None = None) -> Stag
         exclude={"created_at"}
     ):
         raise ValueError("FeatureSpec does not match the current model-frame schema.")
+    table_asset = state.require(ArtifactType.TABLE_ASSET, TableAsset)
+    split_manifest = state.require(ArtifactType.SPLIT_MANIFEST, SplitManifest)
+    if split_manifest.table_asset_id != compute_artifact_id(table_asset):
+        raise ValueError("SplitManifest points to a different integrated TableAsset.")
+    if split_manifest.table_fingerprint != table_asset.fingerprint:
+        raise ValueError("SplitManifest table fingerprint does not match the integrated table.")
+    if split_manifest.validation_strategy_artifact_id != compute_artifact_id(strategy):
+        raise ValueError("SplitManifest points to a different validation strategy.")
+    if split_manifest.target_column != problem.target_column:
+        raise ValueError("SplitManifest target does not match the confirmed problem.")
+    labeled = frame.loc[frame[problem.target_column].notna()]
+    expected_manifest = _build_split_manifest(
+        labeled,
+        strategy,
+        target_column=problem.target_column,
+        table_asset=table_asset,
+        table_frame=frame,
+    )
+    if split_manifest.model_dump(exclude={"created_at"}) != expected_manifest.model_dump(
+        exclude={"created_at"}
+    ):
+        raise ValueError(
+            "SplitManifest selections do not match the configured deterministic split."
+        )
     excluded_present = set(problem.excluded_columns) & set(card.column_names)
     candidates = default_candidates(problem.task_type)
     candidate_limit = state.blackboard.get(CANDIDATE_LIMIT_KEY)

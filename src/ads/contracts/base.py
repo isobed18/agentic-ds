@@ -50,7 +50,12 @@ class ArtifactType(StrEnum):
     STAGING_WORKSPACE = "staging_workspace"
     STAGING_REPORT = "staging_report"
     DOCUMENT_EXTRACTION = "document_extraction"
+    DOCUMENT_TABLE_REVIEW = "document_table_review"
     AUTOMATION_EXECUTION_PLAN = "automation_execution_plan"
+    GRAPH_PATCH = "graph_patch"
+    TABLE_ASSET = "table_asset"
+    SPLIT_MANIFEST = "split_manifest"
+    NODE_ATTEMPT = "node_attempt"
     CRITIQUE = "critique"
     GATE_DECISION = "gate_decision"
 

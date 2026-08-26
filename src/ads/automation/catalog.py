@@ -11,9 +11,11 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from ads.automation.settings import component_settings_schema, validate_component_settings
 from ads.contracts.base import FrozenModel
+from ads.contracts.registry import canonical_contract_id
 from ads.contracts.staging import (
     LocalizedText,
     PipelineBlueprint,
@@ -25,6 +27,7 @@ from ads.contracts.staging import (
 
 class AutomationComponentDefinition(FrozenModel):
     catalog_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]*$")
+    catalog_version: str = "1"
     category: Literal[
         "source",
         "understand",
@@ -43,8 +46,33 @@ class AutomationComponentDefinition(FrozenModel):
     inputs: list[PipelinePort] = Field(default_factory=list)
     outputs: list[PipelinePort] = Field(default_factory=list)
     default_settings: dict[str, Any] = Field(default_factory=dict)
+    settings_schema: dict[str, Any] = Field(default_factory=dict)
+    executor_id: str = ""
+    gate_policy_id: str = "default"
+    disableable: bool = True
+    pausable: bool = True
+    resource_class: Literal["cpu", "local_llm", "gpu", "human"] = "cpu"
+    latency_class: Literal["instant", "short", "long", "human"] = "short"
+    when_to_use: str = ""
+    when_not_to_use: str = ""
     evidence_layer: Literal["measured", "agent_proposal", "human_decision", "executor"]
     repeatable: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _attach_host_metadata(cls, raw: Any) -> Any:
+        if not isinstance(raw, dict):
+            return raw
+        enriched = dict(raw)
+        catalog_id = str(enriched.get("catalog_id") or "")
+        if catalog_id:
+            defaults = validate_component_settings(
+                catalog_id, dict(enriched.get("default_settings") or {})
+            )
+            enriched["default_settings"] = defaults
+            enriched.setdefault("settings_schema", component_settings_schema(catalog_id))
+            enriched.setdefault("executor_id", f"ads.executor.{catalog_id}")
+        return enriched
 
 
 def _text(en: str, tr: str) -> LocalizedText:
@@ -62,7 +90,7 @@ def _port(
     return PipelinePort(
         id=port_id,
         label=_text(label, label),
-        data_type=data_type,
+        data_type=canonical_contract_id(data_type),
         required=required,
         multiple=multiple,
     )
@@ -147,8 +175,24 @@ def automation_component_catalog() -> list[AutomationComponentDefinition]:
             ),
             kind="human_review",
             inputs=[_port("extracted_tables", "Candidate tables", "extracted_tables")],
-            outputs=[_port("accepted_tables", "Accepted tables", "accepted_tables")],
+            outputs=[_port("review_decisions", "Review decisions", "review_decisions")],
             evidence_layer="human_decision",
+        ),
+        AutomationComponentDefinition(
+            catalog_id="document.promote_tables",
+            category="transform",
+            title=_text("Promote document tables", "Belge tablolarını veri yap"),
+            description=_text(
+                "Creates immutable TableAssets only for explicitly accepted candidates.",
+                "Yalnızca açıkça kabul edilen adaylar için değişmez TableAsset'ler üretir.",
+            ),
+            kind="integration",
+            inputs=[
+                _port("extracted_tables", "Candidate tables", "extracted_tables"),
+                _port("review_decisions", "Review decisions", "review_decisions"),
+            ],
+            outputs=[_port("accepted_tables", "Promoted tables", "accepted_tables")],
+            evidence_layer="executor",
         ),
         AutomationComponentDefinition(
             catalog_id="data.integrate",
@@ -402,7 +446,9 @@ def instantiate_component(
         description=definition.description,
         inputs=definition.inputs,
         outputs=definition.outputs,
-        settings={**definition.default_settings, **(settings or {})},
+        settings=validate_component_settings(
+            catalog_id, {**definition.default_settings, **(settings or {})}
+        ),
         evidence_layer=definition.evidence_layer,
         configured_by=configured_by,
         catalog_id=catalog_id,
@@ -423,6 +469,7 @@ def add_problem_branches(
     configured_by: Literal["planner", "human"] = "planner",
 ) -> PipelineBlueprint:
     """Expand up to three problem branches using only registered components."""
+    original_component_count = len(blueprint.components)
     components = list(blueprint.components)
     connections = list(blueprint.connections)
     used_ids = {item.id for item in components}
@@ -506,7 +553,17 @@ def add_problem_branches(
         edge(ids["training"], "trained_models", ids["report"], "trained_models")
         edge(problem, "problem_definition", ids["report"], "problem_definition")
 
-    expanded = blueprint.model_copy(update={"components": components, "connections": connections})
+    expanded = blueprint.model_copy(
+        update={
+            "components": components,
+            "connections": connections,
+            "revision": (
+                blueprint.revision + 1
+                if len(components) > original_component_count
+                else blueprint.revision
+            ),
+        }
+    )
     expanded.validate_connections()
     return expanded
 
@@ -518,6 +575,7 @@ def apply_planner_graph_operations(
     connections: list[dict[str, Any]] | None = None,
     updates: dict[str, dict[str, Any]] | None = None,
     disable_components: list[str] | None = None,
+    base_revision: int | None = None,
 ) -> PipelineBlueprint:
     """Apply planner graph edits through the same catalog boundary as the UI.
 
@@ -525,6 +583,11 @@ def apply_planner_graph_operations(
     instantiates every node, validates its settings/control policy, and rejects
     the whole proposal if any connection is incompatible or cyclic.
     """
+    if base_revision is not None and base_revision != blueprint.revision:
+        raise ValueError(
+            f"stale graph patch targets revision {base_revision}; current revision is "
+            f"{blueprint.revision}"
+        )
     # Local import avoids making the component catalog depend on staging's
     # default-graph construction during module import.
     from ads.staging.blueprint import apply_component_updates
@@ -573,7 +636,14 @@ def apply_planner_graph_operations(
             raise ValueError(f"pipeline connection id {edge.id!r} already exists")
         edges.append(edge)
         edge_ids.add(edge.id)
-    result = revised.model_copy(update={"components": components, "connections": edges})
+    has_operations = bool(additions or connections or current_updates)
+    result = revised.model_copy(
+        update={
+            "components": components,
+            "connections": edges,
+            "revision": blueprint.revision + 1 if has_operations else blueprint.revision,
+        }
+    )
     result.validate_connections()
     return result
 

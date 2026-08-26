@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -20,6 +21,7 @@ import pandas as pd
 from ads.contracts.documents import (
     DocumentEngineId,
     DocumentExtraction,
+    DocumentFileResult,
     DocumentPageContent,
     ExtractedDocument,
     ExtractedFigureCandidate,
@@ -32,9 +34,7 @@ _MAX_PAGE_CHARS = 250_000
 _MAX_TABLE_ROWS = 50_000
 _MAX_TABLE_COLUMNS = 250
 _MAX_WARNINGS = 100
-_MARKDOWN_TABLE_SEPARATOR = re.compile(
-    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$"
-)
+_MARKDOWN_TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
 
 class DocumentExtractionError(RuntimeError):
@@ -84,9 +84,38 @@ def _text(value: Any, *, limit: int) -> str:
     return str(value or "").strip()[:limit]
 
 
+def _candidate_id(source_file: str | Path, kind: str, index: int) -> str:
+    """Return a stable, contract-safe ID without losing source uniqueness.
+
+    Display names retain the original filename. IDs are machine identifiers and
+    must not inherit spaces, parentheses, Unicode punctuation, or other filename
+    characters rejected by the persisted candidate contract.
+    """
+    source_name = Path(source_file).name
+    stem = re.sub(r"[^a-zA-Z0-9_.:]+", "_", Path(source_name).stem).strip("_.:")
+    safe_stem = stem or "document"
+    source_digest = hashlib.sha256(source_name.encode("utf-8")).hexdigest()[:8]
+    safe_kind = re.sub(r"[^a-zA-Z0-9_.:]+", "_", kind).strip("_.:") or "candidate"
+    return f"{safe_stem}_{source_digest}:{safe_kind}:{index}"
+
+
 def _ocr_enabled(settings: dict[str, Any]) -> bool:
     value = settings.get("ocr", "auto")
     return value is True or str(value).casefold() in {"auto", "always", "true", "1"}
+
+
+def _docling_ocr_enabled(path: Path, settings: dict[str, Any]) -> tuple[bool, str | None]:
+    """Resolve OCR auto from measured text coverage before loading OCR models."""
+    requested = settings.get("ocr", "auto")
+    if str(requested).casefold() != "auto":
+        return _ocr_enabled(settings), None
+    parsed = load_pdf(path)
+    text_pages = sum(len(page.text.strip()) >= 32 for page in parsed.pages)
+    sufficient_text = parsed.page_count > 0 and text_pages / parsed.page_count >= 0.6
+    if sufficient_text:
+        warning = f"ocr_auto_skipped:text_layer_sufficient:{text_pages}/{parsed.page_count}_pages"
+        return False, warning
+    return True, None
 
 
 def _page_number(item: Any) -> int | None:
@@ -119,9 +148,7 @@ def _table_from_frame(
 ) -> tuple[ExtractedTableCandidate, list[str]]:
     warnings: list[str] = []
     if frame.shape[1] > _MAX_TABLE_COLUMNS:
-        warnings.append(
-            f"table_{index}_columns_truncated:{frame.shape[1]}->{_MAX_TABLE_COLUMNS}"
-        )
+        warnings.append(f"table_{index}_columns_truncated:{frame.shape[1]}->{_MAX_TABLE_COLUMNS}")
         frame = frame.iloc[:, :_MAX_TABLE_COLUMNS]
     if frame.shape[0] > _MAX_TABLE_ROWS:
         warnings.append(f"table_{index}_rows_truncated:{frame.shape[0]}->{_MAX_TABLE_ROWS}")
@@ -130,7 +157,7 @@ def _table_from_frame(
     rows = [[_scalar(value) for value in row] for row in frame.itertuples(index=False, name=None)]
     return (
         ExtractedTableCandidate(
-            candidate_id=f"{Path(source_file).stem}:table:{index}",
+            candidate_id=_candidate_id(source_file, "table", index),
             source_file=source_file,
             page_number=page_number,
             title=title,
@@ -165,7 +192,7 @@ def _tables_from_markdown(markdown: str, source_file: str) -> list[ExtractedTabl
         if columns and all(len(row) == len(columns) for row in rows):
             tables.append(
                 ExtractedTableCandidate(
-                    candidate_id=f"{Path(source_file).stem}:table:{len(tables) + 1}",
+                    candidate_id=_candidate_id(source_file, "table", len(tables) + 1),
                     source_file=source_file,
                     columns=columns,
                     rows=rows[:_MAX_TABLE_ROWS],
@@ -217,8 +244,9 @@ def _docling_converter(ocr: bool, tables: bool, figures: bool) -> Any:
 
 def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> ExtractedDocument:
     del output_dir
+    use_ocr, ocr_warning = _docling_ocr_enabled(path, settings)
     converter = _docling_converter(
-        _ocr_enabled(settings),
+        use_ocr,
         bool(settings.get("extract_tables", True)),
         bool(settings.get("extract_figures", True)),
     )
@@ -241,7 +269,7 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
             )
 
     tables: list[ExtractedTableCandidate] = []
-    warnings: list[str] = []
+    warnings: list[str] = [ocr_warning] if ocr_warning else []
     if settings.get("extract_tables", True):
         for index, item in enumerate(getattr(document, "tables", []), start=1):
             try:
@@ -269,7 +297,7 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
                 pass
             figures.append(
                 ExtractedFigureCandidate(
-                    candidate_id=f"{path.stem}:figure:{index}",
+                    candidate_id=_candidate_id(path.name, "figure", index),
                     source_file=path.name,
                     page_number=_page_number(item),
                     caption=caption,
@@ -300,9 +328,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
     try:
         elements = partition_pdf(
             filename=str(path),
-            strategy=(
-                "hi_res" if wants_layout else "auto" if _ocr_enabled(settings) else "fast"
-            ),
+            strategy=("hi_res" if wants_layout else "auto" if _ocr_enabled(settings) else "fast"),
             infer_table_structure=bool(settings.get("extract_tables", True)),
             extract_images_in_pdf=bool(settings.get("extract_figures", True)),
             extract_image_block_types=(
@@ -352,7 +378,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
         if category.casefold() == "image" and settings.get("extract_figures", True):
             figures.append(
                 ExtractedFigureCandidate(
-                    candidate_id=f"{path.stem}:figure:{len(figures) + 1}",
+                    candidate_id=_candidate_id(path.name, "figure", len(figures) + 1),
                     source_file=path.name,
                     page_number=page,
                     caption=content[:1_000] or None,
@@ -367,9 +393,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
         )
         for number, parts in sorted(page_parts.items())
     ]
-    markdown = "\n\n".join(
-        f"<!-- page {page.page_number} -->\n\n{page.markdown}" for page in pages
-    )
+    markdown = "\n\n".join(f"<!-- page {page.page_number} -->\n\n{page.markdown}" for page in pages)
     return ExtractedDocument(
         source_file=path.name,
         page_count=max(page_parts, default=0),
@@ -418,7 +442,7 @@ def _marker(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracted
         for index, image in enumerate(images, start=1):
             figures.append(
                 ExtractedFigureCandidate(
-                    candidate_id=f"{path.stem}:figure:{index}",
+                    candidate_id=_candidate_id(path.name, "figure", index),
                     source_file=path.name,
                     caption=str(image.get("name") or ""),
                     kind="picture",
@@ -489,16 +513,20 @@ def _mineru(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracted
     image_files = [
         item for item in target.rglob("*") if item.suffix.lower() in {".png", ".jpg", ".jpeg"}
     ]
-    figures = [
-        ExtractedFigureCandidate(
-            candidate_id=f"{path.stem}:figure:{index}",
-            source_file=path.name,
-            caption=item.name,
-            kind="picture",
-            image_path=str(item),
-        )
-        for index, item in enumerate(image_files, start=1)
-    ] if settings.get("extract_figures", True) else []
+    figures = (
+        [
+            ExtractedFigureCandidate(
+                candidate_id=_candidate_id(path.name, "figure", index),
+                source_file=path.name,
+                caption=item.name,
+                kind="picture",
+                image_path=str(item),
+            )
+            for index, item in enumerate(image_files, start=1)
+        ]
+        if settings.get("extract_figures", True)
+        else []
+    )
     return ExtractedDocument(
         source_file=path.name,
         page_count=load_pdf(path).page_count,
@@ -529,6 +557,7 @@ def extract_document_directory(
     engine: DocumentEngineId,
     settings: dict[str, Any],
     output_dir: str | Path,
+    on_progress: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> DocumentExtraction:
     """Execute the selected adapter locally and return a normalized artifact."""
     started = time.perf_counter()
@@ -544,12 +573,44 @@ def extract_document_directory(
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     extracted: list[ExtractedDocument] = []
+    file_results: list[DocumentFileResult] = []
     warnings: list[str] = []
-    for path in documents:
+    for index, path in enumerate(documents, start=1):
+        file_started = time.perf_counter()
+        if on_progress is not None:
+            on_progress(
+                "file_started",
+                {"source_file": path.name, "index": index, "total": len(documents)},
+            )
         try:
-            extracted.append(extractor(path, settings, destination))
+            document = extractor(path, settings, destination)
+            duration = time.perf_counter() - file_started
+            document = document.model_copy(update={"duration_seconds": duration})
+            extracted.append(document)
+            result = DocumentFileResult(
+                source_file=path.name,
+                status="ready",
+                page_count=document.page_count,
+                table_candidates=len(document.tables),
+                figure_candidates=len(document.figures),
+                duration_seconds=duration,
+                warnings=document.warnings,
+            )
+            file_results.append(result)
+            if on_progress is not None:
+                on_progress("file_ready", result.model_dump(mode="json"))
         except Exception as exc:
-            warnings.append(f"{path.name}:{type(exc).__name__}:{str(exc)[:500]}")
+            warning = f"{path.name}:{type(exc).__name__}:{str(exc)[:500]}"
+            warnings.append(warning)
+            result = DocumentFileResult(
+                source_file=path.name,
+                status="failed",
+                duration_seconds=time.perf_counter() - file_started,
+                warnings=[warning],
+            )
+            file_results.append(result)
+            if on_progress is not None:
+                on_progress("file_failed", result.model_dump(mode="json"))
     if not extracted:
         raise DocumentExtractionError("; ".join(warnings) or f"{engine} produced no documents")
     return DocumentExtraction(
@@ -559,6 +620,7 @@ def extract_document_directory(
         engine_version=_engine_version(engine),
         settings=dict(settings),
         documents=extracted,
+        file_results=file_results,
         duration_seconds=time.perf_counter() - started,
         warnings=warnings[:_MAX_WARNINGS],
     )
@@ -574,7 +636,9 @@ def document_extraction_prompt_context(
     terms = {word.casefold() for word in re.findall(r"[\w-]{3,}", query)}
     remaining = character_budget
     result: list[dict[str, Any]] = []
-    for document in artifact.documents:
+    document_count = max(1, len(artifact.documents))
+    fair_share = max(1, character_budget // document_count)
+    for index, document in enumerate(artifact.documents):
         candidates = document.pages or [
             DocumentPageContent(page_number=1, markdown=document.markdown)
         ]
@@ -584,11 +648,13 @@ def document_extraction_prompt_context(
             reverse=True,
         )
         selected: list[dict[str, Any]] = []
+        document_budget = remaining if index == document_count - 1 else min(fair_share, remaining)
         for page in ranked[:7]:
-            if remaining <= 0:
+            if document_budget <= 0:
                 break
-            text = page.markdown[:remaining]
+            text = page.markdown[:document_budget]
             selected.append({"page": page.page_number, "text": text})
+            document_budget -= len(text)
             remaining -= len(text)
         result.append(
             {
@@ -601,8 +667,6 @@ def document_extraction_prompt_context(
                 "selected_excerpts": selected,
             }
         )
-        if remaining <= 0:
-            break
     return result
 
 

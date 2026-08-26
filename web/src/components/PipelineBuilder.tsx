@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -7,11 +7,13 @@ import {
   MarkerType,
   Position,
   ReactFlow,
-  addEdge,
+  useEdgesState,
+  useNodesState,
   type Connection,
   type Edge,
   type Node,
   type NodeProps,
+  type OnEdgesChange,
 } from "@xyflow/react";
 import {
   api,
@@ -21,142 +23,86 @@ import {
   type PipelineBlueprint,
   type PipelineComponent,
   type PipelineConnection,
+  type PipelineLayout,
   type PipelineOutputReference,
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
+import { pipelinePortsMatch } from "./pipelineGraph";
+import { PlannerPanel } from "./PlannerPanel";
 import { Badge, Spinner, cx } from "./ui";
-import { pipelineConnectionFromHandles, pipelinePortsMatch } from "./pipelineGraph";
 
 interface ComponentNodeData extends Record<string, unknown> {
   component: PipelineComponent;
-  expanded: boolean;
-  onToggle: (id: string) => void;
   outputs: PipelineOutputReference[];
 }
 
-type ComponentFlowNode = Node<ComponentNodeData, "pipelineComponent">;
+interface BranchNodeData extends Record<string, unknown> {
+  branchId: string;
+  componentCount: number;
+  onExpand: (branchId: string) => void;
+}
 
-const NODE_WIDTH = 270;
-const COLLAPSED_HEIGHT = 106;
-const EXPANDED_HEIGHT = 248;
+type ComponentFlowNode = Node<ComponentNodeData, "pipelineComponent">;
+type BranchFlowNode = Node<BranchNodeData, "branchGroup">;
+type FlowNode = ComponentFlowNode | BranchFlowNode;
+
+const NODE_WIDTH = 224;
+const NODE_HEIGHT = 82;
+const BRANCH_WIDTH = 250;
+const BRANCH_HEIGHT = 92;
+
+export const WORKFLOW_INTERACTION = {
+  panOnScroll: true,
+  panOnScrollSpeed: 0.85,
+  zoomOnScroll: false,
+  zoomOnPinch: true,
+  panOnDrag: [1, 2] as number[],
+  minZoom: 0.25,
+  maxZoom: 1.8,
+};
 
 function local(value: { en: string; tr: string }): string {
   return activeLanguage() === "tr" ? value.tr : value.en;
 }
 
-function evidenceTone(layer: PipelineComponent["evidence_layer"]): "ok" | "brand" | "warn" | "neutral" {
-  if (layer === "measured") return "ok";
-  if (layer === "agent_proposal") return "brand";
-  if (layer === "human_decision") return "warn";
-  return "neutral";
-}
-
-function evidenceLabel(layer: PipelineComponent["evidence_layer"]): string {
-  return t({
-    measured: "Measured",
-    agent_proposal: "Agent proposal",
-    human_decision: "Human decision",
-    executor: "Execution",
-  }[layer]);
-}
-
 function ComponentNode({ data, selected }: NodeProps<ComponentFlowNode>) {
-  const { component, expanded, onToggle, outputs } = data;
-  const height = expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT;
+  const { component, outputs } = data;
   const artifactCount = new Set(outputs.flatMap((output) => output.artifact_ids)).size;
+  const status = outputs.some((output) => output.status === "needs_review")
+    ? "Needs review"
+    : outputs.length > 0 && outputs.every((output) => output.status === "ready")
+      ? "Completed"
+      : outputs.some((output) => output.status === "pending")
+        ? "Running"
+        : component.enabled ? "Ready" : "Disabled";
   return (
-    <article
-      className={cx(
-        "w-[270px] overflow-hidden rounded-xl border bg-surface shadow-card transition-all",
-        selected ? "border-brand-500 ring-2 ring-brand-100" : "border-line",
-        !component.enabled && "opacity-55",
-      )}
-      style={{ height }}
-    >
-      {component.inputs.map((port, index) => (
-        <Handle
-          key={`in:${port.id}`}
-          id={`in:${port.id}`}
-          type="target"
-          position={Position.Left}
-          style={{ top: `${32 + ((index + 1) * 52) / (component.inputs.length + 1)}%` }}
-          className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-500"
-        />
-      ))}
-      {component.outputs.map((port, index) => (
-        <Handle
-          key={`out:${port.id}`}
-          id={`out:${port.id}`}
-          type="source"
-          position={Position.Right}
-          style={{ top: `${32 + ((index + 1) * 52) / (component.outputs.length + 1)}%` }}
-          className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-500"
-        />
-      ))}
-
-      <button
-        type="button"
-        onClick={(event) => { event.stopPropagation(); onToggle(component.id); }}
-        className="flex w-full items-start gap-2 px-3.5 py-3 text-left hover:bg-surface-sunken"
-        aria-expanded={expanded}
-      >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-semibold text-ink">{local(component.title)}</span>
-          <span className="mt-1 block truncate text-[10px] text-ink-mute">{local(component.description)}</span>
-        </span>
-        <span className="text-sm text-ink-faint">{expanded ? "−" : "+"}</span>
-      </button>
-      <div className="flex flex-wrap gap-1 border-t border-line-soft px-3.5 py-2">
-        <Badge tone={evidenceTone(component.evidence_layer)}>{evidenceLabel(component.evidence_layer)}</Badge>
-        <Badge tone={component.enabled ? "ok" : "neutral"}>{t(component.enabled ? "Enabled" : "Disabled")}</Badge>
-        {component.control.execution === "pause_after" && <Badge tone="warn">{t("Pause after")}</Badge>}
-        {component.control.gate_handler === "planner" && <Badge tone="brand">{t("Planner handles gates")}</Badge>}
-        {component.branch_id && <Badge tone="brand">{component.branch_id}</Badge>}
-        {artifactCount > 0 && <Badge tone="neutral">{artifactCount} {t("artifacts")}</Badge>}
-        {outputs.some((output) => output.status === "needs_review") && <Badge tone="warn">{t("Review output")}</Badge>}
-        {outputs.length > 0 && outputs.every((output) => output.status === "ready") && <Badge tone="ok">{t("Outputs ready")}</Badge>}
+    <article className={cx("h-[82px] w-56 rounded-xl border bg-surface shadow-card", selected ? "border-brand-500 ring-2 ring-brand-100" : "border-line", !component.enabled && "opacity-55")}>
+      {component.inputs.map((port, index) => <Handle key={`in:${port.id}`} id={`in:${port.id}`} type="target" position={Position.Left} style={{ top: `${32 + ((index + 1) * 40) / (component.inputs.length + 1)}%` }} className="!h-2 !w-2 !border-2 !border-white !bg-slate-400" />)}
+      {component.outputs.map((port, index) => <Handle key={`out:${port.id}`} id={`out:${port.id}`} type="source" position={Position.Right} style={{ top: `${32 + ((index + 1) * 40) / (component.outputs.length + 1)}%` }} className="!h-2 !w-2 !border-2 !border-white !bg-slate-400" />)}
+      <div className="flex h-full items-center gap-3 px-3.5 py-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-sm font-bold text-brand-700">{local(component.title).slice(0, 1)}</span>
+        <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-semibold text-ink">{local(component.title)}</span><span className="mt-1 block text-[10px] font-medium text-ink-mute">{t(status)}</span></span>
+        <span className="flex flex-col items-end gap-1">{component.control.execution === "pause_after" && <Badge tone="warn">{t("Pause")}</Badge>}{component.branch_id && <Badge tone="brand">{component.branch_id}</Badge>}{artifactCount > 0 && <Badge tone="neutral">{artifactCount}</Badge>}</span>
       </div>
-      {expanded && (
-        <div className="grid grid-cols-2 gap-2 border-t border-line-soft px-3.5 py-3">
-          <PortList title={t("Inputs")} ports={component.inputs} side="input" />
-          <PortList title={t("Outputs")} ports={component.outputs} side="output" outputs={outputs} />
-        </div>
-      )}
     </article>
   );
 }
 
-function PortList({ title, ports, side, outputs = [] }: {
-  title: string;
-  ports: PipelineComponent["inputs"];
-  side: "input" | "output";
-  outputs?: PipelineOutputReference[];
-}) {
+function BranchNode({ data, selected }: NodeProps<BranchFlowNode>) {
   return (
-    <div>
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-ink-faint">{title}</p>
-      <ul className="mt-1.5 space-y-1">
-        {ports.map((port) => (
-          <li key={port.id} className="rounded-md bg-surface-sunken px-2 py-1.5">
-            <p className="truncate text-[9.5px] font-medium text-ink" title={local(port.label)}>{local(port.label)}</p>
-            <p className="truncate font-mono text-[8px] text-ink-faint">{port.data_type}</p>
-            {outputs.find((output) => output.port_id === port.id) && (
-              <p className="mt-0.5 truncate text-[8px] font-medium text-brand-700">
-                {t(outputs.find((output) => output.port_id === port.id)!.status.replace("_", " "))}
-              </p>
-            )}
-          </li>
-        ))}
-        {!ports.length && <li className="text-[9px] text-ink-faint">{t(side === "input" ? "Starts here" : "No output")}</li>}
-      </ul>
-    </div>
+    <article className={cx("h-[92px] w-[250px] rounded-2xl border-2 border-dashed bg-brand-50 px-4 py-3 shadow-card", selected ? "border-brand-500" : "border-brand-200")}>
+      <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-400" />
+      <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-400" />
+      <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-100 text-brand-700">⑂</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{data.branchId}</p><p className="text-[10px] text-ink-mute">{data.componentCount} {t("workflow steps collapsed")}</p></div></div>
+      <button type="button" className="mt-2 text-[10px] font-semibold text-brand-700" onClick={(event) => { event.stopPropagation(); data.onExpand(data.branchId); }}>{t("Expand branch")}</button>
+    </article>
   );
 }
 
-const nodeTypes = { pipelineComponent: ComponentNode };
+const nodeTypes = { pipelineComponent: ComponentNode, branchGroup: BranchNode };
 
-function toEdges(blueprint: PipelineBlueprint): Edge[] {
-  return blueprint.connections.map((connection) => ({
+function semanticEdge(connection: PipelineConnection): Edge {
+  return {
     id: connection.id,
     source: connection.source_component,
     sourceHandle: `out:${connection.source_port}`,
@@ -164,624 +110,256 @@ function toEdges(blueprint: PipelineBlueprint): Edge[] {
     targetHandle: `in:${connection.target_port}`,
     type: "smoothstep",
     markerEnd: { type: MarkerType.ArrowClosed, color: "#94a3b8", width: 14, height: 14 },
-    style: { stroke: "#94a3b8", strokeWidth: 1.6 },
-  }));
+    style: { stroke: "#94a3b8", strokeWidth: 1.5 },
+  };
 }
 
-async function layoutNodes(
+export function displayEdges(blueprint: PipelineBlueprint, collapsedBranches: Set<string>): Edge[] {
+  const branchByComponent = new Map(blueprint.components.map((component) => [component.id, component.branch_id]));
+  const mapped: Edge[] = [];
+  for (const connection of blueprint.connections) {
+    const sourceBranch = branchByComponent.get(connection.source_component);
+    const targetBranch = branchByComponent.get(connection.target_component);
+    const source = sourceBranch && collapsedBranches.has(sourceBranch) ? `branch:${sourceBranch}` : connection.source_component;
+    const target = targetBranch && collapsedBranches.has(targetBranch) ? `branch:${targetBranch}` : connection.target_component;
+    if (source === target) continue;
+    const edge = semanticEdge(connection);
+    mapped.push({ ...edge, id: `${source}->${target}`, source, target, sourceHandle: source.startsWith("branch:") ? null : edge.sourceHandle, targetHandle: target.startsWith("branch:") ? null : edge.targetHandle });
+  }
+  return [...new Map(mapped.map((edge) => [edge.id, edge])).values()];
+}
+
+function displayNodes(
   blueprint: PipelineBlueprint,
-  expanded: Set<string>,
-  componentOutputs: PipelineOutputReference[],
-  onToggle: (id: string) => void,
-): Promise<ComponentFlowNode[]> {
-  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
-  const elk = new ELK();
-  const graph = await elk.layout({
-    id: "pipeline-root",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.spacing.nodeNode": "58",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "115",
-      "elk.padding": "[top=30,left=30,bottom=30,right=30]",
-    },
-    children: blueprint.components.map((component) => ({
-      id: component.id,
-      width: NODE_WIDTH,
-      height: expanded.has(component.id) ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT,
-    })),
-    edges: blueprint.connections.map((connection) => ({
-      id: connection.id,
-      sources: [connection.source_component],
-      targets: [connection.target_component],
-    })),
-  });
-  const positions = new Map(
-    (graph.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]),
-  );
-  return blueprint.components.map((component) => ({
+  outputs: PipelineOutputReference[],
+  collapsedBranches: Set<string>,
+  positions: Map<string, { x: number; y: number }>,
+  onExpand: (branchId: string) => void,
+): FlowNode[] {
+  const visible = blueprint.components.filter((component) => !component.branch_id || !collapsedBranches.has(component.branch_id));
+  const nodes: FlowNode[] = visible.map((component) => ({
     id: component.id,
     type: "pipelineComponent",
     position: positions.get(component.id) ?? { x: 0, y: 0 },
-    data: {
-      component,
-      expanded: expanded.has(component.id),
-      onToggle,
-      outputs: componentOutputs.filter((output) => output.component_id === component.id),
-    },
+    data: { component, outputs: outputs.filter((output) => output.component_id === component.id) },
   }));
+  for (const branchId of collapsedBranches) {
+    const children = blueprint.components.filter((component) => component.branch_id === branchId);
+    if (!children.length) continue;
+    const firstPosition = children.map((component) => positions.get(component.id)).find(Boolean) ?? { x: 0, y: 0 };
+    nodes.push({ id: `branch:${branchId}`, type: "branchGroup", position: firstPosition, data: { branchId, componentCount: children.length, onExpand } });
+  }
+  return nodes;
 }
 
-export function PipelineBuilder({ runId = null, baseArtifactId = null, blueprint, componentOutputs = [], plannerPanel, onSaved, onChange }: {
+async function autoLayout(nodes: FlowNode[], edges: Edge[]): Promise<FlowNode[]> {
+  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
+  const graph = await new ELK().layout({
+    id: "pipeline-root",
+    layoutOptions: { "elk.algorithm": "layered", "elk.direction": "RIGHT", "elk.edgeRouting": "ORTHOGONAL", "elk.spacing.nodeNode": "54", "elk.layered.spacing.nodeNodeBetweenLayers": "100", "elk.padding": "[top=40,left=40,bottom=40,right=40]" },
+    children: nodes.map((node) => ({ id: node.id, width: node.type === "branchGroup" ? BRANCH_WIDTH : NODE_WIDTH, height: node.type === "branchGroup" ? BRANCH_HEIGHT : NODE_HEIGHT })),
+    edges: edges.map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] })),
+  });
+  const positions = new Map((graph.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
+  return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }));
+}
+
+export function PipelineBuilder({ runId = null, baseArtifactId = null, blueprint, layout, componentOutputs = [], onSaved, onChange, onExitAdvanced }: {
   runId?: string | null;
   baseArtifactId?: string | null;
   blueprint: PipelineBlueprint;
+  layout?: PipelineLayout;
   componentOutputs?: PipelineOutputReference[];
-  plannerPanel?: ReactNode;
   onSaved?: (workspace: Awaited<ReturnType<typeof api.updateStagingPipeline>>) => void;
   onChange?: (blueprint: PipelineBlueprint) => void;
+  onExitAdvanced?: () => void;
 }) {
   const [draft, setDraft] = useState(blueprint);
-  const [nodes, setNodes] = useState<ComponentFlowNode[]>([]);
-  const [edges, setEdges] = useState<Edge[]>(() => toEdges(blueprint));
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["understand-documents", "planner"]));
-  const [selected, setSelected] = useState<string | null>("understand-documents");
-  const [engines, setEngines] = useState<DocumentEngine[]>([]);
+  const initialCollapsed = useMemo(() => new Set(layout?.collapsed_branches ?? blueprint.components.map((component) => component.branch_id).filter((value): value is string => Boolean(value))), []);
+  const [collapsedBranches, setCollapsedBranches] = useState(initialCollapsed);
+  const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
+  const [edges, setEdges, applyEdgeChanges] = useEdgesState<Edge>([]);
   const [catalog, setCatalog] = useState<AutomationComponentDefinition[]>([]);
-  const [catalogSearch, setCatalogSearch] = useState("");
+  const [engines, setEngines] = useState<DocumentEngine[]>([]);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(true);
-  const [inspectorTab, setInspectorTab] = useState<"node" | "planner">("node");
+  const [error, setError] = useState<string | null>(null);
+  const structureRef = useRef("");
+  const currentLayout = useRef(layout);
+  const collapsedReady = useRef(false);
+
+  useEffect(() => { currentLayout.current = layout; }, [layout]);
+  useEffect(() => { void api.automationComponents().then((value) => { setCatalog(value.components); setEngines(value.document_engines); }); }, []);
+
+  const expandBranch = useCallback((branchId: string) => {
+    setCollapsedBranches((current) => { const next = new Set(current); next.delete(branchId); return next; });
+  }, []);
+
+  const structureKey = `${draft.components.map((component) => `${component.id}:${component.branch_id ?? ""}`).join("|")}::${draft.connections.map((edge) => `${edge.id}:${edge.source_component}.${edge.source_port}->${edge.target_component}.${edge.target_port}`).join("|")}::${[...collapsedBranches].sort().join("|")}`;
 
   useEffect(() => {
-    void api.automationComponents().then((value) => {
-      setEngines(value.document_engines);
-      setCatalog(value.components);
-    });
-  }, []);
+    const positions = new Map((layout?.nodes ?? []).map((node) => [node.component_id, { x: node.x, y: node.y }]));
+    const nextEdges = displayEdges(draft, collapsedBranches);
+    const nextNodes = displayNodes(draft, componentOutputs, collapsedBranches, positions, expandBranch);
+    setEdges(nextEdges);
+    const hasEveryPosition = nextNodes.every((node) => node.id.startsWith("branch:") || positions.has(node.id));
+    if (structureRef.current === structureKey) {
+      setNodes((current) => nextNodes.map((node) => ({ ...node, position: current.find((item) => item.id === node.id)?.position ?? node.position })));
+      return;
+    }
+    structureRef.current = structureKey;
+    if (hasEveryPosition && nextNodes.length) setNodes(nextNodes);
+    else void autoLayout(nextNodes, nextEdges).then(setNodes);
+  }, [structureKey]);
+
+  useEffect(() => {
+    setNodes((current) => current.map((node) => node.type === "pipelineComponent" ? {
+      ...node,
+      data: {
+        ...node.data,
+        component: draft.components.find((component) => component.id === node.id) ?? node.data.component,
+        outputs: componentOutputs.filter((output) => output.component_id === node.id),
+      },
+    } : node));
+  }, [componentOutputs, draft.components]);
+
   useEffect(() => {
     setDraft(blueprint);
-    setEdges(toEdges(blueprint));
     setSaved(true);
   }, [blueprint]);
 
-  const toggle = (id: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-  const layoutKey = `${draft.components.map((item) => `${item.id}:${item.enabled}`).join("|")}:${[...expanded].sort().join("|")}:${componentOutputs.map((output) => `${output.component_id}:${output.port_id}:${output.status}`).join("|")}`;
-  useEffect(() => {
-    let cancelled = false;
-    void layoutNodes(draft, expanded, componentOutputs, toggle).then((value) => { if (!cancelled) setNodes(value); });
-    return () => { cancelled = true; };
-  }, [layoutKey]);
+  const selectedComponent = useMemo(() => draft.components.find((component) => component.id === selected) ?? null, [draft, selected]);
 
-  const selectedComponent = useMemo(
-    () => draft.components.find((component) => component.id === selected) ?? null,
-    [draft, selected],
-  );
+  async function persistLayout(positionOverride?: { id: string; x: number; y: number }, branchOverride = collapsedBranches) {
+    if (!runId || !baseArtifactId) return;
+    const previous = new Map((currentLayout.current?.nodes ?? []).map((node) => [node.component_id, node]));
+    for (const node of nodes) {
+      if (node.type !== "pipelineComponent") continue;
+      previous.set(node.id, { component_id: node.id, x: positionOverride?.id === node.id ? positionOverride.x : node.position.x, y: positionOverride?.id === node.id ? positionOverride.y : node.position.y, collapsed: true });
+    }
+    const next: PipelineLayout = { version: "1", nodes: [...previous.values()], collapsed_branches: [...branchOverride].sort() };
+    try {
+      const workspace = await api.updateStagingLayout(runId, baseArtifactId, next);
+      currentLayout.current = workspace.pipeline_layout;
+      onSaved?.(workspace);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  useEffect(() => {
+    if (!collapsedReady.current) {
+      collapsedReady.current = true;
+      return;
+    }
+    void persistLayout(undefined, collapsedBranches);
+  }, [collapsedBranches]);
+
+  function collapseAllBranches() {
+    setCollapsedBranches(new Set(draft.components.map((component) => component.branch_id).filter((value): value is string => Boolean(value))));
+  }
+
+  async function runAutoLayout() {
+    setBusy(true);
+    try {
+      const laidOut = await autoLayout(nodes, edges);
+      setNodes(laidOut);
+      if (runId && baseArtifactId) {
+        const next: PipelineLayout = { version: "1", nodes: laidOut.filter((node) => node.type === "pipelineComponent").map((node) => ({ component_id: node.id, x: node.position.x, y: node.position.y, collapsed: true })), collapsed_branches: [...collapsedBranches].sort() };
+        const workspace = await api.updateStagingLayout(runId, baseArtifactId, next);
+        currentLayout.current = workspace.pipeline_layout;
+        onSaved?.(workspace);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally { setBusy(false); }
+  }
 
   function updateComponent(componentId: string, update: (component: PipelineComponent) => PipelineComponent) {
-    setDraft((current) => ({
-      ...current,
-      components: current.components.map((component) => component.id === componentId ? update(component) : component),
-    }));
+    setDraft((current) => ({ ...current, components: current.components.map((component) => component.id === componentId ? update(component) : component) }));
     setSaved(false);
   }
 
   function addComponent(definition: AutomationComponentDefinition) {
-    if (!definition.repeatable && draft.components.some((item) => (
-      item.catalog_id === definition.catalog_id || item.kind === definition.kind
-    ))) {
-      setError(t("This component can only be added once."));
-      return;
-    }
-    const stem = definition.catalog_id.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const suffix = crypto.randomUUID().slice(0, 6);
-    const component: PipelineComponent = {
-      id: `${stem}-${suffix}`,
-      kind: definition.kind,
-      title: definition.title,
-      description: definition.description,
-      inputs: definition.inputs,
-      outputs: definition.outputs,
-      settings: { ...definition.default_settings },
-      control: { execution: "auto", gate_handler: "planner", max_retries: null },
-      enabled: true,
-      optional: false,
-      evidence_layer: definition.evidence_layer,
-      configured_by: "human",
-      catalog_id: definition.catalog_id,
-      branch_id: null,
-      group_id: null,
-    };
+    if (!definition.repeatable && draft.components.some((item) => item.catalog_id === definition.catalog_id)) { setError(t("This component can only be added once.")); return; }
+    const id = `${definition.catalog_id.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${crypto.randomUUID().slice(0, 6)}`;
+    const component: PipelineComponent = { id, kind: definition.kind, title: definition.title, description: definition.description, inputs: definition.inputs, outputs: definition.outputs, settings: { ...definition.default_settings }, control: { execution: "auto", gate_handler: "planner", max_retries: null }, enabled: true, optional: false, evidence_layer: definition.evidence_layer, configured_by: "human", catalog_id: definition.catalog_id, branch_id: null, group_id: null };
     setDraft((current) => ({ ...current, components: [...current.components, component] }));
-    setSelected(component.id);
-    setSaved(false);
-    setError(null);
+    setSelected(id); setCatalogOpen(false); setSaved(false); setError(null);
   }
 
   function removeComponent(componentId: string) {
     if (componentId === "data-source") return;
-    setDraft((current) => ({
-      ...current,
-      components: current.components.filter((component) => component.id !== componentId),
-    }));
-    setEdges((current) => current.filter((edge) => edge.source !== componentId && edge.target !== componentId));
-    setSelected(null);
-    setSaved(false);
-  }
-
-  async function runDocuments() {
-    if (!runId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      if (!saved) await save();
-      const workspace = await api.runDocumentUnderstanding(runId);
-      onSaved?.(workspace);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(false);
-    }
+    setDraft((current) => ({ ...current, components: current.components.filter((component) => component.id !== componentId), connections: current.connections.filter((edge) => edge.source_component !== componentId && edge.target_component !== componentId) }));
+    setSelected(null); setSaved(false);
   }
 
   function connect(connection: Connection) {
     if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) return;
-    if (!pipelinePortsMatch(
-      draft, connection.source, connection.sourceHandle, connection.target, connection.targetHandle,
-    )) {
-      setError(t("Connections require matching output and input types."));
-      return;
-    }
-    setError(null);
-    setEdges((current) => addEdge({ ...connection, id: `human:${crypto.randomUUID()}`, type: "smoothstep" }, current));
-    setSaved(false);
+    if (!pipelinePortsMatch(draft, connection.source, connection.sourceHandle, connection.target, connection.targetHandle)) { setError(t("Connections require matching output and input contracts.")); return; }
+    const semantic: PipelineConnection = { id: `human:${crypto.randomUUID()}`, source_component: connection.source, source_port: connection.sourceHandle.slice(4), target_component: connection.target, target_port: connection.targetHandle.slice(3) };
+    setDraft((current) => ({ ...current, connections: [...current.connections, semantic] })); setSaved(false); setError(null);
   }
 
-  async function save() {
-    setBusy(true);
-    setError(null);
+  const onEdgesChange: OnEdgesChange<Edge> = (changes) => {
+    applyEdgeChanges(changes);
+    const removed = new Set(changes.filter((change) => change.type === "remove").map((change) => change.id));
+    if (removed.size) { setDraft((current) => ({ ...current, connections: current.connections.filter((edge) => !removed.has(edge.id)) })); setSaved(false); }
+  };
+
+  async function saveBlueprint() {
+    setBusy(true); setError(null);
     try {
-      const connections = edges.map(pipelineConnectionFromHandles).filter((item): item is PipelineConnection => item !== null);
-      const next = { ...draft, connections };
-      if (runId && baseArtifactId) {
-        const workspace = await api.updateStagingPipeline(runId, baseArtifactId, next);
-        onSaved?.(workspace);
-      }
-      onChange?.(next);
-      setSaved(true);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(false);
-    }
+      if (runId && baseArtifactId) onSaved?.(await api.updateStagingPipeline(runId, baseArtifactId, draft));
+      onChange?.(draft); setSaved(true);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+    finally { setBusy(false); }
   }
 
   return (
-    <section className="rounded-xl border border-line bg-surface p-4 shadow-card">
-      <header className="mb-3 flex flex-wrap items-start gap-3">
-        <div className="mr-auto">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-ink">{t("Build the pipeline")}</h2>
-            <Badge tone="brand">{t("MVP blueprint")}</Badge>
-          </div>
-          <p className="mt-1 max-w-3xl text-xs text-ink-mute">
-            {t("Open components to inspect their inputs and outputs. Drag matching ports to connect them, then save the blueprint before running.")}
-          </p>
-        </div>
-        <button onClick={() => void save()} disabled={busy || saved} className="btn-primary !py-1.5 text-xs">
-          {busy ? t("Saving…") : saved ? t("Pipeline saved") : runId ? t("Save pipeline") : t("Use this pipeline")}
-        </button>
+    <section className="relative flex h-full min-h-[34rem] flex-col overflow-hidden bg-surface-sunken">
+      <header className="z-20 flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface px-4 py-2.5">
+        {onExitAdvanced && <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={onExitAdvanced}>← {t("Back to proposal")}</button>}
+        <div className="mr-auto"><h2 className="text-sm font-semibold text-ink">{t("Workflow")}</h2><p className="text-[10px] text-ink-mute">{t("The accepted graph defines the plan; layout is visual state only.")}</p></div>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => setCatalogOpen(true)}>+ {t("Add component")}</button>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => void runAutoLayout()} disabled={busy}>{t("Auto layout")}</button>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={collapseAllBranches} disabled={!draft.components.some((component) => component.branch_id)}>{t("Collapse branches")}</button>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => setPlannerOpen(true)}>{t("Planner")}</button>
+        <button type="button" className="btn-primary !py-1.5 text-xs" onClick={() => void saveBlueprint()} disabled={busy || saved}>{saved ? t("Saved") : t("Save workflow")}</button>
       </header>
-
-      {error && <p className="mb-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
-      <div className="grid min-h-[650px] gap-3 xl:grid-cols-[250px_minmax(0,1fr)_330px]">
-        <ComponentLibrary
-          catalog={catalog}
-          search={catalogSearch}
-          onSearch={setCatalogSearch}
-          onAdd={addComponent}
-        />
-        <div className="h-[650px] overflow-hidden rounded-xl border border-line bg-surface-sunken">
-          {nodes.length === 0 ? <div className="flex h-full items-center justify-center"><Spinner label={t("Laying out the pipeline…")} /></div> : (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              onConnect={connect}
-              onEdgesChange={(changes) => {
-                if (changes.some((change) => change.type === "remove")) setSaved(false);
-                setEdges((current) => {
-                  const removed = new Set(changes.filter((change) => change.type === "remove").map((change) => change.id));
-                  return current.filter((edge) => !removed.has(edge.id));
-                });
-              }}
-              onNodeClick={(_, node) => { setSelected(node.id); setInspectorTab("node"); }}
-              fitView
-              fitViewOptions={{ padding: 0.14, maxZoom: 1 }}
-              minZoom={0.2}
-              maxZoom={1.4}
-              panOnScroll
-              zoomOnScroll={false}
-              deleteKeyCode={["Backspace", "Delete"]}
-              aria-label={t("Customizable data-to-ML pipeline")}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#cbd5e1" />
-              <Controls showInteractive={false} position="bottom-left" />
-            </ReactFlow>
-          )}
-        </div>
-
-        <aside className="min-h-0 overflow-y-auto rounded-xl border border-line bg-surface-sunken">
-          {plannerPanel && (
-            <div className="sticky top-0 z-10 flex gap-1 border-b border-line bg-surface px-2 py-2">
-              {(["node", "planner"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setInspectorTab(tab)}
-                  className={cx("flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold", inspectorTab === tab ? "bg-brand-50 text-brand-700" : "text-ink-mute hover:bg-surface-sunken")}
-                >
-                  {t(tab === "node" ? "Component" : "Planner")}
-                </button>
-              ))}
-            </div>
-          )}
-          {inspectorTab === "planner" && plannerPanel ? plannerPanel : (
-            <ComponentPreferences
-              component={selectedComponent}
-              engines={engines}
-              outputs={componentOutputs.filter((output) => output.component_id === selectedComponent?.id)}
-              busy={busy}
-              canRunDocuments={Boolean(runId)}
-              onRunDocuments={() => void runDocuments()}
-              onRemove={() => selectedComponent && removeComponent(selectedComponent.id)}
-              onChange={(update) => selectedComponent && updateComponent(selectedComponent.id, update)}
-            />
-          )}
-        </aside>
+      {error && <p className="absolute left-4 top-16 z-30 max-w-xl rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700 shadow-card">{error}</p>}
+      <div className="min-h-0 flex-1">
+        {nodes.length === 0 ? <div className="grid h-full place-items-center"><Spinner label={t("Preparing workflow…")} /></div> : (
+          <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} onNodeClick={(_, node) => { if (node.type === "pipelineComponent") setSelected(node.id); }} onNodeDragStop={(_, node) => { if (node.type === "pipelineComponent") void persistLayout({ id: node.id, x: node.position.x, y: node.position.y }); }} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} {...WORKFLOW_INTERACTION} zoomActivationKeyCode={["Control", "Meta"]} deleteKeyCode={collapsedBranches.size ? null : ["Backspace", "Delete"]} aria-label={t("Accepted data science workflow")}>
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#cbd5e1" /><Controls showInteractive={false} position="bottom-left" />
+          </ReactFlow>
+        )}
       </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-ink-mute">
-        <Badge tone="ok">{t("Measured")}</Badge><span>{t("host measurements")}</span>
-        <Badge tone="brand">{t("Agent proposal")}</Badge><span>{t("review before accepting")}</span>
-        <Badge tone="warn">{t("Human decision")}</Badge><span>{t("becomes active only after acceptance")}</span>
-      </div>
+
+      {catalogOpen && <Drawer side="left" title={t("Add component")} onClose={() => setCatalogOpen(false)}><ComponentLibrary catalog={catalog} onAdd={addComponent} /></Drawer>}
+      {selectedComponent && <Drawer side="right" title={t("Component inspector")} onClose={() => setSelected(null)}><ComponentInspector component={selectedComponent} blueprint={draft} engines={engines} outputs={componentOutputs.filter((output) => output.component_id === selectedComponent.id)} onRemove={() => removeComponent(selectedComponent.id)} onChange={(update) => updateComponent(selectedComponent.id, update)} /></Drawer>}
+      {plannerOpen && <div className="absolute inset-y-0 right-0 z-40 flex w-[min(380px,92vw)] pt-[53px] shadow-2xl"><PlannerPanel runId={runId} open onToggle={() => setPlannerOpen(false)} /></div>}
     </section>
   );
 }
 
-function ComponentLibrary({ catalog, search, onSearch, onAdd }: {
-  catalog: AutomationComponentDefinition[];
-  search: string;
-  onSearch: (value: string) => void;
-  onAdd: (definition: AutomationComponentDefinition) => void;
-}) {
-  const needle = search.trim().toLocaleLowerCase();
-  const visible = catalog.filter((item) => (
-    !needle
-    || local(item.title).toLocaleLowerCase().includes(needle)
-    || local(item.description).toLocaleLowerCase().includes(needle)
-    || item.category.includes(needle)
-  ));
+function Drawer({ side, title, onClose, children }: { side: "left" | "right"; title: string; onClose: () => void; children: React.ReactNode }) {
+  return <aside className={`absolute inset-y-0 z-40 flex w-[min(380px,92vw)] flex-col bg-surface pt-[53px] shadow-2xl ${side === "left" ? "left-0 border-r border-line" : "right-0 border-l border-line"}`}><header className="flex h-12 shrink-0 items-center border-b border-line px-4"><h3 className="flex-1 text-sm font-semibold text-ink">{title}</h3><button type="button" className="btn-ghost !px-2 !py-1" onClick={onClose}>×</button></header><div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div></aside>;
+}
+
+function ComponentLibrary({ catalog, onAdd }: { catalog: AutomationComponentDefinition[]; onAdd: (definition: AutomationComponentDefinition) => void }) {
+  const [search, setSearch] = useState("");
+  const visible = catalog.filter((item) => !search.trim() || `${local(item.title)} ${local(item.description)} ${item.category}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   const categories = [...new Set(visible.map((item) => item.category))];
-  return (
-    <aside className="h-[650px] overflow-y-auto rounded-xl border border-line bg-surface p-3">
-      <div className="sticky top-0 z-10 bg-surface pb-2">
-        <h3 className="text-xs font-semibold text-ink">{t("Components")}</h3>
-        <p className="mt-1 text-[10px] leading-relaxed text-ink-mute">
-          {t("Add one responsibility at a time. Connections define the data contract.")}
-        </p>
-        <input
-          value={search}
-          onChange={(event) => onSearch(event.target.value)}
-          placeholder={t("Search components")}
-          className="field mt-2 !py-1.5 text-xs"
-        />
-      </div>
-      <div className="space-y-4 pt-1">
-        {categories.map((category) => (
-          <section key={category}>
-            <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-              {t(category)}
-            </p>
-            <div className="space-y-1.5">
-              {visible.filter((item) => item.category === category).map((item) => (
-                <button
-                  key={item.catalog_id}
-                  type="button"
-                  onClick={() => onAdd(item)}
-                  className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-left hover:border-brand-300 hover:bg-brand-50"
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-ink">{local(item.title)}</span>
-                    <span className="text-base leading-none text-brand-600">+</span>
-                  </span>
-                  <span className="mt-0.5 block line-clamp-2 text-[9px] leading-relaxed text-ink-mute">{local(item.description)}</span>
-                  <span className="mt-1.5 block font-mono text-[8px] text-ink-faint">
-                    {item.inputs.length} {t("in")} · {item.outputs.length} {t("out")}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </aside>
-  );
+  return <div><p className="text-xs leading-relaxed text-ink-mute">{t("Components expose registered contracts. Templates and visual groups are not runtime nodes.")}</p><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search components")} className="field mt-3 text-xs" /><div className="mt-5 space-y-5">{categories.map((category) => <section key={category}><p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t(category)}</p><div className="space-y-2">{visible.filter((item) => item.category === category).map((item) => <button key={item.catalog_id} type="button" onClick={() => onAdd(item)} className="w-full rounded-xl border border-line px-3 py-2.5 text-left hover:border-brand-300 hover:bg-brand-50"><p className="text-xs font-semibold text-ink">{local(item.title)}</p><p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-ink-mute">{local(item.description)}</p></button>)}</div></section>)}</div></div>;
 }
 
-function ComponentPreferences({
-  component,
-  engines,
-  outputs,
-  busy,
-  canRunDocuments,
-  onRunDocuments,
-  onRemove,
-  onChange,
-}: {
-  component: PipelineComponent | null;
-  engines: DocumentEngine[];
-  outputs: PipelineOutputReference[];
-  busy: boolean;
-  canRunDocuments: boolean;
-  onRunDocuments: () => void;
-  onRemove: () => void;
-  onChange: (update: (component: PipelineComponent) => PipelineComponent) => void;
-}) {
+function ComponentInspector({ component, blueprint, engines, outputs, onRemove, onChange }: { component: PipelineComponent; blueprint: PipelineBlueprint; engines: DocumentEngine[]; outputs: PipelineOutputReference[]; onRemove: () => void; onChange: (update: (component: PipelineComponent) => PipelineComponent) => void }) {
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  useEffect(() => {
-    setPreview(null);
-    setPreviewError(null);
-  }, [component?.id]);
-  if (!component) {
-    return <aside className="rounded-xl border border-line bg-surface-sunken p-4 text-xs text-ink-mute">{t("Select a component to configure it.")}</aside>;
-  }
-  const engineId = String(component.settings.engine ?? "");
-  const engine = engines.find((item) => item.id === engineId);
-  const updateSetting = (key: string, value: unknown) => onChange((current) => ({
-    ...current,
-    configured_by: "human",
-    settings: { ...current.settings, [key]: value },
-  }));
-  return (
-    <div className="p-4">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-ink">{local(component.title)}</h3>
-          <p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{local(component.description)}</p>
-        </div>
-        <button
-          onClick={() => onChange((current) => ({ ...current, enabled: !current.enabled, configured_by: "human" }))}
-          className={cx("rounded-full px-2.5 py-1 text-[10px] font-semibold", component.enabled ? "bg-ok-50 text-ok-700" : "bg-line-soft text-ink-mute")}
-        >
-          {t(component.enabled ? "Enabled" : "Disabled")}
-        </button>
-      </div>
-
-      <div className="mt-4 space-y-2 border-t border-line pt-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Execution control")}</p>
-        <SelectSetting
-          label={t("After this component")}
-          value={component.control.execution}
-          values={["auto", "pause_after"]}
-          onChange={(value) => onChange((current) => ({ ...current, configured_by: "human", control: { ...current.control, execution: value as "auto" | "pause_after" } }))}
-        />
-        <SelectSetting
-          label={t("Ordinary gate handled by")}
-          value={component.control.gate_handler}
-          values={["planner", "human"]}
-          onChange={(value) => onChange((current) => ({ ...current, configured_by: "human", control: { ...current.control, gate_handler: value as "planner" | "human" } }))}
-        />
-        <label className="block text-[11px] font-medium text-ink">
-          {t("Retry limit")}
-          <input
-            className="field mt-1 text-xs"
-            type="number"
-            min={0}
-            max={9}
-            value={component.control.max_retries ?? ""}
-            placeholder={t("Use policy default")}
-            onChange={(event) => onChange((current) => ({
-              ...current,
-              configured_by: "human",
-              control: {
-                ...current.control,
-                max_retries: event.target.value === "" ? null : Number(event.target.value),
-              },
-            }))}
-          />
-        </label>
-        <p className="text-[9px] leading-relaxed text-ink-faint">{t("Hard safety rules always remain active.")}</p>
-      </div>
-
-      {component.kind === "document_understanding" && (
-        <div className="mt-4 space-y-3 border-t border-line pt-3">
-          <label className="block text-[11px] font-medium text-ink">
-            {t("Document engine")}
-            <select value={engineId} onChange={(event) => updateSetting("engine", event.target.value)} className="field mt-1.5 text-xs">
-              {engines.map((item) => (
-                <option key={item.id} value={item.id} disabled={!item.selectable}>
-                  {item.label}{!item.selectable ? ` · ${t("comparison only")}` : item.available ? "" : ` · ${t("not installed")}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          {engine && (
-            <div className="rounded-lg border border-line bg-surface px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={engine.selectable && engine.available ? "ok" : "warn"}>
-                  {t(!engine.selectable ? "Excluded by dependency policy" : engine.available ? "Available" : "Needs installation")}
-                </Badge>
-                <span className="text-[10px] text-ink-faint">{t("local")}</span>
-              </div>
-              <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(engine.description)}</p>
-            </div>
-          )}
-          <Choice label={t("OCR when needed")} checked={component.settings.ocr !== "never"} onChange={(value) => updateSetting("ocr", value ? "auto" : "never")} />
-          <Choice label={t("Extract candidate tables")} checked={component.settings.extract_tables === true} onChange={(value) => updateSetting("extract_tables", value)} />
-          <Choice label={t("Extract figures and charts")} checked={component.settings.extract_figures === true} onChange={(value) => updateSetting("extract_figures", value)} />
-          <Choice label={t("Allow accepted document tables into training data")} checked={component.settings.use_extracted_tables_for_training === true} onChange={(value) => updateSetting("use_extracted_tables_for_training", value)} />
-          <p className="rounded-lg bg-warn-50 px-3 py-2 text-[10px] leading-relaxed text-warn-700">
-            {t("Document tables remain candidates until a person accepts their schema and provenance.")}
-          </p>
-          <button
-            type="button"
-            disabled={!canRunDocuments || busy || !engine?.available}
-            onClick={onRunDocuments}
-            className="btn-primary w-full !py-1.5 text-xs"
-          >
-            {busy ? t("Running…") : t("Run document understanding")}
-          </button>
-        </div>
-      )}
-
-      {component.kind === "report" && (
-        <label className="mt-4 block border-t border-line pt-3 text-[11px] font-medium text-ink">
-          {t("Report instructions")}
-          <textarea
-            value={String(component.settings.instructions ?? "")}
-            onChange={(event) => updateSetting("instructions", event.target.value)}
-            rows={4}
-            className="field mt-1.5 resize-none text-xs"
-            placeholder={t("Explain what this report should help a person decide.")}
-          />
-        </label>
-      )}
-
-      {component.kind === "problem_discovery" && (
-        <div className="mt-4 space-y-2 border-t border-line pt-3">
-          <TextSetting label={t("Problem title")} value={component.settings.problem_title} onChange={(value) => updateSetting("problem_title", value)} />
-          <TextSetting label={t("Target column")} value={component.settings.target_column} onChange={(value) => updateSetting("target_column", value || null)} />
-          <SelectSetting label={t("Task type")} value={component.settings.task_type} values={["binary_classification", "multiclass_classification", "regression", "anomaly_detection"]} onChange={(value) => updateSetting("task_type", value)} />
-          <SelectSetting label={t("Primary metric")} value={component.settings.primary_metric} values={["roc_auc", "average_precision", "f1", "balanced_accuracy", "accuracy", "rmse", "mae", "r2", "mape", "silhouette"]} onChange={(value) => updateSetting("primary_metric", value)} />
-        </div>
-      )}
-
-      {component.kind === "validation" && (
-        <label className="mt-4 block border-t border-line pt-3 text-[11px] font-medium text-ink">
-          {t("Cross-validation folds")}
-          <input className="field mt-1.5 text-xs" type="number" min={2} max={20} value={Number(component.settings.n_folds ?? 5)} onChange={(event) => updateSetting("n_folds", Number(event.target.value))} />
-        </label>
-      )}
-
-      {component.kind === "training" && (
-        <div className="mt-4 space-y-2 border-t border-line pt-3">
-          <TextSetting label={t("Preferred model family")} value={component.settings.preferred_family} onChange={(value) => updateSetting("preferred_family", value)} />
-          <label className="block text-[11px] font-medium text-ink">{t("Candidate limit")}<input className="field mt-1 text-xs" type="number" min={1} max={20} value={Number(component.settings.candidate_limit ?? 2)} onChange={(event) => updateSetting("candidate_limit", Number(event.target.value))} /></label>
-        </div>
-      )}
-
-      {!["document_understanding", "report", "problem_discovery", "validation", "training"].includes(component.kind) && (
-        <div className="mt-4 border-t border-line pt-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Current preferences")}</p>
-          <dl className="mt-2 space-y-1.5">
-            {Object.entries(component.settings).map(([key, value]) => (
-              <div key={key} className="flex gap-2 text-[10px]"><dt className="font-mono text-ink-mute">{key}</dt><dd className="ml-auto text-right text-ink">{JSON.stringify(value)}</dd></div>
-            ))}
-            {!Object.keys(component.settings).length && <p className="text-[10px] text-ink-faint">{t("No overrides yet")}</p>}
-          </dl>
-        </div>
-      )}
-
-      <ArtifactInspector
-        outputs={outputs}
-        preview={preview}
-        error={previewError}
-        onOpen={(artifactId) => {
-          setPreview(null);
-          setPreviewError(null);
-          void api.artifactPreview(artifactId)
-            .then(setPreview)
-            .catch((caught) => setPreviewError(caught instanceof Error ? caught.message : String(caught)));
-        }}
-      />
-
-      {component.id !== "data-source" && (
-        <button type="button" onClick={onRemove} className="mt-4 w-full rounded-lg border border-stop-200 px-3 py-1.5 text-[10px] font-semibold text-stop-700 hover:bg-stop-50">
-          {t("Remove component")}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function TextSetting({ label, value, onChange }: { label: string; value: unknown; onChange: (value: string) => void }) {
-  return <label className="block text-[11px] font-medium text-ink">{label}<input className="field mt-1 text-xs" value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} /></label>;
-}
-
-function SelectSetting({ label, value, values, onChange }: { label: string; value: unknown; values: string[]; onChange: (value: string) => void }) {
-  return <label className="block text-[11px] font-medium text-ink">{label}<select className="field mt-1 text-xs" value={String(value ?? "")} onChange={(event) => onChange(event.target.value)}><option value="">{t("Choose…")}</option>{values.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</select></label>;
-}
-
-function ArtifactInspector({ outputs, preview, error, onOpen }: {
-  outputs: PipelineOutputReference[];
-  preview: ArtifactPreview | null;
-  error: string | null;
-  onOpen: (artifactId: string) => void;
-}) {
-  const artifacts = [
-    ...new Map(
-      outputs.flatMap((output) => output.artifact_ids.map((artifactId) => [
-        artifactId,
-        { artifactId, output },
-      ] as const)),
-    ).values(),
-  ];
-  return (
-    <section className="mt-4 border-t border-line pt-3">
-      <div className="flex items-center gap-2"><h4 className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Artifacts")}</h4><Badge tone={artifacts.length ? "ok" : "neutral"}>{artifacts.length}</Badge></div>
-      <div className="mt-2 space-y-1.5">
-        {artifacts.map(({ artifactId, output }) => <button key={`${output.port_id}:${artifactId}`} onClick={() => onOpen(artifactId)} className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-left hover:border-brand-300"><span className="block text-[10px] font-semibold text-ink">{local(output.summary)}</span><span className="mt-0.5 block truncate font-mono text-[8px] text-ink-faint">{artifactId}</span></button>)}
-        {!artifacts.length && <p className="rounded-lg bg-surface px-2.5 py-2 text-[10px] text-ink-faint">{t("Run this component to attach inspectable outputs here.")}</p>}
-      </div>
-      {error && <p className="mt-2 rounded-lg bg-stop-50 px-2.5 py-2 text-[10px] text-stop-700">{error}</p>}
-      {preview && <ArtifactPreviewCard preview={preview} />}
-    </section>
-  );
-}
-
-function ArtifactPreviewCard({ preview }: { preview: ArtifactPreview }) {
-  return (
-    <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50 p-2.5 text-[10px] text-ink-soft">
-      <p className="font-semibold text-ink">{preview.artifact_type.replaceAll("_", " ")}</p>
-      {preview.title && <p className="mt-2 text-xs font-semibold text-ink">{local(preview.title)}</p>}
-      {preview.summary && <p className="mt-1 leading-relaxed text-ink-soft">{local(preview.summary)}</p>}
-      {preview.findings && preview.findings.length > 0 && (
-        <ul className="mt-2 space-y-1 border-t border-brand-100 pt-2">
-          {preview.findings.map((finding, index) => <li key={index}>• {local(finding)}</li>)}
-        </ul>
-      )}
-      {preview.verification_questions && preview.verification_questions.length > 0 && (
-        <div className="mt-2 rounded bg-warn-50 px-2 py-1.5 text-warn-700">
-          {preview.verification_questions.map((question, index) => <p key={index}>{local(question)}</p>)}
-        </div>
-      )}
-      {preview.engine && <p className="mt-1">{t("Engine")}: {preview.engine}</p>}
-      {preview.documents?.map((document) => (
-        <div key={document.source_file} className="mt-2 border-t border-brand-100 pt-2">
-          <p className="font-medium text-ink">{document.title || document.source_file}</p>
-          <p className="mt-0.5 text-ink-mute">{document.page_count} {t("pages")} · {document.tables.length} {t("tables")} · {document.figures.length} {t("figures")}</p>
-          {document.tables.map((table, index) => <p key={index} className="mt-1 rounded bg-surface px-2 py-1 font-mono text-[8px]">{String(table.title || `${t("Table")} ${index + 1}`)} · {String(table.row_count ?? 0)} {t("rows")}</p>)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Choice({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <label className="flex items-start gap-2 text-[11px] text-ink-soft">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5" />
-      <span>{label}</span>
-    </label>
-  );
+  const incoming = blueprint.connections.filter((edge) => edge.target_component === component.id);
+  const updateSetting = (key: string, value: unknown) => onChange((current) => ({ ...current, configured_by: "human", settings: { ...current.settings, [key]: value } }));
+  return <div className="space-y-5"><section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Overview")}</p><h4 className="mt-1 text-base font-semibold text-ink">{local(component.title)}</h4><p className="mt-1 text-xs leading-relaxed text-ink-mute">{local(component.description)}</p></section><section className="border-t border-line pt-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Inputs")}</p><ul className="mt-2 space-y-1.5">{component.inputs.map((port) => { const binding = incoming.find((edge) => edge.target_port === port.id); return <li key={port.id} className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-xs font-medium text-ink">{local(port.label)}</p><p className="mt-0.5 font-mono text-[9px] text-ink-faint">{binding ? `${binding.source_component}.${binding.source_port}` : port.required ? t("Required input missing") : t("Optional — not connected")}</p></li>; })}</ul></section><section className="border-t border-line pt-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Settings")}</p><div className="mt-2 space-y-2">{Object.entries(component.settings).map(([key, value]) => component.catalog_id === "document.extract" && key === "engine" ? <label key={key} className="block text-xs font-medium text-ink">{t("Document engine")}<select className="field mt-1 text-xs" value={String(value)} onChange={(event) => updateSetting(key, event.target.value)}>{engines.map((engine) => <option key={engine.id} value={engine.id} disabled={!engine.selectable}>{engine.label}{!engine.selectable ? ` · ${t("unavailable")}` : ""}</option>)}</select></label> : typeof value === "boolean" ? <label key={key} className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-xs text-ink"><span>{key.replaceAll("_", " ")}</span><input type="checkbox" checked={value} onChange={(event) => updateSetting(key, event.target.checked)} /></label> : <label key={key} className="block text-xs font-medium text-ink">{key.replaceAll("_", " ")}<input className="field mt-1 text-xs" value={String(value ?? "")} onChange={(event) => updateSetting(key, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>)}</div></section><section className="border-t border-line pt-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Review policy")}</p><label className="mt-2 block text-xs font-medium text-ink">{t("After this component")}<select className="field mt-1 text-xs" value={component.control.execution} onChange={(event) => onChange((current) => ({ ...current, configured_by: "human", control: { ...current.control, execution: event.target.value as "auto" | "pause_after" } }))}><option value="auto">{t("Continue")}</option><option value="pause_after">{t("Pause for review")}</option></select></label><label className="mt-2 block text-xs font-medium text-ink">{t("Preferred reviewer")}<select className="field mt-1 text-xs" value={component.control.gate_handler} onChange={(event) => onChange((current) => ({ ...current, configured_by: "human", control: { ...current.control, gate_handler: event.target.value as "planner" | "human" } }))}><option value="planner">{t("Planner where policy permits")}</option><option value="human">{t("Human")}</option></select></label><p className="mt-2 text-[10px] leading-relaxed text-ink-faint">{t("Hard safety policy determines the allowed resolver and actions. This preference cannot override it.")}</p></section><section className="border-t border-line pt-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Outputs")}</p><div className="mt-2 space-y-2">{outputs.flatMap((output) => output.artifact_ids.map((artifactId) => <button key={artifactId} type="button" className="w-full rounded-lg border border-line px-3 py-2 text-left hover:bg-brand-50" onClick={() => void api.artifactPreview(artifactId).then(setPreview)}><p className="text-xs font-medium text-ink">{output.port_id.replaceAll("_", " ")}</p><p className="mt-0.5 text-[10px] text-brand-700">{t("Open artifact")}</p></button>))}{!outputs.some((output) => output.artifact_ids.length) && <p className="text-xs text-ink-mute">{t("No artifacts produced yet.")}</p>}</div></section>{component.id !== "data-source" && <button type="button" className="btn-ghost w-full text-stop-700" onClick={onRemove}>{t("Remove component")}</button>}{preview && <div className="rounded-xl border border-line bg-surface-sunken p-3"><div className="flex items-start"><p className="flex-1 text-xs font-semibold text-ink">{preview.title?.en ?? String(preview.artifact_type)}</p><button type="button" onClick={() => setPreview(null)}>×</button></div><p className="mt-2 text-[11px] leading-relaxed text-ink-mute">{preview.summary?.en ?? ""}</p></div>}</div>;
 }

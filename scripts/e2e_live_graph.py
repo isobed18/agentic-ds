@@ -341,11 +341,18 @@ def main() -> None:
     parser.add_argument(
         "--llm", choices=("ollama", "claude-cli", "fast-audit"), default="ollama"
     )
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=None,
+        help="Artifact store for this audit (defaults to the shared development store).",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    artifact_root = (args.artifact_root or (root / "data" / "artifacts")).resolve()
     fast_audit = FastAuditLLM() if args.llm == "fast-audit" else None
     plane = ControlPlane(
-        store=ArtifactStore(root / "data" / "artifacts"),
+        store=ArtifactStore(artifact_root),
         source_roots=(root / "data",),
         upload_root=root / "data" / "uploads",
         llm_factory=(
@@ -378,6 +385,8 @@ def main() -> None:
         ),
         flush=True,
     )
+    latest = plane.staging_workspace(run_id)
+    plane.accept_staging_plan(run_id, base_artifact_id=latest["artifact_id"])
     plane.start_staged_run(run_id, {"run_mode": "fully_auto"})
     progress = wait_for(plane, run_id, {"completed", "failed", "aborted"}, args.timeout)
     artifacts = plane.store.list(run_id)
@@ -390,6 +399,7 @@ def main() -> None:
         "artifact_count": len(artifacts),
         "final_reports": final_reports,
         "attempts": len(progress.get("attempts", [])),
+        "artifact_root": str(artifact_root),
     }
     print(json.dumps(result), flush=True)
     if progress["status"] != "completed" or not final_reports:

@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from ads.api.service import ControlPlane, create_app
+from ads.api.service import ControlPlane, _RunPauseRequested, create_app
 from ads.contracts.base import ArtifactType
 from ads.llm import LLMResponse, ModelProfile
 from ads.orchestration.runner import RunOutcome, RunStatus
@@ -255,6 +255,40 @@ class TestStagingRunsTheFirstStages:
 
 
 class TestContinuingKeepsTheWork:
+    def test_pause_request_is_recorded_for_the_next_stage_boundary(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "running"
+        runtime.current_stage = "exploratory_analysis"
+
+        response = client.post(f"/api/runs/{run_id}/pause")
+
+        assert response.status_code == 200, response.text
+        progress = client.get(f"/api/runs/{run_id}/progress").json()
+        assert progress["pause_requested"] is True
+        assert progress["events"][-1]["event"] == "pause_requested"
+        assert progress["events"][-1]["stage"] == "exploratory_analysis"
+
+    def test_pause_refuses_a_run_that_is_not_active(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        response = client.post(f"/api/runs/{run_id}/pause")
+
+        assert response.status_code == 409
+
+    def test_pause_occurs_only_after_a_stage_that_can_proceed(self, client: TestClient) -> None:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "running"
+        runtime.pause_requested = True
+        event = client.plane._event_recorder(runtime)  # noqa: SLF001
+
+        event("gate_decided", {"stage": "training", "verdict": "retry"})
+        with pytest.raises(_RunPauseRequested):
+            event("gate_decided", {"stage": "training", "verdict": "auto_proceed"})
+
     def test_the_run_id_does_not_change(self, client: TestClient) -> None:
         """It used to be replaced by a freshly started run, which threw away
         the intake the person had just read and re-ran it against the same
@@ -302,12 +336,19 @@ class TestContinuingKeepsTheWork:
 
         assert "problem_discovery" in recorder.calls[1]["checkpoints"]
 
-    def test_fully_auto_accepts_and_applies_the_saved_planner_plan(
+    def test_fully_auto_applies_an_explicitly_accepted_planner_plan(
         self, client: TestClient, recorder: _Recorder
     ) -> None:
         planner = _PlannerLLM()
         client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
         run_id = _stage(client)
+
+        proposal = client.get(f"/api/runs/{run_id}/staging").json()
+        accepted = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": proposal["artifact_id"]},
+        )
+        assert accepted.status_code == 200, accepted.text
 
         started = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "fully_auto"})
         assert started.status_code == 200, started.text
@@ -326,6 +367,18 @@ class TestContinuingKeepsTheWork:
             run_id, ArtifactType.AUTOMATION_EXECUTION_PLAN
         )
         assert execution_plan is not None
+
+    def test_fully_auto_refuses_a_proposal_that_the_human_has_not_accepted(
+        self, client: TestClient
+    ) -> None:
+        planner = _PlannerLLM()
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+        run_id = _stage(client)
+
+        started = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "fully_auto"})
+
+        assert started.status_code == 400
+        assert "accept the Planner proposal" in started.json()["detail"]
 
     def test_fully_auto_refuses_an_enabled_document_component_without_outputs(
         self, client: TestClient
@@ -348,6 +401,12 @@ class TestContinuingKeepsTheWork:
             },
         )
         assert updated.status_code == 200, updated.text
+
+        accepted = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": updated.json()["artifact_id"]},
+        )
+        assert accepted.status_code == 200, accepted.text
 
         started = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "fully_auto"})
 
@@ -373,6 +432,56 @@ class TestContinuingKeepsTheWork:
 
 
 class TestConfiguringAndDiscarding:
+    def test_manual_layout_is_durable_and_does_not_change_execution_fingerprint(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        original = client.get(f"/api/runs/{run_id}/staging").json()
+        before = client.post(f"/api/runs/{run_id}/automation/compile").json()
+
+        response = client.put(
+            f"/api/runs/{run_id}/staging/layout",
+            json={
+                "base_artifact_id": original["artifact_id"],
+                "layout": {
+                    "nodes": [
+                        {
+                            "component_id": "data-source",
+                            "x": 84.5,
+                            "y": 210.0,
+                            "collapsed": True,
+                        }
+                    ],
+                    "collapsed_branches": ["cost"],
+                },
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["pipeline_layout"]["nodes"][0]["x"] == 84.5
+        after = client.post(f"/api/runs/{run_id}/automation/compile").json()
+        assert before["plan"]["blueprint_fingerprint"] == after["plan"]["blueprint_fingerprint"]
+
+    def test_layout_save_rejects_a_stale_workspace_revision(self, client: TestClient) -> None:
+        run_id = _stage(client)
+        original = client.get(f"/api/runs/{run_id}/staging").json()
+        body = {
+            "base_artifact_id": original["artifact_id"],
+            "layout": {
+                "nodes": [
+                    {"component_id": "data-source", "x": 10, "y": 20, "collapsed": True}
+                ],
+                "collapsed_branches": [],
+            },
+        }
+        assert client.put(f"/api/runs/{run_id}/staging/layout", json=body).status_code == 200
+
+        stale = client.put(f"/api/runs/{run_id}/staging/layout", json=body)
+
+        assert stale.status_code == 400
+        assert "changed" in stale.json()["detail"]
+
     def test_pipeline_preferences_are_persisted_as_a_new_staging_snapshot(
         self, client: TestClient
     ) -> None:

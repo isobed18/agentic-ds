@@ -5,7 +5,16 @@ never through a shared conversation history. That is the difference between an
 architecture that degrades at stage 8 and one that does not.
 """
 
-from ads.contracts.automation import AutomationExecutionPlan, AutomationPlanNode
+from ads.contracts.automation import (
+    AutomationExecutionPlan,
+    AutomationPlanNode,
+    ExecutionEdgeBinding,
+    ExecutionOutputContract,
+    NodeAttempt,
+    NodeInputBinding,
+    NodeOutputBinding,
+)
+from ads.contracts.automation_definition import AutomationDefinition
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.comprehension import (
     ComprehensionBrief,
@@ -31,11 +40,22 @@ from ads.contracts.datacard import (
     TextStats,
     ValueCount,
 )
+from ads.contracts.dataflow import (
+    BlobReference,
+    FoldSelection,
+    RowSelection,
+    SplitManifest,
+    TableAsset,
+    TableColumn,
+    TableProvenance,
+)
 from ads.contracts.documents import (
     DocumentEngineId,
     DocumentExtraction,
     DocumentExtractionSummary,
     DocumentPageContent,
+    DocumentTableDecision,
+    DocumentTableReview,
     ExtractedDocument,
     ExtractedFigureCandidate,
     ExtractedTableCandidate,
@@ -117,7 +137,10 @@ from ads.contracts.problem import (
     TaskType,
 )
 from ads.contracts.staging import (
+    GraphPatch,
     LocalizedText,
+    PipelineLayout,
+    PipelineNodeLayout,
     RelationshipExplanation,
     RuntimeConfigurationPlan,
     StagingMessage,
@@ -140,13 +163,21 @@ from ads.contracts.validation import (
 )
 
 __all__ = [
+    "GraphPatch",
+    "AutomationDefinition",
     "AggregationStep",
     "AutomationExecutionPlan",
     "AutomationPlanNode",
+    "ExecutionEdgeBinding",
+    "ExecutionOutputContract",
+    "NodeAttempt",
+    "NodeInputBinding",
+    "NodeOutputBinding",
     "Artifact",
     "ArtifactType",
     "AutonomyProfile",
     "BUILTIN_PROFILES",
+    "BlobReference",
     "Cardinality",
     "ColumnProfile",
     "CritiqueResult",
@@ -157,6 +188,8 @@ __all__ = [
     "DocumentExtraction",
     "DocumentExtractionSummary",
     "DocumentPageContent",
+    "DocumentTableDecision",
+    "DocumentTableReview",
     "DEFAULT_PROFILE",
     "Finding",
     "ExploratoryAnalysis",
@@ -173,6 +206,7 @@ __all__ = [
     "FeatureSpec",
     "FeatureExperiment",
     "FeatureExperimentManifest",
+    "FoldSelection",
     "GateDecision",
     "GateVerdict",
     "HumanPrompt",
@@ -194,6 +228,8 @@ __all__ = [
     "LeakageKind",
     "LeakageReport",
     "LocalizedText",
+    "PipelineLayout",
+    "PipelineNodeLayout",
     "leakage_challenge_fingerprint",
     "leakage_finding_fingerprint",
     "LoadIssue",
@@ -215,6 +251,7 @@ __all__ = [
     "RelationshipCandidate",
     "RelationshipExplanation",
     "RowsPerParentStats",
+    "RowSelection",
     "SchemaActionKind",
     "SchemaInvestigationAction",
     "RepeatedEntitySignal",
@@ -226,12 +263,16 @@ __all__ = [
     "SensitivityEvidenceCode",
     "Severity",
     "SplitStrategy",
+    "SplitManifest",
     "StagingMessage",
     "StagingReport",
     "StagingReportArtifact",
     "StagingWorkspace",
     "SUPERVISED_TASKS",
     "TaskType",
+    "TableAsset",
+    "TableColumn",
+    "TableProvenance",
     "TemporalSpanSignal",
     "ValidationSignals",
     "ValidationInvestigationAction",

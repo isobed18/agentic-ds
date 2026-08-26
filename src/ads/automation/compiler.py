@@ -11,7 +11,15 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ads.contracts.automation import AutomationExecutionPlan, AutomationPlanNode
+from ads.automation.catalog import automation_component_catalog
+from ads.automation.settings import validate_component_settings
+from ads.contracts.automation import (
+    AutomationExecutionPlan,
+    AutomationPlanNode,
+    ExecutionEdgeBinding,
+    ExecutionOutputContract,
+)
+from ads.contracts.registry import canonical_contract_id
 from ads.contracts.staging import PipelineBlueprint
 from ads.staging.blueprint import validate_executable_blueprint
 
@@ -75,6 +83,30 @@ def compile_automation_plan(blueprint: PipelineBlueprint) -> AutomationExecution
     validate_executable_blueprint(blueprint)
     order = _topological_order(blueprint)
     components = {item.id: item for item in blueprint.components if item.enabled}
+    catalog = {definition.catalog_id: definition for definition in automation_component_catalog()}
+    exact_bindings: list[ExecutionEdgeBinding] = []
+    for edge in blueprint.connections:
+        if edge.source_component not in components or edge.target_component not in components:
+            continue
+        source = components[edge.source_component]
+        target = components[edge.target_component]
+        source_port = next(port for port in source.outputs if port.id == edge.source_port)
+        target_port = next(port for port in target.inputs if port.id == edge.target_port)
+        source_contract = canonical_contract_id(source_port.data_type)
+        target_contract = canonical_contract_id(target_port.data_type)
+        if source_contract != target_contract:
+            raise ValueError(f"edge {edge.id!r} has incompatible registered contracts")
+        exact_bindings.append(
+            ExecutionEdgeBinding(
+                edge_id=edge.id,
+                target_component=edge.target_component,
+                target_port=edge.target_port,
+                source_component=edge.source_component,
+                source_port=edge.source_port,
+                contract_id=target_contract,
+            )
+        )
+
     nodes: list[AutomationPlanNode] = []
     pause_component: str | None = None
     pause_stage: str | None = None
@@ -83,32 +115,61 @@ def compile_automation_plan(blueprint: PipelineBlueprint) -> AutomationExecution
         catalog_id = component.catalog_id or (
             "data.upload" if component.kind == "data_source" else component.kind
         )
+        definition = catalog.get(catalog_id)
+        if definition is None:
+            raise ValueError(f"component {component_id!r} has no registered catalog definition")
         stage_id = _STAGE_BY_CATALOG.get(catalog_id)
         nodes.append(
             AutomationPlanNode(
+                instance_id=component_id,
                 component_id=component_id,
                 catalog_id=catalog_id,
+                catalog_version=definition.catalog_version,
+                scope_id=component.branch_id or "root",
                 executor=_executor(catalog_id),
+                executor_id=definition.executor_id,
                 stage_id=stage_id,
+                resolved_settings=validate_component_settings(catalog_id, component.settings),
                 control=component.control,
+                gate_policy_id=(
+                    "hard.leakage@1"
+                    if catalog_id == "analysis.leakage"
+                    else definition.gate_policy_id
+                ),
+                input_bindings=[
+                    binding
+                    for binding in exact_bindings
+                    if binding.target_component == component_id
+                ],
+                output_contracts=[
+                    ExecutionOutputContract(
+                        port_id=port.id,
+                        contract_id=canonical_contract_id(port.data_type),
+                        required=port.required,
+                        multiple=port.multiple,
+                    )
+                    for port in component.outputs
+                ],
             )
         )
         if component.control.execution == "pause_after" and pause_component is None:
-            if stage_id is None:
+            if not definition.pausable:
                 raise ValueError(
                     f"component {component_id!r} cannot be an execution pause boundary"
                 )
             pause_component = component_id
             pause_stage = stage_id
 
-    fingerprint_payload = blueprint.model_dump(mode="json", exclude={"name"})
+    fingerprint_payload = blueprint.model_dump(mode="json", exclude={"name", "revision"})
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return AutomationExecutionPlan(
+        plan_id=f"plan-{fingerprint[:16]}",
         blueprint_fingerprint=fingerprint,
         node_order=order,
         nodes=nodes,
+        exact_bindings=exact_bindings,
         pause_after_component=pause_component,
         pause_after_stage=pause_stage,
     )

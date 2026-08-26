@@ -21,6 +21,7 @@ data/
 # Control-plane credential written by scripts/set_password.py. Holds the scrypt
 # hash and the session-signing secret; neither belongs in version control.
 .auth.env
+.runtime.env
 
 # Local editor / OS
 .vscode/

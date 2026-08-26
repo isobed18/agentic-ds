@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from ads.api import ControlPlane, create_app
 from ads.contracts import Metric, ProblemDefinition, TaskType
 from ads.contracts.datacard import NumericStats
+from ads.contracts.documents import DocumentExtraction, DocumentFileResult, ExtractedDocument
 from ads.contracts.eda import (
     CorrelationMatrix,
     DistributionKind,
@@ -137,9 +138,7 @@ def test_manual_mode_graph_matches_the_nine_executed_stages(tmp_path: Path) -> N
     assert not any(node["kind"] == "planner_agent" for node in graph["nodes"])
 
 
-def test_human_approved_escalation_projects_as_completed_stage(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_human_approved_escalation_projects_as_completed_stage(tmp_path: Path, monkeypatch) -> None:
     """Approval resolves attention state without erasing the gate audit."""
     plane = _plane(tmp_path)
     escalated_attempt = {
@@ -189,6 +188,26 @@ def test_run_options_are_derived_from_closed_contract_vocabularies(tmp_path: Pat
 
 def test_document_only_source_gets_a_persisted_staging_graph(tmp_path: Path, monkeypatch) -> None:
     plane = _plane(tmp_path)
+    planner = _PlannerFakeLLM(
+        {
+            "reply": "The document evidence is ready for review.",
+            "pipeline_decision": "no_pipeline",
+            "decision_reason_en": "The documents support understanding, not an ML workflow.",
+            "decision_reason_tr": "Belgeler anlamayı destekliyor, ML iş akışını değil.",
+            "reports": [
+                {
+                    "kind": "documents",
+                    "title_en": "Document briefing",
+                    "title_tr": "Belge özeti",
+                    "summary_en": "The PDF was inspected and its extraction status is explicit.",
+                    "summary_tr": "PDF incelendi ve çıkarım durumu açıkça kaydedildi.",
+                }
+            ],
+            "rationale_en": ["Keep document evidence separate from trusted tables."],
+            "rationale_tr": ["Belge kanıtını güvenilir tablolardan ayrı tut."],
+        }
+    )
+    plane.llm_factory = lambda: planner
     document_source = tmp_path / "sources" / "documents-only"
     document_source.mkdir()
     (document_source / "brief.pdf").write_bytes(b"test-document")
@@ -200,15 +219,161 @@ def test_document_only_source_gets_a_persisted_staging_graph(tmp_path: Path, mon
         "documents": [{"name": "brief.pdf", "page_count": 1}],
     }
     monkeypatch.setattr(plane, "source_profile", lambda source_id: profile)
+    monkeypatch.setattr(
+        "ads.api.service.extract_document_directory",
+        lambda *args, **kwargs: DocumentExtraction(
+            source_id="documents-only",
+            source_fingerprint="fingerprint",
+            engine="docling",
+            documents=[ExtractedDocument(source_file="brief.pdf", page_count=1)],
+            file_results=[
+                DocumentFileResult(source_file="brief.pdf", status="ready", page_count=1)
+            ],
+            duration_seconds=0.1,
+        ),
+    )
 
     staged = plane.stage_run("documents-only")
     workspace = plane.staging_workspace(staged["run_id"])
     components = {item["id"]: item for item in workspace["pipeline_blueprint"]["components"]}
 
-    assert staged["status"] == "staged"
+    assert staged["status"] == "staging"
     assert components["intake"]["enabled"] is False
     assert components["understand-documents"]["enabled"] is True
     assert workspace["source_id"] == "documents-only"
+    deadline = time.time() + 10
+    while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+    progress = plane.progress(staged["run_id"])
+    assert progress["status"] == "staged"
+    assert "document_understanding_started" in {event["event"] for event in progress["events"]}
+    assert "staging_analysis_ready" in {event["event"] for event in progress["events"]}
+    completed = plane.staging_workspace(staged["run_id"])
+    assert planner.calls
+    automatic_schema = planner.calls[0]["schema"]
+    schema_text = json.dumps(automatic_schema)
+    assert "pipeline_component_additions" not in schema_text
+    assert "pipeline_connections" not in schema_text
+    automatic_prompt = json.loads(planner.calls[0]["prompt"])
+    assert set(automatic_prompt) == {
+        "source_files",
+        "structured_tables",
+        "measured_relationships",
+        "document_extraction",
+    }
+    assert completed["reports"][0]["title"]["en"] == "Document briefing"
+    assert completed["recommended_plan"] is not None
+    assert completed["recommended_plan"]["pipeline_recommendation"] == "no_pipeline"
+    assert completed["recommended_plan"]["configuration"] == {}
+
+
+def test_document_failure_stops_staging_and_skips_planner(tmp_path: Path, monkeypatch) -> None:
+    plane = _plane(tmp_path)
+    planner = _PlannerFakeLLM({"reply": "must not run"})
+    plane.llm_factory = lambda: planner
+    document_source = tmp_path / "sources" / "broken-documents"
+    document_source.mkdir()
+    filename = "toefl-ibt-teachers-resources-practice-test-3 (1).pdf"
+    (document_source / filename).write_bytes(b"test-document")
+    monkeypatch.setattr(
+        plane,
+        "source_profile",
+        lambda source_id: {
+            "source_id": source_id,
+            "label": source_id,
+            "tables": [],
+            "relationships": [],
+            "documents": [{"name": filename, "page_count": 1}],
+        },
+    )
+
+    def failed_extraction(*args, **kwargs):
+        del args, kwargs
+        return DocumentExtraction(
+            source_id="broken-documents",
+            source_fingerprint="fingerprint",
+            engine="docling",
+            documents=[ExtractedDocument(source_file="other.pdf", page_count=1)],
+            file_results=[
+                DocumentFileResult(
+                    source_file=filename,
+                    status="failed",
+                    warnings=[f"{filename}:ValidationError:invalid candidate_id"],
+                )
+            ],
+            duration_seconds=0.1,
+        )
+
+    monkeypatch.setattr("ads.api.service.extract_document_directory", failed_extraction)
+
+    staged = plane.stage_run("broken-documents")
+    deadline = time.time() + 5
+    while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+
+    progress = plane.progress(staged["run_id"])
+    workspace = plane.staging_workspace(staged["run_id"])
+    assert progress["status"] == "failed"
+    assert "DocumentExtractionError" in progress["error"]
+    assert any(event["event"] == "document_understanding_failed" for event in progress["events"])
+    assert not any(event["event"] == "staging_analysis_ready" for event in progress["events"])
+    assert planner.calls == []
+    assert workspace["document_extractions"][-1]["status"] == "failed"
+    assert workspace["document_extractions"][-1]["files"][0]["status"] == "failed"
+    assert workspace["recommended_plan"] is None
+
+
+def test_planner_failure_cannot_mark_document_staging_ready(tmp_path: Path, monkeypatch) -> None:
+    plane = _plane(tmp_path)
+
+    class FailingPlanner:
+        def generate_structured(self, **kwargs):
+            del kwargs
+            raise UnicodeError("planner output could not be decoded")
+
+    plane.llm_factory = FailingPlanner
+    document_source = tmp_path / "sources" / "planner-failure"
+    document_source.mkdir()
+    (document_source / "brief.pdf").write_bytes(b"test-document")
+    monkeypatch.setattr(
+        plane,
+        "source_profile",
+        lambda source_id: {
+            "source_id": source_id,
+            "label": source_id,
+            "tables": [],
+            "relationships": [],
+            "documents": [{"name": "brief.pdf", "page_count": 1}],
+        },
+    )
+    monkeypatch.setattr(
+        "ads.api.service.extract_document_directory",
+        lambda *args, **kwargs: DocumentExtraction(
+            source_id="planner-failure",
+            source_fingerprint="fingerprint",
+            engine="docling",
+            documents=[ExtractedDocument(source_file="brief.pdf", page_count=1)],
+            file_results=[
+                DocumentFileResult(source_file="brief.pdf", status="ready", page_count=1)
+            ],
+            duration_seconds=0.1,
+        ),
+    )
+
+    staged = plane.stage_run("planner-failure")
+    deadline = time.time() + 5
+    while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+
+    progress = plane.progress(staged["run_id"])
+    workspace = plane.staging_workspace(staged["run_id"])
+    assert progress["status"] == "failed"
+    assert progress["current_stage"] is None
+    assert "Planner could not create" in progress["error"]
+    assert "staging_analysis_failed" in {event["event"] for event in progress["events"]}
+    assert "staging_analysis_ready" not in {event["event"] for event in progress["events"]}
+    assert workspace["recommended_plan"] is None
+    assert "UnicodeError" in workspace["planner_error"]
 
 
 def test_planner_chat_can_configure_and_remember_rules_without_raw_rows(
@@ -316,9 +481,10 @@ def test_pre_pipeline_planner_receives_intake_and_schema_discovery_together(
 
     prompt = json.loads(fake.calls[0]["prompt"])
     assert set(prompt["intake_and_schema_discovery"]) == {"intake", "schema_discovery"}
-    assert prompt["intake_and_schema_discovery"]["schema_discovery"]["outputs"][0][
-        "type"
-    ] == "integration_plan"
+    assert (
+        prompt["intake_and_schema_discovery"]["schema_discovery"]["outputs"][0]["type"]
+        == "integration_plan"
+    )
 
 
 def test_planner_receives_bounded_page_provenance_from_local_pdf(
@@ -539,8 +705,8 @@ def test_graph_progress_and_stage_inspection_have_workflow_states(
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
-def test_main_page_is_one_graph_automation_workspace() -> None:
-    """The pivot keeps upload, graph, planner, controls, and artifacts together."""
+def test_main_page_progressively_reveals_one_automation_workspace() -> None:
+    """Upload, understanding, proposal, and graph remain one progressive route."""
     workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
 
     for region in ("PipelineRail", "StageWorkspace", "PlannerPanel"):
@@ -584,13 +750,26 @@ def test_main_page_is_one_graph_automation_workspace() -> None:
     automation = (WEB_SRC / "pages" / "Automation.tsx").read_text(encoding="utf-8")
     one_page = (WEB_SRC / "pages" / "AutomationWorkspace.tsx").read_text(encoding="utf-8")
     builder = (WEB_SRC / "components" / "PipelineBuilder.tsx").read_text(encoding="utf-8")
+    understanding = (WEB_SRC / "components" / "UnderstandingWorkspace.tsx").read_text(
+        encoding="utf-8"
+    )
     assert '{ to: "/explore", label: "Your data"' in shell
-    assert '{ to: "/automation", label: "Automation"' in shell
+    assert '{ to: "/automation", label: "Data projects"' in shell
     assert 'path="/automation"' in app
     assert "<AutomationWorkspace" in automation
-    for feature in ("<PipelineBuilder", "<PlannerPanel", "api.upload", "runGraph"):
+    # Progressive disclosure keeps upload, understanding/proposal, and the accepted
+    # workflow in one route without forcing the graph to render in the initial state.
+    for feature in (
+        "<GuidedPipeline",
+        "<PipelineBuilder",
+        "<UnderstandingAndProposal",
+        "api.upload",
+        "acceptPlan",
+    ):
         assert feature in one_page
-    for control in ("pause_after", "gate_handler", "max_retries", "ArtifactInspector"):
+    assert "<PlannerPanel" in understanding
+    assert "<PlannerPanel" in builder
+    for control in ("pause_after", "gate_handler", "max_retries", "ArtifactPreview"):
         assert control in builder
 
 
