@@ -8,7 +8,7 @@
 
 export type { StageStatus } from "./status";
 import type { StageStatus } from "./status";
-import { activeLanguage } from "./i18n";
+import { activeLanguage, t } from "./i18n";
 
 export interface WorkflowNode {
   id: string;
@@ -630,7 +630,7 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs?: number):
     });
   } catch (error) {
     if (controller?.signal.aborted) {
-      throw new Error("Planner yanıt vermedi. Lütfen tekrar deneyin.");
+      throw new Error(t("The planner did not respond. Please try again."));
     }
     throw error;
   } finally {
