@@ -554,7 +554,12 @@ def install_auth(app: FastAPI, config: AuthConfig) -> None:
             return await call_next(request)
 
         token = request.cookies.get(COOKIE_NAME, "")
-        if token and read_session(token, config):
+        session_user = read_session(token, config) if token else None
+        if session_user:
+            # Routes need to know *who* is asking, not merely that someone is.
+            # A per-user capability (the paid DeepSeek backend spends one
+            # person's key) cannot be enforced from a boolean.
+            request.state.username = session_user
             return await call_next(request)
 
         # API callers get a status code they can act on; browsers get the form.

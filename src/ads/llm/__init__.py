@@ -10,12 +10,24 @@ from ads.llm.client import (
     StructuredLLM,
     dereference_schema,
 )
+from ads.llm.deepseek import (
+    DEFAULT_DEEPSEEK_MODEL,
+    DEFAULT_DEEPSEEK_TIMEOUT,
+    DEFAULT_REQUESTS_PER_MINUTE,
+    DeepSeekClient,
+    RateLimiter,
+)
 
 __all__ = [
     "LARGE",
     "SMALL",
     "LLMResponse",
     "ClaudeCliClient",
+    "DEFAULT_DEEPSEEK_MODEL",
+    "DEFAULT_DEEPSEEK_TIMEOUT",
+    "DEFAULT_REQUESTS_PER_MINUTE",
+    "DeepSeekClient",
+    "RateLimiter",
     "DEFAULT_CLAUDE_TIMEOUT",
     "ModelProfile",
     "OllamaClient",
