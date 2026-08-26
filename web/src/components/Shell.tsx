@@ -124,6 +124,7 @@ function ProfileCard({ collapsed }: { collapsed: boolean }) {
       {open && !collapsed && (
         <div className="absolute bottom-[68px] left-2.5 right-2.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop">
           <p className="truncate px-3 py-2 text-xs text-ink-mute">{username ?? t("Local session")}</p>
+          {["Account", "Preferences"].map((item) => <button key={item} type="button" disabled title={t("Not available yet")} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-faint disabled:cursor-not-allowed">{t(item)}</button>)}
           <button onClick={() => void signOut()} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-soft hover:bg-surface-sunken">{t("Sign out")}</button>
         </div>
       )}

@@ -809,6 +809,7 @@ const TR: Record<string, string> = {
   "Agent reports": "Ajan raporları",
   "Local session": "Yerel oturum",
   "Agentic DS user": "Agentic DS kullanıcısı",
+  "Not available yet": "Henüz kullanılamıyor",
   "Delete data project": "Veri projesini sil",
   "Delete this data project? Its execution history will be kept.": "Bu veri projesi silinsin mi? Çalıştırma geçmişi korunacak.",
   "Run workflow": "İş akışını çalıştır",
