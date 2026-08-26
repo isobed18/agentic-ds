@@ -16,6 +16,7 @@ from ads.contracts import (
     ValidationStrategy,
 )
 from ads.contracts.base import ArtifactType
+from ads.contracts.dataflow import SplitManifest, TableAsset
 from ads.contracts.gates import BUILTIN_PROFILES, GateVerdict
 from ads.contracts.leakage import LeakageReport
 from ads.contracts.problem import ProblemDefinition as StoredProblemDefinition
@@ -140,6 +141,13 @@ def test_default_pipeline_runs_end_to_end_on_real_sample_data(
         "report",
     ]
     assert "total_comp_ytd" not in state.blackboard[TRAINING_FRAME_COLUMNS_KEY]
+    table_asset = state.require(ArtifactType.TABLE_ASSET, TableAsset)
+    split_manifest = state.require(ArtifactType.SPLIT_MANIFEST, SplitManifest)
+    assert split_manifest.table_asset_id in state.attempts_for("integration")[0].artifact_ids
+    assert split_manifest.table_fingerprint == table_asset.fingerprint
+    assert set(split_manifest.outer_train.positions).isdisjoint(split_manifest.holdout.positions)
+    assert state.attempts_for("training")[0].input_bindings[ArtifactType.TABLE_ASSET.value]
+    assert state.attempts_for("training")[0].input_bindings[ArtifactType.SPLIT_MANIFEST.value]
     markdown = state.blackboard[FINAL_MARKDOWN_KEY]
     assert "Performance against the baseline" in markdown
     assert "Ridge" in markdown

@@ -9,9 +9,10 @@ data.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 
@@ -54,11 +55,26 @@ class ExtractedDocument(FrozenModel):
     tables: list[ExtractedTableCandidate] = Field(default_factory=list)
     figures: list[ExtractedFigureCandidate] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    duration_seconds: float = Field(default=0.0, ge=0.0)
+
+
+class DocumentFileResult(FrozenModel):
+    """Truthful per-file outcome retained even when one document fails."""
+
+    source_file: str
+    status: Literal["ready", "failed"]
+    page_count: int = Field(default=0, ge=0)
+    table_candidates: int = Field(default=0, ge=0)
+    figure_candidates: int = Field(default=0, ge=0)
+    duration_seconds: float = Field(default=0.0, ge=0.0)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DocumentExtractionSummary(FrozenModel):
+    artifact_id: str | None = None
     engine: DocumentEngineId
     engine_version: str | None = None
+    ocr_mode: Literal["auto", "always", "never"] = "auto"
     status: Literal["ready", "failed"]
     document_count: int = Field(ge=0)
     page_count: int = Field(ge=0)
@@ -67,6 +83,7 @@ class DocumentExtractionSummary(FrozenModel):
     figure_candidates: int = Field(ge=0)
     duration_seconds: float = Field(ge=0.0)
     warnings: list[str] = Field(default_factory=list)
+    files: list[DocumentFileResult] = Field(default_factory=list)
 
 
 class DocumentExtraction(Artifact):
@@ -81,14 +98,29 @@ class DocumentExtraction(Artifact):
     engine_version: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
     documents: list[ExtractedDocument] = Field(default_factory=list)
+    file_results: list[DocumentFileResult] = Field(default_factory=list)
     duration_seconds: float = Field(ge=0.0)
     warnings: list[str] = Field(default_factory=list)
 
     def extraction_summary(self) -> DocumentExtractionSummary:
+        file_results = self.file_results or [
+            DocumentFileResult(
+                source_file=item.source_file,
+                status="ready",
+                page_count=item.page_count,
+                table_candidates=len(item.tables),
+                figure_candidates=len(item.figures),
+                duration_seconds=item.duration_seconds,
+                warnings=item.warnings,
+            )
+            for item in self.documents
+        ]
+        has_failed_file = any(item.status == "failed" for item in file_results)
         return DocumentExtractionSummary(
             engine=self.engine,
             engine_version=self.engine_version,
-            status="ready",
+            ocr_mode=str(self.settings.get("ocr", "auto")),
+            status="failed" if has_failed_file else "ready",
             document_count=len(self.documents),
             page_count=sum(item.page_count for item in self.documents),
             text_characters=sum(len(item.markdown) for item in self.documents),
@@ -96,6 +128,7 @@ class DocumentExtraction(Artifact):
             figure_candidates=sum(len(item.figures) for item in self.documents),
             duration_seconds=self.duration_seconds,
             warnings=[*self.warnings, *(w for item in self.documents for w in item.warnings)],
+            files=file_results,
         )
 
     def summary(self) -> dict[str, Any]:
@@ -103,11 +136,48 @@ class DocumentExtraction(Artifact):
         return value.model_dump(mode="json")
 
 
+class DocumentTableDecision(FrozenModel):
+    candidate_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]+$")
+    decision: Literal["accepted", "rejected"]
+    source_file: str
+    page_number: int | None = Field(default=None, ge=1)
+    columns: list[str] = Field(default_factory=list)
+    reviewer: Literal["human"] = "human"
+    decided_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DocumentTableReview(Artifact):
+    """Human decisions that authorize specific extracted tables for promotion."""
+
+    artifact_type: ClassVar[ArtifactType] = ArtifactType.DOCUMENT_TABLE_REVIEW
+    schema_version: ClassVar[str] = "1"
+
+    extraction_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decisions: list[DocumentTableDecision] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def decisions_target_unique_candidates(self) -> DocumentTableReview:
+        candidate_ids = [item.candidate_id for item in self.decisions]
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("document table review contains duplicate candidate decisions")
+        return self
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "extraction_artifact_id": self.extraction_artifact_id,
+            "accepted": sum(item.decision == "accepted" for item in self.decisions),
+            "rejected": sum(item.decision == "rejected" for item in self.decisions),
+        }
+
+
 __all__ = [
     "DocumentEngineId",
     "DocumentExtraction",
     "DocumentExtractionSummary",
+    "DocumentFileResult",
     "DocumentPageContent",
+    "DocumentTableDecision",
+    "DocumentTableReview",
     "ExtractedDocument",
     "ExtractedFigureCandidate",
     "ExtractedTableCandidate",

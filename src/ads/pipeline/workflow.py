@@ -68,7 +68,7 @@ def build_default_spec() -> WorkflowSpec:
             id="integration",
             component="pipeline.integration",
             consumes=(ArtifactType.DATA_CARD, ArtifactType.INTEGRATION_PLAN),
-            produces=(ArtifactType.DATA_CARD,),
+            produces=(ArtifactType.DATA_CARD, ArtifactType.TABLE_ASSET),
             description="Execute the approved integration plan and verify ABT grain.",
         ),
         StageDefinition(
@@ -110,7 +110,9 @@ def build_default_spec() -> WorkflowSpec:
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
                 ArtifactType.FEATURE_SPEC,
+                ArtifactType.TABLE_ASSET,
             ),
+            produces=(ArtifactType.SPLIT_MANIFEST,),
             description="Build the configured split and measure its retained support.",
         ),
         StageDefinition(
@@ -122,6 +124,8 @@ def build_default_spec() -> WorkflowSpec:
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
                 ArtifactType.FEATURE_SPEC,
+                ArtifactType.TABLE_ASSET,
+                ArtifactType.SPLIT_MANIFEST,
             ),
             produces=(ArtifactType.TRAINED_MODEL,),
             description="Fit and compare the fixed deterministic model menu.",
@@ -226,7 +230,7 @@ def build_full_spec_definition() -> WorkflowSpec:
             id="integration",
             component="pipeline.integration",
             consumes=(ArtifactType.DATA_CARD, ArtifactType.INTEGRATION_PLAN),
-            produces=(ArtifactType.DATA_CARD,),
+            produces=(ArtifactType.DATA_CARD, ArtifactType.TABLE_ASSET),
             description="Execute the proposed plan and verify analytical-base-table grain.",
         ),
         StageDefinition(
@@ -322,7 +326,9 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.LEAKAGE_REPORT,
                 ArtifactType.FEATURE_SPEC,
                 ArtifactType.VALIDATION_TRIAL,
+                ArtifactType.TABLE_ASSET,
             ),
+            produces=(ArtifactType.SPLIT_MANIFEST,),
             description="Build the selected split and measure retained support.",
         ),
         StageDefinition(
@@ -334,6 +340,8 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.VALIDATION_STRATEGY,
                 ArtifactType.LEAKAGE_REPORT,
                 ArtifactType.FEATURE_SPEC,
+                ArtifactType.TABLE_ASSET,
+                ArtifactType.SPLIT_MANIFEST,
             ),
             produces=(
                 ArtifactType.TRAINED_MODEL,

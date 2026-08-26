@@ -57,6 +57,16 @@ def test_default_document_path_requires_review_before_integration() -> None:
     )
     assert any(
         edge.source_component == "review-document-tables"
+        and edge.target_component == "promote-document-tables"
+        for edge in blueprint.connections
+    )
+    assert any(
+        edge.source_component == "understand-documents"
+        and edge.target_component == "promote-document-tables"
+        for edge in blueprint.connections
+    )
+    assert any(
+        edge.source_component == "promote-document-tables"
         and edge.target_component == "integrate-data"
         for edge in blueprint.connections
     )
@@ -221,10 +231,22 @@ def test_planner_can_add_registered_nodes_and_typed_connections() -> None:
     )
 
     added = next(item for item in revised.components if item.id == "eda-review-report")
+    assert revised.revision == baseline.revision + 1
     assert added.configured_by == "planner"
     assert added.settings["report_kind"] == "custom"
     assert added.control.execution == "pause_after"
     revised.validate_connections()
+
+
+def test_planner_patch_rejects_a_stale_graph_revision() -> None:
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+
+    with pytest.raises(ValueError, match="stale graph patch"):
+        apply_planner_graph_operations(
+            baseline,
+            base_revision=baseline.revision + 1,
+            disable_components=["structured-brief"],
+        )
 
 
 def test_planner_cannot_invent_an_unregistered_component() -> None:
@@ -331,8 +353,7 @@ def test_control_plane_launches_each_problem_branch_as_an_isolated_agent_run(
     assert [item["branch_id"] for item in result] == ["churn", "value"]
     assert {item["problem"].target_column for item in launched} == {"churned", "value"}
     assert all(
-        item["mode"] == "agent" and item["parent_run_id"] == "run-parent"
-        for item in launched
+        item["mode"] == "agent" and item["parent_run_id"] == "run-parent" for item in launched
     )
     problem_ref = store.put(
         launched[0]["problem"], run_id="child-1", stage_exec_id="problem_discovery"

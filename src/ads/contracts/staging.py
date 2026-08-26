@@ -8,12 +8,15 @@ write new immutable snapshots so the complete history remains auditable.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, ClassVar, Literal
+from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.documents import DocumentExtractionSummary
+from ads.contracts.registry import canonical_contract_id
 
 
 class LocalizedText(FrozenModel):
@@ -74,29 +77,7 @@ class StagingReportArtifact(Artifact):
         }
 
 
-PipelineDataType = Literal[
-    "structured_files",
-    "documents",
-    "table_profiles",
-    "relationship_graph",
-    "document_content",
-    "extracted_tables",
-    "accepted_tables",
-    "document_figures",
-    "integrated_table",
-    "reports",
-    "runtime_plan",
-    "problem_definition",
-    "validation_strategy",
-    "eda_artifacts",
-    "leakage_report",
-    "feature_spec",
-    "split_manifest",
-    "trained_models",
-    "evaluation_report",
-    "final_report",
-    "model_artifacts",
-]
+PipelineDataType = str
 
 
 class PipelinePort(FrozenModel):
@@ -107,6 +88,12 @@ class PipelinePort(FrozenModel):
     data_type: PipelineDataType
     required: bool = True
     multiple: bool = False
+
+    @field_validator("data_type")
+    @classmethod
+    def _registered_contract(cls, value: str) -> str:
+        canonical_contract_id(value)
+        return value
 
 
 class PipelineNodeControl(FrozenModel):
@@ -189,6 +176,7 @@ class PipelineBlueprint(FrozenModel):
     """Persisted component graph. Inputs and outputs are the executable boundary."""
 
     version: Literal["1"] = "1"
+    revision: int = Field(default=1, ge=1)
     name: LocalizedText
     components: list[PipelineComponent]
     connections: list[PipelineConnection]
@@ -219,7 +207,9 @@ class PipelineBlueprint(FrozenModel):
                 raise ValueError(
                     f"pipeline connection {connection.id!r} references an unknown port"
                 )
-            if source_port.data_type != target_port.data_type:
+            if canonical_contract_id(source_port.data_type) != canonical_contract_id(
+                target_port.data_type
+            ):
                 raise ValueError(
                     f"pipeline connection {connection.id!r} links {source_port.data_type!r} "
                     f"to incompatible {target_port.data_type!r}"
@@ -250,17 +240,79 @@ class PipelineBlueprint(FrozenModel):
             visit(component_id)
 
 
+class GraphPatch(Artifact):
+    """Durable bounded edit from one exact graph revision to the next."""
+
+    artifact_type: ClassVar[ArtifactType] = ArtifactType.GRAPH_PATCH
+    schema_version: ClassVar[str] = "1"
+
+    base_revision: int = Field(ge=1)
+    resulting_revision: int = Field(ge=2)
+    actor: Literal["planner", "human"]
+    additions: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    connections: list[dict[str, Any]] = Field(default_factory=list, max_length=24)
+    updates: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    disabled_components: list[str] = Field(default_factory=list, max_length=12)
+    problem_branches: list[dict[str, Any]] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def _revision_advances(self) -> GraphPatch:
+        if self.resulting_revision <= self.base_revision:
+            raise ValueError("graph patch must advance the blueprint revision")
+        return self
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "base_revision": self.base_revision,
+            "resulting_revision": self.resulting_revision,
+            "actor": self.actor,
+            "operations": (
+                len(self.additions)
+                + len(self.connections)
+                + len(self.updates)
+                + len(self.disabled_components)
+                + len(self.problem_branches)
+            ),
+        }
+
+
+class PipelineNodeLayout(FrozenModel):
+    """UI-only state for one component; never participates in execution semantics."""
+
+    component_id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    x: float
+    y: float
+    collapsed: bool = True
+
+
+class PipelineLayout(FrozenModel):
+    """Persisted manual canvas layout kept outside :class:`PipelineBlueprint`."""
+
+    version: Literal["1"] = "1"
+    nodes: list[PipelineNodeLayout] = Field(default_factory=list)
+    collapsed_branches: list[str] = Field(default_factory=list)
+
+
 class RuntimeConfigurationPlan(FrozenModel):
     """Planner-authored proposal. It has no effect until a person accepts it."""
 
+    proposal_id: str = Field(default_factory=lambda: f"plan-{uuid4().hex[:12]}")
+    status: Literal["proposed", "accepted", "rejected", "superseded"] = "proposed"
     mode: Literal["fully_auto"] = "fully_auto"
+    pipeline_recommendation: Literal["create_pipeline", "defer_pipeline", "no_pipeline"] = (
+        "create_pipeline"
+    )
+    decision_summary: LocalizedText | None = None
     configuration: dict[str, Any] = Field(default_factory=dict)
     stage_directives: dict[str, list[str]] = Field(default_factory=dict)
     checkpoint_stages: list[str] = Field(default_factory=list)
     auto_proceed_stages: list[str] = Field(default_factory=list)
     max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
     rationale: list[LocalizedText] = Field(default_factory=list)
+    # Retained for old artifacts/API clients while ``status`` becomes authoritative.
     accepted: bool = False
+    accepted_at: datetime | None = None
+    accepted_by: Literal["human"] | None = None
 
 
 class StagingWorkspace(Artifact):
@@ -275,6 +327,7 @@ class StagingWorkspace(Artifact):
     relationship_explanations: list[RelationshipExplanation] = Field(default_factory=list)
     reports: list[StagingReport] = Field(default_factory=list)
     pipeline_blueprint: PipelineBlueprint | None = None
+    pipeline_layout: PipelineLayout = Field(default_factory=PipelineLayout)
     component_outputs: list[PipelineOutputReference] = Field(default_factory=list)
     document_extractions: list[DocumentExtractionSummary] = Field(default_factory=list)
     recommended_plan: RuntimeConfigurationPlan | None = None
@@ -303,12 +356,15 @@ class StagingWorkspace(Artifact):
 
 
 __all__ = [
+    "GraphPatch",
     "LocalizedText",
     "PipelineBlueprint",
     "PipelineComponent",
     "PipelineConnection",
     "PipelineDataType",
     "PipelineNodeControl",
+    "PipelineNodeLayout",
+    "PipelineLayout",
     "PipelineOutputReference",
     "PipelinePort",
     "RelationshipExplanation",

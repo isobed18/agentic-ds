@@ -9,15 +9,20 @@ this file tells you which code to read first.
 
 ## What this is
 
-A fully local agentic data science pipeline. A person points it at a folder of
-tabular files; it profiles them, works out how the tables join, decides what
-problem is worth predicting, builds features, trains models, and writes a
-report — with local LLM agents making the judgement calls and a deterministic
-gate deciding whether each stage is allowed to proceed.
+A guided mixed-source data-understanding and machine-learning system. A person
+can give it unfamiliar PDFs, CSV/TSV/TXT files, workbooks, or Parquet files. The
+default product routes every source visibly, profiles structured data, extracts
+documents, synthesizes what the sources contain, decides with the person what
+may enter ML, proposes a plan, and then runs the established gated ML pipeline.
+The free-form graph editor is retained as **Advanced / Experimental** rather
+than presented as the primary journey.
 
-Nothing leaves the machine. No cloud LLM API. Models run through Ollama on
-`http://localhost:11434`; development uses a 27B model on a single RTX 3090,
-production is 8×H100. Dependencies must be open source; copyleft is out.
+The default model transport is local Ollama on `http://localhost:11434`. A
+private test deployment may explicitly opt into the authenticated Claude CLI
+subscription backend. That path uses no Anthropic API key, disables tools and
+repository settings, and removes provider credentials from the child process;
+it is nevertheless remote inference and must never be described as local.
+Dependencies must be open source; copyleft is out.
 
 Python 3.12, FastAPI, pandas/polars/duckdb, scikit-learn, pydantic. Frontend is
 React 19 + Vite + TypeScript + Tailwind. Tests are pytest, lint is ruff.
@@ -58,7 +63,10 @@ Read in roughly this order when orienting.
 | Workflow spec, runner, run state, critic | `src/ads/orchestration/` |
 | Stage implementations and how they are wired into a spec | `src/ads/pipeline/` |
 | Agents — one file per agent, plus the shared spec/runtime | `src/ads/agents/` |
-| Loading and profiling source files | `src/ads/intake/` |
+| Loading, routing, and profiling source files | `src/ads/intake/`, `src/ads/api/service.py` |
+| Document extraction, review, and promotion | `src/ads/documents/` |
+| Staging blueprint and durable pre-ML workspace | `src/ads/staging/`, `src/ads/contracts/staging.py` |
+| Automation catalog, compiler, runner, persistence | `src/ads/automation/` |
 | Leakage, measurements, validation signals | `src/ads/discovery/` |
 | Joining tables into an analytical base table | `src/ads/integration/` |
 | Splitting, feature work, training, export | `src/ads/splitting/`, `src/ads/training/` |
@@ -68,7 +76,7 @@ Read in roughly this order when orienting.
 | Procedural guidance loaded into agent prompts | `src/ads/skills/` |
 | Content-addressed artifact store | `src/ads/store/` |
 | HTTP API, auth gate, i18n, panel rendering | `src/ads/api/` |
-| Frontend | `web/src/` |
+| Guided and advanced frontend | `web/src/` |
 | Launchers and one-off probes | `scripts/` |
 | Design notes, research, backlog | `docs/` |
 
@@ -76,9 +84,10 @@ The API surface is one large module, `src/ads/api/service.py`: the control
 plane and every route. Start there when you want to know what the frontend can
 actually do. `web/src/lib/api.ts` is the other half of that contract.
 
-56 test files under `tests/`, named after the thing they cover. They are the
-best documentation in the repository — when you want to know what a component
-is supposed to do, read its test before its implementation.
+Tests under `tests/` and colocated frontend tests are named after the behavior
+they cover. They are the best executable documentation in the repository —
+when you want to know what a component is supposed to do, read its test before
+its implementation.
 
 ---
 
@@ -101,41 +110,54 @@ is supposed to do, read its test before its implementation.
   evaluate a catalogue lookup at import time — a test guards that.
 - **Codes are not words.** Stage ids, reason codes and check ids are
   identifiers used for lookups; translate them for display only.
-- **Bilingual agent prose is produced in one pass.** User-facing agent
-  contracts carry canonical English and Turkish companions from the same local
-  Ollama response. Do not introduce a translation agent or translate table and
-  column identifiers, metrics, configuration keys, or code.
+- **Bilingual persisted artifacts are produced in one pass.** User-facing
+  artifact contracts carry canonical English and Turkish companions from the
+  same configured model response. Planner chat simply answers in the language
+  of the conversation; do not add a chat-translation agent. Never translate
+  table and column identifiers, metrics, configuration keys, or code.
 
 ---
 
 ## How a run works
 
-Choosing a dataset on the Staging screen starts a real run and stops it after
-two stages — intake and schema discovery — so a person sees measured data, a
-drawn schema, local-planner reports, relationship explanations, and a proposed
-runtime plan before configuring anything. These outputs and the planner chat
-are persisted in immutable `StagingWorkspace` snapshots. That stopped run keeps
-its id; accepting the plan continues the same run rather than starting a second
-one against the same files. Reusing a matching first-two-stage result is
-optional and off by default.
+The primary UI is a guided Data Project:
 
-Staging now also carries a persisted `PipelineBlueprint`. The browser can show
-and edit this graph before the run exists, then sends it with the staging
-request. Every component has typed input/output ports; connections are accepted
-only when the port data types match. Once a staging artifact exists, graph
-edits use its artifact ID as an optimistic concurrency token and create a new
-immutable snapshot. `src/ads/staging/blueprint.py` defines the default graph and
-the closed component-setting vocabulary; `web/src/components/PipelineBuilder.tsx`
-renders it with React Flow and ELK.
+```text
+Upload → Intake/routing → Structured and document understanding → Synthesis
+       → Decide ML inputs → Propose/accept plan → Guided base pipeline → Results
+```
 
-The blueprint is not a second workflow engine. The **Default ML pipeline**
-component still delegates to the existing 12-stage runner. Document engines
-(Docling, Unstructured, Marker, MinerU, and the built-in text reader) are a
-truthful selectable catalog and typed I/O boundary, but Docling/OCR/table
-execution adapters are not implemented yet. An enabled document component with
-no ready outputs blocks `fully_auto`; disable it to run only the structured
-tables. Do not mark a configured engine as executed merely because it appears
-in the graph.
+`ControlPlane.source_profile()` performs the first deterministic routing and
+keeps an exact record of every source file. Choosing **Run Intake** starts a
+real, durable run. Structured sources execute intake and schema discovery;
+documents execute through the selected normalized adapter. The branches may
+progress independently, then converge into one bounded staging synthesis.
+PDF-only sources still execute document extraction and synthesis; they do not
+pretend a tabular ML problem exists.
+
+The outputs, Planner reports/chat, selected graph, proposal, errors, and
+component artifacts are persisted in immutable `StagingWorkspace` snapshots.
+The run keeps its id; accepting a justified plan continues it rather than
+starting a second run against the same sources. Reusing a matching staging
+result is optional and off by default.
+
+Staging carries a persisted `PipelineBlueprint`. Every component has typed
+input/output ports; persisted edits are validated and use the prior artifact id
+as an optimistic-concurrency token. `src/ads/staging/blueprint.py` defines the
+opinionated multimodal graph. The guided UI hides authoring complexity;
+`web/src/components/PipelineBuilder.tsx` exposes React Flow/ELK editing only
+under **Advanced / Experimental**.
+
+Docling, Unstructured, Marker, MinerU, and the built-in text-layer reader now
+have normalized extraction adapters in `src/ads/documents/extraction.py`.
+Candidate tables and figures remain evidence candidates. Only a human-reviewed
+table may be promoted by `src/ads/documents/promotion.py` into a provenance-bound
+`TableAsset`; the guided review/promotion interaction is not complete yet.
+
+The default ML continuation still delegates to the established gated runner.
+`src/ads/automation/compiler.py` and `src/ads/automation/runner.py` provide a
+tested graph-native baseline, but many catalog capabilities still lack
+production executor adapters. Do not claim arbitrary n8n-level execution.
 
 Three supervision modes: `auto`, which retains the problem-discovery human
 checkpoint; `manual`, where every stage is declared a checkpoint; and
@@ -169,30 +191,40 @@ human is durable by design and is never downgraded.
 
 ## State as of this handover
 
-Last committed MVP baseline: `c0600c8` on the private `agentic-ds-dev` remote.
-The production `agentic-ds` remote was deliberately not changed.
+Implementation baseline before this report consolidation: `8862fa5` on branch
+`codex/graph-automation` in the private `agentic-ds-dev` remote. The production
+`agentic-ds` remote was deliberately not changed by this delivery sequence.
 
-**Implemented and tested.** Staging is a durable bilingual data-understanding
-workspace with optional fingerprint cache reuse, planner reports/chat, accepted
-`fully_auto` plans, measured-schema React Flow/ELK views, and a persisted
-multimodal pipeline blueprint. The builder supports expandable nodes, typed
-ports, matching-port connections, document-engine preferences, immutable
-saves, stale-write rejection, and explicit output readiness/artifact IDs.
+**Implemented and tested.** The default product is a guided, durable
+mixed-source data-understanding flow. File routing, structured measurements,
+document extraction, synthesis reports, Planner chat, plan acceptance, the
+guided base-pipeline projection, artifacts, failure banners, retry, continuation,
+and cooperative pause-after-current-stage are persisted or derived from the
+real run. PDF-only staging executes the selected document engine. Document
+candidate ids are sanitized independently from unsafe source filenames.
 
-**Still a baseline, not n8n parity.** Components cannot yet be added from an
-arbitrary registry, the graph is not compiled into a dynamic workflow spec,
-and only the Default ML component executes. Document understanding still uses
-the existing bounded `pypdf` text path for planner chat; Docling and the other
-engine choices do not yet emit document/table/figure artifacts. Implement the
-document adapter and graph compiler before claiming arbitrary pipelines run.
+The full Python suite collected 818 tests: 813 passed and 5 skipped. Ruff
+passed over `src` and `tests`; 17 frontend tests and the production build passed.
+The loopback deployment health check returned 200 and an unauthenticated API
+request returned 401.
 
-**Model path.** Product agents still use the configured local Ollama transport.
-Claude Haiku was used once through the authenticated CLI as a cheap, read-only
-development architecture reviewer; it is not imported by, configured in, or
-available to the Agentic DS runtime.
+**Still incomplete.** Narrative TXT files are currently treated as delimited
+tables. The guided PDF-table review/promotion UI and automatic ML-input refresh
+are incomplete. Chart values are not trusted training data. Immediate hard
+cancel is absent. Many advanced graph components still lack graph-native
+executors. The guided pipeline group map also contains stale ids for EDA and
+leakage (`exploratory_analysis`, `lineage_audit` instead of `eda`,
+`leakage_audit`), so those two live stage statuses/artifacts can be omitted
+until the map and its regression test are corrected.
 
-**Deployment.** Served from a separate checkout behind a Cloudflare tunnel at
-`api.altspacelabs.com`, password-gated, bound to loopback only. `deploy/README.md`
-has the order of operations and an honest list of what that protection does not
-cover. It runs from its own checkout, so edits in the working tree do not affect
-the live site until it is updated deliberately.
+**Model path.** Ollama remains the default self-hosted transport. The current
+private deployment is explicitly configured for `claude_cli`, model `haiku`,
+low effort, and a 90-second timeout. It uses the logged-in Claude Code
+subscription and no Anthropic API key, but it is remote inference.
+
+**Deployment.** The current working checkout is served behind Cloudflare Tunnel
+at `api.altspacelabs.com`, password-gated and bound to `127.0.0.1:8077`.
+`deploy/README.md` documents startup and the limits of this protection.
+
+Start future architecture work at `docs/REPORT_INDEX.md` and update
+`docs/SYSTEM_ARCHITECTURE_REPORT.md` instead of creating another dated report.

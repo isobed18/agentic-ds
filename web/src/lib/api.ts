@@ -54,6 +54,22 @@ export interface RunSummary {
   parent_run_id?: string | null;
   branch_label?: string | null;
   source_id?: string | null;
+  automation_id?: string | null;
+}
+
+export interface AutomationDefinition {
+  schema_version: "1";
+  automation_id: string;
+  name: string;
+  status: "draft" | "saved";
+  revision: number;
+  source_id?: string | null;
+  pipeline_blueprint?: PipelineBlueprint | null;
+  pipeline_layout: PipelineLayout;
+  workspace_artifact_id?: string | null;
+  execution_ids: string[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface GateDecision {
@@ -279,6 +295,8 @@ export interface ProfiledColumn {
 
 export interface ProfiledTable {
   name: string;
+  source_file?: string;
+  sheet_name?: string | null;
   format: string;
   rows: number;
   columns_count: number;
@@ -304,6 +322,13 @@ export interface MeasuredRelationship {
 
 export interface SourceProfile {
   source_id: string;
+  source_files?: Array<{
+    name: string;
+    format: string;
+    route: "structured" | "documents" | "unsupported";
+    reason: string;
+    table_names: string[];
+  }>;
   tables: ProfiledTable[];
   documents?: ProfiledDocument[];
   relationships?: MeasuredRelationship[];
@@ -338,28 +363,8 @@ export interface LocalizedText {
   tr: string;
 }
 
-export type PipelineDataType =
-  | "structured_files"
-  | "documents"
-  | "table_profiles"
-  | "relationship_graph"
-  | "document_content"
-  | "extracted_tables"
-  | "accepted_tables"
-  | "document_figures"
-  | "integrated_table"
-  | "reports"
-  | "runtime_plan"
-  | "problem_definition"
-  | "validation_strategy"
-  | "eda_artifacts"
-  | "leakage_report"
-  | "feature_spec"
-  | "split_manifest"
-  | "trained_models"
-  | "evaluation_report"
-  | "final_report"
-  | "model_artifacts";
+/** Host-registered, versioned edge contract (for example `ads.table_asset@1`). */
+export type PipelineDataType = string;
 
 export interface PipelinePort {
   id: string;
@@ -406,9 +411,23 @@ export interface PipelineConnection {
 
 export interface PipelineBlueprint {
   version: "1";
+  revision?: number;
   name: LocalizedText;
   components: PipelineComponent[];
   connections: PipelineConnection[];
+}
+
+export interface PipelineNodeLayout {
+  component_id: string;
+  x: number;
+  y: number;
+  collapsed: boolean;
+}
+
+export interface PipelineLayout {
+  version: "1";
+  nodes: PipelineNodeLayout[];
+  collapsed_branches: string[];
 }
 
 export interface PipelineOutputReference {
@@ -460,15 +479,35 @@ export interface AutomationComponentDefinition {
 }
 
 export interface DocumentExtractionSummary {
-  artifact_id: string;
+  artifact_id?: string | null;
   engine: string;
   engine_version?: string | null;
+  ocr_mode?: "auto" | "always" | "never";
   status: "ready" | "failed";
   document_count: number;
   page_count: number;
   table_candidates: number;
   figure_candidates: number;
   warnings: string[];
+  duration_seconds: number;
+  files?: Array<{
+    source_file: string;
+    status: "ready" | "failed";
+    page_count: number;
+    table_candidates: number;
+    figure_candidates: number;
+    duration_seconds: number;
+    warnings: string[];
+  }>;
+}
+
+export interface RunProgressSnapshot {
+  status?: string;
+  current_stage?: string | null;
+  events?: Array<Record<string, unknown>>;
+  attempts?: Array<Record<string, unknown>>;
+  pause_requested?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ArtifactPreview {
@@ -522,10 +561,15 @@ export interface StagingWorkspace {
     verification_questions: LocalizedText[];
   }[];
   pipeline_blueprint?: PipelineBlueprint | null;
+  pipeline_layout: PipelineLayout;
   component_outputs?: PipelineOutputReference[];
   document_extractions?: DocumentExtractionSummary[];
   recommended_plan?: {
+    proposal_id: string;
+    status: "proposed" | "accepted" | "rejected" | "superseded";
     mode: "fully_auto";
+    pipeline_recommendation?: "create_pipeline" | "defer_pipeline" | "no_pipeline";
+    decision_summary?: LocalizedText | null;
     configuration: Record<string, unknown>;
     stage_directives: Record<string, string[]>;
     checkpoint_stages: string[];
@@ -533,6 +577,8 @@ export interface StagingWorkspace {
     max_retries_by_stage: Record<string, number>;
     rationale: LocalizedText[];
     accepted: boolean;
+    accepted_at?: string | null;
+    accepted_by?: "human" | null;
   } | null;
   chat_history: {
     role: "user" | "planner";
@@ -652,8 +698,22 @@ export const api = {
   workflow: (runId?: string | null) =>
     request<Workflow>(runId ? `/api/workflow?run_id=${encodeURIComponent(runId)}` : "/api/workflow"),
   runs: () => request<RunSummary[]>("/api/runs"),
+  automations: () => request<AutomationDefinition[]>("/api/automations"),
+  automation: (id: string) => request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}`),
+  createAutomation: (name: string) =>
+    request<AutomationDefinition>("/api/automations", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateAutomation: (id: string, expectedRevision: number, changes: Record<string, unknown>) =>
+    request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ expected_revision: expectedRevision, changes }),
+    }),
+  automationExecutions: (id: string) =>
+    request<RunSummary[]>(`/api/automations/${encodeURIComponent(id)}/executions`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),
-  runProgress: (id: string) => request<{ nodes?: WorkflowNode[]; status?: string; [k: string]: unknown }>(`/api/runs/${id}/progress`),
+  runProgress: (id: string) => request<RunProgressSnapshot>(`/api/runs/${id}/progress`),
   stage: (runId: string, stageId: string) => request<StageDetail>(`/api/runs/${runId}/stages/${stageId}`),
   createRun: (body: RunRequest) => request<RunSummary>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   /**
@@ -673,11 +733,12 @@ export const api = {
    * schema discovery. What comes back is a real run id and the profile, so the
    * pipeline can be drawn before anything has been configured.
    */
-  stageRun: (sourceId: string, reuseCache = false, pipelineBlueprint?: PipelineBlueprint | null) =>
+  stageRun: (sourceId: string, reuseCache = false, pipelineBlueprint?: PipelineBlueprint | null, automationId?: string | null) =>
     request<{ run_id: string; status: string; profile: SourceProfile }>("/api/runs/staged", {
       method: "POST",
       body: JSON.stringify({
         source_id: sourceId,
+        automation_id: automationId,
         reuse_cache: reuseCache,
         configuration: pipelineBlueprint ? { pipeline_blueprint: pipelineBlueprint } : undefined,
       }),
@@ -693,6 +754,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ base_artifact_id: baseArtifactId, blueprint }),
     }),
+  updateStagingLayout: (runId: string, baseArtifactId: string, layout: PipelineLayout) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/staging/layout`, {
+      method: "PUT",
+      body: JSON.stringify({ base_artifact_id: baseArtifactId, layout }),
+    }),
+  acceptStagingPlan: (runId: string, baseArtifactId: string) =>
+    request<StagingWorkspace & { execution_plan_artifact_id: string }>(
+      `/api/runs/${runId}/staging/plan/accept`,
+      { method: "POST", body: JSON.stringify({ base_artifact_id: baseArtifactId }) },
+    ),
   compileAutomation: (runId: string) =>
     request<{ artifact_id: string; workspace_artifact_id: string; plan: AutomationExecutionPlan }>(
       `/api/runs/${runId}/automation/compile`,
@@ -719,6 +790,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(configuration),
     }),
+  pauseRun: (runId: string) =>
+    request<{ run_id: string; status: string }>(`/api/runs/${runId}/pause`, { method: "POST" }),
   discardStaged: (runId: string) =>
     request<{ run_id: string; status: string }>(`/api/runs/${runId}/discard`, { method: "POST" }),
   runOptions: () => request<RunOptions>("/api/run-options"),

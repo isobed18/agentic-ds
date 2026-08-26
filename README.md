@@ -1,16 +1,18 @@
 # Agentic Data Science / ML Pipeline
 
-Local, self-hosted agentic pipeline that takes messy multi-table enterprise data to a
-baseline ML project. No cloud LLM APIs, no cloud services.
+Guided data-understanding and machine-learning system for unfamiliar mixed sources: structured
+tables, reports, and PDFs. It routes every file, explains the available evidence, separates context
+from trusted ML inputs, proposes a plan, and executes an auditable base ML pipeline.
 
-See [docs/architecture-report.md](docs/architecture-report.md) for the full architecture
-and technology evaluation.
+Start with the [report index](docs/REPORT_INDEX.md), the canonical
+[system architecture report](docs/SYSTEM_ARCHITECTURE_REPORT.md), and the current
+[delivery report](docs/PRODUCT_DELIVERY_REPORT.md).
 
 ## Status
 
-The full 11-stage pipeline runs end-to-end on a local 27B model: raw multi-table files
-through to a trained, evaluated model and a standalone reproduction script, pausing for a
-human wherever a decision cannot be made safely without one.
+The established 12-stage agentic pipeline runs end to end from intake and schema discovery through
+training, evaluation, and reporting. The default UI is an opinionated guided journey; typed graph
+authoring remains Advanced / Experimental.
 
 | Component | State |
 |---|---|
@@ -29,16 +31,23 @@ human wherever a decision cannot be made safely without one.
 | Splitting, training, evaluation, reporting | done |
 | Tool registry + permission broker (`ads.tools`) | done |
 | Isolated Docker sandbox (`ads.sandbox`) | done |
+| Durable staging, reports, Planner chat, accepted plans | done |
+| PDF extraction — Docling/Unstructured/Marker/MinerU/text layer | done |
+| Human review and promotion of PDF table candidates | backend done, guided UI pending |
+| Guided accepted-plan/base-pipeline canvas | done |
+| Typed graph compiler and restart-safe runner baseline | done |
+| Arbitrary component-level production execution | experimental / partial |
 | Comprehension layer — cited interpretations (`ads.agents.interpretation`) | in progress |
 | Assurance benchmark (`benchmarks/assurance_v0`) — 20 paired cases | corpus built, baseline pending |
 
-**Measured:** 588 tests pass with no GPU, model or network. A completed run emits a
+**Measured on 2026-08-26:** 818 Python tests collected; 813 passed and 5 were skipped. All 17
+frontend tests, Ruff, TypeScript compilation, and the production build passed. A completed run emits a
 standalone `train.py` that reproduces the recorded holdout metric exactly in a fresh
 interpreter (`25898.5376005` against a recorded `-25898.5376004928`).
 
-Model routing is configured in `ads/llm/client.py`: `LARGE` for planning and code
-generation, `SMALL` for classification and extraction. Point `LARGE` at a 70B-class
-model for production; nothing above that line changes.
+Model routing is configurable. `OllamaClient` is the default fully local path. A private deployment
+may opt into `ClaudeCliClient`, which uses an authenticated Claude Code subscription with tools and
+API/provider credentials disabled; it is remote inference but does not use an Anthropic API key.
 
 ## Setup
 
@@ -128,6 +137,10 @@ These are the invariants worth preserving as the system grows. Each is covered b
 src/ads/
   contracts/     Typed inter-stage contracts — the architecture's backbone
   store/         Content-addressed immutable artifact store
+  staging/       Opinionated multimodal blueprint and settings validation
+  automation/    Component catalog, compiler, graph runner, project store
+  dataflow/      Immutable Parquet-backed tables and split manifests
+  documents/     PDF engines, normalized extraction, review, promotion
   intake/        Loaders, profiler, key/relationship detection
   discovery/     Leakage families, problem support, validation signals, measurements
   integration/   DuckDB plan executor with grain verification

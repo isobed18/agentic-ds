@@ -220,18 +220,22 @@ export function Home() {
   const reports = useAsync<ReportSummary[]>(() => api.reports());
 
   return (
-    <Page title={t("Overview")} subtitle={t("Local, self-hosted agentic data science. Nothing leaves this machine.")}>
+    <Page title={t("Understand unfamiliar data")} subtitle={t("From mixed files to an agreed ML plan, with every source and decision visible.")}>
+      <section className="mb-5 rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 to-surface px-6 py-6 shadow-card">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-700">{t("Recommended next action")}</p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h3 className="text-xl font-semibold text-ink">{t("Give Agentic DS your files")}</h3><p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-mute">{t("Intake routes every PDF, table, and ambiguous source. You review what becomes ML data before the base pipeline can run.")}</p></div><Link to="/automation" className="btn-primary">{t("Start a data project")} →</Link></div>
+        <ol className="mt-6 grid gap-2 sm:grid-cols-5">{["Upload", "Intake", "Understand", "Agree on plan", "Run and review"].map((step, index) => <li key={step} className="rounded-lg border border-brand-100 bg-surface/80 px-3 py-3"><span className="text-[10px] font-semibold text-brand-700">{index + 1}</span><p className="mt-1 text-xs font-medium text-ink">{t(step)}</p></li>)}</ol>
+      </section>
       <div className="mb-5 flex flex-wrap gap-2">
         <Metric label={t("Datasets")} value={String(datasets.data?.length ?? "—")} />
         <Metric label={t("Models")} value={String(models.data?.length ?? "—")} />
         <Metric label={t("Reports")} value={String(reports.data?.length ?? "—")} />
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <Link to="/automation?view=runs" className="card px-5 py-4 hover:border-brand-500">
-          <h3 className="text-sm font-semibold">{t("Open the workflow")}</h3>
+        <Link to="/automation" className="card px-5 py-4 hover:border-brand-500">
+          <h3 className="text-sm font-semibold">{t("Open data projects")}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-mute">
-            Run the pipeline, inspect each stage, and answer approval requests where the
-            gate stops for a human.
+            {t("Continue an intake, review a proposed ML plan, or inspect a transparent run.")}
           </p>
         </Link>
         <Link to="/datasets" className="card px-5 py-4 hover:border-brand-500">

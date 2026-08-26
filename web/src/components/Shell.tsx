@@ -14,7 +14,7 @@ import { cx } from "./ui";
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
   { to: "/explore", label: "Your data", icon: DataIcon },
-  { to: "/automation", label: "Automation", icon: FlowIcon },
+  { to: "/automation", label: "Data projects", icon: FlowIcon },
   { to: "/datasets", label: "Datasets", icon: DataIcon },
   { to: "/experiments", label: "Experiments", icon: FlaskIcon },
   { to: "/models", label: "Models", icon: CubeIcon },
@@ -29,6 +29,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
     () => localStorage.getItem(COLLAPSE_KEY) === "1",
   );
   const location = useLocation();
+  const isAutomationEditor = location.pathname.startsWith("/automation");
 
   useEffect(() => {
     localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0");
@@ -91,13 +92,13 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[60px] shrink-0 items-center gap-4 border-b border-line bg-surface px-6">
+        {!isAutomationEditor && <header className="flex h-[60px] shrink-0 items-center gap-4 border-b border-line bg-surface px-6">
           {topBar ?? <Breadcrumb path={location.pathname} />}
           <div className="ml-auto flex items-center gap-1">
             <LanguagePicker />
             <Notifications />
           </div>
-        </header>
+        </header>}
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
@@ -166,7 +167,7 @@ function GearIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><ci
 
 
 /** Language choice. Persisted per browser and sent to the API with every call. */
-function LanguagePicker() {
+export function LanguagePicker() {
   const active = currentLanguage();
   return (
     <div className="flex items-center rounded-lg border border-line p-0.5">

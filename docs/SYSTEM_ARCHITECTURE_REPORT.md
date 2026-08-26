@@ -1,241 +1,548 @@
-# Agentic DS System Architecture Report
+# Agentic DS — Canonical System Architecture Report
 
-## 1. System purpose and current product shape
+**Status:** current implementation architecture
 
-Agentic DS is a local-first, self-hosted data-understanding and machine-learning automation
-system. Its primary UI is one n8n-style graph workspace in which a user can upload structured
-files and PDFs, inspect a recommended multimodal graph, talk to a planner, edit typed component
-connections, run the graph, and open the immutable artifacts attached to each producer node.
+**Last audited:** 2026-08-26
 
-The production agent path uses local Ollama models. Claude/Codex are development tools only and
-are not runtime dependencies or fallback providers.
+**Canonical scope:** product flow, runtime, data boundaries, major modules, deployment, and known gaps
 
-The architecture separates four responsibilities:
+## 1. Executive summary
 
-1. **Evidence production** — deterministic loaders, profilers, extractors, trials, training, and
-   evaluation create measured artifacts.
-2. **Agent judgment** — local agents interpret bounded evidence and propose reports, problems,
-   validation strategies, and graph changes.
-3. **Control and safety** — typed contracts, graph validation, gates, retry policy, human/planner
-   ownership, and sandboxing constrain execution.
-4. **Presentation** — React Flow renders the same persisted graph and artifact lineage that the
-   backend compiles and executes.
+Agentic DS is a guided data-understanding and machine-learning system for users who receive
+unfamiliar mixed files and do not yet know what the files mean, how they relate, or what ML
+problem is justified.
 
-## 2. End-to-end flow
+The default product is deliberately opinionated:
 
-### 2.1 Upload and source registration
+```text
+Upload
+  → Intake and source routing
+  → Structured/document understanding
+  → Cross-source synthesis
+  → Decide what may enter ML
+  → Propose and accept/adjust a plan
+  → Materialize the established base ML pipeline
+  → Execute with visible states and controls
+  → Review artifacts and results
+```
 
-`src/ads/api/service.py` owns the HTTP control plane. `upload()` writes supported files into a
-source group and returns a source id. Files uploaded together remain one logical source so
-relationships can be measured across CSV, Excel, Parquet, and PDF inputs.
+The free-form graph editor remains available as **Advanced / Experimental**. It is no longer the
+primary journey. The default UI uses the same persisted blueprint and run state, but presents them
+as a guided continuation so a new user always has an obvious next action.
 
-Important files:
+The system is local-first, but its LLM transport is configurable:
 
-- `src/ads/intake/loaders.py` — loads structured formats and normalizes loader errors.
-- `src/ads/documents/pdf.py` — reads safe, page-provenanced PDF metadata/text for source
-  profiling and bounded planner context.
-- `web/src/pages/AutomationWorkspace.tsx` — the single front door for drag/drop, source
-  selection, optional cache reuse, graph execution, and branch status.
+- `OllamaClient` is the default self-hosted runtime.
+- `ClaudeCliClient` is an opt-in private-deployment backend that uses an already authenticated
+  Claude Code subscription. It strips API/provider environment variables and disables tools,
+  MCP, repository settings, and coding-agent permissions. It does not use an Anthropic API key,
+  but inference is remote and therefore is not a fully local execution path.
+- The current private test deployment uses Claude CLI Haiku at low effort with a 90-second timeout.
 
-Raw rows are not sent to agents or browser projections. The browser receives schema statistics,
-relationship evidence, artifact summaries, and approved document projections.
+The core architecture separates four authorities:
 
-### 2.2 Staging: intake and schema discovery
+1. Deterministic executors measure, parse, extract, integrate, split, train, and evaluate.
+2. Agents interpret bounded evidence and propose reports, problems, configurations, and graph edits.
+3. Typed contracts, graph validation, deterministic gates, review boundaries, and sandboxing decide
+   what is allowed to execute or proceed.
+4. The React UI projects persisted evidence, plans, attempts, and artifacts; browser state is not an
+   execution authority.
 
-Selecting **Run data understanding** creates a real run and executes intake through schema
-discovery. This is not a preview: the resulting state and artifact ids are reused when the ML
-pipeline continues.
+## 2. Runtime topology
 
-The intake stage is implemented primarily by:
+```mermaid
+flowchart TB
+    Browser[React web application] --> API[FastAPI control plane]
+    API --> Source[Uploaded/source files]
+    API --> Store[(Content-addressed artifact store)]
+    API --> Snapshots[(Run-state snapshots)]
+    API --> AutomationStore[(Automation revisions)]
+    API --> LLM{Structured LLM transport}
+    LLM --> Ollama[Local Ollama]
+    LLM --> ClaudeCLI[Authenticated Claude CLI\nprivate opt-in deployment]
+    API --> DocumentEngines[Docling / Unstructured / Marker / MinerU / text layer]
+    API --> EstablishedRunner[Established gated ML runner]
+    API --> GraphCompiler[Blueprint compiler]
+    GraphCompiler --> GraphRunner[Graph-native runner baseline]
+    EstablishedRunner --> Store
+    GraphRunner --> Store
+```
 
-- `src/ads/pipeline/stages.py` — stage functions and blackboard bindings.
-- `src/ads/intake/profiler.py` — deterministic table/column profiling, missingness,
-  distributions, semantic types, sensitivity, and candidate keys.
-- `src/ads/intake/keys.py` — key-candidate measurements.
-- `src/ads/contracts/datacard.py` — immutable DataCard and column-profile contracts.
+FastAPI serves both the control-plane API and the compiled frontend. The public test deployment
+binds Uvicorn to `127.0.0.1:8077`; Cloudflare Tunnel is the only public ingress. A password/session
+gate protects the application. The server refuses public startup when credentials are absent.
 
-Schema discovery uses:
+## 3. Source, evidence, and trust boundaries
 
-- `src/ads/agents/schema_discovery.py` — proposes an integration plan from row-free evidence.
-- `src/ads/agents/schema_investigator.py` — performs bounded follow-up investigation.
-- `src/ads/discovery/measurements.py` — deterministic relationship measurements.
-- `src/ads/integration/executor.py` — trials proposed joins against real frames and measures
-  cardinality/fan-out/orphan behavior.
-- `src/ads/contracts/integration.py` — separates agent-authored proposals from executor-owned
-  measured evidence and persisted IntegrationPlan artifacts.
+### 3.1 Two data planes
 
-Caching is optional. A source fingerprint identifies unchanged inputs, but a user can disable
-reuse and rerun intake/schema discovery every time.
+The executor plane may load source rows and PDF content. The agent/browser plane receives bounded
+projections: schemas, aggregates, measured relationships, extraction excerpts with provenance,
+artifact summaries, and approved configuration. Agents do not receive raw tabular rows.
 
-PDF-only sources also receive a persisted staging graph. Structured intake and the ML template
-remain disabled until a trustworthy structured table exists.
+The important contracts are:
 
-### 2.3 Multimodal document path
+- `src/ads/contracts/datacard.py` — row-free table and column profiles.
+- `src/ads/contracts/documents.py` — normalized document pages, candidate tables/figures,
+  per-file outcomes, review decisions, and extraction summaries.
+- `src/ads/contracts/integration.py` — proposed and executor-verified integration plans.
+- `src/ads/contracts/dataflow.py` — immutable `TableAsset` and exact `SplitManifest` artifacts.
+- `src/ads/contracts/staging.py` — the complete pre-ML workspace, proposal, graph, layout, reports,
+  chat history, and component output references.
 
-The default graph routes PDFs from `data.upload.documents` into `document.extract` while
-structured files route independently into table profiling.
+### 3.2 Evidence classes
 
-`src/ads/documents/extraction.py` defines a replaceable adapter boundary. The selectable local
-engines are Docling, Unstructured, Marker, MinerU, and a text-layer fallback. Marker and MinerU
-can run in isolated worker environments because their dependency pins can conflict with the
-main application.
+The UI and contracts preserve four visibly different states:
 
-Document extraction produces page/region-provenanced content, table candidates, and figure
-candidates using contracts in `src/ads/contracts/documents.py`. Candidate tables must pass the
-explicit `document.review_tables` component before they become `accepted_tables`. Current MVP
-behavior does not silently turn charts or candidate PDF tables into training rows.
+| Layer | Producer | Meaning |
+|---|---|---|
+| measured | host profiler/test | directly observed statistic or relationship |
+| executor | registered deterministic capability | parsed, transformed, trained, or evaluated result |
+| agent proposal | bounded LLM | interpretation or recommended future action |
+| human decision | person | accepted plan, review, override, or candidate promotion |
 
-### 2.4 Planner and report generation
+Agent interpretation never becomes measured evidence merely because it is shown next to it.
+Unreviewed PDF tables remain **Candidate — not trusted structured data**.
 
-The planner is a graph control plane, not a dataflow node. `ControlPlane.planner_chat()` in
-`src/ads/api/service.py` receives only bounded source profiles, intake/schema artifacts,
-page-provenanced document context, the registered component catalog, the saved graph, and recent
-chat history.
+## 4. Default journey, end to end
 
-The planner may:
+### 4.1 Home and data project creation
 
-- explain measured relationships;
-- create bilingual report artifacts (English and Turkish fields in one structured response);
-- recommend runtime configuration and stage directives;
-- add registered components;
-- connect exact typed ports;
-- update allowed settings and node control policy;
-- disable components; and
-- expand up to three independent ML problem branches.
+The Home screen leads with **Understand unfamiliar data** and points to a Data Project. The empty
+project explains the five guided steps before asking for files.
 
-It cannot invent code, component kinds, ports, data types, or setting keys. Chat itself is a
-single response in the user's language; translations are generated only for persisted artifacts.
+Key frontend files:
 
-Planner reports are stored as `StagingReportArtifact` objects and attached to the exact report
-component through `producer_component_id`. The whole workspace, recommendations, and chat history
-are also persisted as an immutable `StagingWorkspace` snapshot.
+- `web/src/pages/Catalog.tsx` — Home metrics and the recommended start action.
+- `web/src/components/Shell.tsx` — navigation; the primary workspace is **Data projects**.
+- `web/src/pages/AutomationWorkspace.tsx` — project/run coordinator and lifecycle owner.
+- `web/src/components/automationWorkspaceState.ts` — pure lifecycle selection:
+  `empty → source → understanding → proposal → guided_pipeline`; `workflow` is reached only when
+  Advanced editing is explicitly requested.
 
-### 2.5 Graph authoring and validation
+`AutomationWorkspace.tsx` uploads all selected files into one source group, attaches that source to
+the reusable automation record, resolves the latest execution, polls active run status, and keeps
+the URL bound to the exact automation/run pair.
 
-The graph vocabulary lives in `src/ads/automation/catalog.py`. Each catalog definition has one
-responsibility, named typed inputs/outputs, closed defaults, an evidence layer, and repeatability
-rules. The default template is assembled in `src/ads/staging/blueprint.py`.
+### 4.2 Upload and source registration
 
-Validation occurs on every host-side graph mutation:
+`ControlPlane.upload()` in `src/ads/api/service.py` sanitizes the filename, accepts only registered
+extensions, writes bytes under a generated upload group, prevents duplicate names, and returns a
+stable `upload:<token>` source id. Files selected together remain one source so cross-table
+measurements are possible.
 
-- component ids must be unique;
-- components must come from the registered catalog;
-- catalog ports and capability metadata cannot be spoofed;
-- connections must reference existing exact endpoints;
-- source and target data types must match;
-- single-input ports cannot receive multiple edges;
-- the graph must be acyclic; and
-- every enabled required input must be connected before compilation.
+Current upload support:
 
-Each node also has an execution control:
+- CSV, TSV, and TXT through the delimited-text loader;
+- XLSX, XLSM, and XLS through the workbook loader;
+- Parquet and PQ;
+- PDF.
 
-- `execution`: continue automatically or pause after artifacts are produced;
-- `gate_handler`: planner or human handles ordinary escalation;
-- `max_retries`: optional per-node retry budget.
+Important limitation: TXT is currently treated as a delimited table. The intended product needs a
+content-aware TXT router that distinguishes a narrative report from structured/semi-structured
+data. Until that classifier exists, a narrative TXT can be misrouted as structured input.
 
-Deterministic hard gates remain active regardless of these preferences.
+### 4.3 Intake is the first visible execution phase
 
-### 2.6 Compilation and execution
+`ControlPlane.source_profile()` performs deterministic discovery before a run begins:
 
-`src/ads/automation/compiler.py` converts the persisted visual blueprint into an immutable
-`AutomationExecutionPlan`. Compilation validates the graph, computes deterministic topological
-order, binds registered catalog capabilities to executor/stage seams, freezes node controls, and
-hashes the semantic blueprint.
+1. `src/ads/intake/loaders.py` reads structured files. It sniffs CSV encoding/delimiters, handles
+   workbook sheets independently, infers suspicious Excel header rows, normalizes duplicate or
+   blank columns, and records every repair as a `LoadIssue`.
+2. `src/ads/intake/profiler.py` creates DataCards with types, semantic types, sensitivity,
+   missingness, uniqueness, target suitability, and aggregate quality information.
+3. `src/ads/intake/keys.py` measures candidate primary keys.
+4. `src/ads/discovery/measurements.py` measures cross-table key overlap, orphan rate, parent
+   coverage, name affinity, and cardinality.
+5. `src/ads/documents/pdf.py` reads PDF metadata/text-page availability for the initial safe profile.
+6. `service.py` writes an exact `source_files` routing record: structured, documents, or unsupported.
 
-The execution-plan artifact is the authority for a run. React Flow state is never executed
-directly.
+The browser immediately renders:
 
-The existing ML runtime is defined by:
+```text
+Uploaded files → Intake
+                    ├─ Structured data
+                    ├─ Documents
+                    └─ Needs review
+```
 
-- `src/ads/pipeline/workflow.py` — complete stage specification and routing.
-- `src/ads/orchestration/spec.py` — validated workflow/stage/edge definitions.
-- `src/ads/orchestration/runner.py` — stage execution, gate evaluation, retry routing,
-  checkpointing, resume, and pause-after behavior.
-- `src/ads/orchestration/state.py` — run state, attempts, blackboard bindings, and artifacts.
-- `src/ads/pipeline/agent_stages.py` — problem discovery, validation planning, and other
-  local-agent stage adapters.
+Every file name remains attached to its branch. `web/src/components/stagingRoutingState.ts` derives
+truthful branch/substep states from persisted events; it never invents percentages. The running
+structured steps are Inspect, Profile, Find relationships, Explain. Document steps are Inspect,
+Extract, Verify, Explain.
 
-The default ML template expands into problem discovery, validation, EDA, leakage audit, feature
-engineering, splitting, training, evaluation, and final report components. When the planner adds
-multiple problem branches, each branch launches as a separate child run with a fresh agent set.
-Child artifacts are projected back onto the corresponding branch nodes on the parent graph.
+### 4.4 Staging creates a real resumable run
 
-### 2.7 Modeling path
+Clicking **Run Intake** calls `POST /api/runs/staged`, implemented by
+`ControlPlane.stage_run()` in `src/ads/api/service.py`. This is not a preview:
 
-Important modules after schema discovery:
+- structured sources execute the established workflow through `schema_discovery` and stop;
+- document extraction may run alongside structured work;
+- PDF-only sources execute document understanding and synthesis without pretending that a tabular
+  ML pipeline exists;
+- all events, attempts, artifacts, errors, and progress are persisted under the same run id;
+- the run later resumes after schema discovery rather than repeating intake.
 
-- `src/ads/agents/problem_discovery.py` and `src/ads/contracts/problem.py` — supported task,
-  target, metric, exclusions, and problem confirmation.
-- `src/ads/agents/validation_strategy.py`, `src/ads/discovery/validation_signals.py`, and
-  `src/ads/contracts/validation.py` — split strategy proposal plus measured support/trial.
-- `src/ads/eda/profiler.py` and `src/ads/agents/eda_investigator.py` — deterministic EDA plus
-  bounded agent investigation.
-- `src/ads/discovery/leakage.py`, `src/ads/agents/leakage_investigator.py`, and
-  `src/ads/contracts/leakage.py` — deterministic and adversarial leakage checks.
-- `src/ads/training/runner.py` — candidate execution.
-- `src/ads/training/frame_contracts.py` — train/validation/holdout frame invariants.
-- `src/ads/training/persistence.py` — model artifact persistence.
-- `src/ads/reporting/evaluation.py` and `src/ads/reporting/markdown.py` — evaluation and final
-  report production.
+The optional reuse checkbox controls `_staged_cache`. Reuse is off by default. Cache identity is a
+source fingerprint based on relative path, byte size, and nanosecond modification time. This avoids
+re-reading large unchanged sources but does not provide the strength of a full content hash; equal
+size and equal mtime after a mutation is the documented edge case.
 
-### 2.8 Safety, isolation, and persistence
+### 4.5 Structured understanding and schema discovery
 
-`src/ads/gates/` owns deterministic policies and quality/safety verdicts. Agents can propose or
-retry; they cannot weaken hard safety rules.
+The intake stage in `src/ads/pipeline/stages.py` materializes DataCards and the blackboard objects
+needed by later deterministic executors. Schema discovery is agent-backed but evidence-constrained:
 
-`src/ads/sandbox/` isolates agent-authored analysis and feature code from the API process. Data
-and artifact directories are explicit capabilities rather than ambient filesystem access.
+- `src/ads/agents/schema_discovery.py` proposes the join/integration interpretation from DataCards.
+- `src/ads/agents/schema_investigator.py` may request bounded follow-up investigation.
+- `src/ads/integration/executor.py` executes join trials against host-side frames and measures
+  fan-out, row loss, and grain behavior.
+- `src/ads/contracts/integration.py` keeps proposed judgment separate from measured trials and the
+  accepted `IntegrationPlan`.
 
-`src/ads/store/artifacts.py` is the content-addressed SQLite-backed artifact store. Semantic
-payloads are immutable; `created_at` is excluded from the content hash, so identical reruns are
-idempotent. Large binary side-payloads live in per-artifact blob directories. Run snapshots under
-the run-state directory make progress and audit history inspectable after restart.
+The schema visualization no longer renders a dense all-columns ER diagram by default. The staging
+canvas shows high-level routing and evidence counts; measured relationships, cardinality, coverage,
+and orphan risk open in the inspector. This is implemented by
+`web/src/components/UnderstandingWorkspace.tsx`.
 
-## 3. Frontend architecture
+### 4.6 Document understanding
 
-`web/src/pages/AutomationWorkspace.tsx` is the primary page. It coordinates upload, source/run
-selection, staging, compile/start, document execution, branch launches, polling, and cache choice.
+`src/ads/documents/extraction.py` is the normalized extractor boundary. All engines return the same
+`DocumentExtraction` contract, including engine/version, OCR mode, duration, page-provenanced
+markdown, candidate tables, candidate figures, per-file status, warnings, and partial failure.
 
-`web/src/components/PipelineBuilder.tsx` renders the registered component library, ELK-laid-out
-React Flow canvas, typed handles, node badges, component settings, execution controls, and
-artifact inspector. The right-side panel switches between selected-node details and
-`PlannerPanel.tsx`, keeping configuration and conversation in the graph workspace.
+Supported adapters:
 
-Artifacts are displayed on their producer nodes. Clicking an artifact requests a safe preview;
-document previews show page-provenanced candidate metadata, and staging report previews show the
-human-readable report and verification questions.
+- Docling — main in-process structure/table/OCR path;
+- Unstructured — optional in-process alternative;
+- Marker — isolated worker environment;
+- MinerU — isolated worker environment;
+- text layer — built-in fallback based on PDF text.
 
-## 4. Deployment topology
+`scripts/install_document_engines.ps1` installs optional document engines. Marker and MinerU use
+separate environments under `.document-envs` to avoid dependency conflicts with the API runtime.
 
-FastAPI serves both `/api/*` and the built React bundle from `src/ads/api/static`. Uvicorn listens
-on `127.0.0.1:8077`; the public hostname is exposed through the existing Cloudflare tunnel.
-`scripts/start_public.ps1` launches the server detached and writes durable stdout/stderr logs to
-`data/logs/`, preventing the previous Bad Gateway failure caused by task-attached server lifetime.
+`ControlPlane._execute_document_understanding()` selects the enabled document component settings,
+emits document/file start/ready/failure events, persists normalized extraction output, records
+duration and warnings, and refreshes the `StagingWorkspace`. A single failed file is retained as a
+failed per-file outcome instead of silently disappearing.
 
-Authentication is installed by `src/ads/api/auth.py` from environment configuration. Secrets are
-not stored in this report or committed source.
+Candidate IDs are normalized to the contract-safe pattern in
+`src/ads/documents/extraction.py::_candidate_id()`. This prevents spaces and parentheses in source
+filenames from causing the previous Pydantic failure.
 
-## 5. Current boundaries and next engineering risks
+### 4.7 Review and promotion of PDF tables
 
-- Graph compilation is fully typed, but runtime capability adapters still project registered
-  nodes onto the established pipeline/document/report executors. Adding a new catalog capability
-  requires a host-owned executor adapter; the planner cannot create one.
-- Candidate tables/figures extracted from PDFs remain evidence until reviewed. Chart-to-training-
-  row conversion needs a separate deterministic extraction/reconciliation capability and quality
-  contract.
-- Branch runs are intentionally isolated for correctness. Cross-branch resource scheduling and
-  comparison reports are the next scaling concern.
-- The web bundle should later split React Flow/ELK into lazy chunks; this is a performance issue,
-  not an execution-integrity issue.
-- Local-model latency remains significant. Content-addressed artifacts and optional fingerprint
-  caching reduce repeated work without changing evidence semantics.
+Extraction does not authorize training use.
 
-## 6. Key invariants for future changes
+1. `ControlPlane.review_document_tables()` calls
+   `src/ads/documents/promotion.py:create_document_table_review()`.
+2. The resulting `DocumentTableReview` records exact candidate id, source file, page, columns,
+   accepted/rejected decision, reviewer, and timestamp.
+3. `ControlPlane.promote_document_tables()` verifies the review belongs to the same run.
+4. `promote_reviewed_document_tables()` reloads the exact extraction, rejects changed provenance or
+   malformed/ragged tables, and persists accepted candidates as immutable Parquet-backed
+   `TableAsset` artifacts.
 
-1. Never send raw source rows or sensitive passages to an agent.
-2. Never represent agent interpretation as measured evidence.
-3. Never execute browser graph state directly; compile the persisted validated blueprint.
-4. Never allow a planner/human preference to weaken a deterministic hard gate.
-5. Never use unreviewed PDF candidates as training data.
-6. Preserve content-addressed, immutable artifacts and exact producer lineage.
-7. Keep runtime agents local unless the product requirements explicitly change.
+Current boundary: promoted `TableAsset` artifacts exist and are provenance-safe, but the guided UI
+does not yet provide the complete candidate review/promote interaction or automatically rebuild the
+selected ML input set after promotion.
+
+### 4.8 Cross-source synthesis and Planner proposal
+
+`ControlPlane._generate_staging_analysis()` assembles bounded context from:
+
+- routed source filenames and formats;
+- row-free structured table summaries;
+- measured relationships;
+- document extraction excerpts limited by a character budget and carrying file/page provenance.
+
+One structured LLM call creates two or three bilingual report artifacts and a runtime
+recommendation. The structured response may recommend `create_pipeline`, `defer_pipeline`, or
+`no_pipeline`; the prompt is not biased toward creating or denying ML. A PDF-only TOEFL practice
+source, for example, may truthfully end with understanding artifacts and no justified ML pipeline.
+
+`ControlPlane._persist_staging_workspace()` is the durable merge boundary. It stores:
+
+- exact intake/schema/document artifact ids;
+- measured relationships plus attached interpretation;
+- `StagingReportArtifact` ids attached to producer components;
+- bilingual English/Turkish report fields;
+- Planner chat history;
+- the current blueprint/layout;
+- component output readiness;
+- `RuntimeConfigurationPlan`, rationale, checkpoints, directives, and retry budgets;
+- planner model and failure state.
+
+Each update writes a new immutable `StagingWorkspace` artifact. The UI can therefore inspect the
+reports and chat that produced an accepted plan after the run finishes.
+
+### 4.9 Deciding what enters ML
+
+The guided proposal is the trust transition between understanding and modeling:
+
+- supported structured source files are shown under **Enters ML**;
+- PDFs are **Context only** unless an extracted candidate is reviewed and promoted;
+- the base table and grain come from the measured/accepted integration plan;
+- target, task, metric, validation, stage directives, checkpoint stages, automatic stages, and
+  retry budgets are visible before execution;
+- no/deferred recommendations do not expose a primary Run action.
+
+The current role display is derived from deterministic source routing plus document review state.
+A first-class durable per-source role contract (`ml_input`, `context_only`, `needs_review`,
+`excluded`) is still needed so later Planner revisions and promotions cannot diverge from the UI.
+
+### 4.10 Accepting and materializing the base pipeline
+
+`POST /api/runs/{run_id}/staging/plan/accept` calls `ControlPlane.accept_staging_plan()`.
+Acceptance is an explicit human decision: it validates the saved blueprint, marks the exact proposal
+accepted, persists a new staging snapshot, compiles an immutable execution plan, and synchronizes
+the Automation record.
+
+The default UI then renders `web/src/components/GuidedPipeline.tsx`, not the free-form editor. It
+shows:
+
+- Data understood;
+- Prepare ML data;
+- Define the objective;
+- Analyze and validate;
+- Build and split;
+- Train and evaluate;
+- Review results.
+
+These groups are intended to be projections of the actual established workflow nodes and their
+statuses. Artifact chips are derived from attempt artifact ids. Clicking a group loads the
+stage-detail API; clicking an artifact loads a safe preview.
+
+Current defect: the Analyze and validate group still names `exploratory_analysis` and
+`lineage_audit`, while the established workflow exposes `eda` and `leakage_audit`. Until that map
+and its regression test are corrected, those two stages can be omitted from the group's live
+status, inspection, and artifact count. The underlying workflow still executes them.
+
+### 4.11 Established base ML pipeline
+
+`src/ads/pipeline/workflow.py` defines the production agentic specification. Its stages are:
+
+| Stage | Important implementation |
+|---|---|
+| intake | `pipeline/stages.py`, `intake/*` |
+| schema discovery | `agents/schema_discovery.py`, `pipeline/agent_stages.py` |
+| integration | `integration/executor.py`, `pipeline/stages.py` |
+| problem discovery | `agents/problem_discovery.py`, `contracts/problem.py` |
+| validation strategy | `agents/validation_strategy.py`, `discovery/validation_signals.py` |
+| EDA | `eda/profiler.py`, `agents/eda_investigator.py` |
+| leakage audit | `discovery/leakage.py`, `agents/leakage_investigator.py` |
+| feature pipeline | `pipeline/stages.py`, `agents/feature_investigator.py` |
+| splitting | `splitting/executor.py`, `contracts/dataflow.py` |
+| training | `training/runner.py`, `training/frame_contracts.py` |
+| evaluation | `reporting/evaluation.py` |
+| report | `reporting/markdown.py` |
+
+`src/ads/orchestration/runner.py` is an explicit state machine:
+
+```text
+stage → persist artifacts → critique → deterministic gate
+      → proceed | retry with correction | escalate to human | abort
+```
+
+`src/ads/orchestration/state.py` pins exact inputs to each attempt. A retry inherits the rejected
+attempt's input bindings so the correction is the only intended change. `src/ads/gates/` applies
+hard constraints before risk, measured signals, and autonomy preferences.
+
+`ControlPlane.start_staged_run()` applies the accepted plan, merges graph checkpoint/retry policy,
+loads stage directives, and resumes the same run after schema discovery. `fully_auto` removes
+routine human checkpoints only after plan acceptance; hard leakage/privacy/safety gates remain.
+
+### 4.12 Execution controls and failure behavior
+
+The guided page supports:
+
+- **Run / Continue** — `POST /runs/{id}/start`, same run id and artifact lineage;
+- **Pause after current stage** — `POST /runs/{id}/pause`; a cooperative request lets the current
+  stage finish, pauses only after an `auto_proceed` gate boundary, persists artifacts, and resumes
+  from the next stage;
+- **Retry from Intake** — creates a fresh auditable staging run when the previous execution failed;
+- **Inspect** — loads current progress, exact attempts, stage evidence, and artifacts;
+- **Review results** — opens execution history and catalogs.
+
+Staging/document/Planner failures are promoted to run-level `failed` state, persisted with their
+error, and shown as a visible blocking banner. The pipeline does not silently claim that a proposal
+exists when synthesis failed.
+
+Current control gap: there is no immediate hard-cancel of a running Python/LLM call. Cooperative
+pause takes effect at the next successful stage boundary. A separate cancellable worker/process
+contract is required for safe hard stop.
+
+## 5. Planner, agent, and model architecture
+
+### 5.1 Structured LLM boundary
+
+All runtime model adapters implement `StructuredLLM.generate_structured()`. Pydantic schemas define
+the only accepted output shape. Agents cannot add arbitrary fields or executable capabilities.
+
+- `src/ads/llm/client.py` — Ollama structured-output client and model profiles.
+- `src/ads/llm/claude_cli.py` — subscription-authenticated CLI adapter. API tokens and alternate
+  provider variables are removed from the child environment; tools and setting sources are empty.
+- `src/ads/agents/base.py` and `src/ads/agents/runtime.py` — contract validation, repair, audit, and
+  bounded tool execution.
+
+### 5.2 Planner authority
+
+The Planner is a control-plane agent, not a fake data dependency. It may explain evidence, generate
+reports, recommend configuration, choose registered components/settings, and propose up to three
+problem branches. It may not invent component types, ports, contracts, executor ids, or code.
+
+The current automatic synthesis uses a compact contract for latency. Interactive Planner chat in
+`ControlPlane.planner_chat()` receives the component catalog and may apply bounded graph operations.
+
+### 5.3 Language behavior
+
+Chat responds naturally in the language of the user/model interaction; it does not run a separate
+translation agent. Persisted user-facing artifacts carry canonical English and Turkish companions
+from the same model call. Identifiers, code, metrics, columns, and configuration keys are never
+translated.
+
+Catalog UI text uses edge-selected translation:
+
+- backend: `src/ads/api/i18n.py`;
+- frontend: `web/src/lib/i18n.ts`;
+- language parameter: added by `web/src/lib/api.ts` to every request.
+
+## 6. Graph architecture: default versus advanced
+
+### 6.1 Default product
+
+The default product is the guided journey described above. It uses a persisted
+`PipelineBlueprint`, but hides graph-authoring complexity until requested. Acceptance materializes
+the recommended continuation directly after staging.
+
+### 6.2 Advanced / Experimental editor
+
+`web/src/components/PipelineBuilder.tsx` uses React Flow and ELK to show the full typed graph.
+Component configuration, ports, review policy, artifact output, Planner, manual layout, branch
+collapse, and auto-layout are available. It is explicitly experimental because not every catalog
+node has a production executor adapter under the graph-native runner.
+
+Host-owned graph vocabulary:
+
+- `src/ads/automation/catalog.py` — registered component definitions, capabilities, evidence
+  layer, resource/latency class, ports, and settings schemas.
+- `src/ads/automation/settings.py` — closed Pydantic setting models.
+- `src/ads/contracts/registry.py` — versioned edge contracts.
+- `src/ads/staging/blueprint.py` — opinionated multimodal default graph.
+- `src/ads/contracts/staging.py` — blueprint, connections, controls, layout, and graph patches.
+
+Graph mutations are validated for registered components/contracts, exact ports, type compatibility,
+single-input cardinality, required inputs, unique ids, and acyclicity.
+
+### 6.3 Compiler and graph-native runner baseline
+
+`src/ads/automation/compiler.py` freezes a validated blueprint into
+`AutomationExecutionPlan`: topological order, exact edge bindings, catalog/executor versions,
+settings, gate policy, scope, output contracts, and pause boundary. UI-only layout and display name
+are excluded from the execution fingerprint.
+
+`src/ads/automation/runner.py` is a restart-safe sequential DAG runner. It persists `NodeAttempt`
+artifacts, resolves exact released outputs, validates executor return contracts, supports
+pause/review/failure, and reuses successful attempts by semantic execution key.
+
+Current production truth: the guided **Default ML pipeline** still delegates to the established
+gated runner. The graph-native runner is a tested baseline for future component-level execution;
+many catalog capabilities still lack registered production executors. The UI must not claim n8n
+parity or arbitrary graph execution yet.
+
+## 7. Persistence, caching, and lineage
+
+### 7.1 Artifact store
+
+`src/ads/store/artifacts.py` provides a SQLite-indexed, content-addressed immutable artifact store.
+Semantic payload determines artifact id; creation timestamps do not. Large binary payloads such as
+Parquet live in per-artifact blob directories.
+
+### 7.2 Run snapshots
+
+`ControlPlane._persist_runtime()` writes atomic JSON snapshots under `data/run-state`. Active
+threads also retain runtime state in memory. A snapshot that claims to be active without a matching
+in-process worker is reconciled to `interrupted` rather than displayed as running forever.
+
+### 7.3 Automation records
+
+`src/ads/automation/store.py` persists reusable Data Projects/Automations, optimistic revisions,
+source binding, semantic blueprint, UI-only layout, latest workspace id, and execution references.
+Runs and editor state are separate: viewing an old execution does not rewrite the saved project.
+
+## 8. Frontend module map
+
+| Module | Responsibility |
+|---|---|
+| `web/src/App.tsx` | routes |
+| `web/src/components/Shell.tsx` | navigation, account shell, global language picker |
+| `web/src/pages/Catalog.tsx` | guided Home plus datasets/models/reports catalogs |
+| `web/src/pages/AutomationWorkspace.tsx` | upload, lifecycle, polling, acceptance, execution controls |
+| `web/src/components/UnderstandingWorkspace.tsx` | routed staging canvas, inspectors, reports, relationship evidence, proposal |
+| `web/src/components/stagingRoutingState.ts` | event-to-visible-status reducer |
+| `web/src/components/GuidedPipeline.tsx` | accepted-plan summary and live base-pipeline continuation |
+| `web/src/components/PipelineBuilder.tsx` | Advanced / Experimental graph editor |
+| `web/src/components/PlannerPanel.tsx` | interactive Planner conversation |
+| `web/src/lib/api.ts` | typed API client and language propagation |
+| `web/src/lib/status.ts` | one run/stage status vocabulary |
+
+Both staging and guided canvases implement background drag-to-pan without stealing clicks from
+buttons, fields, links, inspectors, or dialogs.
+
+## 9. Deployment and authentication
+
+- `scripts/serve_public.py` loads `.auth.env` and `.runtime.env`, refuses to start without a
+  credential, creates the FastAPI application, and binds only to loopback.
+- `scripts/start_public.ps1` starts the server hidden, verifies the listener, and writes durable
+  logs under `data/logs`.
+- `src/ads/api/auth.py` provides password hashing, signed secure sessions, and in-process rate
+  limiting.
+- `deploy/cloudflared-config.yml` and `deploy/README.md` document the tunnel.
+- The compiled React bundle under `src/ads/api/static` is committed and served by FastAPI.
+
+Authentication protects the private test deployment, not multi-tenant production. There is one
+account, no per-user authorization model, no durable login audit, and no independent Cloudflare
+Access policy.
+
+## 10. Current gaps and next engineering priorities
+
+1. Add content-aware routing for TXT and other ambiguous semi-structured sources.
+2. Add first-class durable source-use decisions and make Planner revisions/promotion update them.
+3. Complete the guided PDF candidate review/promote UI and reconnect accepted TableAssets into the
+   ML input proposal.
+4. Add chart-data extraction as a separate reviewed capability; a figure candidate is not a table.
+5. Move all catalog components behind registered graph-native executors before enabling broad
+   customization or claiming n8n-level execution.
+6. Fork multi-problem branches from the exact shared integrated `TableAsset`, not repeated intake.
+7. Add a cancellable process/worker protocol for immediate hard stop of long model/extractor work.
+8. Invalidate descendant node attempts after an accepted semantic graph edit.
+9. Lazy-load React Flow/ELK to reduce the initial JavaScript bundle.
+10. Replace single-account tunnel authentication before real multi-user deployment.
+11. Correct the guided-pipeline EDA/leakage stage-id map and add a regression test for every
+    established workflow stage.
+
+## 11. Verification baseline
+
+At the 2026-08-26 audit:
+
+- the full Python suite passed;
+- Ruff passed for `src` and `tests`;
+- all 17 frontend tests passed;
+- TypeScript compilation and the Vite production build passed;
+- the deployed loopback health endpoint returned 200;
+- an unauthenticated API request returned 401;
+- deployed code was commit `8862fa5` on `codex/graph-automation` in `agentic-ds-dev`.
+
+## 12. Non-negotiable invariants
+
+1. Do not send raw structured rows to agents.
+2. Keep measured/extracted evidence visually and contractually distinct from interpretation.
+3. Do not let unreviewed PDF tables or figures become training data.
+4. Do not execute browser graph state; persist, validate, and compile it first.
+5. Do not let Planner/human convenience weaken a deterministic hard gate.
+6. Preserve immutable artifacts, exact producer lineage, and retry input binding.
+7. Surface partial failures and unsupported files; never let a source silently disappear.
+8. Keep Advanced customization honest about executor coverage.
+9. Generate bilingual artifact companions in one model response; do not add a translation agent.
+10. State clearly whether a deployment uses local Ollama or remote Claude CLI inference.

@@ -28,11 +28,12 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ads.contracts.agents import AgentAudit
-from ads.contracts.automation import AutomationExecutionPlan
+from ads.contracts.automation import AutomationExecutionPlan, NodeAttempt
 from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard
-from ads.contracts.documents import DocumentExtraction
+from ads.contracts.dataflow import SplitManifest, TableAsset
+from ads.contracts.documents import DocumentExtraction, DocumentTableReview
 from ads.contracts.eda import EDAReport
 from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.exploration import ExploratoryAnalysis
@@ -44,7 +45,7 @@ from ads.contracts.leakage import LeakageReport
 from ads.contracts.model_experiment import ModelExperiment
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
 from ads.contracts.reporting import EvaluationReport
-from ads.contracts.staging import StagingReportArtifact, StagingWorkspace
+from ads.contracts.staging import GraphPatch, StagingReportArtifact, StagingWorkspace
 from ads.contracts.training import TrainingReport
 from ads.contracts.validation import ValidationStrategy, ValidationTrial
 
@@ -92,7 +93,12 @@ _TYPE_REGISTRY: dict[ArtifactType, type[Artifact]] = {
     ArtifactType.STAGING_WORKSPACE: StagingWorkspace,
     ArtifactType.STAGING_REPORT: StagingReportArtifact,
     ArtifactType.DOCUMENT_EXTRACTION: DocumentExtraction,
+    ArtifactType.DOCUMENT_TABLE_REVIEW: DocumentTableReview,
     ArtifactType.AUTOMATION_EXECUTION_PLAN: AutomationExecutionPlan,
+    ArtifactType.GRAPH_PATCH: GraphPatch,
+    ArtifactType.TABLE_ASSET: TableAsset,
+    ArtifactType.SPLIT_MANIFEST: SplitManifest,
+    ArtifactType.NODE_ATTEMPT: NodeAttempt,
     ArtifactType.EXPLORATORY_ANALYSIS: ExploratoryAnalysis,
     # These five were written by the pipeline but absent here, so `load()`
     # raised "No model registered" for artifacts that existed on disk. The API

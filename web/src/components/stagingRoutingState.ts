@@ -1,0 +1,213 @@
+import type { SourceProfile, StagingWorkspace } from "../lib/api";
+
+export type RouteKind = "structured" | "documents" | "unsupported";
+export type ProgressStatus = "complete" | "running" | "pending" | "failed";
+
+export interface RoutedSourceFile {
+  name: string;
+  format: string;
+  route: RouteKind;
+  reason?: string;
+  tableNames: string[];
+}
+
+export interface RoutingSubstep {
+  id: string;
+  label: string;
+  status: ProgressStatus;
+  detail?: string;
+}
+
+export interface DocumentFileProgress {
+  sourceFile: string;
+  status: "queued" | "running" | "ready" | "failed";
+  pageCount?: number;
+  tableCandidates?: number;
+  figureCandidates?: number;
+  durationSeconds?: number;
+  warnings: string[];
+}
+
+export interface StagingRoutingState {
+  files: RoutedSourceFile[];
+  discovery: ProgressStatus;
+  structured: RoutingSubstep[];
+  documents: RoutingSubstep[];
+  synthesis: ProgressStatus;
+  proposal: ProgressStatus;
+  engine: string;
+  engineVersion?: string | null;
+  ocrMode: string;
+  documentFiles: DocumentFileProgress[];
+  error?: string;
+}
+
+export interface StagingProgressSnapshot {
+  status?: string;
+  current_stage?: string | null;
+  error?: string | null;
+  events?: Array<Record<string, unknown>>;
+  attempts?: Array<Record<string, unknown>>;
+}
+
+export function routedFiles(profile: SourceProfile): RoutedSourceFile[] {
+  if (profile.source_files?.length) {
+    return profile.source_files.map((file) => ({
+      name: file.name,
+      format: file.format,
+      route: file.route,
+      reason: file.reason,
+      tableNames: file.table_names ?? [],
+    }));
+  }
+  const structured = profile.tables.map((table) => ({
+    name: table.source_file ?? table.name,
+    format: table.format,
+    route: "structured" as const,
+    tableNames: [table.name],
+  }));
+  const documents = (profile.documents ?? []).map((document) => ({
+    name: document.name,
+    format: document.format,
+    route: "documents" as const,
+    tableNames: [],
+  }));
+  return uniqueFiles([...structured, ...documents]);
+}
+
+function uniqueFiles(files: RoutedSourceFile[]): RoutedSourceFile[] {
+  const byRouteAndName = new Map<string, RoutedSourceFile>();
+  for (const file of files) {
+    const key = `${file.route}:${file.name}`;
+    const previous = byRouteAndName.get(key);
+    byRouteAndName.set(key, previous ? {
+      ...previous,
+      tableNames: [...new Set([...previous.tableNames, ...file.tableNames])],
+    } : file);
+  }
+  return [...byRouteAndName.values()];
+}
+
+function statusAfter(done: boolean, running: boolean, failed = false): ProgressStatus {
+  if (failed) return "failed";
+  if (done) return "complete";
+  return running ? "running" : "pending";
+}
+
+export function buildStagingRoutingState(
+  profile: SourceProfile,
+  progress: StagingProgressSnapshot | null,
+  workspace: StagingWorkspace | null,
+): StagingRoutingState {
+  const files = routedFiles(profile);
+  const events = progress?.events ?? [];
+  const eventNames = new Set(events.map((event) => String(event.event ?? "")));
+  const gateStages = new Set(
+    events
+      .filter((event) => event.event === "gate_decided")
+      .map((event) => String(event.stage ?? "")),
+  );
+  const discoveryReady = eventNames.has("source_discovery_ready");
+  const intakeReady = gateStages.has("intake");
+  const relationshipsReady = gateStages.has("schema_discovery");
+  const documentReady = eventNames.has("document_understanding_ready");
+  const documentFailed = eventNames.has("document_understanding_failed");
+  const plannerFailed = Boolean(workspace?.planner_error && !workspace.recommended_plan);
+  const runFailed = plannerFailed
+    || ["failed", "interrupted"].includes(String(progress?.status ?? ""));
+  const analysisStarted = eventNames.has("staging_analysis_started");
+  const analysisReady = Boolean(workspace?.recommended_plan) && (
+    eventNames.has("staging_analysis_ready") || progress?.status === "staged"
+  );
+  const currentStage = String(progress?.current_stage ?? "");
+  const latestExtraction = workspace?.document_extractions?.at(-1);
+  const startEvent = [...events].reverse().find((event) => event.event === "document_understanding_started");
+  const engine = String(latestExtraction?.engine ?? startEvent?.engine ?? "docling");
+  const ocrMode = String(latestExtraction?.ocr_mode ?? startEvent?.ocr_mode ?? "auto");
+
+  const structured = files.some((file) => file.route === "structured") ? [
+    { id: "inspect", label: "Inspect", status: statusAfter(discoveryReady, !discoveryReady) },
+    { id: "profile", label: "Profile", status: statusAfter(intakeReady, currentStage === "intake") },
+    { id: "relationships", label: "Find relationships", status: statusAfter(relationshipsReady, currentStage === "schema_discovery") },
+    { id: "explain", label: "Explain", status: statusAfter(analysisReady, analysisStarted && relationshipsReady && !analysisReady) },
+  ] satisfies RoutingSubstep[] : [];
+
+  const documents = files.some((file) => file.route === "documents") ? [
+    { id: "inspect", label: "Inspect", status: statusAfter(discoveryReady, !discoveryReady) },
+    {
+      id: "extract",
+      label: "Extract",
+      status: statusAfter(documentReady, eventNames.has("document_understanding_started") && !documentReady, documentFailed),
+      detail: eventNames.has("document_understanding_started") || documentReady || documentFailed
+        ? `${engine} · OCR ${ocrMode}`
+        : undefined,
+    },
+    { id: "verify", label: "Verify", status: statusAfter(documentReady, false, documentFailed) },
+    { id: "explain", label: "Explain", status: statusAfter(analysisReady && documentReady, analysisStarted && documentReady && !analysisReady && !runFailed, documentFailed || plannerFailed) },
+  ] satisfies RoutingSubstep[] : [];
+
+  const documentFiles = documentProgress(files, events, latestExtraction?.files ?? []);
+  return {
+    files,
+    discovery: statusAfter(discoveryReady, !discoveryReady),
+    structured,
+    documents,
+    synthesis: statusAfter(
+      analysisReady,
+      analysisStarted && !analysisReady && !runFailed,
+      documentFailed || runFailed,
+    ),
+    proposal: workspace?.recommended_plan ? "complete" : runFailed ? "failed" : "pending",
+    engine,
+    engineVersion: latestExtraction?.engine_version,
+    ocrMode,
+    documentFiles,
+    error: typeof progress?.error === "string" && progress.error
+      ? progress.error
+      : workspace?.planner_error ?? undefined,
+  };
+}
+
+function documentProgress(
+  files: RoutedSourceFile[],
+  events: Array<Record<string, unknown>>,
+  completed: NonNullable<StagingWorkspace["document_extractions"]>[number]["files"],
+): DocumentFileProgress[] {
+  const byName = new Map<string, DocumentFileProgress>();
+  for (const file of files.filter((item) => item.route === "documents")) {
+    byName.set(file.name, { sourceFile: file.name, status: "queued", warnings: [] });
+  }
+  for (const event of events) {
+    const eventName = String(event.event ?? "");
+    if (!eventName.startsWith("document_file_")) continue;
+    const sourceFile = String(event.source_file ?? "");
+    if (!sourceFile) continue;
+    const status = eventName.endsWith("started") ? "running"
+      : eventName.endsWith("ready") ? "ready" : "failed";
+    byName.set(sourceFile, {
+      sourceFile,
+      status,
+      pageCount: numberOrUndefined(event.page_count),
+      tableCandidates: numberOrUndefined(event.table_candidates),
+      figureCandidates: numberOrUndefined(event.figure_candidates),
+      durationSeconds: numberOrUndefined(event.duration_seconds),
+      warnings: Array.isArray(event.warnings) ? event.warnings.map(String) : [],
+    });
+  }
+  for (const file of completed ?? []) {
+    byName.set(file.source_file, {
+      sourceFile: file.source_file,
+      status: file.status,
+      pageCount: file.page_count,
+      tableCandidates: file.table_candidates,
+      figureCandidates: file.figure_candidates,
+      durationSeconds: file.duration_seconds,
+      warnings: file.warnings,
+    });
+  }
+  return [...byName.values()];
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}

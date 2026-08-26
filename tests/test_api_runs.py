@@ -97,16 +97,36 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
     assert "Local briefing" in str(profile["documents"])
     assert "PDF text are omitted" in profile["privacy"]
 
-    staged = plane.stage_run(uploaded["source_id"])
+    blueprint = plane.default_staging_pipeline(uploaded["source_id"])
+    document_node = next(
+        item for item in blueprint["components"] if item["id"] == "understand-documents"
+    )
+    document_node["settings"]["engine"] = "text_layer"
+    document_node["settings"]["ocr"] = "never"
+    plane.llm_factory = lambda: object()
+    staged = plane.stage_run(
+        uploaded["source_id"], {"pipeline_blueprint": blueprint}
+    )
     workspace = plane.staging_workspace(staged["run_id"])
     enabled = {
         item["id"]
         for item in workspace["pipeline_blueprint"]["components"]
         if item["enabled"]
     }
-    assert staged["status"] == "staged"
+    assert staged["status"] == "staging"
     assert "understand-documents" in enabled
     assert "default-ml-pipeline" not in enabled
+    deadline = time.time() + 10
+    while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+    progress = plane.progress(staged["run_id"])
+    assert progress["status"] == "staged"
+    event_names = [event["event"] for event in progress["events"]]
+    assert "source_discovery_ready" in event_names
+    assert "document_understanding_started" in event_names
+    assert {item["name"]: item["route"] for item in profile["source_files"]} == {
+        "brief.pdf": "documents"
+    }
     with pytest.raises(ValueError, match="cannot be continued"):
         plane.start_staged_run(staged["run_id"])
 
