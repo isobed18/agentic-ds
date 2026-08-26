@@ -28,9 +28,11 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ads.contracts.agents import AgentAudit
+from ads.contracts.automation import AutomationExecutionPlan
 from ads.contracts.base import Artifact, ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard
+from ads.contracts.documents import DocumentExtraction
 from ads.contracts.eda import EDAReport
 from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.exploration import ExploratoryAnalysis
@@ -42,6 +44,7 @@ from ads.contracts.leakage import LeakageReport
 from ads.contracts.model_experiment import ModelExperiment
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
 from ads.contracts.reporting import EvaluationReport
+from ads.contracts.staging import StagingReportArtifact, StagingWorkspace
 from ads.contracts.training import TrainingReport
 from ads.contracts.validation import ValidationStrategy, ValidationTrial
 
@@ -86,6 +89,10 @@ _TYPE_REGISTRY: dict[ArtifactType, type[Artifact]] = {
     ArtifactType.AGENT_AUDIT: AgentAudit,
     ArtifactType.MEASUREMENT_BUNDLE: MeasurementBundle,
     ArtifactType.COMPREHENSION_BRIEF: ComprehensionBrief,
+    ArtifactType.STAGING_WORKSPACE: StagingWorkspace,
+    ArtifactType.STAGING_REPORT: StagingReportArtifact,
+    ArtifactType.DOCUMENT_EXTRACTION: DocumentExtraction,
+    ArtifactType.AUTOMATION_EXECUTION_PLAN: AutomationExecutionPlan,
     ArtifactType.EXPLORATORY_ANALYSIS: ExploratoryAnalysis,
     # These five were written by the pipeline but absent here, so `load()`
     # raised "No model registered" for artifacts that existed on disk. The API
@@ -279,9 +286,7 @@ class ArtifactStore:
                 raise ArtifactNotFoundError(f"No index entry for id={artifact_id}")
             resolved = _TYPE_REGISTRY.get(ArtifactType(row["artifact_type"]))
             if resolved is None:
-                raise ArtifactNotFoundError(
-                    f"No model registered for type={row['artifact_type']}"
-                )
+                raise ArtifactNotFoundError(f"No model registered for type={row['artifact_type']}")
             model = resolved  # type: ignore[assignment]
 
         return model.model_validate(raw)  # type: ignore[union-attr,return-value]
@@ -314,9 +319,7 @@ class ArtifactStore:
         refs = self.list(run_id, artifact_type=artifact_type, name=name)
         return refs[0] if refs else None
 
-    def load_all(
-        self, run_id: str, artifact_type: ArtifactType, model: type[A]
-    ) -> list[A]:
+    def load_all(self, run_id: str, artifact_type: ArtifactType, model: type[A]) -> list[A]:
         """Load every artifact of a type for a run, typed."""
         refs = self.list(run_id, artifact_type=artifact_type)
         return [self.load(ref.artifact_id, model) for ref in refs]

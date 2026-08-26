@@ -81,9 +81,7 @@ class SensitivityEvidence(FrozenModel):
     @model_validator(mode="after")
     def evidence_population_matches_source(self) -> SensitivityEvidence:
         measured = (self.match_count, self.measured_count, self.match_rate)
-        if self.source in {"column_name", "agent"} and any(
-            value is not None for value in measured
-        ):
+        if self.source in {"column_name", "agent"} and any(value is not None for value in measured):
             raise ValueError("name and agent evidence cannot carry row measurements")
         if self.source == "agent" and not self.rationale:
             raise ValueError("agent evidence must say why")

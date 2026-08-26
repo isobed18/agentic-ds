@@ -144,9 +144,7 @@ def test_ds_registry_reuses_row_free_measurements(runtime: ToolRuntime) -> None:
     broker = PermissionBroker(build_tool_registry())
     agent = _agent("column_profile", "correlation", "candidate_keys")
 
-    profile = broker.invoke(
-        agent, "column_profile", runtime, table="customers", column="spend"
-    )
+    profile = broker.invoke(agent, "column_profile", runtime, table="customers", column="spend")
     correlation = broker.invoke(
         agent,
         "correlation",

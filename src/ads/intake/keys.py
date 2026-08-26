@@ -270,9 +270,7 @@ def measure_relationship(
     )
 
 
-def _is_plausible_relationship(
-    rel: RelationshipCandidate, options: KeyDetectionOptions
-) -> bool:
+def _is_plausible_relationship(rel: RelationshipCandidate, options: KeyDetectionOptions) -> bool:
     """Reject numerically-coincidental overlaps.
 
     A candidate must clear the overlap floor *and* show one of two independent

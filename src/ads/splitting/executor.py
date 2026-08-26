@@ -105,9 +105,7 @@ def _cutoff_timestamp(value: str) -> pd.Timestamp:
     return cutoff
 
 
-def _temporal_boundary(
-    dates: pd.Series, strategy: ValidationStrategy
-) -> pd.Timestamp:
+def _temporal_boundary(dates: pd.Series, strategy: ValidationStrategy) -> pd.Timestamp:
     if strategy.holdout_cutoff:
         return _cutoff_timestamp(strategy.holdout_cutoff)
 
@@ -142,9 +140,7 @@ class _SklearnSplitter(Splitter):
                 target = _resolve_target(self.strategy, frame, self.target_column)
                 raw_folds = self.fold_generator.split(frame, frame[target])
             elif kind is SplitStrategy.GROUPED:
-                group = _require_column(
-                    frame, self.strategy.group_column, "group"
-                )
+                group = _require_column(frame, self.strategy.group_column, "group")
                 if frame[group].isna().any():
                     raise SplitError(f"Grouped splitting does not permit nulls in {group!r}.")
                 raw_folds = self.fold_generator.split(frame, groups=frame[group])
@@ -173,9 +169,7 @@ class _TemporalSplitter(Splitter):
         dates = _datetimes(frame, time_column)
         eligible_dates = dates
         if self.strategy.holdout_cutoff:
-            eligible_dates = dates[
-                dates < _cutoff_timestamp(self.strategy.holdout_cutoff)
-            ]
+            eligible_dates = dates[dates < _cutoff_timestamp(self.strategy.holdout_cutoff)]
 
         time_blocks = pd.Index(eligible_dates.drop_duplicates().sort_values())
         try:
@@ -214,26 +208,20 @@ class _GroupedTemporalSplitter(Splitter):
             .groupby("group", sort=False)["date"]
             .max()
         )
-        completion_blocks = pd.Index(
-            eligible_group_times.drop_duplicates().sort_values()
-        )
+        completion_blocks = pd.Index(eligible_group_times.drop_duplicates().sort_values())
         try:
             raw_folds = self.fold_generator.split(completion_blocks)
             for train_blocks, validation_blocks in raw_folds:
                 train_times = completion_blocks.take(train_blocks)
                 validation_times = completion_blocks.take(validation_blocks)
-                train_groups = eligible_group_times.index[
-                    eligible_group_times.isin(train_times)
-                ]
+                train_groups = eligible_group_times.index[eligible_group_times.isin(train_times)]
                 validation_groups = eligible_group_times.index[
                     eligible_group_times.isin(validation_times)
                 ]
                 boundary = pd.Timestamp(train_times.max())
 
                 train_mask = eligible & groups.isin(train_groups)
-                validation_mask = (
-                    eligible & groups.isin(validation_groups) & dates.gt(boundary)
-                )
+                validation_mask = eligible & groups.isin(validation_groups) & dates.gt(boundary)
                 train_index = frame.index[train_mask]
                 validation_index = frame.index[validation_mask]
                 if train_index.empty or validation_index.empty:
@@ -245,9 +233,7 @@ class _GroupedTemporalSplitter(Splitter):
         except ValueError as exc:
             if isinstance(exc, SplitError):
                 raise
-            raise SplitError(
-                f"Could not construct grouped-temporal folds: {exc}"
-            ) from exc
+            raise SplitError(f"Could not construct grouped-temporal folds: {exc}") from exc
 
 
 def _make_splitter(
@@ -337,9 +323,7 @@ def _split_holdout(
             )
         except ValueError as exc:
             raise SplitError(f"Could not construct {kind.value} holdout: {exc}") from exc
-        return _nonempty_split(
-            frame.iloc[train_positions], frame.iloc[holdout_positions], strategy
-        )
+        return _nonempty_split(frame.iloc[train_positions], frame.iloc[holdout_positions], strategy)
 
     if kind is SplitStrategy.GROUPED:
         group_column = _require_column(frame, strategy.group_column, "group")
@@ -356,9 +340,7 @@ def _split_holdout(
             )
         except ValueError as exc:
             raise SplitError(f"Could not construct grouped holdout: {exc}") from exc
-        return _nonempty_split(
-            frame.iloc[train_positions], frame.iloc[holdout_positions], strategy
-        )
+        return _nonempty_split(frame.iloc[train_positions], frame.iloc[holdout_positions], strategy)
 
     time_column = _require_column(frame, strategy.time_column, "time")
     dates = _datetimes(frame, time_column)

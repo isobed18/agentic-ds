@@ -130,16 +130,13 @@ class ValidationStrategyProposal(FrozenModel):
     n_folds: int = Field(default=5, ge=2, le=20)
     test_size: float = Field(default=0.2, gt=0.0, lt=0.9)
 
-    group_column: str | None = Field(
-        default=None, description="Required for grouped strategies."
-    )
-    time_column: str | None = Field(
-        default=None, description="Required for temporal strategies."
-    )
+    group_column: str | None = Field(default=None, description="Required for grouped strategies.")
+    time_column: str | None = Field(default=None, description="Required for temporal strategies.")
     holdout_cutoff: str | None = Field(
         default=None, description="ISO date; rows at or after this go to holdout."
     )
     rationale: str = Field(max_length=800)
+    rationale_tr: str = Field(max_length=800)
 
     @model_validator(mode="after")
     def _require_supporting_columns(self) -> ValidationStrategyProposal:
@@ -180,7 +177,7 @@ class ValidationInvestigationAction(FrozenModel):
 
 def validation_strategy_fingerprint(proposal: ValidationStrategyProposal) -> str:
     """Hash executable split semantics while excluding explanatory prose."""
-    payload = proposal.model_dump(mode="json", exclude={"rationale"})
+    payload = proposal.model_dump(mode="json", exclude={"rationale", "rationale_tr"})
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -229,6 +226,7 @@ class ValidationTrial(Artifact):
             "temporal_order_violation_count": self.temporal_order_violation_count,
         }
 
+
 class ValidationStrategy(Artifact):
     """How the data will be split for honest evaluation."""
 
@@ -239,17 +237,14 @@ class ValidationStrategy(Artifact):
     n_folds: int = Field(default=5, ge=2, le=20)
     test_size: float = Field(default=0.2, gt=0.0, lt=0.9)
 
-    group_column: str | None = Field(
-        default=None, description="Required for grouped strategies."
-    )
-    time_column: str | None = Field(
-        default=None, description="Required for temporal strategies."
-    )
+    group_column: str | None = Field(default=None, description="Required for grouped strategies.")
+    time_column: str | None = Field(default=None, description="Required for temporal strategies.")
     holdout_cutoff: str | None = Field(
         default=None, description="ISO date; rows at or after this go to holdout."
     )
 
     rationale: str = Field(max_length=800)
+    rationale_tr: str = Field(default="", max_length=800)
     detected_signals: ValidationSignals = Field(
         default_factory=lambda: ValidationSignals(
             n_rows=0,
@@ -302,4 +297,5 @@ class ValidationStrategy(Artifact):
             time_column=self.time_column,
             holdout_cutoff=self.holdout_cutoff,
             rationale=self.rationale,
+            rationale_tr=self.rationale_tr,
         )

@@ -107,8 +107,7 @@ class WorkflowSpec:
         return tuple(
             edge.target
             for edge in self.edges
-            if edge.source == stage_id
-            and edge.condition in (condition, EdgeCondition.ALWAYS)
+            if edge.source == stage_id and edge.condition in (condition, EdgeCondition.ALWAYS)
         )
 
     def next_stage(self, stage_id: str, condition: EdgeCondition) -> str | None:
@@ -143,9 +142,7 @@ class WorkflowSpec:
 
         unreachable = known - self._reachable()
         if unreachable:
-            raise ValueError(
-                f"stages unreachable from {self.entry!r}: {sorted(unreachable)}"
-            )
+            raise ValueError(f"stages unreachable from {self.entry!r}: {sorted(unreachable)}")
 
         self._check_inputs_are_produced()
 
@@ -241,8 +238,7 @@ class WorkflowSpec:
                 for s in self.stages
             ],
             "edges": [
-                {"from": e.source, "to": e.target, "when": e.condition.value}
-                for e in self.edges
+                {"from": e.source, "to": e.target, "when": e.condition.value} for e in self.edges
             ],
         }
 

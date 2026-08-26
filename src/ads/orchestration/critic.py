@@ -167,9 +167,7 @@ def critique_stage(
     judgment = rubric.judgment()
     if llm is not None and judgment:
         findings.extend(
-            _assess_judgment(
-                rubric, judgment, computed, llm, profile, artifact_digest, unmet
-            )
+            _assess_judgment(rubric, judgment, computed, llm, profile, artifact_digest, unmet)
         )
 
     return CritiqueResult(

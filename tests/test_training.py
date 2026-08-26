@@ -34,8 +34,8 @@ def _regression_frame(*, predictive: bool) -> pd.DataFrame:
     rng = np.random.default_rng(12345)
     features = rng.normal(size=(500, 6))
     if predictive:
-        target = 4.0 * features[:, 0] - 2.0 * features[:, 1] + rng.normal(
-            scale=0.15, size=len(features)
+        target = (
+            4.0 * features[:, 0] - 2.0 * features[:, 1] + rng.normal(scale=0.15, size=len(features))
         )
     else:
         target = rng.normal(size=len(features))
@@ -76,9 +76,7 @@ def noise_report() -> Iterator[TrainingReport]:
         (TaskType.MULTICLASS_CLASSIFICATION, DummyClassifier),
     ],
 )
-def test_baseline_is_always_present_and_first(
-    task_type: TaskType, baseline_type: type
-) -> None:
+def test_baseline_is_always_present_and_first(task_type: TaskType, baseline_type: type) -> None:
     candidates = default_candidates(task_type)
 
     assert isinstance(candidates[0].estimator_factory(), baseline_type)
@@ -182,9 +180,7 @@ def test_training_rubric_rejects_a_legacy_report_without_fit_scope(
         "holdout_rows_used_for_fit",
         "inner_fold_fit_count",
     }
-    legacy_report = TrainingReport.model_validate(
-        predictive_report.model_dump(exclude=fit_fields)
-    )
+    legacy_report = TrainingReport.model_validate(predictive_report.model_dump(exclude=fit_fields))
     rubric = build_pipeline_rubrics().get("training")
     assert rubric is not None
 

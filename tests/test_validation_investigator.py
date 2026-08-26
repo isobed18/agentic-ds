@@ -65,6 +65,7 @@ def test_agent_trials_an_exact_strategy_before_finishing() -> None:
         "time_column": None,
         "holdout_cutoff": None,
         "rationale": "Keep entities isolated.",
+        "rationale_tr": "Varlıkları ayrık tut.",
     }
 
     audit = investigate_validation_context(
@@ -127,6 +128,7 @@ def test_failed_pydantic_ai_tool_attempt_consumes_ads_budget() -> None:
         "time_column": None,
         "holdout_cutoff": None,
         "rationale": "Keep entities isolated.",
+        "rationale_tr": "Varlıkları ayrık tut.",
     }
 
     audit = investigate_validation_context(

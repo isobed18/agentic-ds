@@ -56,9 +56,7 @@ def _require_unfitted(estimator: Any) -> None:
         # Non-scikit estimators do not participate in check_is_fitted. Reject
         # conventional fitted-state attributes rather than pretending they are safe.
         fitted_attributes = [
-            name
-            for name in vars(estimator)
-            if name.endswith("_") and not name.startswith("__")
+            name for name in vars(estimator) if name.endswith("_") and not name.startswith("__")
         ]
         if fitted_attributes:
             raise SplitError(
@@ -105,9 +103,7 @@ def fit_in_folds(
 
     folds: list[FoldResult] = []
     estimator_ids: set[int] = set()
-    for fold_number, (train_index, validation_index) in enumerate(
-        splitter.iter_folds(outer_train)
-    ):
+    for fold_number, (train_index, validation_index) in enumerate(splitter.iter_folds(outer_train)):
         estimator = estimator_factory()
         if id(estimator) in estimator_ids:
             raise SplitError(

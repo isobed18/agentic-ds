@@ -66,13 +66,16 @@ class Stage(Protocol):
     reach the runtime, decide its own retries, or talk to the gate.
     """
 
-    def __call__(
-        self, state: RunState, correction: list[str] | None = None
-    ) -> StageResult: ...
+    def __call__(self, state: RunState, correction: list[str] | None = None) -> StageResult: ...
 
 
 class RunStatus:
     COMPLETED = "completed"
+    #: Every stage the caller asked for finished and the rest were never
+    #: started. Distinct from COMPLETED because the run is unfinished by
+    #: request, and distinct from AWAITING_HUMAN because nothing is being
+    #: asked -- resuming it needs a decision to continue, not an answer.
+    STAGED = "staged"
     AWAITING_HUMAN = "awaiting_human"
     ABORTED = "aborted"
     FAILED = "failed"
@@ -111,8 +114,16 @@ def run_workflow(
     max_total_steps: int = 100,
     on_event: Callable[[str, dict], None] | None = None,
     start_at: str | None = None,
+    stop_after: str | None = None,
 ) -> RunOutcome:
     """Execute a spec until it completes, escalates, or aborts.
+
+    ``stop_after`` runs the spec up to and including one stage and then stops
+    with ``STAGED``. It exists so the first stages -- loading and profiling the
+    data, and reading its schema -- can run the moment a dataset is chosen,
+    which is what a person needs to see before they can configure anything. The
+    stopped run is a real run with real artifacts, not a preview: continuing it
+    is ``start_at`` on the same state, so nothing is recomputed.
 
     ``max_total_steps`` is a wall against a retry loop that never converges. The
     gate's per-stage budget should catch that first; this is the backstop for a
@@ -194,9 +205,7 @@ def run_workflow(
         # The Orchestrator judges the stage against a rubric the stage does not
         # own. A stage-supplied critique is kept only when no rubric exists —
         # otherwise the judged would also be the judge.
-        attempt.critique = _critique(
-            rubrics, current, result, state, critic_llm
-        ) or result.critique
+        attempt.critique = _critique(rubrics, current, result, state, critic_llm) or result.critique
         attempt.ended_at = datetime.now(UTC)
 
         decision = evaluate_gate(
@@ -246,7 +255,13 @@ def run_workflow(
             current = retry_target
             continue
 
+        completed = current
         current = spec.next_stage(current, _VERDICT_TO_EDGE[decision.verdict])
+        if stop_after is not None and completed == stop_after:
+            # Stop after the gate has spoken, not before: a stage whose gate
+            # would have escalated must escalate here too, or staging would
+            # quietly swallow the one thing a person needed to be asked.
+            return RunOutcome(state.run_id, RunStatus.STAGED, completed, decisions)
 
     return RunOutcome(state.run_id, RunStatus.COMPLETED, None, decisions)
 
@@ -270,7 +285,10 @@ def _critique(
         facts={"signals": result.signals, "run_state": state},
     )
     return critique_stage(
-        rubric, context, llm=llm, artifact_digest=result.digest  # type: ignore[arg-type]
+        rubric,
+        context,
+        llm=llm,
+        artifact_digest=result.digest,  # type: ignore[arg-type]
     )
 
 
@@ -387,9 +405,7 @@ def resume_workflow(
         if start is None:
             return RunOutcome(state.run_id, RunStatus.COMPLETED, None, [])
     else:
-        raise ValueError(
-            f"unknown decision {decision!r}; expected approve, retry, or abort"
-        )
+        raise ValueError(f"unknown decision {decision!r}; expected approve, retry, or abort")
 
     return run_workflow(
         spec,

@@ -5,6 +5,7 @@ never through a shared conversation history. That is the difference between an
 architecture that degrades at stage 8 and one that does not.
 """
 
+from ads.contracts.automation import AutomationExecutionPlan, AutomationPlanNode
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.comprehension import (
     ComprehensionBrief,
@@ -29,6 +30,15 @@ from ads.contracts.datacard import (
     TextScript,
     TextStats,
     ValueCount,
+)
+from ads.contracts.documents import (
+    DocumentEngineId,
+    DocumentExtraction,
+    DocumentExtractionSummary,
+    DocumentPageContent,
+    ExtractedDocument,
+    ExtractedFigureCandidate,
+    ExtractedTableCandidate,
 )
 from ads.contracts.evidence import (
     MeasurementBundle,
@@ -106,6 +116,15 @@ from ads.contracts.problem import (
     ProblemSupport,
     TaskType,
 )
+from ads.contracts.staging import (
+    LocalizedText,
+    RelationshipExplanation,
+    RuntimeConfigurationPlan,
+    StagingMessage,
+    StagingReport,
+    StagingReportArtifact,
+    StagingWorkspace,
+)
 from ads.contracts.validation import (
     IdentifierContainmentSignal,
     RepeatedEntitySignal,
@@ -122,6 +141,8 @@ from ads.contracts.validation import (
 
 __all__ = [
     "AggregationStep",
+    "AutomationExecutionPlan",
+    "AutomationPlanNode",
     "Artifact",
     "ArtifactType",
     "AutonomyProfile",
@@ -132,6 +153,10 @@ __all__ = [
     "DataCard",
     "DatetimeStats",
     "DecisionOption",
+    "DocumentEngineId",
+    "DocumentExtraction",
+    "DocumentExtractionSummary",
+    "DocumentPageContent",
     "DEFAULT_PROFILE",
     "Finding",
     "ExploratoryAnalysis",
@@ -141,6 +166,9 @@ __all__ = [
     "ExploratoryHistogramBin",
     "ExploratorySeriesPoint",
     "ExploratoryTable",
+    "ExtractedDocument",
+    "ExtractedFigureCandidate",
+    "ExtractedTableCandidate",
     "FrozenModel",
     "FeatureSpec",
     "FeatureExperiment",
@@ -165,6 +193,7 @@ __all__ = [
     "LeakageFinding",
     "LeakageKind",
     "LeakageReport",
+    "LocalizedText",
     "leakage_challenge_fingerprint",
     "leakage_finding_fingerprint",
     "LoadIssue",
@@ -184,17 +213,23 @@ __all__ = [
     "ProblemSupport",
     "QualitySignals",
     "RelationshipCandidate",
+    "RelationshipExplanation",
     "RowsPerParentStats",
     "SchemaActionKind",
     "SchemaInvestigationAction",
     "RepeatedEntitySignal",
     "RiskClass",
+    "RuntimeConfigurationPlan",
     "SemanticType",
     "Sensitivity",
     "SensitivityEvidence",
     "SensitivityEvidenceCode",
     "Severity",
     "SplitStrategy",
+    "StagingMessage",
+    "StagingReport",
+    "StagingReportArtifact",
+    "StagingWorkspace",
     "SUPERVISED_TASKS",
     "TaskType",
     "TemporalSpanSignal",

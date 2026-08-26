@@ -257,10 +257,14 @@ def _problem_response() -> dict[str, Any]:
         "candidates": [
             {
                 "title": "Predict annual physician compensation",
+                "title_tr": "Yıllık hekim ücretini tahmin et",
                 "task_type": "regression",
                 "target_column": "annual_comp",
                 "business_rationale": (
                     "Estimate compensation from pre-outcome physician attributes."
+                ),
+                "business_rationale_tr": (
+                    "Sonuç öncesi hekim özelliklerinden ücreti tahmin et."
                 ),
                 "evidence_columns": [
                     "years_experience",
@@ -283,6 +287,7 @@ def _validation_response() -> dict[str, Any]:
         "time_column": "hire_date",
         "holdout_cutoff": "2019-01-01",
         "rationale": "Later hires simulate the future deployment population.",
+        "rationale_tr": "Sonraki işe alımlar gelecekteki dağıtım nüfusunu simüle eder.",
     }
 
 
@@ -328,9 +333,7 @@ def _policy_with_leakage_retry() -> GatePolicy:
         policy,
         stages={
             **policy.stages,
-            "leakage_audit": replace(
-                policy.stage("leakage_audit"), max_attempts=2
-            ),
+            "leakage_audit": replace(policy.stage("leakage_audit"), max_attempts=2),
         },
     )
 
@@ -394,9 +397,7 @@ def test_unavailable_interpretation_model_does_not_block_report(
         failure_type=failure_type,
     )
     spec, registry = build_full_spec(llm)
-    state = _state(
-        tmp_path, sample_dir, f"interpretation-{failure_type.__name__}"
-    )
+    state = _state(tmp_path, sample_dir, f"interpretation-{failure_type.__name__}")
 
     outcome = run_workflow(
         spec,
@@ -415,13 +416,8 @@ def test_unavailable_interpretation_model_does_not_block_report(
     assert len(briefs) == 2
     assert {brief.scope.value for brief in briefs} == {"source", "analysis"}
     assert all(brief.degraded and not brief.items for brief in briefs)
-    assert all(
-        failure_type.__name__ in (brief.degradation_reason or "")
-        for brief in briefs
-    )
-    audits = state.store.load_all(
-        state.run_id, ArtifactType.AGENT_AUDIT, AgentAudit
-    )
+    assert all(failure_type.__name__ in (brief.degradation_reason or "") for brief in briefs)
+    audits = state.store.load_all(state.run_id, ArtifactType.AGENT_AUDIT, AgentAudit)
     by_stage = {audit.stage_id: audit for audit in audits}
     for stage_id in ("source_comprehension", "analysis_comprehension"):
         audit = by_stage[stage_id]
@@ -464,23 +460,15 @@ def test_failing_authored_eda_agent_does_not_block_the_final_report(
     assert outcome.completed, outcome.error
     assert llm.investigation_calls == 5
     state.require(ArtifactType.FINAL_REPORT, FinalReport, name="final_report")
-    audits = state.store.load_all(
-        state.run_id, ArtifactType.AGENT_AUDIT, AgentAudit
-    )
-    investigation = next(
-        audit for audit in audits if audit.stage_id == "eda_investigation"
-    )
+    audits = state.store.load_all(state.run_id, ArtifactType.AGENT_AUDIT, AgentAudit)
+    investigation = next(audit for audit in audits if audit.stage_id == "eda_investigation")
     assert investigation.valid_members == 0
-    assert investigation.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
+    assert investigation.members[0].validation_failures == ["investigation_error:KeyError"]
     problem_investigation = next(
         audit for audit in audits if audit.stage_id == "problem_investigation"
     )
     assert problem_investigation.valid_members == 0
-    assert problem_investigation.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
+    assert problem_investigation.members[0].validation_failures == ["investigation_error:KeyError"]
     validation_investigation = next(
         audit for audit in audits if audit.stage_id == "validation_investigation"
     )
@@ -492,16 +480,10 @@ def test_failing_authored_eda_agent_does_not_block_the_final_report(
         audit for audit in audits if audit.stage_id == "feature_investigation"
     )
     assert feature_investigation.valid_members == 0
-    assert feature_investigation.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
-    model_investigation = next(
-        audit for audit in audits if audit.stage_id == "model_investigation"
-    )
+    assert feature_investigation.members[0].validation_failures == ["investigation_error:KeyError"]
+    model_investigation = next(audit for audit in audits if audit.stage_id == "model_investigation")
     assert model_investigation.valid_members == 0
-    assert model_investigation.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
+    assert model_investigation.members[0].validation_failures == ["investigation_error:KeyError"]
 
 
 def test_malformed_interpretation_output_does_not_block_report(
@@ -563,9 +545,7 @@ def test_invalid_agent_contract_retries_through_orchestrator(
 
     registry.components["pipeline.schema_discovery"] = capture_signals
     selected = tuple(
-        stage
-        for stage in full_spec.stages
-        if stage.id in {"intake", "schema_discovery"}
+        stage for stage in full_spec.stages if stage.id in {"intake", "schema_discovery"}
     )
     spec = linear_spec(
         "agent-contract-retry",
@@ -624,9 +604,7 @@ def test_schema_investigation_can_recover_inside_one_stage_attempt(
     )
     full_spec, registry = build_full_spec(llm)
     selected = tuple(
-        stage
-        for stage in full_spec.stages
-        if stage.id in {"intake", "schema_discovery"}
+        stage for stage in full_spec.stages if stage.id in {"intake", "schema_discovery"}
     )
     spec = linear_spec("schema-loop-recovery", "1", selected)
     state = _state(tmp_path, sample_dir, "schema-loop-recovery")

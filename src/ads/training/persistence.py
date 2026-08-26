@@ -63,9 +63,7 @@ def attach_training_provenance(
 ) -> None:
     """Attach the inputs save_model needs without changing its public signature."""
     pipeline.ads_training_frame_hash_ = hash_training_frame(frame)
-    pipeline.ads_validation_strategy_ = strategy.model_dump(
-        mode="json", exclude={"created_at"}
-    )
+    pipeline.ads_validation_strategy_ = strategy.model_dump(mode="json", exclude={"created_at"})
 
 
 def model_artifact_id(

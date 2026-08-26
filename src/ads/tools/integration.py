@@ -60,9 +60,9 @@ def register_integration_tools(registry: ToolRegistry) -> ToolRegistry:
         ToolDefinition(
             tool_id="trial_integration_plan",
             arguments={
-                'plan': (
-                    'IntegrationPlanProposal object: base_table, base_grain, '
-                    'joins[], aggregations[]'
+                "plan": (
+                    "IntegrationPlanProposal object: base_table, base_grain, "
+                    "joins[], aggregations[]"
                 ),
             },
             tier=PermissionTier.READ_DATA,

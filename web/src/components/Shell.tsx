@@ -14,7 +14,7 @@ import { cx } from "./ui";
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
   { to: "/explore", label: "Your data", icon: DataIcon },
-  { to: "/workflows", label: "Workflows", icon: FlowIcon },
+  { to: "/automation", label: "Automation", icon: FlowIcon },
   { to: "/datasets", label: "Datasets", icon: DataIcon },
   { to: "/experiments", label: "Experiments", icon: FlaskIcon },
   { to: "/models", label: "Models", icon: CubeIcon },
@@ -71,7 +71,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
               }
             >
               <Icon />
-              {!collapsed && <span className="truncate">{label}</span>}
+              {!collapsed && <span className="truncate">{t(label)}</span>}
             </NavLink>
           ))}
         </nav>
@@ -106,7 +106,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
 
 function Breadcrumb({ path }: { path: string }) {
   const label = NAV.find((n) => (n.end ? path === n.to : path.startsWith(n.to)))?.label ?? "Home";
-  return <h1 className="text-[15px] font-semibold text-ink">{label}</h1>;
+  return <h1 className="text-[15px] font-semibold text-ink">{t(label)}</h1>;
 }
 
 function ProfileCard({ collapsed }: { collapsed: boolean }) {

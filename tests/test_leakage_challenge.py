@@ -75,9 +75,7 @@ def _proposal(finding: LeakageFinding) -> LeakageChallengeProposal:
 def _runtime(frame: pd.DataFrame, finding: LeakageFinding) -> ToolRuntime:
     return ToolRuntime(
         frames={"abt": frame},
-        resources={
-            "leakage_findings": {leakage_finding_fingerprint(finding): finding}
-        },
+        resources={"leakage_findings": {leakage_finding_fingerprint(finding): finding}},
     )
 
 
@@ -134,9 +132,7 @@ def test_registered_timestamp_test_supports_review_but_cannot_clear_gate() -> No
     assert payload.data["gate_effect"] == "human_review_required"
     assert payload.data["tested_rows"] == 3
     assert payload.data["recorded_after_prediction_rows"] == 0
-    assert payload.data["challenge_fingerprint"] == leakage_challenge_fingerprint(
-        proposal
-    )
+    assert payload.data["challenge_fingerprint"] == leakage_challenge_fingerprint(proposal)
     challenge_data = dict(payload.data)
     challenge_data.pop("challenge_fingerprint")
     enriched = LeakageReport(
@@ -145,9 +141,7 @@ def test_registered_timestamp_test_supports_review_but_cannot_clear_gate() -> No
         findings=[finding],
         challenges=[LeakageChallenge.model_validate(challenge_data)],
     )
-    assert enriched.to_quality_signals().leakage_challenge_review_columns == [
-        "leaky_total"
-    ]
+    assert enriched.to_quality_signals().leakage_challenge_review_columns == ["leaky_total"]
 
 
 def test_incomplete_timestamp_coverage_is_indeterminate() -> None:
@@ -313,6 +307,4 @@ def test_model_failure_preserves_the_deterministic_floor() -> None:
 
     assert result.challenge is None
     assert result.audit.valid_members == 0
-    assert result.audit.members[0].validation_failures == [
-        "investigation_error:KeyError"
-    ]
+    assert result.audit.members[0].validation_failures == ["investigation_error:KeyError"]

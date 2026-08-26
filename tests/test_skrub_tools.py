@@ -11,9 +11,7 @@ def test_skrub_helper_fits_only_training_and_does_not_mutate_inputs() -> None:
         {
             "__ads_experiment_row_id": ["t1", "t2", "t3", "t4"],
             "dirty_city": ["Istanbul", "istanbul", "Ankara", "Izmir"],
-            "event_time": pd.to_datetime(
-                ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]
-            ),
+            "event_time": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04"]),
             "target": [0, 1, 0, 1],
         }
     )

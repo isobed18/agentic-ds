@@ -18,9 +18,7 @@ def test_copy_contract_rejects_duplicate_columns_before_materialization() -> Non
 
 def test_feature_postcondition_rejects_target_exposure() -> None:
     training = pd.DataFrame({"row_id": ["train_1"], "feature": [1], "target": [0]})
-    validation = pd.DataFrame(
-        {"row_id": ["validation_1"], "feature": [2], "target": [1]}
-    )
+    validation = pd.DataFrame({"row_id": ["validation_1"], "feature": [2], "target": [1]})
     with pytest.raises(FrameContractError) as caught:
         validate_feature_partition(
             training=training,

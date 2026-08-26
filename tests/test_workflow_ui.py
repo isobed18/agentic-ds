@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from ads.contracts.eda import (
     TargetRelationship,
 )
 from ads.contracts.gates import DecisionOption, GateDecision, GateVerdict, HumanPrompt
+from ads.documents.pdf import PdfDocument, PdfPage
 from ads.llm import LLMResponse, ModelProfile
 from ads.store import ArtifactStore
 
@@ -60,6 +62,11 @@ def _plane(tmp_path: Path) -> ControlPlane:
         store=ArtifactStore(tmp_path / "artifacts"),
         source_roots=(source_root,),
         upload_root=tmp_path / "uploads",
+        # Without this, agent mode constructs an OllamaClient and refuses the
+        # run when no model is reachable, so the test passed on a developer
+        # machine and could not pass anywhere else. Nothing here calls the
+        # model: the spec only needs an object to wire the agents to.
+        llm_factory=lambda: object(),
     )
 
 
@@ -79,6 +86,7 @@ def _configuration() -> dict:
             "n_folds": 3,
             "test_size": 0.2,
             "rationale": "Preserve class representation.",
+            "rationale_tr": "Sınıf temsilini koru.",
         },
         "candidate_limit": 2,
         "instructions": "Prefer a compact, interpretable result.",
@@ -105,9 +113,11 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
         "report",
     ]
     assert all(node["status"] == "pending" for node in graph["nodes"])
-    assert {
-        node["id"] for node in graph["nodes"] if node["kind"] == "planner_agent"
-    } == {"schema_discovery", "problem_discovery", "validation_strategy"}
+    assert {node["id"] for node in graph["nodes"] if node["kind"] == "planner_agent"} == {
+        "schema_discovery",
+        "problem_discovery",
+        "validation_strategy",
+    }
     assert {edge["condition"] for edge in graph["edges"]} == {
         "on_proceed",
         "on_retry",
@@ -127,6 +137,47 @@ def test_manual_mode_graph_matches_the_nine_executed_stages(tmp_path: Path) -> N
     assert not any(node["kind"] == "planner_agent" for node in graph["nodes"])
 
 
+def test_human_approved_escalation_projects_as_completed_stage(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Approval resolves attention state without erasing the gate audit."""
+    plane = _plane(tmp_path)
+    escalated_attempt = {
+        "stage_id": "leakage_audit",
+        "attempt": 1,
+        "started_at": "2026-08-24T18:01:28+00:00",
+        "ended_at": "2026-08-24T18:01:47+00:00",
+        "verdict": "escalate",
+        "error": None,
+        "artifact_ids": [],
+        "input_bindings": {},
+    }
+    monkeypatch.setattr(
+        plane,
+        "progress",
+        lambda run_id: {
+            "run_id": run_id,
+            "status": "completed",
+            "current_stage": None,
+            "configuration": {"mode": "agent"},
+            "attempts": [escalated_attempt],
+            "events": [
+                {
+                    "event": "human_decision_recorded",
+                    "stage": "leakage_audit",
+                    "decision": "approve",
+                }
+            ],
+        },
+    )
+
+    graph = plane.workflow_graph("approved-run")
+    leakage = next(node for node in graph["nodes"] if node["id"] == "leakage_audit")
+
+    assert leakage["status"] == "succeeded"
+    assert escalated_attempt["verdict"] == "escalate"
+
+
 def test_run_options_are_derived_from_closed_contract_vocabularies(tmp_path: Path) -> None:
     client = TestClient(create_app(plane=_plane(tmp_path)))
     options = client.get("/api/run-options").json()
@@ -136,12 +187,37 @@ def test_run_options_are_derived_from_closed_contract_vocabularies(tmp_path: Pat
     assert "grouped_temporal" in options["split_strategies"]
 
 
+def test_document_only_source_gets_a_persisted_staging_graph(tmp_path: Path, monkeypatch) -> None:
+    plane = _plane(tmp_path)
+    document_source = tmp_path / "sources" / "documents-only"
+    document_source.mkdir()
+    (document_source / "brief.pdf").write_bytes(b"test-document")
+    profile = {
+        "source_id": "documents-only",
+        "label": "documents-only",
+        "tables": [],
+        "relationships": [],
+        "documents": [{"name": "brief.pdf", "page_count": 1}],
+    }
+    monkeypatch.setattr(plane, "source_profile", lambda source_id: profile)
+
+    staged = plane.stage_run("documents-only")
+    workspace = plane.staging_workspace(staged["run_id"])
+    components = {item["id"]: item for item in workspace["pipeline_blueprint"]["components"]}
+
+    assert staged["status"] == "staged"
+    assert components["intake"]["enabled"] is False
+    assert components["understand-documents"]["enabled"] is True
+    assert workspace["source_id"] == "documents-only"
+
+
 def test_planner_chat_can_configure_and_remember_rules_without_raw_rows(
     tmp_path: Path,
 ) -> None:
     fake = _PlannerFakeLLM(
         {
             "reply": "I suggest regression with a temporal split.",
+            "reply_tr": "Zamansal bölmeyle regresyon öneriyorum.",
             "configuration_patch": {
                 "task_type": "regression",
                 "validation_strategy": "temporal",
@@ -179,7 +255,109 @@ def test_planner_chat_can_configure_and_remember_rules_without_raw_rows(
     assert body["checkpoint_stages"] == ["training"]
     assert body["auto_proceed_stages"] == ["eda"]
     assert body["max_retries_by_stage"] == {"eda": 2}
+    assert "reply_tr" not in body
+    assert "reply_tr" not in fake.calls[0]["schema"]["properties"]
+    assert "reply_tr" not in fake.calls[0]["system"]
     assert "secret-one@example.test" not in fake.calls[0]["prompt"]
+    assert "intake.guiding_data_understanding" in fake.calls[0]["system"]
+    assert "intake.reading_documents" in fake.calls[0]["system"]
+    assert "Reference guidance only" in fake.calls[0]["system"]
+
+
+def test_pre_pipeline_planner_receives_intake_and_schema_discovery_together(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fake = _PlannerFakeLLM(
+        {
+            "reply": "The source has one customer table.",
+            "reply_tr": "Kaynakta bir müşteri tablosu var.",
+        }
+    )
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: fake
+
+    monkeypatch.setattr(
+        plane,
+        "progress",
+        lambda run_id: {
+            "run_id": run_id,
+            "status": "staged",
+            "current_stage": "schema_discovery",
+            "events": [],
+            "attempts": [],
+        },
+    )
+    monkeypatch.setattr(plane, "gate_decisions", lambda run_id: [])
+
+    def stage_detail(run_id: str, stage_id: str) -> dict[str, Any]:
+        del run_id
+        return {
+            "stage": {"id": stage_id},
+            "status": "succeeded",
+            "human_view": {"state_label": "Complete"},
+            "outputs": [
+                {
+                    "type": "data_card" if stage_id == "intake" else "integration_plan",
+                    "summary": f"{stage_id} summary",
+                    "story": {"stage": stage_id},
+                }
+            ],
+            "gate_decisions": [],
+        }
+
+    monkeypatch.setattr(plane, "stage_detail", stage_detail)
+
+    plane.planner_chat(
+        message="Help me understand this source.",
+        source_id="safe-demo",
+        run_id="staged-run",
+        stage_id="intake",
+    )
+
+    prompt = json.loads(fake.calls[0]["prompt"])
+    assert set(prompt["intake_and_schema_discovery"]) == {"intake", "schema_discovery"}
+    assert prompt["intake_and_schema_discovery"]["schema_discovery"]["outputs"][0][
+        "type"
+    ] == "integration_plan"
+
+
+def test_planner_receives_bounded_page_provenance_from_local_pdf(
+    tmp_path: Path, monkeypatch
+) -> None:
+    fake = _PlannerFakeLLM(
+        {
+            "reply": "The retention chart is discussed on page 2.",
+            "reply_tr": "Elde tutma grafiği 2. sayfada ele alınıyor.",
+        }
+    )
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: fake
+    (plane.source_path("safe-demo") / "brief.pdf").write_bytes(b"local-test-pdf")
+    monkeypatch.setattr(
+        "ads.api.service.load_pdf_directory",
+        lambda path: [
+            PdfDocument(
+                name="brief.pdf",
+                page_count=2,
+                pages=(
+                    PdfPage(1, "Overview of the provider study."),
+                    PdfPage(2, "The retention chart compares monthly churn by provider."),
+                ),
+                image_count=1,
+            )
+        ],
+    )
+
+    plane.planner_chat(
+        message="What does the retention chart show?",
+        source_id="safe-demo",
+    )
+
+    prompt = json.loads(fake.calls[0]["prompt"])
+    pdf = prompt["local_pdf_context"][0]
+    assert pdf["name"] == "brief.pdf"
+    assert {excerpt["page"] for excerpt in pdf["selected_excerpts"]} == {1, 2}
+    assert "retention chart" in pdf["selected_excerpts"][1]["text"]
 
 
 def test_planner_supervision_maps_to_real_checkpoint_and_retry_policy(tmp_path: Path) -> None:
@@ -361,13 +539,8 @@ def test_graph_progress_and_stage_inspection_have_workflow_states(
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
-def test_main_page_is_the_workflow_experience_not_an_artifact_dashboard() -> None:
-    """The three-region layout the brief specifies, asserted at its source.
-
-    design_prompt.txt is explicit: pipeline at the top, stage workspace in the
-    centre, planner chat on the right. The main screen must compose those three
-    regions rather than list artifacts.
-    """
+def test_main_page_is_one_graph_automation_workspace() -> None:
+    """The pivot keeps upload, graph, planner, controls, and artifacts together."""
     workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
 
     for region in ("PipelineRail", "StageWorkspace", "PlannerPanel"):
@@ -398,6 +571,27 @@ def test_main_page_is_the_workflow_experience_not_an_artifact_dashboard() -> Non
 
     # The schema must be legible to a person, not only to the agent.
     assert "<SchemaMap" in workspace
+
+    # Source understanding is a real pre-pipeline workspace. It uses the same
+    # measured graph and connects its planner to both the source and staged run.
+    explore = (WEB_SRC / "pages" / "Explore.tsx").read_text(encoding="utf-8")
+    for feature in ("<SchemaDiagram", "<AgentBriefing", "<DocumentUnderstanding", "starterPrompts"):
+        assert feature in explore, f"the data-understanding screen is missing {feature}"
+    assert "sourceId={currentRun?.dataset ?? null}" in workflows
+
+    shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
+    app = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
+    automation = (WEB_SRC / "pages" / "Automation.tsx").read_text(encoding="utf-8")
+    one_page = (WEB_SRC / "pages" / "AutomationWorkspace.tsx").read_text(encoding="utf-8")
+    builder = (WEB_SRC / "components" / "PipelineBuilder.tsx").read_text(encoding="utf-8")
+    assert '{ to: "/explore", label: "Your data"' in shell
+    assert '{ to: "/automation", label: "Automation"' in shell
+    assert 'path="/automation"' in app
+    assert "<AutomationWorkspace" in automation
+    for feature in ("<PipelineBuilder", "<PlannerPanel", "api.upload", "runGraph"):
+        assert feature in one_page
+    for control in ("pause_after", "gate_handler", "max_retries", "ArtifactInspector"):
+        assert control in builder
 
 
 def test_every_pipeline_stage_has_a_reachable_workspace(tmp_path: Path, monkeypatch) -> None:
@@ -519,9 +713,7 @@ def test_problem_card_explains_the_agents_suggestion_in_human_terms(tmp_path: Pa
 
     detail = plane.stage_detail("story-run", "problem_discovery")
     story = next(
-        item["story"]
-        for item in detail["outputs"]
-        if item["type"] == "problem_definition"
+        item["story"] for item in detail["outputs"] if item["type"] == "problem_definition"
     )
 
     assert "Forecast customer churn score" in story["suggestion"]

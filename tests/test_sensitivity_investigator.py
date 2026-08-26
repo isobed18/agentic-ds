@@ -61,9 +61,7 @@ def make_tckn(prefix: str) -> str:
 
 
 def _card(frame: pd.DataFrame):
-    return profile_table(
-        LoadedTable(name="t", frame=frame, source_uri="x", source_format="csv")
-    )
+    return profile_table(LoadedTable(name="t", frame=frame, source_uri="x", source_format="csv"))
 
 
 class TestTheAgentAdds:
@@ -111,14 +109,10 @@ class TestTheAgentCannotSubtract:
         checksums are worth keeping is that they do not depend on anyone's
         opinion.
         """
-        card = _card(
-            pd.DataFrame(
-                {"hasta_no": [make_tckn("123456789"), make_tckn("234567891")]}
-            )
+        card = _card(pd.DataFrame({"hasta_no": [make_tckn("123456789"), make_tckn("234567891")]}))
+        assert checksum_backed(card.columns[0]), (
+            "arithmetic, not the column name, must establish this"
         )
-        assert checksum_backed(
-            card.columns[0]
-        ), "arithmetic, not the column name, must establish this"
         assert card.columns[0].sensitivity is Sensitivity.PII
 
         # The proposal shape has no field for "not personal" at all — the only
@@ -135,9 +129,7 @@ class TestTheAgentCannotSubtract:
         card = _card(pd.DataFrame({"tutar": [1, 2]}))
         agent = _Agent(
             SensitivityProposal(
-                personal_columns=[
-                    SensitivityJudgement(column="hayali_sutun", rationale="invented")
-                ]
+                personal_columns=[SensitivityJudgement(column="hayali_sutun", rationale="invented")]
             )
         )
         updated, changed = investigate_sensitivity(card, agent)

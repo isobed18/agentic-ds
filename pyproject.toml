@@ -10,6 +10,7 @@ dependencies = [
     "duckdb>=1.1",
     "pyarrow>=17.0",
     "openpyxl>=3.1",
+    "pypdf>=5.0,<7",
     "numpy>=1.26",
     "scikit-learn>=1.5",
     "joblib>=1.4",
@@ -23,10 +24,11 @@ dependencies = [
 [project.optional-dependencies]
 # Kesif katmani: dosya tanima ve yonlendirme (src/ads/kesif).
 # Cekirdege eklenmedi; bu bilesen kullanilmadan kurulum gerekmez.
+# pypdf burada YOK: cekirdek bagimliliklarda zaten var (pypdf>=5.0,<7).
+# Ikinci kez, ustsuz bir sinirla listelemek surum catismasi uretirdi.
 kesif = [
     "magika>=1.0",
     "mcp>=2.0",
-    "pypdf>=5.0",
 ]
 # OCR: taranmis tablo ve ekran goruntusu okuma (src/ads/kesif/formatlar/goruntu).
 # Ayri tutuldu cunku KURULU BOYUT ~245 MB (opencv 125 + onnxruntime 82) ve
@@ -34,10 +36,28 @@ kesif = [
 # headless opencv bilincli tercih: sunucuda GUI kutuphaneleri gereksiz
 # (Linux'ta X11/GTK bagimliliklarini da dusurur).
 # Modeller pakete GOMULU gelir; calisma aninda indirme yapmaz (air-gap dogrulandi).
+#
+# NOT: PDF/OCR isi src/ads/documents (docling, unstructured) ile ORTUSUYOR.
+# Konsolidasyon bekliyor; bkz. docs/kesif-entegrasyon.md.
 kesif-ocr = [
     "rapidocr-onnxruntime>=1.4,<2",
     "opencv-python-headless>=4.8",
     "pillow>=10.0",
+]
+documents-docling = [
+    "docling>=2.117,<3",
+]
+documents-unstructured = [
+    "unstructured[pdf]>=0.18,<1",
+]
+# Install these into isolated worker venvs with
+# scripts/install_document_engines.ps1. Their dependency pins intentionally do
+# not share the application environment.
+documents-marker-worker = [
+    "marker-pdf>=1.10,<2",
+]
+documents-mineru-worker = [
+    "mineru[all]>=3.3,<4"
 ]
 api = [
     "fastapi>=0.115",
@@ -45,6 +65,11 @@ api = [
 ]
 workflow-prefect = [
     "prefect>=3,<4",
+]
+# Fold-local vectorisers offered to sandboxed agent code. Optional because the
+# pipeline runs without it; the sandbox helper is simply not importable.
+sandbox = [
+    "skrub>=0.5,<1",
 ]
 dev = [
     "pytest>=8.3",
@@ -66,7 +91,11 @@ packages = ["src/ads"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# The repository root as well as src/: four test modules import `tests.*` or
+# `alternatives.*`, which resolve only if the root is importable. `python -m
+# pytest` inserts the working directory and hid this locally; a bare `pytest`,
+# which is what CI runs, does not.
+pythonpath = ["src", "."]
 addopts = "-q"
 
 [tool.ruff]

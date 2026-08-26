@@ -71,9 +71,7 @@ def test_exported_script_runs_and_reproduces_recorded_metric(tmp_path: Path) -> 
     features.to_csv(feature_path, index=False)
     source_cards = [
         profile_table(
-            LoadedTable(
-                name="base", frame=base, source_uri=str(base_path), source_format="csv"
-            )
+            LoadedTable(name="base", frame=base, source_uri=str(base_path), source_format="csv")
         ),
         profile_table(
             LoadedTable(

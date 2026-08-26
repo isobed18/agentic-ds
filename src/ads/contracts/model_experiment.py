@@ -30,9 +30,7 @@ class ModelExperimentManifest(FrozenModel):
 
     @model_validator(mode="after")
     def _unique_features(self) -> ModelExperimentManifest:
-        if len(set(self.declared_feature_columns)) != len(
-            self.declared_feature_columns
-        ):
+        if len(set(self.declared_feature_columns)) != len(self.declared_feature_columns):
             raise ValueError("Declared feature columns must be unique.")
         return self
 
@@ -45,9 +43,7 @@ class ModelExperiment(Artifact):
 
     source_training_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_class: Literal["exploratory"] = "exploratory"
-    evaluation_split: Literal["inner_development_holdout"] = (
-        "inner_development_holdout"
-    )
+    evaluation_split: Literal["inner_development_holdout"] = "inner_development_holdout"
     final_holdout_used: Literal[False] = False
     task_type: TaskType
     metric: Metric

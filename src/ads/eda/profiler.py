@@ -60,17 +60,14 @@ def _validate_inputs(card: DataCard, frame: pd.DataFrame, problem: ProblemDefini
         if problem.target_column is None:
             raise EDAError(f"{problem.task_type.value} requires a target column for EDA.")
         if problem.target_column not in frame.columns:
-            raise EDAError(
-                f"Target column {problem.target_column!r} is not present in the ABT."
-            )
+            raise EDAError(f"Target column {problem.target_column!r} is not present in the ABT.")
 
 
 def _full_profiles(card: DataCard, frame: pd.DataFrame) -> dict[str, ColumnProfile]:
     """Reuse intake profiling on the full EDA frame without retaining samples."""
     options = ProfileOptions(include_samples=False, max_profile_rows=max(len(frame), 1))
     return {
-        name: profile_column(name, frame[name], len(frame), options)
-        for name in card.column_names
+        name: profile_column(name, frame[name], len(frame), options) for name in card.column_names
     }
 
 
@@ -189,14 +186,10 @@ def _numeric_distribution_shape(
             is_local_maximum = (
                 smoothed[index] >= smoothed[index - 1]
                 and smoothed[index] >= smoothed[index + 1]
-                and (
-                    smoothed[index] > smoothed[index - 1]
-                    or smoothed[index] > smoothed[index + 1]
-                )
+                and (smoothed[index] > smoothed[index - 1] or smoothed[index] > smoothed[index + 1])
             )
             prominence = max(
-                (smoothed[index] - max(smoothed[index - 1], smoothed[index + 1]))
-                / total,
+                (smoothed[index] - max(smoothed[index - 1], smoothed[index + 1])) / total,
                 0.0,
             )
             share = histogram[index].count / total
@@ -217,8 +210,7 @@ def _numeric_distribution_shape(
                     )
                 )
     peak_separations = [
-        right.bin_index - left.bin_index
-        for left, right in zip(peaks, peaks[1:], strict=False)
+        right.bin_index - left.bin_index for left, right in zip(peaks, peaks[1:], strict=False)
     ]
     most_common_count = int(values.value_counts().iloc[0])
     rounding: list[RoundingConcentration] = []
@@ -295,9 +287,7 @@ def _class_balance(distribution: TargetDistribution | None) -> ClassBalance | No
         majority_class=majority.value,
         majority_count=majority.count,
         majority_rate=majority.rate,
-        majority_to_minority_ratio=round(
-            majority.count / minority.count, _ROUND_DIGITS
-        ),
+        majority_to_minority_ratio=round(majority.count / minority.count, _ROUND_DIGITS),
     )
 
 
@@ -306,9 +296,7 @@ def _correlation_matrix(
     frame: pd.DataFrame,
     profiles: dict[str, ColumnProfile],
 ) -> CorrelationMatrix:
-    numeric_columns = [
-        name for name in card.column_names if profiles[name].numeric is not None
-    ]
+    numeric_columns = [name for name in card.column_names if profiles[name].numeric is not None]
     if not numeric_columns:
         return CorrelationMatrix(columns=[], values=[])
 
@@ -319,17 +307,13 @@ def _correlation_matrix(
         for column_name in numeric_columns:
             value = measured.loc[row_name, column_name]
             row.append(
-                None
-                if pd.isna(value)
-                else round(float(np.clip(value, -1.0, 1.0)), _ROUND_DIGITS)
+                None if pd.isna(value) else round(float(np.clip(value, -1.0, 1.0)), _ROUND_DIGITS)
             )
         values.append(row)
     return CorrelationMatrix(columns=numeric_columns, values=values)
 
 
-def _pearson_from_matrix(
-    matrix: CorrelationMatrix, feature: str, target: str
-) -> float | None:
+def _pearson_from_matrix(matrix: CorrelationMatrix, feature: str, target: str) -> float | None:
     if feature not in matrix.columns or target not in matrix.columns:
         return None
     feature_index = matrix.columns.index(feature)
@@ -349,9 +333,7 @@ def _target_relationships(
     return [
         TargetRelationship(
             column=column,
-            pearson_correlation=_pearson_from_matrix(
-                correlations, column, target_column
-            ),
+            pearson_correlation=_pearson_from_matrix(correlations, column, target_column),
             adjusted_mutual_information=round(
                 normalised_mutual_information(frame[column], target), _ROUND_DIGITS
             ),
@@ -403,9 +385,7 @@ def profile_for_eda(
     """Build a deterministic, numbers-only EDA report for a confirmed problem."""
     _validate_inputs(abt_card, frame, problem)
     profiles = _full_profiles(abt_card, frame)
-    feature_columns = [
-        name for name in abt_card.column_names if name != problem.target_column
-    ]
+    feature_columns = [name for name in abt_card.column_names if name != problem.target_column]
     model_eligible = [
         profile.name
         for profile in usable_feature_columns(

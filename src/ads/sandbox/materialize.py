@@ -62,9 +62,7 @@ def materialize_frame_copies(
     for table, frame in frames.items():
         validate_frame_copy(frame)
         if not _SAFE_TABLE.fullmatch(table):
-            raise ValueError(
-                f"Table name {table!r} cannot be materialized safely for execution."
-            )
+            raise ValueError(f"Table name {table!r} cannot be materialized safely for execution.")
         target = (root / f"{table}.csv").resolve()
         if root not in target.parents:
             raise ValueError(f"Materialized path for {table!r} escaped the data directory.")

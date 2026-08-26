@@ -25,20 +25,41 @@ from ads.tools import PermissionBroker, ToolError, ToolRuntime, build_tool_regis
 MAX_TURNS = DEFAULT_INVESTIGATION_BUDGETS["schema_investigation"].max_turns
 
 SYSTEM_PROMPT = """\
-You are actively investigating how to integrate several messy tables into one analytical base
-table. Do not fill a plan from first impressions. Use the available deterministic tools to check
-keys, cardinality and joins. When isolated execution is available you may also write exploratory
-Python against the read-only table copies, but numbers produced by your code are exploratory and
-do not support the final plan.
+You are an active data integration investigator working on messy enterprise data.
+Your job is to determine how to integrate several source tables into one
+analytical base table (ABT) while preserving the base entity grain.
 
-The final plan must be tested with trial_integration_plan. That tool runs the proposed operations
-through the deterministic DuckDB engine and measures the realized grain. Submit only the exact
-executable plan semantics that received a successful trial. Changing a join, aggregation, base
-table, base grain, or join type after the trial requires another trial.
+Use the available deterministic tools (candidate_keys, cardinality, column_profile,
+join_overlap, trial_integration_plan) to measure keys and joins. When isolated code
+execution is available, you may also write exploratory Python, but numbers produced
+by exploratory code do not support the final plan.
 
-Every response is one typed action: call_tool, submit_plan, or abandon. Tool failures and plan
-validation failures are returned in the transcript so you can correct them. Never claim that
-agent-authored code proves a join or grain property; only host-created tool measurements do.
+Key rules for building the integration plan:
+- Choose as `base_table` the table whose grain matches the entity to be analysed
+  (e.g. physician, customer).
+- `base_grain` must be a list of column names that uniquely identify one row of the base table.
+- If a table has MANY rows per base row (1:N child table, e.g. transactions or ledger entries),
+  you MUST aggregate it first before joining. Joining a 1:N table directly multiplies rows
+  and causes validator failure (unaggregated_fan_out) and trial grain corruption.
+
+How to aggregate and join 1:N child tables:
+1. Add an entry to `aggregations` with:
+   - `source_table`: the raw child table name (e.g. "transactions").
+   - `output_name`: a distinct name for the aggregated view (e.g. "transactions_agg").
+   - `group_by`: the foreign key column(s) that match the base grain (e.g. ["physician_id"]).
+   - `aggregations`: a dictionary mapping new output column names to SQL aggregate expressions \
+(e.g. {"txn_count": "COUNT(*)", "total_amount": "SUM(amount)"}).
+2. In `joins`, join `output_name` onto the base table where `right_table` is `output_name` and \
+`right_columns` are the `group_by` columns.
+
+Before calling submit_plan, you MUST run your proposed plan through `trial_integration_plan`. \
+That tool runs the proposed operations through the deterministic DuckDB engine and verifies \
+that grain is preserved. Submit only the exact executable plan semantics that received a trial.
+
+Every response is one typed action:
+- `call_tool`: invoke a tool with exact name and arguments.
+- `submit_plan`: submit a tested plan that passed trial_integration_plan.
+- `abandon`: give up with a stated reason if integration is impossible.
 """
 
 
@@ -127,12 +148,30 @@ def _tool_help(data_paths: dict[str, str]) -> str:
 
 
 def _render_failures(failures: list[ValidationFailure]) -> str:
-    return "; ".join(
-        f"{failure.code}"
-        + (f" at {failure.field_path}" if failure.field_path else "")
-        + f": {failure.detail}"
-        for failure in failures
-    )
+    lines = []
+    for failure in failures:
+        msg = (
+            f"{failure.code}"
+            + (f" at {failure.field_path}" if failure.field_path else "")
+            + f": {failure.detail}"
+        )
+        if failure.code == "unaggregated_fan_out":
+            msg += (
+                " (HINT: 1:N child tables must be aggregated before joining. "
+                "Add an entry to `aggregations` with `source_table`, `output_name`, "
+                "`group_by=[...]`, and `aggregations={'col': 'SUM(...)'}`, "
+                "then join `output_name` instead of the raw table.)"
+            )
+        elif failure.code == "trial_grain_not_preserved":
+            msg += (
+                " (HINT: DuckDB trial row count multiplied or contained duplicates. "
+                "Ensure `base_grain` uniquely identifies base table rows, "
+                "and ensure all 1:N child tables are aggregated before joining.)"
+            )
+        elif failure.code == "missing_base_grain":
+            msg += " (HINT: Set `base_grain` to a non-empty list of PK columns for `base_table`.)"
+        lines.append(msg)
+    return "; ".join(lines)
 
 
 def investigate_schema(

@@ -65,9 +65,7 @@ class ScriptedLLM:
         )
 
 
-def _context(
-    cards: list[DataCard], relationships: list[RelationshipCandidate]
-):
+def _context(cards: list[DataCard], relationships: list[RelationshipCandidate]):
     return build_context_with_evidence(cards, relationships)
 
 
@@ -186,6 +184,98 @@ def test_schema_gate_binds_plan_to_the_exact_persisted_trial(
     )
 
     assert criterion.check(CritiqueContext("schema_discovery", [bound, trial]))
-    assert not criterion.check(
-        CritiqueContext("schema_discovery", [substituted, trial])
+    assert not criterion.check(CritiqueContext("schema_discovery", [substituted, trial]))
+
+
+def test_investigator_system_prompt_contains_fan_out_and_aggregation_rules() -> None:
+    from ads.agents.schema_investigator import SYSTEM_PROMPT
+
+    assert "base_grain" in SYSTEM_PROMPT
+    assert "aggregations" in SYSTEM_PROMPT
+    assert "output_name" in SYSTEM_PROMPT
+    assert "group_by" in SYSTEM_PROMPT
+
+
+def test_investigator_recovers_from_unaggregated_fan_out(
+    cards: list[DataCard],
+    frames: dict[str, Any],
+    relationships: list[RelationshipCandidate],
+) -> None:
+    """An initial unaggregated proposal receives actionable error feedback and can recover."""
+    bad_plan = {
+        "base_table": "physicians__physician_master",
+        "base_grain": ["physician_id"],
+        "grain_description": "One row per physician.",
+        "aggregations": [],
+        "joins": [
+            {
+                "left_table": "physicians__physician_master",
+                "right_table": "transactions",
+                "left_columns": ["physician_id"],
+                "right_columns": ["physician_id"],
+                "how": "left",
+                "rationale": "Direct join of 1:N transactions.",
+            }
+        ],
+        "warnings": [],
+    }
+    good_plan = {
+        "base_table": "physicians__physician_master",
+        "base_grain": ["physician_id"],
+        "grain_description": "One row per physician.",
+        "aggregations": [
+            {
+                "source_table": "transactions",
+                "output_name": "transactions_agg",
+                "group_by": ["physician_id"],
+                "aggregations": {"tx_count": "COUNT(*)", "total_amount": "SUM(amount)"},
+                "rationale": "Roll up transactions by physician before joining.",
+            }
+        ],
+        "joins": [
+            {
+                "left_table": "physicians__physician_master",
+                "right_table": "transactions_agg",
+                "left_columns": ["physician_id"],
+                "right_columns": ["physician_id"],
+                "how": "left",
+                "rationale": "Aggregated transactions join to preserve base physician grain.",
+            }
+        ],
+        "warnings": [],
+    }
+    llm = ScriptedLLM(
+        [
+            # Turn 1: Try to submit unaggregated plan directly
+            {
+                "action": "submit_plan",
+                "plan": bad_plan,
+                "reason": "Initial attempt without aggregation.",
+            },
+            # Turn 2: Try trial on corrected plan
+            {
+                "action": "call_tool",
+                "tool_id": "trial_integration_plan",
+                "arguments": {"plan": good_plan},
+                "reason": "Test aggregated plan through DuckDB engine.",
+            },
+            # Turn 3: Submit the successfully tested good plan
+            {
+                "action": "submit_plan",
+                "plan": good_plan,
+                "reason": "Submit tested plan.",
+            },
+        ]
     )
+
+    result = investigate_schema(
+        context=_context(cards, relationships),
+        llm=llm,
+        runtime=ToolRuntime.from_sources(cards, frames),
+    )
+
+    assert result.succeeded
+    assert result.proposal is not None
+    assert result.proposal.base_table == "physicians__physician_master"
+    assert len(result.proposal.aggregations) == 1
+    assert result.proposal.aggregations[0].output_name == "transactions_agg"

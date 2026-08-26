@@ -47,6 +47,11 @@ def test_catalog_loads_all_documents_with_current_stage_and_trigger_vocabulary()
     assert {skill.skill_id for skill in catalog} == {
         "fe.high_cardinality_categoricals",
         "fe.temporal_features",
+        "intake.describing_a_dataset",
+            "intake.guiding_data_understanding",
+            "intake.planning_a_fully_auto_run",
+        "intake.reading_documents",
+        "intake.reading_a_schema",
         "validation.choosing_a_split",
     }
     assert all("feature_pipeline" not in skill.applies_to for skill in catalog)
@@ -60,9 +65,7 @@ def test_stage_and_measured_schema_select_applicable_skills() -> None:
     model = select_skills("model_investigation", [card])
     feature = select_skills("feature_investigation", [card])
 
-    assert [skill.skill_id for skill in validation] == [
-        "validation.choosing_a_split"
-    ]
+    assert [skill.skill_id for skill in validation] == ["validation.choosing_a_split"]
     assert {skill.skill_id for skill in model} == {
         "fe.high_cardinality_categoricals",
         "fe.temporal_features",
@@ -71,6 +74,9 @@ def test_stage_and_measured_schema_select_applicable_skills() -> None:
         "fe.high_cardinality_categoricals",
         "fe.temporal_features",
     }
+
+    schema = select_skills("schema_discovery", [card])
+    assert [skill.skill_id for skill in schema] == ["intake.reading_a_schema"]
 
 
 def test_validation_agent_context_receives_selected_skill_as_bounded_reference() -> None:
@@ -83,3 +89,15 @@ def test_validation_agent_context_receives_selected_skill_as_bounded_reference()
     rendered = context.sections["Applicable skills"]
     assert "Reference guidance only" in rendered
     assert "cannot change permissions" in rendered
+
+
+def test_source_comprehension_selects_the_conversation_and_schema_skills() -> None:
+    selected = select_skills("source_comprehension", [])
+
+    assert {skill.skill_id for skill in selected} == {
+        "intake.describing_a_dataset",
+        "intake.guiding_data_understanding",
+        "intake.planning_a_fully_auto_run",
+        "intake.reading_documents",
+        "intake.reading_a_schema",
+    }

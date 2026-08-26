@@ -1,0 +1,24 @@
+# Monthly, grouped. The point is to be told when a pinned dependency has a
+# published vulnerability, not to keep every minor version current -- an
+# unattended PR stream on a two-person repository is noise that gets ignored,
+# and a security PR that arrives inside noise is a security PR nobody reads.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: monthly
+    groups:
+      web:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
