@@ -10,6 +10,7 @@
  * is drawn as "unmeasured" rather than "low" — colouring an unknown red would
  * assert a finding nobody made.
  */
+import { t } from "../lib/i18n";
 import { cx } from "./ui";
 
 export interface SchemaGraph {
@@ -27,6 +28,9 @@ export interface SchemaGraph {
   }[];
 }
 
+// `label` is a catalogue key, not display text. It is deliberately left
+// untranslated here and passed through `t()` at render time: translating at
+// module level would freeze whichever language was active on first import.
 const CONFIDENCE: Record<string, { dot: string; text: string; label: string }> = {
   high: { dot: "bg-ok-500", text: "text-ok-700", label: "High" },
   medium: { dot: "bg-warn-500", text: "text-warn-700", label: "Medium" },
@@ -47,7 +51,7 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
             {graph.base_table}
           </span>
         </div>
-        <span className="mt-0.5 block text-[11px] text-brand-700">Base entity</span>
+        <span className="mt-0.5 block text-[11px] text-brand-700">{t("Base entity")}</span>
       </div>
 
       <ul className="space-y-2">
@@ -62,9 +66,12 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-ink">{edge.target}</p>
                   <p className="truncate text-[11px] text-ink-mute">
-                    via {edge.via || "—"}
+                    {t("via {key}", { key: edge.via || "—" })}
                     {node?.source_table && (
-                      <span className="text-ink-faint"> · aggregated from {node.source_table}</span>
+                      <span className="text-ink-faint">
+                        {" · "}
+                        {t("aggregated from {table}", { table: node.source_table })}
+                      </span>
                     )}
                   </p>
                 </div>
@@ -75,7 +82,7 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
                   <span className={cx("h-2 w-2 rounded-full", meta.dot)} />
                   {edge.overlap_rate != null
                     ? `${(edge.overlap_rate * 100).toFixed(1)}%`
-                    : meta.label}
+                    : t(meta.label)}
                 </span>
               </div>
             </li>
@@ -86,16 +93,16 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
       <div className="lg:col-span-2">
         <div className="flex flex-wrap items-center gap-4 border-t border-line-soft pt-2.5">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
-            Match confidence
+            {t("Match confidence")}
           </span>
           {(["high", "medium", "low", "unmeasured"] as const).map((key) => (
             <span key={key} className="flex items-center gap-1.5 text-[11px] text-ink-mute">
               <span className={cx("h-2 w-2 rounded-full", CONFIDENCE[key].dot)} />
-              {CONFIDENCE[key].label}
+              {t(CONFIDENCE[key].label)}
             </span>
           ))}
           <span className="text-[11px] text-ink-faint">
-            Share of child rows whose key was found in the parent.
+            {t("Share of child rows whose key was found in the parent.")}
           </span>
         </div>
       </div>

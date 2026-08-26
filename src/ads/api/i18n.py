@@ -212,6 +212,10 @@ _TR.update(
         "This experiment cannot replace the deterministic winner or affect a gate.": (
             "Bu deney deterministik kazananın yerine geçemez ve bir kapıyı etkileyemez."
         ),
+        "An isolated development experiment scored by the host on withheld labels.": (
+            "Host'un, saklanan etiketler üzerinde puanladığı yalıtılmış bir "
+            "geliştirme deneyi."
+        ),
     }
 )
 
