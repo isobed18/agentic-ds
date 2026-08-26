@@ -63,22 +63,29 @@ Hepsi pipeline tarafında. Kesif'i kullanabilmek için bunların
 değişmesi gerekiyor ve **bu dosyalar bu dalda değiştirilmedi** —
 sahibinin kararı olduğu için.
 
-### 3.1 Yükleme kapısı dosyayı reddediyor
+> **Güncelleme — `b551eeb` (26.08.2026, İshak).** Bu bölüm kısmen aşıldı:
+> PDF yolu artık açık. Aşağıdaki metin buna göre düzeltildi; kalan engel
+> daralmış durumda ama **cinsi değişmedi** — karar hâlâ uzantıya bakıyor.
 
-`src/ads/api/service.py`
+### 3.1 Yükleme kapısı hâlâ uzantıya bakıyor
+
+`src/ads/api/service.py:115`
 
 ```python
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls",
-                    ".parquet", ".pq"}
+                    ".parquet", ".pq", ".pdf"}       # .pdf b551eeb'de eklendi
 ...
-raise ValueError("supported uploads are CSV/TSV, Excel, or Parquet")
+raise ValueError("supported uploads are CSV/TSV, Excel, Parquet, or PDF")
 ```
 
-PDF veya görüntü yüklemek **hata veriyor**. Kesif'in var olma sebebi tam
-olarak bu kapıyı kaldırmak: dosyanın ne olduğuna uzantıya bakarak değil
-içeriğe bakarak karar vermek.
+PDF artık geçiyor. **Görüntü hâlâ geçmiyor** — taranmış tablo ve ekran
+görüntüsü reddediliyor. Daha önemlisi mekanizma aynı kaldı: karar
+`Path(safe_name).suffix` ile veriliyor. Uzantısı yanlış ya da hiç olmayan
+bir dosya, içeriği ne olursa olsun reddedilir; `.csv` uzantılı bir PDF ise
+kabul edilip tablo sanılır. Keşif'in var olma sebebi tam olarak bu:
+**uzantı bir iddiadır, ölçüm değil.**
 
-### 3.2 Klasör tarayıcı desteklemediğini sessizce atlıyor
+### 3.2 Klasör tarayıcılar desteklemediğini sessizce atlıyor
 
 `src/ads/intake/loaders.py`
 
@@ -86,9 +93,12 @@ içeriğe bakarak karar vermek.
 if path.is_file() and path.suffix.lower() in supported:
 ```
 
-Klasördeki bir PDF **görünmez** oluyor — hata bile vermiyor. Bu sessiz
-veri kaybı; mimarinin önlemek için kurulduğu şeyin ta kendisi. Kesif bu
-dosyaları görünür kılıp akışa ya da human feedback'e yönlendirir.
+`source_profile()` artık iki tarayıcı çağırıyor — `load_directory()`
+(tablolar) ve `load_pdf_directory()` (PDF'ler). İkisi de uzantıyla
+filtreliyor. Yani klasördeki bir görüntü, uzantısız bir dosya ya da yanlış
+adlandırılmış bir tablo **hâlâ görünmez** oluyor: hata bile vermiyor.
+Sessiz veri kaybı, mimarinin önlemek için kurulduğu şeyin ta kendisi.
+Keşif bu dosyaları görünür kılıp akışa ya da human feedback'e yönlendirir.
 
 ### 3.3 Sıralama — en önemlisi
 
@@ -120,14 +130,27 @@ geçişi genişletiyor: *"tabloları profille"* → *"bu dosyalar da ne"*.
 
 Felsefe aynı: **ekranda ölçülmüş veri göster, diyalogda tahmin etme.**
 
-Ayrıca `source_profile()` şu an şunu fırlatıyor:
+**`b551eeb` bunu daha da kolaylaştırdı.** `source_profile()` artık iki
+şeritli:
 
 ```python
-raise ValueError("source contains no supported data files")
+loaded    = load_directory(source_path)       # tablo şeridi
+documents = load_pdf_directory(source_path)   # belge şeridi
+cards     = profile_tables(loaded)
+if not cards and not documents:
+    raise ValueError("source contains no supported data files")
 ```
 
-Kesif devredeyse bu hata yerine *"şu dosyalar geldi, şunlar şu akışa
-gidiyor, şu ikisi için karar gerekiyor"* cevabı üretilebilir.
+Şeritler zaten var; eksik olan tek şey **bir dosyanın hangi şeride ait
+olduğuna içerikten karar veren katman.** Keşif'in `akis` çıktısı birebir
+bunu veriyor: `tablo` → `loaded`, `belge` → `documents`, `yargi` →
+human feedback. Yeni bir kavram eklemiyor, var olan ayrımı ölçülmüş hale
+getiriyor.
+
+Yukarıdaki `raise` de o noktada *"şu dosyalar geldi, şunlar şu şeride
+gidiyor, şu ikisi için karar gerekiyor"* cevabına dönüşebilir — şu an
+kullanıcı sadece "desteklenen dosya yok" görüyor, hangi dosyanın neden
+elendiğini görmüyor.
 
 ---
 
@@ -181,6 +204,46 @@ MCP yalnızca **dış ajanlar** için. Ölçüldü: çağrı başına **1,10 ms*
 (ortanca). Dosya başına çağrılırsa 10.000 dosyada 11 sn'ye çıkar; toplu
 çağrıda (`envanter`) ihmal edilebilir. İkisi aynı anda mümkün, seçim
 gerekmiyor.
+
+### 6.1 Veri alma yolunda LLM ve MCP yok — iddia değil, ölçüm
+
+Ekipten gelen itiraz haklı: **veri alma yolu yavaşlatılamaz.** Keşif bu
+kısıta göre tasarlandı, sonradan uydurulmadı.
+
+| | |
+|---|---|
+| LLM çağrısı | **0** — hiçbir katmanda yok |
+| Ağ bağlantısı | **0** — soketler kapatılarak doğrulandı |
+| MCP katmanı | **kurulu bile değil** — ayrı ekstra (`kesif-mcp`), CI'da yok |
+| 25 dosyalık parti | **160 ms** (dosya başı 6,4 ms) |
+| 10.000 dosyaya ölçeklenirse | **~64 sn**, tek geçiş |
+| 10.000 sayı biçimi tespiti | **6,1 ms** (saf regex) |
+
+Pipeline `envanter()`'ı **doğrudan import ediyor**; arada protokol yok.
+CI `kesif`'i kuruyor ama `kesif-mcp`'yi kurmuyor — yani "MCP olmadan
+çalışır" her koşumda sınanıyor, iddia olarak kalmıyor.
+
+### 6.2 `1.000.000` mu `1.234` mü — LLM'e sormadan
+
+Türkçede nokta binlik ayracı, İngilizcede ondalık ayracı. Bu tam olarak
+`kanit.py`'nin işi ve **model kullanmıyor**, regex kullanıyor:
+
+| Sütundaki değerler | Sonuç | Güven |
+|---|---|---|
+| `1.000.000`, `2.500.000` | binlik `.` / ondalık `,` → **TR** | yüksek |
+| `1,234.56`, `987.25` | binlik `,` / ondalık `.` → **EN** | yüksek |
+| `1.234`, `5.678` | **karar yok** | *yok* |
+| `1.234`, `5.678`, `45,10` | **TR** (2 kesin kanıt, 2 belirsiz) | yüksek |
+
+Üçüncü satır kritik: `1.234` tek başına **gerçekten belirsiz** — bin iki
+yüz otuz dört de olabilir, 1,234 de. Sistem burada tahmin etmiyor,
+`belirsiz` sayıyor ve karara katmıyor. Dördüncü satırda ise aynı sütunda
+`45,10` görüldüğü an virgülün ondalık olduğu **kanıtlanıyor**, dolayısıyla
+noktalar binlik oluyor.
+
+Bir LLM'in burada yapacağı şey tahmin etmek olurdu ve yanıldığında bunu
+söylemezdi. Ölçüm yanılamadığı yerde susuyor, sustuğu yerde human
+feedback'e çıkıyor.
 
 Gözetimsiz koşum için:
 
