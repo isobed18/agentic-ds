@@ -430,6 +430,13 @@ class ControlPlane:
     #: Staging runs Intake and Schema Discovery (which takes ~7 min on local 27B model).
     #: When unchanged data is staged again, the staged state & artifacts are reused.
     _staged_cache: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict)
+    #: Where the profile cache survives a restart. The in-memory dict above is
+    #: per-process, so every deploy, crash or restart previously re-profiled
+    #: every source from scratch -- the docstring on `source_profile` records a
+    #: single 121 MB dataset costing 4.91s of a 5.22s page load, and that cost
+    #: was paid again on every boot. Keyed by the same fingerprint, so a changed
+    #: file still invalidates immediately.
+    profile_cache_dir: Path | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def __post_init__(self) -> None:
@@ -2651,6 +2658,47 @@ class ControlPlane:
                 parts.append(f"{path.relative_to(root)}:{stat.st_size}:{stat.st_mtime_ns}")
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
+    def _profile_cache_path(self, source_id: str) -> Path | None:
+        if self.profile_cache_dir is None:
+            return None
+        # The id is host-controlled (`upload:<token>`) but it reaches here from a
+        # URL, so it is reduced to a hash rather than trusted as a filename.
+        digest = hashlib.sha256(source_id.encode("utf-8")).hexdigest()[:32]
+        return self.profile_cache_dir / f"{digest}.json"
+
+    def _read_cached_profile(self, source_id: str, fingerprint: str) -> dict[str, Any] | None:
+        path = self._profile_cache_path(source_id)
+        if path is None or not path.is_file():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # A truncated cache file is a performance problem, never a
+            # correctness one: fall through and re-profile.
+            return None
+        if payload.get("fingerprint") != fingerprint:
+            return None
+        profile = payload.get("profile")
+        return profile if isinstance(profile, dict) else None
+
+    def _write_cached_profile(
+        self, source_id: str, fingerprint: str, profile: dict[str, Any]
+    ) -> None:
+        path = self._profile_cache_path(source_id)
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Written via a temporary file and replaced, so a crash mid-write
+            # cannot leave a half-file that later reads as a valid cache hit.
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps({"fingerprint": fingerprint, "profile": profile}), encoding="utf-8"
+            )
+            temporary.replace(path)
+        except OSError:
+            pass
+
     def source_profile(self, source_id: str) -> dict[str, Any]:
         """Profile source files into a schema-only browser projection.
 
@@ -2665,6 +2713,12 @@ class ControlPlane:
             cached = self._profile_cache.get(source_id)
         if cached is not None and cached[0] == fingerprint:
             return cached[1]
+
+        persisted = self._read_cached_profile(source_id, fingerprint)
+        if persisted is not None:
+            with self._lock:
+                self._profile_cache[source_id] = (fingerprint, persisted)
+            return persisted
 
         source_path = self.source_path(source_id)
         loaded = load_directory(source_path)
@@ -2770,6 +2824,7 @@ class ControlPlane:
         }
         with self._lock:
             self._profile_cache[source_id] = (fingerprint, profile)
+        self._write_cached_profile(source_id, fingerprint, profile)
         return profile
 
     @staticmethod
@@ -5124,6 +5179,11 @@ def create_app(
             store=store,
             source_roots=tuple(Path(root) for root in source_roots or ()),
             llm_factory=llm_factory,
+            # Sits beside the artifact store rather than in a temp directory, so
+            # it survives a restart -- which is the entire point of persisting
+            # it. Deleting the directory is always safe; it only costs one
+            # re-profile per source.
+            profile_cache_dir=Path(artifacts_dir).parent / "cache" / "profiles",
         )
     app = FastAPI(title="Agentic DS workflow", version="0.2.0")
 
