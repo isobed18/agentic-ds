@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import pytest
 
-from ads.kesif.yargi import (
+# Kesif ekstrasi (`.[kesif]`) kurulu degilse bu modul TOPLANAMAZ: magika,
+# yonlendiricinin modul seviyesinde import ettigi bir bagimlilik. Guard
+# olmadan collection hatasi tum suite'i durdurur -- yalnizca kesif
+# testlerini degil.
+pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
+
+from ads.kesif.yargi import (  # noqa: E402
     GECERLI_AKISLAR,
     SECENEKLER,
     ArtikRapor,
     artigi_coz,
     sor,
 )
-from ads.kesif.yonlendirici import Akis, Karar
+from ads.kesif.yonlendirici import Akis, Karar  # noqa: E402
 
 
 def _artik_karar(yol: str = "belirsiz.txt") -> Karar:
@@ -85,7 +91,7 @@ def test_sor_deterministik_karari_reddeder() -> None:
         sor(_deterministik_karar(), lambda soru, secenekler: ("tablo", ""))
 
 
-def test_artigi_coz_sadece_deterministik_olmayanlari_insana_sorar() -> None:
+def test_artigi_coz_sadece_deterministik_olmayanlari_human_feedbacke_cikarir() -> None:
     envanter = {
         "kararlar": [
             _deterministik_karar(),
@@ -99,7 +105,7 @@ def test_artigi_coz_sadece_deterministik_olmayanlari_insana_sorar() -> None:
     assert isinstance(rapor, ArtikRapor)
     assert rapor.toplam == 3
     assert rapor.deterministik == 1
-    assert rapor.insana_cikan == 2
+    assert rapor.human_feedbacke_cikan == 2
     assert rapor.eskalasyon_orani == round(2 / 3, 3)
     assert [y.akis for y in rapor.yanitlar] == ["belge", "agac"]
     assert all(y.kaynak == "human_feedback" for y in rapor.yanitlar)

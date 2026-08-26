@@ -7,18 +7,18 @@ kanitini gosterir, secenekleri bedelleriyle sunar.
 
 TEMEL KURAL: sunucu karar VERMEZ.
 Olcer, kaniti gosterir, secenekleri siralar. Secim cagiran tarafta kalir.
-Bu, boru hattinin kendi ilkesiyle ayni: deterministik katmanin vetosu vardir,
+Bu, pipeline'in kendi ilkesiyle ayni: deterministik katmanin vetosu vardir,
 ajan olcum uretmez.
 """
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class Onem(str, Enum):
+class Onem(StrEnum):
     """Bir bulgunun ne kadar acil oldugu."""
 
     BILGI = "bilgi"      # farkinda ol, bir sey yapman gerekmiyor
@@ -75,7 +75,7 @@ class Rapor(BaseModel):
     bulgular: list[Bulgu] = Field(default_factory=list)
     okunabilir: bool = Field(
         default=True,
-        description="False ise bu dosya bu haliyle boru hattina giremez",
+        description="False ise bu dosya bu haliyle pipeline'a giremez",
     )
     not_: str = Field(
         default="",

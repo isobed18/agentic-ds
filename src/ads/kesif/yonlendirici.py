@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import zipfile
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from magika import Magika
@@ -61,7 +61,7 @@ FORMAT_AKIS_BELIRLER: dict[str, str] = {
 SEKIL_GEREKTIREN = {"txt", "csv", "tsv", "ignorefile", "unknown", "dat"}
 
 
-class Akis(str, Enum):
+class Akis(StrEnum):
     TABLO = "tablo"
     BELGE = "belge"
     AGAC = "agac"

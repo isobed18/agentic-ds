@@ -1,6 +1,7 @@
 """KESIF yonlendirici: hicbir dal sessizce ISLENEMEZ demez ya da cokmez.
 
-Kural: sistem emin degilse insana sorar (deterministik=False, akis=YARGI).
+Kural: sistem emin degilse human feedback'e cikar (deterministik=False,
+akis=YARGI).
 Yalnizca gercekten olgu olan seyler (bos dosya, yuksek guvenli format +
 sekil) otomatik karar verir. Magika'nin ciktisi burada sahtelenir; testler
 gercek modelin o an ne dedigine degil, kodun o cikti karsisinda ne
@@ -14,8 +15,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from ads.kesif import yonlendirici as y
-from ads.kesif.yonlendirici import Akis, envanter, yonlendir
+# Kesif ekstrasi (`.[kesif]`) kurulu degilse bu modul TOPLANAMAZ: magika,
+# yonlendiricinin modul seviyesinde import ettigi bir bagimlilik. Guard
+# olmadan collection hatasi tum suite'i durdurur -- yalnizca kesif
+# testlerini degil.
+pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
+
+from ads.kesif import yonlendirici as y  # noqa: E402
+from ads.kesif.yonlendirici import Akis, envanter, yonlendir  # noqa: E402
 
 
 def _sahte_magika(monkeypatch: pytest.MonkeyPatch, etiket: str, guven: float) -> None:
@@ -23,7 +30,9 @@ def _sahte_magika(monkeypatch: pytest.MonkeyPatch, etiket: str, guven: float) ->
     monkeypatch.setattr(y._magika, "identify_path", lambda yol: sonuc)
 
 
-def test_taninmayan_format_insana_sorulur(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_taninmayan_format_human_feedbacke_dusuyor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dosya = tmp_path / "gizemli.xyz"
     dosya.write_bytes(b"herhangi bir icerik")
     _sahte_magika(monkeypatch, "cozumleyicisi_olmayan_format", 0.99)
@@ -35,7 +44,7 @@ def test_taninmayan_format_insana_sorulur(tmp_path: Path, monkeypatch: pytest.Mo
     assert "cozumleyici tanimli degil" in k.yargi_sebebi
 
 
-def test_ikili_supheli_icerik_insana_sorulur(
+def test_ikili_supheli_icerik_human_feedbacke_dusuyor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dosya = tmp_path / "supheli.txt"
@@ -96,7 +105,7 @@ def test_yuksek_guvenli_kapsayici_otomatik_kalir(
     assert k.akis is Akis.KAPSAYICI
 
 
-def test_dusuk_guvenli_belge_insana_sorulur(
+def test_dusuk_guvenli_belge_human_feedbacke_dusuyor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dosya = tmp_path / "belirsiz.pdf"
@@ -150,7 +159,7 @@ def test_acilamayan_pdf_belge_sayilmiyor(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_bos_dosya_hala_otomatik_islenemez(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tek istisna: 0 bayt olgu, tahmin degil. Insana sorulmaz."""
+    """Tek istisna: 0 bayt olgu, tahmin degil. Human feedback gerekmez."""
     dosya = tmp_path / "bos.txt"
     dosya.write_bytes(b"")
     _sahte_magika(monkeypatch, "empty", 1.0)

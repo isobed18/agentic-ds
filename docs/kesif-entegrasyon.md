@@ -198,9 +198,16 @@ feedback'ten de ayırt edilebilir kalır.
 ## 7. Kurulum
 
 ```bash
-pip install -e ".[kesif]"          # magika + mcp + pypdf
+pip install -e ".[kesif]"          # yalnızca magika — pipeline için gereken bu
+pip install -e ".[kesif-mcp]"      # MCP sunucusu, OPSİYONEL
 pip install -e ".[kesif-ocr]"      # OCR, ~245 MB, OPSİYONEL
 ```
+
+**MCP çekirdek kuruluma dahil değil.** Veri alma yolunda protokol katmanı
+yok: pipeline `envanter()`'ı doğrudan import eder (§6). MCP yalnızca keşif'i
+*dış* bir ajana açmak istendiğinde gerekiyor. CI de `kesif`'i kuruyor,
+`kesif-mcp`'yi kurmuyor — yani "MCP olmadan çalışır" iddiası her koşumda
+sınanıyor.
 
 OCR ayrı tutuldu: yalnızca görüntü/taranmış belge işleyenler ihtiyaç
 duyar. Kurulu değilse sistem çökmüyor, dosya human feedback'e çıkıyor ve

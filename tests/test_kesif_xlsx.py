@@ -9,12 +9,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
-from ads.kesif.formatlar import tablolu
-from ads.kesif.model import Onem
-from ads.kesif.okuyucu import oku_calisma_kitabi
-from ads.kesif.yonlendirici import Akis, yonlendir
+# Kesif ekstrasi (`.[kesif]`) kurulu degilse bu modul TOPLANAMAZ: magika,
+# yonlendiricinin modul seviyesinde import ettigi bir bagimlilik. Guard
+# olmadan collection hatasi tum suite'i durdurur -- yalnizca kesif
+# testlerini degil.
+pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
+
+from ads.kesif.formatlar import tablolu  # noqa: E402
+from ads.kesif.model import Onem  # noqa: E402
+from ads.kesif.okuyucu import oku_calisma_kitabi  # noqa: E402
+from ads.kesif.yonlendirici import Akis, yonlendir  # noqa: E402
 
 
 def _kitap(hedef: Path, bos_sayfa: bool = True, ikinci_tablo: bool = True) -> Path:

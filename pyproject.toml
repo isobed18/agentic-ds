@@ -28,6 +28,13 @@ dependencies = [
 # Ikinci kez, ustsuz bir sinirla listelemek surum catismasi uretirdi.
 kesif = [
     "magika>=1.0",
+]
+# MCP sunucusu (src/ads/kesif/sunucu.py) AYRI tutuldu ve cekirdek kesif
+# kurulumuna dahil DEGIL. Sebep: veri alma yolunda MCP zorunlu degil --
+# pipeline `from ads.kesif.yonlendirici import envanter` ile dogrudan
+# cagirir ve arada hicbir protokol katmani olmaz. MCP yalnizca kesif'i
+# DIS bir ajana acmak istendiginde gerekir.
+kesif-mcp = [
     "mcp>=2.0",
 ]
 # OCR: taranmis tablo ve ekran goruntusu okuma (src/ads/kesif/formatlar/goruntu).

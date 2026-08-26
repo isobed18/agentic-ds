@@ -24,10 +24,10 @@ from __future__ import annotations
 import re
 import statistics
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Sekil(str, Enum):
+class Sekil(StrEnum):
     TABLO = "tablo"                  # ayracli, sutunlu
     SABIT_GENISLIK = "sabit_genislik"  # hizalanmis sutunlar, ayrac yok
     LOG = "log"                      # zaman damgali, tekrarli satirlar

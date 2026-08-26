@@ -13,13 +13,19 @@ from pathlib import Path
 
 import pytest
 
-from ads.kesif.ornek_parti import yaz
-from ads.kesif.yargi import (
+# Kesif ekstrasi (`.[kesif]`) kurulu degilse bu modul TOPLANAMAZ: magika,
+# yonlendiricinin modul seviyesinde import ettigi bir bagimlilik. Guard
+# olmadan collection hatasi tum suite'i durdurur -- yalnizca kesif
+# testlerini degil.
+pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
+
+from ads.kesif.ornek_parti import yaz  # noqa: E402
+from ads.kesif.yargi import (  # noqa: E402
     artigi_coz,
     en_makul_akis,
     otomatik_coz,
 )
-from ads.kesif.yonlendirici import Akis, Karar, envanter
+from ads.kesif.yonlendirici import Akis, Karar, envanter  # noqa: E402
 
 
 def _artik(sekil: str = "belirsiz", format_: str = "txt",
@@ -89,8 +95,8 @@ def test_otomatik_mod_gercek_partide_hicbir_dosyayi_bekletmiyor(
     env = envanter(yaz(tmp_path / "karma"))
     rapor = artigi_coz(env, otomatik=True)
 
-    assert rapor.insana_cikan > 0, "partide eskalasyona cikan dosya olmali"
-    assert rapor.otomatik_cozulen == rapor.insana_cikan
+    assert rapor.human_feedbacke_cikan > 0, "partide eskalasyona cikan dosya olmali"
+    assert rapor.otomatik_cozulen == rapor.human_feedbacke_cikan
     assert all(y.akis for y in rapor.yanitlar), "hicbiri cozumsuz kalmamali"
     assert all(y.kaynak == "otomatik_varsayilan" for y in rapor.yanitlar)
 

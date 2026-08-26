@@ -69,7 +69,7 @@ class InsanSonucu:
 
 
 def onizleme_hazirla(karar: Karar) -> str:
-    """Insana GOSTERILEBILIR bir onizleme uret.
+    """Human feedback ekraninda GOSTERILEBILIR bir onizleme uret.
 
     Ham baytlari dokmek ikili dosyada (goruntu, PDF) ekrana coplu bir
     blok basiyordu; bu soruyu kolaylastirmak yerine ZORLASTIRIYOR. Iyi
@@ -254,7 +254,7 @@ def otomatik_coz(karar: Karar) -> InsanSonucu:
 class ArtikRapor:
     toplam: int
     deterministik: int
-    insana_cikan: int
+    human_feedbacke_cikan: int
     eskalasyon_orani: float
     yanitlar: list[InsanSonucu] = field(default_factory=list)
 
@@ -267,7 +267,7 @@ def artigi_coz(envanter_sonucu: dict, cevaplayici: Cevaplayici | None = None,
                otomatik: bool = False) -> ArtikRapor:
     """Envanterdeki SADECE human feedback gerektiren dosyalari coz.
 
-    `otomatik=True` verilirse insana sorulmaz; deterministik yedek
+    `otomatik=True` verilirse human feedback beklenmez; deterministik yedek
     kullanilir ve her sonuc `kaynak="otomatik_varsayilan"` olarak
     etiketlenir. Gozetimsiz toplu kosumlar icindir.
     """
@@ -277,7 +277,7 @@ def artigi_coz(envanter_sonucu: dict, cevaplayici: Cevaplayici | None = None,
     r = ArtikRapor(
         toplam=len(kararlar),
         deterministik=len(kararlar) - len(artik),
-        insana_cikan=len(artik),
+        human_feedbacke_cikan=len(artik),
         eskalasyon_orani=round(len(artik) / len(kararlar), 3) if kararlar else 0.0,
     )
     for k in artik:

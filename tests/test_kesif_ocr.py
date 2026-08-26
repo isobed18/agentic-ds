@@ -160,6 +160,10 @@ def test_mcp_zinciri_goruntude_calisiyor(tmp_path: Path, monkeypatch) -> None:
     """
     import importlib
 
+    # MCP sunucusu ayri bir ekstra (`.[kesif-mcp]`); kesif'in kendisi onsuz
+    # calisir, bu yuzden kurulu degilse test atlanir.
+    pytest.importorskip("mcp", reason="kesif-mcp ekstrasi kurulu degil")
+
     _tablo_goruntusu(tmp_path / "tablo.png")
     monkeypatch.setenv("KESIF_KOK", str(tmp_path))
     from ads.kesif import sunucu as _sunucu

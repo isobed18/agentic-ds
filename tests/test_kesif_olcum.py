@@ -13,8 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from ads.kesif.ornek_parti import yaz
-from ads.kesif.yonlendirici import Akis, envanter
+# Kesif ekstrasi (`.[kesif]`) kurulu degilse bu modul TOPLANAMAZ: magika,
+# yonlendiricinin modul seviyesinde import ettigi bir bagimlilik. Guard
+# olmadan collection hatasi tum suite'i durdurur -- yalnizca kesif
+# testlerini degil.
+pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
+
+from ads.kesif.ornek_parti import yaz  # noqa: E402
+from ads.kesif.yonlendirici import Akis, envanter  # noqa: E402
 
 # Her dosyanin gitmesi gereken akis. Bir katman bozulursa burasi kirilir.
 BEKLENEN_AKIS: dict[str, Akis] = {
