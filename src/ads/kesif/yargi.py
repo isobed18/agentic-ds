@@ -225,6 +225,15 @@ def en_makul_akis(karar: Karar) -> tuple[str, str]:
     if karar.sekil in SEKIL_AKIS:
         return SEKIL_AKIS[karar.sekil], f"sekil olcumu '{karar.sekil}'"
 
+    # Kisa, tek sutunlu CSV/TSV dosyalarinda ayirac olcumu dogal olarak
+    # sonucsuz kalabilir ve Magika bunlari dusuk guvenle ``txt`` diye
+    # etiketleyebilir. Bu durumda kullanicinin gozlenen dosya uzantisi,
+    # genel ``txt -> belge`` varsayimindan daha ozeldir. Bunun bir icerik
+    # olcumu olmadigini gerekcede acik tutuyoruz.
+    uzanti = Path(karar.yol).suffix.lower().lstrip(".")
+    if uzanti in {"csv", "tsv"}:
+        return "tablo", f"dosya uzantisi '.{uzanti}' (sekil belirsiz)"
+
     if karar.format in FORMAT_AKIS:
         return FORMAT_AKIS[karar.format], f"format '{karar.format}'"
 

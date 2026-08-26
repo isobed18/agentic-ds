@@ -7,12 +7,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from ads.agents.runtime import AgentRuntimePolicy
 from ads.contracts.agents import AgentAudit
 from ads.contracts.base import ArtifactType
 from ads.contracts.comprehension import ComprehensionBrief
+from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import BUILTIN_PROFILES, GateVerdict
 from ads.contracts.integration import IntegrationPlan
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
@@ -616,6 +618,44 @@ def test_schema_investigation_can_recover_inside_one_stage_attempt(
     audit = state.require(ArtifactType.AGENT_AUDIT, AgentAudit, name="agent_audit")
     assert audit.members[0].validation_failures == ["untested_plan"]
     assert state.attempts_for("schema_discovery")[0].decision.verdict is GateVerdict.AUTO_PROCEED
+
+
+def test_single_keyless_table_uses_executor_owned_row_identity(
+    tmp_path: Path,
+) -> None:
+    """A valid observation table must not hang because it has no business key."""
+    source = tmp_path / "keyless"
+    source.mkdir()
+    pd.DataFrame(
+        {
+            "size": ["small", "small", "large", "large"] * 30,
+            "color": ["red", "green"] * 60,
+            "class": ["p", "n", "p", "n"] * 30,
+        }
+    ).to_csv(source / "observations.csv", index=False)
+    llm = FakeLLM([{"items": []}])
+    full_spec, registry = build_full_spec(llm)
+    selected = tuple(
+        stage
+        for stage in full_spec.stages
+        if stage.id in {"intake", "schema_discovery", "integration"}
+    )
+    spec = linear_spec("single-keyless-table", "1", selected)
+    state = _state(tmp_path, source, "single-keyless-table")
+
+    outcome = run_workflow(spec, registry, state, rubrics=build_pipeline_rubrics())
+
+    assert outcome.completed, outcome.error
+    plan = state.require(ArtifactType.INTEGRATION_PLAN, IntegrationPlan)
+    assert plan.base_table == "observations"
+    assert plan.base_grain == ["__ads_row_id"]
+    assert any("executor-owned row identity" in warning for warning in plan.warnings)
+    assert state.attempts_for("schema_discovery")[0].decision.verdict is GateVerdict.AUTO_PROCEED
+    abt = state.require(ArtifactType.DATA_CARD, DataCard, name="abt")
+    row_identity = abt.column("__ads_row_id")
+    assert row_identity is not None
+    assert row_identity.semantic_type is SemanticType.IDENTIFIER
+    assert len(llm.calls) == 1, "only advisory source comprehension should use the model"
 
 
 def test_agent_panel_persists_contract_tool_and_agreement_audit(

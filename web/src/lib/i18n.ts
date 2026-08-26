@@ -688,6 +688,8 @@ const TR: Record<string, string> = {
   "Structured data": "Yapısal veri",
   "Structured files": "Yapısal dosyalar",
   "Needs review": "İnceleme gerekiyor",
+  "Understanding needs review": "Veri anlayışı inceleme gerektiriyor",
+  "Start a new understanding run": "Yeni bir veri anlama çalışması başlat",
   "Explain why": "Nedenini açıkla",
   "Inspect": "İncele",
   "Profile": "Profille",

@@ -55,7 +55,7 @@ from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.base import ArtifactType
 from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import QualitySignals
-from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal
+from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal, IntegrationTrial
 from ads.contracts.problem import (
     ProblemDefinition,
     ProblemDiscoveryProposal,
@@ -65,7 +65,7 @@ from ads.contracts.validation import (
     ValidationStrategy,
     ValidationStrategyProposal,
 )
-from ads.intake import detect_relationships
+from ads.intake import detect_primary_keys, detect_relationships
 from ads.llm import StructuredLLM
 from ads.orchestration import RunState, StageResult
 from ads.pipeline.stages import (
@@ -82,6 +82,9 @@ from ads.skills import select_skills
 from ads.splitting import execute_validation_trial
 from ads.store import compute_artifact_id
 from ads.tools import PermissionBroker, ToolRuntime, build_tool_registry
+from ads.tools.integration import trial_integration_plan
+
+_SYNTHETIC_ROW_ID_BASE = "__ads_row_id"
 
 
 def _single_call[T](spec: AgentSpec[T]) -> AgentSpec[T]:
@@ -195,6 +198,115 @@ def _source_inputs(state: RunState) -> tuple[list[DataCard], dict[str, pd.DataFr
     return cards, frames
 
 
+def _trial_plan(
+    *,
+    state: RunState,
+    cards: list[DataCard],
+    frames: dict[str, pd.DataFrame],
+    proposal: IntegrationPlanProposal,
+) -> IntegrationTrial:
+    """Run an executor-owned trial without routing a deterministic case through an agent."""
+    runtime = ToolRuntime.from_sources(cards, frames, run_id=f"{state.run_id}-single-table-trial")
+    try:
+        payload = trial_integration_plan(
+            runtime,
+            {"plan": proposal.model_dump(mode="json", exclude={"created_at"})},
+        )
+        return IntegrationTrial.model_validate(payload.data)
+    finally:
+        runtime.close()
+
+
+def _single_table_schema_result(
+    *,
+    state: RunState,
+    cards: list[DataCard],
+    frames: dict[str, pd.DataFrame],
+) -> StageResult | None:
+    """Build the no-join plan deterministically for one observation table.
+
+    Schema interpretation is necessary when sources must be related. For one
+    table there is no relationship judgment to make, so spending several model
+    turns asking for a join plan adds latency and can only invent structure.
+
+    A source key is preferred and verified against the full frame. When none is
+    clean, the executor adds a reserved row identity to its in-memory copy. The
+    resulting ABT profiles that column as an identifier, which keeps it out of
+    targets and model features while preserving exact row lineage.
+    """
+    if len(cards) != 1 or len(frames) != 1:
+        return None
+    card = cards[0]
+    frame = frames.get(card.table_name)
+    if frame is None or frame.empty:
+        return None
+
+    candidates = detect_primary_keys(card, frame)
+    grain = list(candidates[0].columns) if candidates else []
+    warnings: list[str] = []
+    warnings_tr: list[str] = []
+
+    def proposal_for(columns: list[str]) -> IntegrationPlanProposal:
+        return IntegrationPlanProposal(
+            base_table=card.table_name,
+            base_grain=columns,
+            grain_description=(
+                "One analytical row per source row, identified by " + ", ".join(columns) + "."
+            ),
+            grain_description_tr=(
+                "Her kaynak satırı için bir analitik satır; kimlik: "
+                + ", ".join(columns)
+                + "."
+            ),
+            warnings=warnings,
+            warnings_tr=warnings_tr,
+        )
+
+    trial: IntegrationTrial | None = None
+    proposal: IntegrationPlanProposal | None = None
+    if grain:
+        proposal = proposal_for(grain)
+        trial = _trial_plan(state=state, cards=cards, frames=frames, proposal=proposal)
+        if not trial.grain_preserved:
+            proposal = None
+            trial = None
+
+    if proposal is None:
+        row_id = _SYNTHETIC_ROW_ID_BASE
+        suffix = 1
+        while row_id in frame.columns:
+            row_id = f"{_SYNTHETIC_ROW_ID_BASE}_{suffix}"
+            suffix += 1
+        prepared = frame.copy()
+        prepared.insert(0, row_id, range(len(prepared)))
+        frames[card.table_name] = prepared
+        state.blackboard[SOURCE_FRAMES_KEY] = frames
+        warnings = [
+            "No clean source key exists. The executor added an executor-owned row identity "
+            f"({row_id}) for lineage; it is excluded from model features."
+        ]
+        warnings_tr = [
+            "Temiz bir kaynak anahtarı yok. Yürütücü, veri soyunu izlemek için yürütücüye ait "
+            f"bir satır kimliği ({row_id}) ekledi; bu alan model özelliklerinden çıkarılır."
+        ]
+        proposal = proposal_for([row_id])
+        trial = _trial_plan(state=state, cards=cards, frames=frames, proposal=proposal)
+
+    if not trial.grain_preserved:
+        raise ValueError("Executor-owned single-table row identity did not preserve grain.")
+    trial_id = compute_artifact_id(trial)
+    plan = IntegrationPlan.from_proposal(proposal, [], trial_artifact_id=trial_id)
+    return StageResult(
+        artifacts=[plan, trial],
+        names={0: "integration_plan", 1: "integration_trial"},
+        signals=QualitySignals(validation_failures=0),
+        digest=(
+            "Single-table input requires no relationship inference. "
+            f"{plan.summary()}; deterministic trial: {trial.summary()}"
+        ),
+    )
+
+
 def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     """Create active schema discovery with tool-driven deterministic plan trials."""
     if panel_size < 1:
@@ -245,6 +357,9 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     def stage(state: RunState, correction: list[str] | None = None) -> StageResult:
         cards, frames = _source_inputs(state)
         relationships = detect_relationships(cards, frames)
+        single_table = _single_table_schema_result(state=state, cards=cards, frames=frames)
+        if single_table is not None:
+            return single_table
         backend = state.blackboard.get(EXECUTION_BACKEND_KEY)
         if backend is not None and not isinstance(backend, ExecutionBackend):
             raise TypeError("Configured execution backend does not satisfy ExecutionBackend.")
