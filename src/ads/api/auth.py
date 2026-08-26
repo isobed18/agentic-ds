@@ -49,6 +49,7 @@ _DKLEN = 32
 
 _ENV_USERNAME = "ADS_AUTH_USERNAME"
 _ENV_PASSWORD_HASH = "ADS_AUTH_PASSWORD_HASH"
+_ENV_USERS = "ADS_AUTH_USERS_JSON"
 _ENV_SECRET = "ADS_AUTH_SECRET"
 _ENV_SESSION_HOURS = "ADS_AUTH_SESSION_HOURS"
 _ENV_SECURE_COOKIE = "ADS_AUTH_SECURE_COOKIE"
@@ -125,10 +126,20 @@ class AuthConfig:
     secure_cookie: bool = True
     max_failures: int = 8
     lockout_seconds: int = 900
+    users: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def credentials(self) -> dict[str, str]:
+        """Configured accounts, with the legacy single account as a fallback."""
+        if self.users:
+            return self.users
+        if self.username and self.password_hash:
+            return {self.username: self.password_hash}
+        return {}
 
     @property
     def enabled(self) -> bool:
-        return bool(self.username and self.password_hash)
+        return bool(self.credentials)
 
 
 def config_from_env() -> AuthConfig | None:
@@ -137,10 +148,27 @@ def config_from_env() -> AuthConfig | None:
     ``None`` means "run without a password", which is the historical behaviour
     and what the loopback launcher and the tests rely on.
     """
+    users: dict[str, str] = {}
+    users_raw = os.environ.get(_ENV_USERS, "").strip()
+    if users_raw:
+        try:
+            decoded = json.loads(users_raw)
+        except json.JSONDecodeError:
+            decoded = None
+        if isinstance(decoded, dict):
+            users = {
+                str(name).strip(): str(password_hash).strip()
+                for name, password_hash in decoded.items()
+                if str(name).strip() and str(password_hash).strip()
+            }
+
     username = os.environ.get(_ENV_USERNAME, "").strip()
     password_hash = os.environ.get(_ENV_PASSWORD_HASH, "").strip()
-    if not username or not password_hash:
+    if not users and username and password_hash:
+        users = {username: password_hash}
+    if not users:
         return None
+    username, password_hash = next(iter(users.items()))
 
     secret_raw = os.environ.get(_ENV_SECRET, "").strip()
     if secret_raw:
@@ -167,6 +195,7 @@ def config_from_env() -> AuthConfig | None:
         secret=secret,
         session_hours=session_hours,
         secure_cookie=secure_cookie,
+        users=users,
     )
 
 
@@ -189,11 +218,19 @@ def _b64decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + padding)
 
 
-def issue_session(config: AuthConfig, *, now: float | None = None) -> str:
-    """Mint a signed session token for the configured user."""
+def issue_session(
+    config: AuthConfig,
+    *,
+    username: str | None = None,
+    now: float | None = None,
+) -> str:
+    """Mint a signed session token for one configured user."""
     now = time.time() if now is None else now
+    selected = username or config.username
+    if selected not in config.credentials:
+        raise ValueError("cannot issue a session for an unconfigured user")
     payload = json.dumps(
-        {"u": config.username, "exp": now + config.session_hours * 3600},
+        {"u": selected, "exp": now + config.session_hours * 3600},
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
@@ -223,9 +260,9 @@ def read_session(token: str, config: AuthConfig, *, now: float | None = None) ->
     if float(claims.get("exp", 0)) <= now:
         return None
     username = claims.get("u")
-    # A token signed for a different account must not survive a credential
-    # change, so the name is checked rather than merely echoed back.
-    if username != config.username:
+    # Removing an account invalidates its signed sessions without rotating the
+    # shared signing key, so account deletion takes effect at the next request.
+    if username not in config.credentials:
         return None
     return username
 
@@ -483,18 +520,19 @@ def install_auth(app: FastAPI, config: AuthConfig) -> None:
         username = str(body.get("username", ""))
         password = str(body.get("password", ""))
 
-        # Both factors are checked every time, and the username comparison is
-        # constant-time too, so response timing does not reveal which half was
-        # wrong.
-        name_ok = hmac.compare_digest(username, config.username)
-        password_ok = verify_password(password, config.password_hash)
+        # Always perform one expensive password verification. Unknown names use
+        # a real configured hash as a timing dummy, so account enumeration does
+        # not become materially cheaper than a wrong password.
+        configured_hash = config.credentials.get(username)
+        password_ok = verify_password(password, configured_hash or config.password_hash)
+        name_ok = configured_hash is not None
         if not (name_ok and password_ok):
             limiter.record_failure(key)
             return JSONResponse({"detail": "Kullanıcı adı veya parola hatalı."}, status_code=401)
 
         limiter.record_success(key)
-        response = JSONResponse({"username": config.username})
-        _set_cookie(response, issue_session(config))
+        response = JSONResponse({"username": username})
+        _set_cookie(response, issue_session(config, username=username))
         return response
 
     @app.post("/api/auth/logout", include_in_schema=False)

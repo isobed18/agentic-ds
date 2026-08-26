@@ -13,6 +13,7 @@ import { Badge, Empty, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationDefinition,
+  type DataSource,
   type PipelineBlueprint,
   type RunSummary,
   type SourceProfile,
@@ -65,6 +66,17 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
     }
   }
 
+  async function remove(item: AutomationDefinition) {
+    if (!window.confirm(t("Delete this data project? Its execution history will be kept."))) return;
+    setError(null);
+    try {
+      await api.deleteAutomation(item.automation_id);
+      setItems((current) => current.filter((candidate) => candidate.automation_id !== item.automation_id));
+    } catch (caught) {
+      setError(messageOf(caught));
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-surface-sunken px-6 py-8 lg:px-10">
       <div className="mx-auto max-w-6xl">
@@ -75,7 +87,7 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
         {error && <p className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
         {busy && !items.length ? <div className="mt-16"><Spinner label={t("Opening automation…")} /></div> : (
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((item) => <button key={item.automation_id} type="button" onClick={() => onOpen(item.automation_id)} className="rounded-xl border border-line bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2><Badge tone={item.status === "saved" ? "ok" : "neutral"}>{t(item.status === "saved" ? "Saved" : "Draft")}</Badge></div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>)}
+            {items.map((item) => <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className="w-full p-5 pr-12 text-left"><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2><Badge tone={item.status === "saved" ? "ok" : "neutral"}>{t(item.status === "saved" ? "Saved" : "Draft")}</Badge></div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button><button type="button" aria-label={t("Delete data project")} title={t("Delete data project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>)}
             {!items.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No data projects yet")} hint={t("Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.")} /></div>}
           </div>
         )}
@@ -92,6 +104,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [activeView, setActiveView] = useState<"editor" | "executions">(params.get("view") === "executions" ? "executions" : "editor");
   const [executions, setExecutions] = useState<RunSummary[]>([]);
   const [sourceId, setSourceId] = useState("");
+  const [sources, setSources] = useState<DataSource[]>([]);
   const [profile, setProfile] = useState<SourceProfile | null>(null);
   const [runId, setRunId] = useState<string | null>(params.get("run"));
   const [runStatus, setRunStatus] = useState<string | null>(null);
@@ -106,8 +119,9 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refreshAutomation = useCallback(async () => {
-    const [record, history] = await Promise.all([api.automation(automationId), api.automationExecutions(automationId)]);
+    const [record, history, availableSources] = await Promise.all([api.automation(automationId), api.automationExecutions(automationId), api.dataSources()]);
     setAutomation(record); setName(record.name); setSourceId(record.source_id ?? ""); setExecutions(history);
+    setSources(availableSources);
     return record;
   }, [automationId]);
 
@@ -161,6 +175,17 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     catch (caught) { setError(messageOf(caught)); } finally { setUploading(false); }
   }
 
+  async function selectExistingSource(nextSourceId: string) {
+    if (!automation || !nextSourceId || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const saved = await api.updateAutomation(automationId, automation.revision, { source_id: nextSourceId });
+      setAutomation(saved); setSourceId(nextSourceId); setRunId(null); setRunStatus(null); setWorkspace(null); setAdvancedGraph(false);
+      setParams({ automation: automationId }, { replace: true });
+    } catch (caught) { setError(messageOf(caught)); }
+    finally { setBusy(false); }
+  }
+
   async function startUnderstanding() {
     if (!sourceId || busy) return; setBusy(true); setError(null);
     try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ automation: automationId, run: staged.run_id }, { replace: true }); await refreshAutomation(); }
@@ -185,6 +210,36 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
+  async function retryRun() {
+    if (!runId || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const progress = await api.runProgress(runId);
+      const pending = progress.pending_question as { human_prompt?: { options?: Array<{ option_id?: string }> } } | undefined;
+      const canRetryComponent = pending?.human_prompt?.options?.some((option) => option.option_id === "retry");
+      if (String(progress.status) === "awaiting_human" && canRetryComponent) {
+        await api.answer(runId, { decision: "retry", instructions: [] });
+        setRunStatus("resuming");
+      } else {
+        const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId);
+        setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null);
+        setParams({ automation: automationId, run: staged.run_id }, { replace: true });
+        await refreshAutomation();
+      }
+    } catch (caught) { setError(messageOf(caught)); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteExecution(targetRunId: string) {
+    if (!window.confirm(t("Delete this execution and all of its artifacts?"))) return;
+    setError(null);
+    try {
+      await api.deleteRun(targetRunId);
+      if (runId === targetRunId) { setRunId(null); setRunStatus(null); setWorkspace(null); }
+      await refreshAutomation();
+    } catch (caught) { setError(messageOf(caught)); }
+  }
+
   const lifecycle = automationView({ sourceId, runId, runStatus, workspace, advancedGraph });
   const switchView = (view: "editor" | "executions") => { setActiveView(view); setParams({ automation: automationId, ...(runId ? { run: runId } : {}), ...(view === "executions" ? { view: "executions" } : {}) }, { replace: true }); };
 
@@ -194,20 +249,22 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
         <input value={name} onChange={(event) => { setName(event.target.value); setSaveState("unsaved"); }} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[320px] max-w-[32vw] border-0 bg-transparent text-sm font-semibold text-ink outline-none" />
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{(["editor", "executions"] as const).map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{t(view === "editor" ? "Editor" : "Executions")}</button>)}</div>
-        <div className="ml-auto flex items-center gap-2"><LanguagePicker /><span className={cx("text-[11px]", saveState === "unsaved" ? "text-warn-700" : "text-ink-faint")}>{t(saveState === "saving" ? "Saving…" : saveState === "unsaved" ? "Unsaved changes" : "Saved")}</span>{activeView === "editor" && <button type="button" className="btn-ghost !h-8 !w-8 !p-0 text-lg" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}</div>
+        <div className="ml-auto flex items-center gap-2">{activeView === "editor" && <select aria-label={t("Choose uploaded data")} title={t("Choose uploaded data")} value={sourceId} onChange={(event) => void selectExistingSource(event.target.value)} className="h-8 max-w-[220px] rounded-lg border border-line bg-surface px-2 text-[11px] text-ink"><option value="">{t("Choose uploaded data")}</option>{sources.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select>}<LanguagePicker /><span className={cx("text-[11px]", saveState === "unsaved" ? "text-warn-700" : "text-ink-faint")}>{t(saveState === "saving" ? "Saving…" : saveState === "unsaved" ? "Unsaved changes" : "Saved")}</span>{activeView === "editor" && <button type="button" className="btn-ghost !h-8 !w-8 !p-0 text-lg" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}</div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
       {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} /> : <>{lifecycle === "empty" && <button type="button" onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload PDFs, CSV, Excel, Parquet, or TXT files. Intake will show where every file goes before any ML decision is made.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{["Intake", "Understand", "Choose ML inputs", "Accept plan", "Run and review"].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{t(step)}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void startUnderstanding()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void startUnderstanding()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => { setBlueprint(next); setSaveState("unsaved"); }} onSaved={(next) => { applyWorkspace(next); setSaveState("saved"); }} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
-      {!runId && sourceId && activeView === "editor" && <label className="absolute bottom-3 left-4 flex items-center gap-1.5 rounded-lg bg-surface px-2 py-1.5 text-[10px] text-ink-mute shadow-card"><input type="checkbox" checked={reuseCache} onChange={(event) => setReuseCache(event.target.checked)} />{t("Reuse matching understanding")}</label>}
+      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{["Intake", "Understand", "Choose ML inputs", "Accept plan", "Run and review"].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{t(step)}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => { setBlueprint(next); setSaveState("unsaved"); }} onSaved={(next) => { applyWorkspace(next); setSaveState("saved"); }} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>
   );
 }
 
-function ExecutionHistory({ executions }: { executions: RunSummary[] }) {
+function ExecutionHistory({ executions, busy, onPause, onRetry, onDelete }: { executions: RunSummary[]; busy: boolean; onPause: (runId: string) => void; onRetry: (runId: string) => void; onDelete: (runId: string) => void }) {
   const [selected, setSelected] = useState<RunSummary | null>(executions[0] ?? null);
   useEffect(() => { if (!selected && executions.length) setSelected(executions[0]); }, [executions, selected]);
-  return <div className="h-full overflow-y-auto bg-surface-sunken p-6"><div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-[1fr_1.4fr]"><section><h2 className="text-sm font-semibold text-ink">{t("Execution history")}</h2><div className="mt-3 space-y-2">{executions.map((item, index) => <button key={item.run_id} type="button" onClick={() => setSelected(item)} className={cx("flex w-full items-center gap-3 rounded-xl border bg-surface px-4 py-3 text-left", selected?.run_id === item.run_id ? "border-brand-400 ring-2 ring-brand-100" : "border-line")}><span className="text-xs font-semibold text-ink">#{executions.length - index}</span><Badge tone={item.status === "completed" ? "ok" : item.status === "failed" ? "stop" : "brand"}>{t(item.status)}</Badge><span className="ml-auto text-[10px] text-ink-faint">{item.last_activity ? new Date(item.last_activity).toLocaleString() : "—"}</span></button>)}{!executions.length && <Empty title={t("Never executed")} hint={t("Accepted workflow runs will appear here without changing the saved editor graph.")} />}</div></section>{selected && <section className="rounded-xl border border-line bg-surface p-5 shadow-card"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Selected execution")}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><ExecutionFact label={t("Status")} value={t(selected.status)} /><ExecutionFact label={t("Artifacts")} value={selected.artifact_count ?? 0} /><ExecutionFact label={t("Completed stages")} value={selected.stages?.length ?? 0} /><ExecutionFact label={t("Last activity")} value={selected.last_activity ? new Date(selected.last_activity).toLocaleString() : "—"} /></div><p className="mt-4 text-xs text-ink-mute">{t("Select a completed node in the Editor to inspect its readable artifacts and evidence.")}</p></section>}</div></div>;
+  useEffect(() => { if (selected && !executions.some((item) => item.run_id === selected.run_id)) setSelected(executions[0] ?? null); }, [executions, selected]);
+  const active = selected && ["queued", "staging", "running", "resuming"].includes(selected.status);
+  const retryable = selected && ["failed", "interrupted", "aborted", "awaiting_human"].includes(selected.status);
+  return <div className="h-full overflow-y-auto bg-surface-sunken p-6"><div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-[1fr_1.4fr]"><section><h2 className="text-sm font-semibold text-ink">{t("Execution history")}</h2><div className="mt-3 space-y-2">{executions.map((item, index) => <button key={item.run_id} type="button" onClick={() => setSelected(item)} className={cx("flex w-full items-center gap-3 rounded-xl border bg-surface px-4 py-3 text-left", selected?.run_id === item.run_id ? "border-brand-400 ring-2 ring-brand-100" : "border-line")}><span className="text-xs font-semibold text-ink">#{executions.length - index}</span><Badge tone={item.status === "completed" ? "ok" : item.status === "failed" ? "stop" : "brand"}>{t(item.status)}</Badge><span className="ml-auto text-[10px] text-ink-faint">{item.last_activity ? new Date(item.last_activity).toLocaleString() : "—"}</span></button>)}{!executions.length && <Empty title={t("Never executed")} hint={t("Accepted workflow runs will appear here without changing the saved editor graph.")} />}</div></section>{selected && <section className="rounded-xl border border-line bg-surface p-5 shadow-card"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Selected execution")}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><ExecutionFact label={t("Status")} value={t(selected.status)} /><ExecutionFact label={t("Artifacts")} value={selected.artifact_count ?? 0} /><ExecutionFact label={t("Completed stages")} value={selected.stages?.length ?? 0} /><ExecutionFact label={t("Last activity")} value={selected.last_activity ? new Date(selected.last_activity).toLocaleString() : "—"} /></div><div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">{active && <button type="button" className="btn-ghost text-xs" disabled={busy} onClick={() => onPause(selected.run_id)}>{t("Pause after current stage")}</button>}{retryable && <button type="button" className="btn-primary text-xs" disabled={busy} onClick={() => onRetry(selected.run_id)}>{t(selected.status === "awaiting_human" ? "Retry current component" : "Retry run")}</button>}{!active && <button type="button" className="btn-ghost text-xs text-stop-700" disabled={busy} onClick={() => onDelete(selected.run_id)}>{t("Delete execution")}</button>}</div><p className="mt-4 text-xs text-ink-mute">{t("Select a completed node in the Editor to inspect its readable artifacts and evidence.")}</p></section>}</div></div>;
 }
 
 function ExecutionFact({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-[10px] text-ink-faint">{label}</p><p className="mt-1 text-sm font-semibold text-ink">{value}</p></div>; }

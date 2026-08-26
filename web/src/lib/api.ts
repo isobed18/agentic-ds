@@ -702,6 +702,8 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs?: number):
 }
 
 export const api = {
+  authSession: () => request<{ username: string | null; authenticated: boolean }>("/api/auth/session"),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   /**
    * Without a run this is the blank pipeline template; with one, the same
    * graph annotated with per-stage status, attempts and retries. This — not
@@ -723,6 +725,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ expected_revision: expectedRevision, changes }),
     }),
+  deleteAutomation: (id: string) =>
+    request<{ automation_id: string; definitions: number; revisions: number }>(
+      `/api/automations/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
   automationExecutions: (id: string) =>
     request<RunSummary[]>(`/api/automations/${encodeURIComponent(id)}/executions`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),

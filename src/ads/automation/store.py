@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -50,6 +51,25 @@ class AutomationStore:
             raise KeyError(automation_id)
         with self._lock:
             return self._read(target)
+
+    def delete(self, automation_id: str) -> dict[str, int]:
+        """Delete one validated definition and all of its immutable revisions."""
+        target = self._target(automation_id)
+        revision_dir = (self.revision_root / automation_id).resolve()
+        if self.revision_root not in revision_dir.parents:
+            raise ValueError("invalid automation revision path")
+        with self._lock:
+            if not target.is_file():
+                raise KeyError(automation_id)
+            revision_count = (
+                sum(1 for path in revision_dir.glob("*.json") if path.is_file())
+                if revision_dir.is_dir()
+                else 0
+            )
+            target.unlink()
+            if revision_dir.is_dir():
+                shutil.rmtree(revision_dir)
+        return {"definitions": 1, "revisions": revision_count}
 
     def update(
         self,
