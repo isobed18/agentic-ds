@@ -44,6 +44,8 @@ const TR: Record<string, string> = {
   "needs you": "sizi bekliyor",
 
   // gate verdicts and reasons
+  "The planner did not respond. Please try again.":
+    "Planner yanıt vermedi. Lütfen tekrar deneyin.",
   "Continued": "Devam etti",
   "Sent back": "Geri gönderildi",
   "Asked you": "Size soruldu",

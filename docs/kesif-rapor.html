@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keşif Katmanı — Teknik Rapor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  *,*::before,*::after{box-sizing:border-box;}
+  body,h1,h2,h3,p,ul,ol,li,table,figure,figcaption{margin:0;padding:0;}
+  :root{
+    --paper:#FFFFFF; --surface:#F6F7F8; --sunk:#EDEFF1; --ink:#16191D;
+    --muted:#5C6570; --rule:#D3D8DD; --hair:#E5E9ED; --accent:#1F4E79;
+    --risk:#9B2C1F; --ok:#1F6B4A; --warm:#8A5B12;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --paper:#101317; --surface:#171B20; --sunk:#1C2127; --ink:#E4E8EC;
+    --muted:#98A2AD; --rule:#2C333B; --hair:#232930; --accent:#7FB3E0;
+    --risk:#E08A78; --ok:#6FBF95; --warm:#D6AC63;}}
+  :root[data-theme="dark"]{
+    --paper:#101317; --surface:#171B20; --sunk:#1C2127; --ink:#E4E8EC;
+    --muted:#98A2AD; --rule:#2C333B; --hair:#232930; --accent:#7FB3E0;
+    --risk:#E08A78; --ok:#6FBF95; --warm:#D6AC63;}
+  :root[data-theme="light"]{
+    --paper:#FFFFFF; --surface:#F6F7F8; --sunk:#EDEFF1; --ink:#16191D;
+    --muted:#5C6570; --rule:#D3D8DD; --hair:#E5E9ED; --accent:#1F4E79;
+    --risk:#9B2C1F; --ok:#1F6B4A; --warm:#8A5B12;}
+
+  body{background:var(--paper);color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:15.5px;line-height:1.62;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:52rem;margin:0 auto;padding:3rem 1.5rem 4.5rem;
+    display:flex;flex-direction:column;gap:2.2rem;}
+  code,pre,.mono,th,.no,.etiket{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;}
+
+  h1{font-size:1.55rem;line-height:1.25;font-weight:600;margin:.5rem 0 .45rem;
+    letter-spacing:-.012em;}
+  .sub{font-size:.97rem;color:var(--muted);max-width:60ch;}
+  h2{font-size:.95rem;font-weight:600;margin:0 0 .9rem;padding-bottom:.5rem;
+    border-bottom:1px solid var(--rule);display:flex;align-items:baseline;gap:.7rem;
+    letter-spacing:-.005em;}
+  h2 .no{color:var(--accent);font-weight:600;font-size:.8rem;}
+  h3{font-size:.86rem;font-weight:600;margin:1.15rem 0 .4rem;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.07em;}
+  p{margin:0 0 .75rem;max-width:70ch;} p:last-child{margin-bottom:0;}
+  strong{font-weight:600;color:var(--ink);}
+  section{display:flex;flex-direction:column;}
+
+  code{font-size:.86em;background:var(--sunk);border-radius:2px;padding:.05em .32em;}
+  pre{font-size:.79rem;background:var(--surface);border:1px solid var(--rule);
+    padding:.8rem 1rem;overflow-x:auto;margin:0 0 .75rem;line-height:1.6;}
+
+  header.top{border-bottom:2px solid var(--ink);padding-bottom:1.2rem;}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent);font-weight:500;}
+  .meta{display:flex;flex-wrap:wrap;gap:.3rem 2rem;margin-top:1rem;padding-top:.8rem;
+    border-top:1px solid var(--hair);font-size:.75rem;color:var(--muted);}
+  .meta b{color:var(--ink);font-weight:500;}
+
+  .ozet{background:var(--surface);border:1px solid var(--rule);
+    padding:1.05rem 1.25rem;margin-top:1.1rem;}
+  .ozet p{font-size:.95rem;max-width:66ch;margin-bottom:.5rem;}
+  .ozet p:last-child{margin-bottom:0;}
+
+  .scroll{overflow-x:auto;}
+  table{border-collapse:collapse;width:100%;font-size:.83rem;min-width:26rem;
+    font-variant-numeric:tabular-nums;}
+  th,td{text-align:left;padding:.48rem .9rem .48rem 0;border-bottom:1px solid var(--hair);
+    vertical-align:top;}
+  thead th{border-bottom:1px solid var(--rule);font-size:.7rem;letter-spacing:.04em;
+    color:var(--muted);font-weight:500;}
+  td.n{text-align:right;padding-right:1.3rem;white-space:nowrap;}
+  td.y{color:var(--ok);} td.w{color:var(--warm);} td.r{color:var(--risk);}
+  .kucuk{color:var(--muted);font-size:.88em;}
+
+  .kutu{background:var(--surface);border:1px solid var(--rule);
+    border-left:3px solid var(--rule);padding:.85rem 1.05rem;margin:.85rem 0;}
+  .kutu.iyi{border-left-color:var(--ok);}
+  .kutu.uyari{border-left-color:var(--risk);}
+  .kutu.not{border-left-color:var(--warm);}
+  .kutu.vurgu{border-left-color:var(--accent);}
+  .lbl{font-family:"IBM Plex Mono",monospace;font-size:.66rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted);display:block;margin-bottom:.4rem;
+    font-weight:500;}
+  .kutu.iyi .lbl{color:var(--ok);} .kutu.uyari .lbl{color:var(--risk);}
+  .kutu.not .lbl{color:var(--warm);} .kutu.vurgu .lbl{color:var(--accent);}
+  .kutu p{font-size:.9rem;} .kutu p:last-child{margin-bottom:0;}
+
+  /* katman kunyesi */
+  .kunye{display:grid;grid-template-columns:7rem 1fr;gap:.45rem 1.1rem;
+    margin:.7rem 0 .9rem;font-size:.9rem;}
+  .kunye dt{font-family:"IBM Plex Mono",monospace;font-size:.7rem;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--muted);padding-top:.25em;}
+  .kunye dd{margin:0;}
+  @media(max-width:34rem){.kunye{grid-template-columns:1fr;gap:.1rem;}
+    .kunye dd{margin-bottom:.5rem;}}
+
+  .liste{display:flex;flex-direction:column;gap:.45rem;}
+  .liste .sat{display:grid;grid-template-columns:1.3rem 1fr;gap:.65rem;}
+  .liste .sat .i{font-family:"IBM Plex Mono",monospace;font-size:.75rem;
+    color:var(--accent);font-weight:500;padding-top:.25em;}
+  .liste .sat p{margin:0;font-size:.93rem;}
+
+  figure{margin:1rem 0;display:flex;flex-direction:column;gap:.6rem;}
+  svg.dg{display:block;width:100%;min-width:40rem;max-width:100%;height:auto;}
+  figcaption{font-size:.78rem;color:var(--muted);line-height:1.5;max-width:64ch;}
+  .b{fill:var(--surface);stroke:currentColor;stroke-width:1.1;}
+  .b-acc{fill:var(--surface);stroke:var(--accent);stroke-width:1.6;}
+  .b-ok{fill:var(--surface);stroke:var(--ok);stroke-width:1.5;}
+  .b-risk{fill:var(--surface);stroke:var(--risk);stroke-width:1.4;stroke-dasharray:5 4;}
+  .b-warm{fill:var(--surface);stroke:var(--warm);stroke-width:1.5;}
+  .t{fill:currentColor;font-size:12px;font-family:"IBM Plex Mono",monospace;}
+  .s{fill:currentColor;font-size:10.5px;opacity:.75;font-family:"IBM Plex Mono",monospace;}
+  .t-acc{fill:var(--accent);font-size:12px;font-weight:500;font-family:"IBM Plex Mono",monospace;}
+  .s-acc{fill:var(--accent);font-size:10.5px;font-family:"IBM Plex Mono",monospace;}
+  .t-ok{fill:var(--ok);font-size:12px;font-weight:500;font-family:"IBM Plex Mono",monospace;}
+  .s-ok{fill:var(--ok);font-size:10.5px;font-family:"IBM Plex Mono",monospace;}
+  .t-risk{fill:var(--risk);font-size:11.5px;font-weight:500;font-family:"IBM Plex Mono",monospace;}
+  .s-risk{fill:var(--risk);font-size:10.5px;font-family:"IBM Plex Mono",monospace;}
+  .t-warm{fill:var(--warm);font-size:11.5px;font-weight:500;font-family:"IBM Plex Mono",monospace;}
+  .ln{stroke:currentColor;stroke-width:1.1;fill:none;}
+  .ln-acc{stroke:var(--accent);stroke-width:1.4;fill:none;}
+  .ln-ok{stroke:var(--ok);stroke-width:1.5;fill:none;}
+  .ln-risk{stroke:var(--risk);stroke-width:1.3;fill:none;stroke-dasharray:4 4;}
+  .mk{fill:currentColor;} .mk-ok{fill:var(--ok);} .mk-risk{fill:var(--risk);}
+
+  .kapanis{border-top:2px solid var(--ink);padding-top:1.1rem;font-size:.95rem;}
+  @media print{body{background:#fff;color:#000;font-size:9.5pt;}
+    .wrap{max-width:none;padding:0;gap:1.2rem;}
+    section,.kutu,figure{break-inside:avoid;} h2{break-after:avoid;}}
+  @media(max-width:44rem){.wrap{padding:2rem 1.1rem 3rem;gap:1.8rem;}
+    .meta{gap:.25rem 1.2rem;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">Teknik rapor</div>
+  <h1>Keşif katmanı — mimari, ölçümler ve entegrasyon değerlendirmesi</h1>
+  <p class="sub">Pipeline girişinde çalışan tanıma ve yönlendirme katmanının
+    bileşen bazında dökümü, dış bağımlılıklar ve MCP maliyet ölçümü.</p>
+  <div class="meta">
+    <span><b>Hazırlayan</b> · Emre Keser</span>
+    <span><b>Tarih</b> · 24 Ağustos 2026</span>
+    <span><b>Amaç</b> · entegrasyon öncesi değerlendirme</span>
+  </div>
+
+  <div class="ozet">
+    <p><strong>Kapsam.</strong> Türü bilinmeyen bir dosyanın ne olduğunu içerikten
+      ölçüp doğru işleme akışına yönlendiren dört katmanlı bileşen. 3.307 satır,
+      770 test.</p>
+    <p><strong>Ölçüm.</strong> 25 dosyalık karma partide 25/25 doğru yönlendirme.
+      %88 otomatik çözülüyor, %12 human feedback'e çıkıyor.</p>
+    <p><strong>MCP maliyeti.</strong> Çağrı başına 1,10 ms. Toplu çağrıda ihmal
+      edilebilir; entegrasyonda doğrudan import önerilir, MCP dış ajanlar için açık
+      kalır. Detay §06.</p>
+  </div>
+</header>
+
+<section>
+  <h2><span class="no">01</span> Mimari</h2>
+  <p>Dört katman sırayla çalışır. Her katman, kendinden öncekinin çözemediğini alır.
+    İlk üçü deterministiktir ve MCP sunucusunun içindedir; dördüncüsü sunucunun
+    dışındadır.</p>
+
+  <figure>
+    <div class="scroll">
+      <svg class="dg" viewBox="0 0 820 246" role="img"
+        aria-label="Dört katmanlı yönlendirici. Dosya sırayla Magika, şekil tespiti ve kanıt katmanından geçer; her katman çözebildiğini akışlara yollar, çözemediğini bir sonraki katmana devreder. İlk üç katman MCP sunucusunun içinde ve deterministiktir. Dördüncü katman olan human feedback sunucunun dışındadır ve yalnızca kalan artık için çalışır.">
+        <defs>
+          <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <polygon class="mk" points="0,0 10,5 0,10"/></marker>
+          <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <polygon class="mk-ok" points="0,0 10,5 0,10"/></marker>
+          <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <polygon class="mk-risk" points="0,0 10,5 0,10"/></marker>
+        </defs>
+
+        <rect x="16" y="26" width="514" height="196" rx="2" fill="none"
+              stroke="var(--accent)" stroke-width="1" opacity=".4"/>
+        <text class="s-acc" x="26" y="20">MCP SUNUCUSU · DETERMİNİSTİK</text>
+
+        <rect class="b" x="30" y="40" width="100" height="36" rx="2"/>
+        <text class="t" x="80" y="63" text-anchor="middle">dosya</text>
+        <line class="ln" x1="130" y1="58" x2="166" y2="58" marker-end="url(#a1)"/>
+
+        <rect class="b-ok" x="170" y="40" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="63" text-anchor="middle">1 · MAGIKA</text>
+        <line class="ln-ok" x1="350" y1="52" x2="470" y2="52" marker-end="url(#a2)"/>
+        <text class="s-ok" x="356" y="45">çözdüyse</text>
+
+        <line class="ln" x1="260" y1="76" x2="260" y2="96" marker-end="url(#a1)"/>
+        <text class="s" x="268" y="90">çözemediyse</text>
+
+        <rect class="b-ok" x="170" y="96" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="119" text-anchor="middle">2 · ŞEKİL TESPİTİ</text>
+        <line class="ln-ok" x1="350" y1="108" x2="470" y2="108" marker-end="url(#a2)"/>
+
+        <line class="ln" x1="260" y1="132" x2="260" y2="152" marker-end="url(#a1)"/>
+
+        <rect class="b-ok" x="170" y="152" width="180" height="36" rx="2"/>
+        <text class="t-ok" x="260" y="175" text-anchor="middle">3 · KANIT KATMANI</text>
+        <line class="ln-ok" x1="350" y1="164" x2="470" y2="164" marker-end="url(#a2)"/>
+
+        <line class="ln-risk" x1="260" y1="188" x2="260" y2="200" marker-end="url(#a3)"/>
+
+        <rect class="b-risk" x="170" y="200" width="180" height="26" rx="2"/>
+        <text class="t-risk" x="260" y="217" text-anchor="middle">ARTIK · %12</text>
+
+        <rect class="b-acc" x="474" y="40" width="46" height="182" rx="2"/>
+        <text class="t-acc" x="497" y="100" text-anchor="middle" transform="rotate(-90 497 100)">AKIŞLAR</text>
+        <text class="s-acc" x="497" y="165" text-anchor="middle" transform="rotate(-90 497 165)">%88</text>
+
+        <line class="ln-risk" x1="350" y1="213" x2="560" y2="213" marker-end="url(#a3)"/>
+        <text class="s-risk" x="366" y="206">sunucu dışına</text>
+
+        <rect class="b-warm" x="564" y="196" width="220" height="40" rx="2"/>
+        <text class="t-warm" x="674" y="220" text-anchor="middle">4 · HUMAN FEEDBACK</text>
+
+        <line class="ln-acc" x1="640" y1="196" x2="519" y2="150" marker-end="url(#a2)"/>
+        <text class="s-acc" x="556" y="176">seçilen akış</text>
+      </svg>
+    </div>
+    <figcaption>Ucuz katmanlar her dosyaya, pahalı katman yalnızca kalan artığa
+      uygulanır. Çıkış akışları: tablo, belge, ağaç, kapsayıcı, işlenemez.</figcaption>
+  </figure>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Katman</th><th>Kaynak</th><th>Girdi</th><th>Çıktı</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Magika</td><td class="kucuk">Google, hazır</td>
+          <td>dosya baytları</td><td>format etiketi + güven</td></tr>
+        <tr><td>2 · Şekil tespiti</td><td class="kucuk">bizim</td>
+          <td>çözülmüş metin</td><td>yapısal şekil</td></tr>
+        <tr><td>3 · Kanıt katmanı</td><td class="kucuk">bizim</td>
+          <td>ham baytlar</td><td>okuma parametreleri</td></tr>
+        <tr><td>4 · Human feedback</td><td class="kucuk">bizim</td>
+          <td>çözülemeyen dosya</td><td>seçilmiş akış + kaynak etiketi</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">02</span> Katman 1 — Magika</h2>
+  <dl class="kunye">
+    <dt>Nedir</dt><dd>Google'ın açık kaynak dosya türü sınıflandırıcısı. Uzantıya
+      değil içeriğe bakar.</dd>
+    <dt>Kaynak</dt><dd>Hazır bileşen · Apache-2.0 · ~1 MB model · tamamen çevrimdışı</dd>
+    <dt>Görevi</dt><dd>Dosyanın formatını belirlemek</dd>
+    <dt>Ölçülen</dt><dd>3,84 ms/dosya. Uzantısı kasten yanlış verilen dört dosyanın
+      dördü de doğru tespit edildi.</dd>
+  </dl>
+
+  <h3>Ölçülen sınırlar</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Sınır</th><th>Ölçüm</th></tr></thead>
+      <tbody>
+        <tr><td>Kısa dosyada yüksek güvenle hatalı sınıflandırma</td>
+          <td class="r">3 satırlık CSV → <code>ignorefile</code>, güven 0,953</td></tr>
+        <tr><td>Format şekil bilgisi vermiyor</td>
+          <td class="w">log, rapor ve hizalı tablo — üçü de <code>txt</code></td></tr>
+        <tr><td>Bilinmeyen formatlar</td>
+          <td class="kucuk">JSON Lines → <code>txt</code>, güven 0,493 (düşük, tutarlı)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:.8rem">Birinci sınır kritik: hata düşük güvenle değil yüksek
+    güvenle geliyor, dolayısıyla güven eşiğiyle filtrelenemiyor. Bu nedenle Magika'nın
+    çıktısı bir girdi olarak kullanılıyor, karar olarak değil. Kısa dosyalarda kararı
+    ikinci katmanın ölçümüyle doğrulanıyor.</p>
+</section>
+
+<section>
+  <h2><span class="no">03</span> Katman 2 — Şekil tespiti</h2>
+  <dl class="kunye">
+    <dt>Nedir</dt><dd>Metnin yapısal biçimini belirleyen ölçüm katmanı.</dd>
+    <dt>Kaynak</dt><dd>Kendi geliştirmemiz · dış bağımlılık yok</dd>
+    <dt>Görevi</dt><dd>Akış kararının dayandığı asıl bilgiyi üretmek</dd>
+    <dt>Gerekçe</dt><dd>Akış formattan çıkmıyor. Bir <code>txt</code> dosyası log,
+      rapor veya hizalı tablo olabilir; üçü üç ayrı akışa gider.</dd>
+  </dl>
+
+  <h3>Yöntem</h3>
+  <p>Beş bağımsız sinyal ölçülür; hiçbiri tek başına karar vermez.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Sinyal</th><th>İşaret ettiği şekil</th></tr></thead>
+      <tbody>
+        <tr><td>ayraç tutarlılığı</td><td>tablo</td></tr>
+        <tr><td>hizalı boşluk sütunları</td><td>sabit genişlikli tablo</td></tr>
+        <tr><td>zaman damgası + seviye etiketi</td><td>log</td></tr>
+        <tr><td><code>anahtar: değer</code> kalıbı</td><td>ağaç</td></tr>
+        <tr><td>cümle yapısı, satır uzunluğu değişkenliği</td><td>serbest metin</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:.8rem"><strong>Karar kuralı:</strong> en yüksek sinyal ≥ 0,60
+    ve ikinciyle farkı ≥ 0,15 olmalıdır. Aksi halde karar verilmez; dosya artık olarak
+    işaretlenir.</p>
+
+  <div class="kutu iyi">
+    <span class="lbl">Katkı</span>
+    <p><code>hizali_rapor.txt</code> — Magika <code>txt</code> etiketi veriyor, belge
+      akışına gider ve tablo yapısı kaybolurdu. Şekil tespiti sabit genişlik tespit
+      edip tablo akışına yönlendiriyor.</p>
+  </div>
+
+  <div class="kutu not">
+    <span class="lbl">Geliştirme sırasında düzeltilen iki hata</span>
+    <p>İlk sütunu tarih olan CSV dosyaları zaman damgası nedeniyle log olarak
+      sınıflandırılıyordu; ayırt edici kanıt olarak log seviye etiketi eklendi.</p>
+    <p>Sayıları sağa hizalı tablolar tespit edilemiyordu; sütun kenarı yerine satırlar
+      boyunca tekrar eden boşluk sütunları aranarak çözüldü.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">04</span> Katman 3 — Kanıt katmanı</h2>
+  <dl class="kunye">
+    <dt>Nedir</dt><dd>Okuma parametrelerini bayt düzeyinde ölçen katman.</dd>
+    <dt>Kaynak</dt><dd>Kendi geliştirmemiz · dış bağımlılık yok</dd>
+    <dt>Görevi</dt><dd>Kodlama, ayraç, sayı biçimi, tarih biçimi</dd>
+    <dt>Önemi</dt><dd>Türkçe veri uyumluluğu bu katmanda çözülüyor.</dd>
+  </dl>
+
+  <h3>Kodlama tespiti</h3>
+  <p>Eski Windows sistemlerinden gelen Türkçe dosyalar <code>cp1254</code> kodludur.
+    Yanlış okunduğunda <code>İstanbul</code> değeri <code>Ýstanbul</code> olur; işlem
+    hata vermez, bozulma sessizdir.</p>
+
+<pre>cp1252 ve cp1254 tam olarak 6 baytta ayrışır:  Ğ  İ  Ş  ğ  ı  ş
+6 Türkçe harf ise iki kodlamada da aynıdır:    Ç  Ö  Ü  ç  ö  ü</pre>
+
+  <p>Uzlaşan harfler, ayrışan harflerin nasıl okunacağını belirler. Dosyada hem
+    <code>ç ö ü</code> hem ayrışan baytlar bulunuyorsa metnin Türkçe olduğu bayt
+    düzeyinde kanıtlanmış olur. Bu bir dil tahmini değil, ölçümdür.</p>
+
+  <div class="kutu not">
+    <span class="lbl">Kuralın kırıldığı durum ve düzeltmesi</span>
+    <p>İzlandaca hem <code>ö</code> hem <code>ð</code> hem <code>þ</code> kullanır.
+      Kural İzlandaca metni Türkçe olarak sınıflandırıyordu. İki parçalı düzeltildi:
+      Türkçede kullanılmayan 44 harf karşı kanıt olarak eklendi ve kanıtlar
+      çeliştiğinde karar verilmemesi sağlandı.</p>
+  </div>
+
+  <h3>Sayı biçimi</h3>
+  <p><code>12.500,00</code> değeri Türkçe biçimde 12500,00; İngilizce biçimde 12,5
+    anlamına gelir. Yanlış okunduğunda sütun metne döner ve sayısal analiz sessizce
+    düşer. Ölçüm sonrası bu bir tercih sorusu olarak seçenekleriyle kullanıcıya
+    sunulur.</p>
+</section>
+
+<section>
+  <h2><span class="no">05</span> Katman 4 — Human feedback</h2>
+  <dl class="kunye">
+    <dt>Nedir</dt><dd>Deterministik katmanların çözemediği dosyalar için karar katmanı.</dd>
+    <dt>Konum</dt><dd>MCP sunucusunun dışında</dd>
+    <dt>Gerekçe</dt><dd>Sunucu deterministik kalır; deterministik katmanın vetosu
+      korunur ve eskalasyon oranı ölçülebilir olur.</dd>
+    <dt>Yöntem</dt><dd>Açık uçlu soru sorulmaz. Kazanç ve bedeli yazılı, kapalı
+      seçenek listesi sunulur.</dd>
+  </dl>
+
+  <p>Bu yaklaşım pipeline'ın <code>gates</code> katmanındaki
+    <code>build_human_prompt</code> deseniyle aynıdır.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Soru türü</th><th>Örnek</th><th>Ne zaman sorulur</th></tr></thead>
+      <tbody>
+        <tr><td>Akış kararı</td><td>Dosya hangi akışa gidecek?</td>
+          <td class="kucuk">Yalnızca belirsizse</td></tr>
+        <tr><td>Okuma kararı</td><td>Sütun Türkçe sayı biçiminde mi?</td>
+          <td class="kucuk">Akış çözülmüş olsa dahi</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Gözetimsiz koşum</h3>
+  <p>Toplu koşumlarda operatör bulunmayabilir. Otomatik mod bu durumda beklemez;
+    sabit bir kural zinciriyle en makul akışı seçer. Üç kısıta uyar: açık tercihtir
+    (kendiliğinden devreye girmez), deterministiktir (model çağrılmaz) ve sonucu
+    <code>kaynak: otomatik_varsayilan</code> olarak etiketlenir.</p>
+
+  <p style="margin-top:.6rem">Karar kaynakları her zaman ayırt edilebilir kalır:
+    <code>ölçüm</code>, <code>human_feedback</code>, <code>otomatik_varsayilan</code>.</p>
+</section>
+
+<section>
+  <h2><span class="no">06</span> MCP maliyeti — ölçüm</h2>
+  <p>Entegrasyonda MCP'nin ek yük getireceği değerlendirmesi ölçümle sınandı. Maliyeti
+    izole etmek için iş yapmayan bir tool 200 kez çağrıldı.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Ölçüm</th><th class="n">Değer</th><th>Not</th></tr></thead>
+      <tbody>
+        <tr><td>Bağlantı kurulumu</td><td class="n">1.267 ms</td>
+          <td class="kucuk">Bir kez, sunucu başlatılırken</td></tr>
+        <tr><td>Çağrı başına protokol</td><td class="n">1,10 ms</td>
+          <td class="kucuk">ortanca · p95: 1,25 · aralık: 1,05–1,41</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Ölçeğe yansıması</h3>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Dosya sayısı</th><th class="n">Dosya başına çağrı</th>
+        <th class="n">Toplu çağrı</th></tr></thead>
+      <tbody>
+        <tr><td>1.000</td><td class="n">1,1 sn</td><td class="n y">0,001 sn</td></tr>
+        <tr><td>10.000</td><td class="n w">11,0 sn</td><td class="n y">0,001 sn</td></tr>
+        <tr><td>100.000</td><td class="n r">110,3 sn</td><td class="n y">0,001 sn</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:.8rem">Fark protokolden değil çağrı biçiminden kaynaklanıyor.
+    <code>envanter</code> tool'u bütün klasörü tek çağrıda işler; dosya başına
+    çağrılması gerekmez.</p>
+
+  <div class="kutu vurgu">
+    <span class="lbl">Öneri</span>
+    <p>Pipeline modülü <strong>doğrudan import etsin</strong>
+      (<code>from ads.kesif.yonlendirici import envanter</code>). Bu durumda MCP devrede
+      olmaz, ek yük sıfırdır.</p>
+    <p>MCP <strong>dış ajanlar için açık kalsın</strong>. Sunucu aynı fonksiyonları
+      çağırdığı için kod tekrarı gerekmez. İki kullanım aynı anda mümkündür; seçim
+      yapılması gerekmiyor.</p>
+  </div>
+
+  <h3>MCP, LLM ve human feedback</h3>
+  <p>Üçü sıklıkla alternatif olarak değerlendiriliyor, ancak farklı sorulara cevap
+    veriyorlar.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th></th><th>Cevapladığı soru</th><th>Bu katmanda</th></tr></thead>
+      <tbody>
+        <tr><td>MCP</td><td>Yetenek nasıl çağrılır?</td>
+          <td class="kucuk">7 tool ile dışarı açık; sunucu LLM çağırmıyor</td></tr>
+        <tr><td>LLM</td><td>Ölçüm yetmediğinde kim karar verir?</td>
+          <td class="kucuk">Kullanılmıyor</td></tr>
+        <tr><td>Human feedback</td><td>Ölçüm yetmediğinde kim karar verir?</td>
+          <td class="kucuk">Kullanılıyor</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:.8rem">LLM kullanılmama gerekçesi: çözülemeyen dosyanın akışı
+    çoğunlukla bir olgu sorusu değil tercih sorusudur — dosyanın ne olduğu değil,
+    kullanıcının hangisini istediği belirsizdir. İkinci gerekçe kapalı ağ koşuludur;
+    bulut API bağımlılığı bulunmuyor.</p>
+</section>
+
+<section>
+  <h2><span class="no">07</span> Dış bağımlılıklar</h2>
+  <p>Tamamı izin verilen lisanslarda ve çevrimdışı çalışıyor. Soketler kapatılarak
+    doğrulandı: sıfır bağlantı denemesi.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Bileşen</th><th>Sürüm</th><th>Lisans</th><th>Kullanım</th></tr></thead>
+      <tbody>
+        <tr><td><code>magika</code></td><td>1.0.3</td><td>Apache-2.0</td>
+          <td>İçerikten format tespiti</td></tr>
+        <tr><td><code>mcp</code></td><td>2.0.0</td><td>MIT</td>
+          <td>Tool arayüzü</td></tr>
+        <tr><td><code>pypdf</code></td><td>6.16.2</td><td>BSD-3-Clause</td>
+          <td>PDF metin katmanı ve gömülü görüntü</td></tr>
+        <tr><td><code>openpyxl</code></td><td>3.1.5</td><td>MIT</td>
+          <td>XLSX sayfa yapısı <span class="kucuk">(çekirdekte mevcut)</span></td></tr>
+        <tr><td><code>rapidocr-onnxruntime</code></td><td>1.4.4</td><td>Apache-2.0</td>
+          <td>OCR <span class="kucuk">(opsiyonel, ~245 MB — revize edilecek)</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:.8rem">Kendi geliştirmemiz: şekil tespiti, kanıt katmanı,
+    yönlendirici, human feedback katmanı, MCP sunucusu ve ölçüm partisi üreteci.</p>
+</section>
+
+<section>
+  <h2><span class="no">08</span> Entegrasyon</h2>
+  <p>Katman pipeline'ın t0–t1 sınırında, <code>intake</code> aşamasından önce
+    konumlanır. Mevcut <code>intake</code> dosyanın CSV olduğunu varsayıyor; bu katman
+    o varsayımı kaldırır.</p>
+
+  <h3>Çıktı sözleşmesi</h3>
+<pre>Karar:
+  format          magika etiketi + güven
+  sekil           tablo / sabit_genislik / log / anahtar_deger / serbest_metin
+  akis            tablo / belge / agac / kapsayici / islenemez / yargi
+  deterministik   True  → akış hazır
+                  False → human feedback gerekli, sebebi yazılı
+  kanitlar        her ölçümün dayanağı
+  notlar          sonraki aşamaya uyarılar</pre>
+
+  <h3>Karar bekleyen konular</h3>
+  <div class="liste">
+    <div class="sat"><span class="i">1</span><p><strong>Human feedback'in
+      <code>gates</code> katmanına bağlanması.</strong> Pipeline'da hâlihazırda bir
+      insan onayı mekanizması var. Keşif katmanı ikinci bir paralel mekanizma kurmamalı;
+      ürettiği kapalı seçenekleri mevcut mekanizmaya devretmeli. Ekip kararı
+      gerekiyor.</p></div>
+    <div class="sat"><span class="i">2</span><p><strong>Seçilmeyen dosyaların
+      akıbeti.</strong> Kullanıcı yalnızca tablo akışını seçtiğinde diğer dosyaların
+      silinmesi mi park edilmesi mi gerektiği tanımlı değil. Öneri: park edilmeleri ve
+      sayılarının görünür kalması.</p></div>
+  </div>
+
+  <h3>İhtiyaçlar</h3>
+  <div class="liste">
+    <div class="sat"><span class="i">→</span><p><strong>Gerçek veri örneği.</strong>
+      Ölçümler sentetik parti üzerinde yapıldı; kurumdan gelen gerçek dosyalarla
+      doğrulanması gerekiyor.</p></div>
+    <div class="sat"><span class="i">→</span><p><strong>OCR yaklaşımı.</strong>
+      Mentörden öneri alındı; bu bileşen o doğrultuda yeniden değerlendirilecek.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="no">09</span> Durum</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Bileşen</th><th>Durum</th></tr></thead>
+      <tbody>
+        <tr><td>Magika entegrasyonu, kısa dosya koruması</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>Şekil tespiti, beş sinyal</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>Kanıt katmanı: kodlama, ayraç, sayı, tarih</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>Yapısal doğrulama: JSON, XML, TOML, ZIP</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>PDF: metin katmanı ölçümü, taranmışta OCR</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>XLSX: sayfa yapısı ve sayfa seçimi</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>Human feedback ve otomatik mod</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>MCP sunucusu, 7 tool</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>Tarayıcı üzerinden canlı gösterim</td><td class="y">Çalışıyor</td></tr>
+        <tr><td>OCR / Türkçe tanıma</td><td class="w">Mentör önerisi doğrultusunda revize edilecek</td></tr>
+        <tr><td>Word (<code>.docx</code>) çözümleyici</td><td class="w">Planlandı</td></tr>
+        <tr><td>Gerçek kurum verisiyle doğrulama</td><td class="w">Bekliyor</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>OCR durumu</h3>
+  <div class="kutu vurgu">
+    <span class="lbl">Revize edilecek</span>
+    <p>Bu bileşen için mentörden öneri alındı. <strong>OCR yaklaşımı bu öneri
+      doğrultusunda yeniden değerlendirilecek</strong>; aşağıdaki ölçüm mevcut
+      durumu kaydetmek içindir, nihai tasarım değildir.</p>
+  </div>
+  <p>Görüntüden tablo okuma çalışıyor; yapı ve sayısal değerler doğru çıkarılıyor.
+    Gömülü tanıma modelinin sözlüğünde Türkçe harfler bulunmuyor — 6.623 karakterlik
+    sözlükte <code>ğ Ğ ı İ ş Ş ç Ç ö Ö</code> yer almıyor. Model bu harfleri üretemiyor,
+    yerine ASCII karşılıklarını koyuyor ve bunu sessizce yapıyor
+    (<code>Iğdır</code> → <code>ngoa</code>, güven 0,828). Sistem bu sınırı gizlemiyor:
+    Türkçe doğrulanamadığında metin human feedback'e çıkarılıyor, sayılar ve tablo
+    yapısı etkilenmiyor.</p>
+
+  <div class="kutu uyari">
+    <span class="lbl">Ortak bulgu</span>
+    <p>Üç ayrı yerde aynı hata sınıfı ölçüldü: Magika kısa dosyada 0,953 güvenle
+      yanıldı, kodlama kuralı İzlandaca metni Türkçe olarak sınıflandırdı, OCR 0,828
+      güvenle hatalı metin üretti. Üçünde de hatalı sonuç yüksek güvenle geldi ve
+      güven eşiğiyle elenemedi. Mimarinin ölçüm temelli kurulmasının gerekçesi budur.</p>
+  </div>
+</section>
+
+<p class="kapanis">MCP maliyeti ölçüldü ve toplu kullanımda ihmal edilebilir düzeyde;
+  entegrasyonda doğrudan import önerilir, MCP dış ajanlar için açık kalır. LLM'e ihtiyaç
+  duyulmadı. Entegrasyon için ekip kararı bekleyen tek mimari konu, human feedback'in
+  mevcut <code>gates</code> mekanizmasına bağlanmasıdır.</p>
+
+</div>
+</body>
+</html>
