@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How the issue-to-PR loop works
+    url: https://github.com/isobed18/agentic-ds/blob/main/docs/TEAM_WORKFLOW.md
+    about: Read this before claiming an issue or reviewing an agent's PR.

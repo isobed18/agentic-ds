@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in the product behaves wrongly. Testers start here.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An agent will pick this up and open a PR, so the fields below are what it
+        has to work from. It cannot ask you a follow-up question at 2am — the
+        difference between a fixed bug and a guessed one is usually the third
+        field.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, not what you think caused it.
+      placeholder: The upload button did nothing. No error, no spinner.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Numbered, from a fresh page load. If it only happens sometimes, say so —
+        an intermittent bug that is reported as reliable wastes a whole cycle.
+      placeholder: |
+        1. Open Data projects
+        2. Click the new project card
+        3. Pick two CSV files
+        4. Nothing happens
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in the product
+      options:
+        - Data projects / upload
+        - Intake and routing
+        - Understanding and schema discovery
+        - Planner and proposal
+        - Guided pipeline / run controls
+        - Reports and artifacts
+        - Data library / catalogs
+        - Login and accounts
+        - Language (Turkish or English text)
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How badly does it block you
+      options:
+        - Blocks me completely, cannot continue
+        - Annoying, but I have a way around it
+        - Cosmetic
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot, run id, or console error
+      description: |
+        A run id is worth more than a screenshot. If the browser console has a
+        red line, paste it — that usually names the file to fix.
+    validations:
+      required: false
