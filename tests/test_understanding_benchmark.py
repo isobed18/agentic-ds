@@ -269,3 +269,70 @@ def _valid_turkish_id(value: str) -> bool:
     digits = [int(c) for c in value]
     odd, even = sum(digits[0:9:2]), sum(digits[1:8:2])
     return digits[9] == (odd * 7 - even) % 10 and digits[10] == sum(digits[:10]) % 10
+
+
+# ------------------------------- vocabulary the two sides do not share
+
+def test_a_file_and_the_table_loaded_from_it_are_the_same_thing() -> None:
+    """The answer key names files, because that is what a person uploaded. The
+    system names tables, because that is what it loaded.
+
+    Scoring that difference failed a run that was entirely correct: every join
+    found, cardinality right, and the report said recall 0.0.
+    """
+    truth = _truth([EDGE_RATINGS])
+    as_reported = [
+        {
+            "from_table": "ratings",
+            "from_columns": ["movie_id"],
+            "to_table": "movies",
+            "to_columns": ["movie_id"],
+            "cardinality": "N:1",
+            "overlap_rate": 1.0,
+        }
+    ]
+    report = score_module.score(truth, as_reported)
+    assert report["edges"]["recall"] == 1.0
+    assert report["cardinality"]["accuracy"] == 1.0
+
+
+def test_camelcase_and_snake_case_columns_match() -> None:
+    """The loader normalises headers, so a key is not spelled the way its file
+    spells it. Same split the loader uses, so the two stay in step."""
+    assert score_module._column("movieId") == "movie_id"
+    assert score_module._column("movie_id") == "movie_id"
+    assert score_module._table("links.csv") == "links"
+    assert score_module._table("links") == "links"
+
+
+def test_a_true_but_redundant_join_does_not_cost_precision() -> None:
+    """`links` is 1:1 with `movies`, so anything joining `movies` on `movieId`
+    also joins `links` on it. Reporting that is a defensible modelling choice,
+    not a false positive, and marking it down would push a system toward saying
+    less than it measured."""
+    redundant = {
+        "from": "ratings.csv",
+        "from_columns": ["movieId"],
+        "to": "links.csv",
+        "to_columns": ["movieId"],
+    }
+    truth = _truth([EDGE_RATINGS], redundant_relationships=[redundant])
+
+    report = score_module.score(truth, [dict(EDGE_RATINGS), dict(redundant)])
+    assert report["edges"]["precision"] == 1.0
+    assert report["edges"]["unexpected"] == []
+    assert report["edges"]["redundant_but_valid"], "reported, so it stays visible"
+
+
+def test_a_redundant_join_is_still_not_required() -> None:
+    """Not finding it is not a miss either -- recall counts the true edges only."""
+    redundant = {
+        "from": "ratings.csv",
+        "from_columns": ["movieId"],
+        "to": "links.csv",
+        "to_columns": ["movieId"],
+    }
+    truth = _truth([EDGE_RATINGS], redundant_relationships=[redundant])
+    report = score_module.score(truth, [dict(EDGE_RATINGS)])
+    assert report["edges"]["recall"] == 1.0
+    assert report["edges"]["redundant_but_valid"] == []

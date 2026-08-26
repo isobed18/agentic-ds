@@ -127,6 +127,26 @@ def measure(corpus: Path) -> dict[str, Any]:
             # every child key is distinct.
             edge("links.csv", "movieId", "1:1"),
         ],
+        # True, but implied by the two edges above: `links` is 1:1 with `movies`,
+        # so anything joining `movies` on `movieId` also joins `links` on it.
+        # Reporting these is a defensible modelling choice, not an error, so they
+        # are neither required for recall nor counted against precision.
+        "redundant_relationships": [
+            {
+                "from": "ratings.csv",
+                "from_columns": ["movieId"],
+                "to": "links.csv",
+                "to_columns": ["movieId"],
+                "implied_by": "links.csv is 1:1 with movies.csv",
+            },
+            {
+                "from": "tags.csv",
+                "from_columns": ["movieId"],
+                "to": "links.csv",
+                "to_columns": ["movieId"],
+                "implied_by": "links.csv is 1:1 with movies.csv",
+            },
+        ],
         "implicit_entities": [
             {
                 "key": "userId",
