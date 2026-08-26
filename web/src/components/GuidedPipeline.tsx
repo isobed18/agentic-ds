@@ -30,7 +30,12 @@ interface GuidedPipelineProps {
 const GROUPS: Array<{ id: string; title: string; stages: string[] }> = [
   { id: "prepare", title: "Prepare ML data", stages: ["integration"] },
   { id: "objective", title: "Define the objective", stages: ["problem_discovery"] },
-  { id: "analysis", title: "Analyze and validate", stages: ["validation_strategy", "exploratory_analysis", "lineage_audit"] },
+  // `eda` and `leakage_audit` are the ids the established workflow declares.
+  // This group previously named `exploratory_analysis` (an artifact type) and
+  // `lineage_audit` (an id nothing produces), so both stages ran but were
+  // silently dropped from this group's status, inspection, and artifact count.
+  // tests/test_guided_pipeline_groups.py holds every id here to the spec.
+  { id: "analysis", title: "Analyze and validate", stages: ["validation_strategy", "eda", "leakage_audit"] },
   { id: "features", title: "Build and split", stages: ["feature_pipeline", "splitting"] },
   { id: "model", title: "Train and evaluate", stages: ["training", "evaluation"] },
   { id: "report", title: "Review results", stages: ["report"] },
