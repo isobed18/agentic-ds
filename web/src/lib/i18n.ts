@@ -899,6 +899,8 @@ const TR: Record<string, string> = {
 
   // Data projects workspace
   "Data projects": "Veri projeleri",
+  "The data project is still loading. Try again in a moment.":
+    "Veri projesi hâlâ yükleniyor. Birazdan tekrar deneyin.",
   "New data project": "Yeni veri projesi",
   "No data projects yet": "Henüz veri projesi yok",
   "Guided data science": "Rehberli veri bilimi",
