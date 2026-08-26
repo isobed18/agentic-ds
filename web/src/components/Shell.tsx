@@ -8,14 +8,14 @@ import { t } from "../lib/i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { Notifications } from "./Notifications";
+import { api } from "../lib/api";
 import { LANGUAGES, currentLanguage, setLanguage } from "../lib/i18n";
 import { cx } from "./ui";
 
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
-  { to: "/explore", label: "Your data", icon: DataIcon },
   { to: "/automation", label: "Data projects", icon: FlowIcon },
-  { to: "/datasets", label: "Datasets", icon: DataIcon },
+  { to: "/datasets", label: "Data library", icon: DataIcon },
   { to: "/experiments", label: "Experiments", icon: FlaskIcon },
   { to: "/models", label: "Models", icon: CubeIcon },
   { to: "/reports", label: "Reports", icon: DocIcon },
@@ -112,18 +112,20 @@ function Breadcrumb({ path }: { path: string }) {
 
 function ProfileCard({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+  useEffect(() => { void api.authSession().then((session) => setUsername(session.username)).catch(() => setUsername(null)); }, []);
+  const initials = (username ?? "ADS").split(/[-_.\s]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "ADS";
+  async function signOut() {
+    await api.logout().catch(() => undefined);
+    window.location.href = "/login";
+  }
   return (
     <div className="relative border-t border-line p-2.5">
       {open && !collapsed && (
         <div className="absolute bottom-[68px] left-2.5 right-2.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop">
-          {["Account", "Preferences", "Sign out"].map((item) => (
-            <button
-              key={item}
-              className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-soft hover:bg-surface-sunken"
-            >
-              {item}
-            </button>
-          ))}
+          <p className="truncate px-3 py-2 text-xs text-ink-mute">{username ?? t("Local session")}</p>
+          {["Account", "Preferences"].map((item) => <button key={item} type="button" disabled title={t("Not available yet")} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-faint disabled:cursor-not-allowed">{t(item)}</button>)}
+          <button onClick={() => void signOut()} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-soft hover:bg-surface-sunken">{t("Sign out")}</button>
         </div>
       )}
       <button
@@ -134,13 +136,13 @@ function ProfileCard({ collapsed }: { collapsed: boolean }) {
         )}
       >
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink text-xs font-semibold text-white">
-          IB
+          {initials}
         </span>
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1 text-left">
-              <span className="block truncate text-sm font-medium text-ink">{t("Ishak Bediryorganci")}</span>
-              <span className="block truncate text-xs text-ink-mute">{t("Data Scientist")}</span>
+              <span className="block truncate text-sm font-medium text-ink">{username ?? t("Local session")}</span>
+              <span className="block truncate text-xs text-ink-mute">{t("Agentic DS user")}</span>
             </span>
             <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-ink-faint" fill="none" stroke="currentColor" strokeWidth="1.8">
               <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />

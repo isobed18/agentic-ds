@@ -753,7 +753,9 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     understanding = (WEB_SRC / "components" / "UnderstandingWorkspace.tsx").read_text(
         encoding="utf-8"
     )
-    assert '{ to: "/explore", label: "Your data"' in shell
+    assert '{ to: "/explore", label: "Your data"' not in shell
+    assert '{ to: "/datasets", label: "Data library"' in shell
+    assert 'path="/explore" element={<Navigate to="/datasets" replace />}' in app
     assert '{ to: "/automation", label: "Data projects"' in shell
     assert 'path="/automation"' in app
     assert "<AutomationWorkspace" in automation

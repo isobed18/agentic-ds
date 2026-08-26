@@ -58,7 +58,10 @@ def main() -> None:
     args = parser.parse_args()
 
     auth_values = load_env_file(ENV_PATH)
-    if not auth_values.get("ADS_AUTH_USERNAME") or not auth_values.get("ADS_AUTH_PASSWORD_HASH"):
+    has_legacy_user = bool(
+        auth_values.get("ADS_AUTH_USERNAME") and auth_values.get("ADS_AUTH_PASSWORD_HASH")
+    )
+    if not auth_values.get("ADS_AUTH_USERS_JSON") and not has_legacy_user:
         raise SystemExit(
             f"No credential found in {ENV_PATH}.\n"
             "This launcher will not expose the control plane without one. Run:\n"
@@ -89,7 +92,7 @@ def main() -> None:
         )
     print(f"Artifacts: {args.artifacts.resolve()}")
     print(f"Data:      {args.data.resolve()}")
-    print(f"User:      {auth_values['ADS_AUTH_USERNAME']}")
+    print("Auth:      configured")
     print(f"LLM:       {values.get('ADS_LLM_BACKEND', 'ollama')}")
     print(f"Bound to:  127.0.0.1:{args.port}  (loopback only -- not on the LAN)")
     print("Password gate: ON")

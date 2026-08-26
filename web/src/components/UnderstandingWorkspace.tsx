@@ -46,7 +46,7 @@ function useRunProgress(runId: string | null): RunProgressSnapshot | null {
   return progress;
 }
 
-export function SourceSummary({ profile, onStart, busy }: { profile: SourceProfile; onStart: () => void; busy: boolean }) {
+export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache }: { profile: SourceProfile; onStart: () => void; busy: boolean; reuseCache: boolean; onReuseCache: (value: boolean) => void }) {
   const [sourceOpen, setSourceOpen] = useState(false);
   const counts = sourceCounts(profile);
   return (
@@ -54,11 +54,12 @@ export function SourceSummary({ profile, onStart, busy }: { profile: SourceProfi
       <div className="flex min-w-[570px] items-center gap-10 px-10 py-16">
         <PhaseNode title={t("Uploaded files")} subtitle={t("{count} files", { count: counts.files })} status="complete" onClick={() => setSourceOpen(true)} footer={t("Click to inspect files")} />
         <GraphEdge status="pending" />
-        <button type="button" onClick={onStart} disabled={busy} className="w-[250px] rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/80 p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 disabled:opacity-60">
+        <div className="w-[270px] rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/80 p-5 text-left shadow-card">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Recommended next step")}</p>
-          <p className="mt-2 text-sm font-semibold text-ink">{busy ? t("Starting…") : t("Run Intake")}</p>
+          <button type="button" onClick={onStart} disabled={busy} className="mt-2 text-sm font-semibold text-ink hover:text-brand-700 disabled:opacity-60">{busy ? t("Starting…") : t("Run Intake")}</button>
           <p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{t("Classify and route every file, then understand each source on the right path.")}</p>
-        </button>
+          <label className="mt-4 flex items-start gap-2 border-t border-brand-200 pt-3 text-[10px] leading-relaxed text-ink-mute"><input type="checkbox" className="mt-0.5" checked={reuseCache} onChange={(event) => onReuseCache(event.target.checked)} /><span><strong className="block text-ink">{t("Reuse matching understanding")}</strong>{t("Optional. Turn this off to rerun Intake and Schema Discovery for the same files.")}</span></label>
+        </div>
       </div>
       {sourceOpen && <Inspector title={t("Uploaded files")} eyebrow={t("Source")} onClose={() => setSourceOpen(false)}><SourceOverview profile={profile} /></Inspector>}
     </CanvasSurface>
@@ -185,7 +186,26 @@ function UnderstandingResults({ profile, workspace, onOpenArtifact }: { profile:
   const counts = sourceCounts(profile);
   const extraction = workspace.document_extractions?.at(-1);
   const reportIds = useMemo(() => (workspace.component_outputs ?? []).filter((output) => output.data_type === "reports").flatMap((output) => output.artifact_ids), [workspace.component_outputs]);
-  return <div className="space-y-5"><div className="grid grid-cols-2 gap-2"><Metric label={t("Documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Candidate document tables")} value={extraction?.table_candidates ?? 0} /><Metric label={t("Measured relationships")} value={workspace.relationship_explanations.length} /></div><EvidenceSection title={t("Measured / extracted facts")} tone="measured"><SourceFiles profile={profile} compact />{extraction?.artifact_id && <button type="button" className="mt-3 w-full rounded-lg border border-line px-3 py-3 text-left hover:border-brand-300" onClick={() => onOpenArtifact(extraction.artifact_id!)}><p className="text-xs font-semibold text-ink">{t("Document extraction")}</p><p className="mt-1 text-[11px] text-ink-mute">{t("{tables} candidate tables · {figures} figures/charts", { tables: extraction.table_candidates, figures: extraction.figure_candidates })}</p><p className="mt-2 text-[10px] font-medium text-brand-700">{t("Open extracted content and provenance")}</p></button>}</EvidenceSection><EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection><EvidenceSection title={t("Agent interpretation")} tone="interpretation">{workspace.reports.length ? <div className="space-y-2">{workspace.reports.map((report, index) => <button key={`${report.title.en}:${index}`} type="button" disabled={!reportIds[index]} onClick={() => reportIds[index] && onOpenArtifact(reportIds[index])} className="w-full rounded-lg border border-violet-200 bg-violet-50/60 px-3 py-3 text-left"><p className="text-xs font-semibold text-ink">{local(report.title)}</p><p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{local(report.summary)}</p><p className="mt-2 text-[10px] font-medium text-violet-700">{reportIds[index] ? t("Open report artifact") : t("Summary only")}</p></button>)}</div> : <Spinner label={t("The Planner is preparing an explanation…")} />}</EvidenceSection></div>;
+  const insights = workspace.reports.flatMap((report) => report.findings).slice(0, 3);
+  const warnings = [
+    ...(extraction?.warnings ?? []),
+    ...((extraction?.table_candidates ?? 0) > 0 ? [t("Extracted tables are candidates and cannot enter ML until reviewed.")] : []),
+  ];
+  return <div className="space-y-5">
+    <div className="grid grid-cols-2 gap-2"><Metric label={t("Documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Candidate document tables")} value={extraction?.table_candidates ?? 0} /><Metric label={t("Measured relationships")} value={workspace.relationship_explanations.length} /></div>
+    <section className="space-y-2" aria-label={t("Understanding summary")}>
+      {insights.map((insight) => <SignalLine key={insight.en} symbol="✦" tone="insight" text={local(insight)} />)}
+      {warnings.map((warning) => <SignalLine key={warning} symbol="!" tone="warning" text={warning} />)}
+      {!insights.length && !warnings.length && <SignalLine symbol="✓" tone="ok" text={t("Understanding completed without a reported warning.")} />}
+    </section>
+    <EvidenceSection title={t("Measured / extracted facts")} tone="measured"><SourceFiles profile={profile} compact />{extraction?.artifact_id && <button type="button" className="mt-3 w-full rounded-lg border border-line px-3 py-3 text-left hover:border-brand-300" onClick={() => onOpenArtifact(extraction.artifact_id!)}><p className="text-xs font-semibold text-ink">{t("Document extraction")}</p><p className="mt-1 text-[11px] text-ink-mute">{t("{tables} candidate tables · {figures} figures/charts", { tables: extraction.table_candidates, figures: extraction.figure_candidates })}</p><p className="mt-2 text-[10px] font-medium text-brand-700">{t("Open extracted content and provenance")}</p></button>}</EvidenceSection>
+    <EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection>
+    {workspace.reports.length ? <details className="group rounded-xl border border-violet-200 bg-violet-50/40"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-xs font-semibold text-violet-800"><span>▣</span><span className="flex-1">{t("Agent reports")}</span><Badge tone="neutral">{workspace.reports.length}</Badge><span className="transition group-open:rotate-180">⌄</span></summary><div className="space-y-3 border-t border-violet-200 p-4">{workspace.reports.map((report, index) => <article key={`${report.title.en}:${index}`} className="rounded-lg border border-violet-200 bg-surface px-3 py-3"><p className="text-xs font-semibold text-ink">{local(report.title)}</p><p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{local(report.summary)}</p>{report.findings.length > 0 && <ul className="mt-3 space-y-1">{report.findings.map((finding) => <li key={finding.en} className="text-[10px] leading-relaxed text-ink-mute">• {local(finding)}</li>)}</ul>}<button type="button" disabled={!reportIds[index]} onClick={() => reportIds[index] && onOpenArtifact(reportIds[index])} className="mt-3 text-[10px] font-semibold text-violet-700 disabled:text-ink-faint">{reportIds[index] ? t("Open report artifact") : t("Summary only")}</button></article>)}</div></details> : <Spinner label={t("The Planner is preparing an explanation…")} />}
+  </div>;
+}
+
+function SignalLine({ symbol, tone, text }: { symbol: string; tone: "insight" | "warning" | "ok"; text: string }) {
+  return <div className={cx("flex items-start gap-2 rounded-lg border px-3 py-2", tone === "warning" ? "border-warn-200 bg-warn-50 text-warn-800" : tone === "ok" ? "border-ok-200 bg-ok-50 text-ok-800" : "border-violet-200 bg-violet-50 text-violet-800")}><span className="grid h-4 w-4 shrink-0 place-items-center text-[10px] font-bold">{symbol}</span><p className="line-clamp-2 text-[10px] leading-relaxed">{text}</p></div>;
 }
 
 function RelationshipList({ workspace }: { workspace: StagingWorkspace }) {

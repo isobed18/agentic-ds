@@ -585,6 +585,11 @@ class ControlPlane:
         assert self.automation_store is not None
         return self.automation_store.create(name).model_dump(mode="json")
 
+    def delete_automation(self, automation_id: str) -> dict[str, Any]:
+        """Delete a saved graph without deleting its independently audited runs."""
+        assert self.automation_store is not None
+        return {"automation_id": automation_id, **self.automation_store.delete(automation_id)}
+
     def update_automation(
         self,
         automation_id: str,
@@ -5181,6 +5186,15 @@ def create_app(
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown automation") from None
         except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/automations/{automation_id}")
+    def delete_automation(automation_id: str) -> dict[str, Any]:
+        try:
+            return plane.delete_automation(automation_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown automation") from None
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/automations/{automation_id}/executions")

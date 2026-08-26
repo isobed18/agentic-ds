@@ -70,3 +70,16 @@ def test_execution_history_is_attached_without_becoming_editor_state(tmp_path) -
     assert first.execution_ids == ("run-a1b2c3d4",)
     assert second.execution_ids == ("run-a1b2c3d4", "run-e5f6a7b8")
     assert second.pipeline_blueprint is None
+
+
+def test_automation_store_deletes_definition_and_revisions(tmp_path) -> None:
+    store = AutomationStore(tmp_path / "automations")
+    created = store.create("Disposable")
+    store.update(created.automation_id, expected_revision=1, changes={"name": "Updated"})
+
+    deleted = store.delete(created.automation_id)
+
+    assert deleted == {"definitions": 1, "revisions": 2}
+    assert store.list() == []
+    with pytest.raises(KeyError):
+        store.get(created.automation_id)

@@ -119,6 +119,27 @@ def test_session_for_a_renamed_user_is_rejected(config: AuthConfig) -> None:
     assert read_session(token, renamed) is None
 
 
+def test_multi_user_sessions_are_scoped_to_current_accounts() -> None:
+    config = AuthConfig(
+        username="gonenc-ads",
+        password_hash=hash_password(PASSWORD),
+        secret=b"multi-user-test-secret",
+        users={
+            "gonenc-ads": hash_password(PASSWORD),
+            "berkin-ads": hash_password("another-password"),
+        },
+    )
+    token = issue_session(config, username="berkin-ads")
+    assert read_session(token, config) == "berkin-ads"
+    removed = AuthConfig(
+        username="gonenc-ads",
+        password_hash=config.credentials["gonenc-ads"],
+        secret=config.secret,
+        users={"gonenc-ads": config.credentials["gonenc-ads"]},
+    )
+    assert read_session(token, removed) is None
+
+
 def test_garbage_token_is_rejected(config: AuthConfig) -> None:
     for junk in ["", ".", "no-dot", "a.b.c", "!!!.???"]:
         assert read_session(junk, config) is None
@@ -179,6 +200,18 @@ def test_config_is_none_with_only_half_a_credential(
     assert config_from_env() is None
 
 
+def test_config_reads_multiple_users(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "ADS_AUTH_USERS_JSON",
+        json.dumps({"gonenc-ads": hash_password(PASSWORD), "berkin-ads": hash_password("two")}),
+    )
+    monkeypatch.delenv("ADS_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("ADS_AUTH_PASSWORD_HASH", raising=False)
+    config = config_from_env()
+    assert config is not None
+    assert set(config.credentials) == {"gonenc-ads", "berkin-ads"}
+
+
 # ---------------------------------------------------------------- the app
 
 
@@ -217,6 +250,24 @@ def test_correct_credentials_open_the_api(client: TestClient) -> None:
     res = client.post("/api/auth/login", json={"username": "isobed18", "password": PASSWORD})
     assert res.status_code == 200
     assert COOKIE_NAME in res.cookies
+    assert client.get("/api/runs").status_code == 200
+
+
+def test_second_configured_user_can_login(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "ADS_AUTH_USERS_JSON",
+        json.dumps({"gonenc-ads": hash_password(PASSWORD), "berkin-ads": hash_password("two")}),
+    )
+    monkeypatch.delenv("ADS_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("ADS_AUTH_PASSWORD_HASH", raising=False)
+    monkeypatch.setenv("ADS_AUTH_SECRET", "test-secret")
+    monkeypatch.setenv("ADS_AUTH_SECURE_COOKIE", "0")
+    client = TestClient(create_app(tmp_path), follow_redirects=False)
+    response = client.post(
+        "/api/auth/login", json={"username": "berkin-ads", "password": "two"}
+    )
+    assert response.status_code == 200
+    assert response.json()["username"] == "berkin-ads"
     assert client.get("/api/runs").status_code == 200
 
 
@@ -276,5 +327,6 @@ def test_no_auth_configured_leaves_the_api_open(tmp_path, monkeypatch: pytest.Mo
     # depend on. serve_public.py is what prevents this reaching the tunnel.
     for name in ("ADS_AUTH_USERNAME", "ADS_AUTH_PASSWORD_HASH"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("ADS_AUTH_USERS_JSON", raising=False)
     open_client = TestClient(create_app(tmp_path))
     assert open_client.get("/api/runs").status_code == 200
