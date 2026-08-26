@@ -61,6 +61,10 @@ ANAHTAR_DEGER_KALIBI = re.compile(
     r"^\s*[A-Za-z_çğıöşüÇĞİÖŞÜ][\w .\-çğıöşüÇĞİÖŞÜ]{0,40}\s*[:=]\s*\S"
 )
 CUMLE_SONU = re.compile(r"[.!?]['\"\)]?\s*$")
+# Cumle isareti metnin HERHANGI bir yerinde: ardindan bosluk ya da metin
+# sonu gelmeli. Bu kosul ondalik sayiyi disarida birakir -- "450.50"
+# icindeki nokta rakamla devam ettigi icin cumle sayilmaz.
+CUMLE_ISARETI = re.compile(r"[.!?]['\"\)]?(?=\s|$)")
 
 
 def _satirlar(metin: str, azami: int = 400) -> list[str]:
@@ -168,21 +172,37 @@ def _anahtar_deger_sinyali(satirlar: list[str]) -> tuple[float, str]:
 
 
 def _serbest_metin_sinyali(satirlar: list[str]) -> tuple[float, str]:
-    """Cumle bitisi, satir uzunlugu degiskenligi, kelime yogunlugu."""
+    """Cumle YOGUNLUGU, satir uzunlugu degiskenligi, kelime yogunlugu.
+
+    Cumle sayimi satir sonuna DEGIL metnin tamamina bakiyor. Onceki surum
+    "satir cumleyle bitiyor mu" diye soruyordu ve 72-80 sutunda sarmalanmis
+    nesri -- yani bir .txt belgesinin en yaygin halini -- cezalandiriyordu:
+    cumleler satir ortasinda devam ettigi icin oran %20'de kaliyor ve
+    gercek bir rapor yargiya dusuyordu. Satir sonu bir bicimlendirme
+    artefakti, dilbilimsel bir sinir degil.
+
+    Yogunluk esigi nesrin kendi istatistiginden geliyor: yaklasik 10-25
+    kelimede bir cumle biter. Tablo, log ve anahtar-deger satirlarinda ise
+    cumle isareti neredeyse hic yok, dolayisiyla ayirt edicilik korunuyor.
+    """
     if len(satirlar) < 2:
         return 0.0, "satir yetersiz"
 
-    cumle = sum(1 for s in satirlar if CUMLE_SONU.search(s)) / len(satirlar)
     kelime_ort = statistics.fmean(len(s.split()) for s in satirlar)
     uzunluklar = [len(s) for s in satirlar]
     degisken = (statistics.pstdev(uzunluklar) / statistics.fmean(uzunluklar)
                 if statistics.fmean(uzunluklar) else 0)
 
-    # serbest metin: cumleyle biter, satir basina cok kelime, uzunluk degisken
-    puan = (min(1.0, cumle * 1.2) * 0.45
+    toplam_kelime = sum(len(s.split()) for s in satirlar)
+    cumle_sayisi = len(CUMLE_ISARETI.findall(" ".join(satirlar)))
+    beklenen = max(1.0, toplam_kelime / 15)      # nesirde ~15 kelimede bir cumle
+    yogunluk = min(1.0, cumle_sayisi / beklenen)
+
+    puan = (yogunluk * 0.45
             + min(1.0, kelime_ort / 8) * 0.35
             + min(1.0, degisken * 2) * 0.20)
-    return puan, (f"cumleyle biten %{cumle*100:.0f}, "
+    return puan, (f"{cumle_sayisi} cumle / {toplam_kelime} kelime "
+                  f"(yogunluk {yogunluk:.2f}), "
                   f"satir basi {kelime_ort:.1f} kelime, "
                   f"uzunluk degiskenligi {degisken:.2f}")
 

@@ -204,3 +204,57 @@ def test_envanter_tek_bozuk_dosyada_cokmez(
     diger_kararlar = [k for k in env["kararlar"] if not k.yol.endswith("bozuk.csv")]
     assert len(diger_kararlar) == 2
     assert all(k.deterministik for k in diger_kararlar)
+
+
+def test_sarmalanmis_nesir_belge_akisinda_kalir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """72-80 sutunda sarmalanmis duz metin yargiya DUSMEMELI.
+
+    Onceki surum "satir cumleyle bitiyor mu" diye oluyordu. Sarmalanmis
+    nesirde cumleler satir ortasinda devam ettigi icin bu oran %20'de
+    kaliyor, serbest_metin sinyali 0.49 ile ESIK_KARAR'in (0.60) altinda
+    kaliyor ve gercek bir rapor human feedback'e cikiyordu -- yani bir
+    .txt belgesinin EN YAYGIN hali cezalandiriliyordu.
+
+    Satir sonu bir bicimlendirme artefakti; olcum artik cumle yogunluguna
+    bakiyor.
+    """
+    dosya = tmp_path / "rapor.txt"
+    dosya.write_text(
+        "Bu ceyrekte satislar beklentinin uzerinde gerceklesti. Ozellikle\n"
+        "guney bolgesinde talep artisi belirgindi. Onumuzdeki donemde ayni\n"
+        "egilimin surmesi bekleniyor, ancak tedarik tarafinda gecikmeler\n"
+        "risk olusturuyor. Ekip bu konuda bir aksiyon plani hazirladi ve\n"
+        "gelecek hafta sunulacak. Detaylar ekte yer aliyor.\n",
+        encoding="utf-8",
+    )
+    _sahte_magika(monkeypatch, "txt", 0.90)
+
+    k = yonlendir(dosya)
+
+    assert k.deterministik is True
+    assert k.akis is Akis.BELGE
+    assert k.sekil == "serbest_metin"
+
+
+def test_ondalik_sayilar_cumle_sayilmiyor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cumle yogunlugu olcumu tabloyu serbest metne cevirmemeli.
+
+    "450.50" icindeki nokta bir cumle sonu DEGIL; ardindan rakam geliyor.
+    Bu ayrim olmasaydi EN sayi bicimli her tablo nesir sanilabilirdi.
+    """
+    dosya = tmp_path / "satis.csv"
+    dosya.write_text(
+        "urun,adet,tutar\nklavye,3,450.50\nfare,7,210.25\nmonitor,2,3400.00\n"
+        "kablo,11,95.75\nmouse,4,180.00\nekran,1,7200.90\n",
+        encoding="utf-8",
+    )
+    _sahte_magika(monkeypatch, "csv", 0.95)
+
+    k = yonlendir(dosya)
+
+    assert k.akis is Akis.TABLO
+    assert k.sekil == "tablo"
