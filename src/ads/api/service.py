@@ -110,6 +110,79 @@ from ads.staging import (
 )
 from ads.store import ArtifactStore
 
+# Kesif (dosya tanima) opsiyonel bir ekstra: `.[kesif]`. Kurulu degilse
+# profil ciktisi kesif alanlari olmadan uretilir, hicbir sey kirilmaz.
+try:
+    from ads.kesif.yonlendirici import envanter as _kesif_envanter
+except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
+    _kesif_envanter = None
+
+# Kesif'in olctugu akisin, bu dosyadaki uzanti temelli `route` sozluguyle
+# karsiligi. Esleme yalnizca UYUSMAZLIK saptamak icin; route'u kesif
+# DEGISTIRMIYOR (bkz. source_profile).
+_KESIF_AKIS_ROTA = {"tablo": "structured", "belge": "documents"}
+
+def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict[str, Any]:
+    """Her kaynak dosyanin turunu ICERIKTEN olc ve `source_files`'i zenginlestir.
+
+    Bu ek bilgidir, karar degil: `route` alanina DOKUNULMAZ. Amac, uzantiya
+    bakarak verilen mevcut kararin nerede yaniltici oldugunu gorunur kilmak --
+    ornegin `.csv` adli bir PDF, ya da hicbir uzantisi olmadigi icin
+    "unsupported" sayilan gecerli bir tablo.
+
+    Kesif kurulu degilse ya da olcum sirasinda bir sey ters giderse profil
+    kesif alanlari olmadan doner; cagiran taraf icin bu bir hata degildir.
+    """
+    if _kesif_envanter is None:
+        return {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
+
+    try:
+        env = _kesif_envanter(source_root)
+    except Exception as hata:  # olcum hicbir kosulda profili dusurmemeli
+        return {"kullanildi": False, "sebep": f"olcum yapilamadi: {type(hata).__name__}"}
+
+    girdiler = {row["name"]: row for row in source_files}
+    uyusmazlik = 0
+
+    for karar in env["kararlar"]:
+        try:
+            ad = Path(karar.yol).resolve().relative_to(source_root).as_posix()
+        except ValueError:
+            continue
+        satir = girdiler.get(ad)
+        if satir is None:
+            continue
+
+        akis = karar.akis.value
+        satir["kesif_akis"] = akis
+        satir["kesif_deterministik"] = karar.deterministik
+        if karar.kanitlar:
+            baslik, detay = karar.kanitlar[0]
+            satir["kesif_kanit"] = f"{baslik}: {detay}"
+        if not karar.deterministik and karar.yargi_sebebi:
+            satir["kesif_sebep"] = karar.yargi_sebebi
+
+        # Uyusmazlik yalnizca kesif KESIN konustugunda ve uzantiyla farkli
+        # bir seride bulustugunda iddia edilir. Kararsizsa sessiz kalir.
+        olculen_rota = _KESIF_AKIS_ROTA.get(akis)
+        celisiyor = (
+            karar.deterministik
+            and olculen_rota is not None
+            and olculen_rota != satir["route"]
+        )
+        satir["kesif_uyusmazlik"] = celisiyor
+        if celisiyor:
+            uyusmazlik += 1
+
+    return {
+        "kullanildi": True,
+        "dosya_sayisi": env["dosya_sayisi"],
+        "deterministik": env["deterministik"],
+        "yargi_gerektiren": env["yargi_gerektiren"],
+        "uyusmazlik": uyusmazlik,
+    }
+
+
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
@@ -2635,9 +2708,13 @@ class ControlPlane:
                     "table_names": tables_by_file.get(name, []),
                 }
             )
+        # Uzantiya bakarak verilen yukaridaki `route` kararinin yaninda,
+        # icerikten OLCULMUS karsiligini da tasi. Route degismez.
+        kesif_ozeti = _kesif_olcumu(source_root, source_files)
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
+            "kesif": kesif_ozeti,
             "relationships": relationships,
             "documents": [document.public_summary() for document in documents],
             "tables": [

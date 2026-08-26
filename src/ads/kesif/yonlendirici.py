@@ -84,9 +84,33 @@ class Karar:
     kanitlar: list[tuple[str, str]] = field(default_factory=list)
 
 
-def _kisa_mi(ham: bytes) -> bool:
-    return (len(ham) < KISA_DOSYA_BAYT
-            or ham.count(b"\n") < KISA_DOSYA_SATIR)
+def _kisa_mi(ham: bytes, boyut: int) -> bool:
+    # Uzunluk GERCEK dosya boyutundan, satir sayisi okunan onekten gelir:
+    # onek sinirina takilmis buyuk bir dosya "kisa" sayilmamali.
+    return boyut < KISA_DOSYA_BAYT or ham.count(b"\n") < KISA_DOSYA_SATIR
+
+
+# Dosyanin tamamini okumuyoruz. Kodlama tespiti zaten en fazla bu kadarini
+# kullaniyor, sekil olcumu de ilk birkac yuz satirda karara variyor.
+# `source_profile()` bunu koşum oncesi HER dosya icin cagiriyor; orada
+# 121 MB'lik bir veri setini bellege almak olcum degil israf olurdu.
+OKUMA_SINIRI = 128_000
+
+
+def _onek_oku(yol: Path) -> tuple[bytes, int]:
+    """Dosyanin basindan sinirli bir onek ve GERCEK boyutunu dondur.
+
+    Onek satir sinirinda kesilir: ortadan bolunmus bir cok baytli karakter
+    kodlama tespitini yaniltabilirdi (utf-8 gecerliyken gecersiz gorunur).
+    """
+    boyut = yol.stat().st_size
+    with yol.open("rb") as f:
+        ham = f.read(OKUMA_SINIRI)
+    if boyut > OKUMA_SINIRI:
+        son_satir = ham.rfind(b"\n")
+        if son_satir > 0:
+            ham = ham[:son_satir + 1]
+    return ham, boyut
 
 
 def _yapisal_dogrula(metin: str) -> tuple[str, str] | None:
@@ -139,15 +163,15 @@ def _yapisal_dogrula(metin: str) -> tuple[str, str] | None:
 
 
 def yonlendir(yol: Path) -> Karar:
-    ham = yol.read_bytes()
+    ham, boyut = _onek_oku(yol)
     m = _magika.identify_path(yol)
     format_ = m.output.label
     guven = float(m.score)
 
-    k = Karar(yol=str(yol), boyut=len(ham), format=format_,
+    k = Karar(yol=str(yol), boyut=boyut, format=format_,
               format_guveni=guven, sekil="-", akis=Akis.YARGI)
 
-    if not ham:
+    if boyut == 0:
         k.akis = Akis.ISLENEMEZ
         k.notlar.append("dosya bos")
         return k
@@ -228,7 +252,7 @@ def yonlendir(yol: Path) -> Karar:
         return k
 
     # --- metin: kodlamayi coz, sonra sekli olc -------------------------
-    kod = kodlama_tespit(ham[:128_000])
+    kod = kodlama_tespit(ham)
     k.kanitlar.extend(kod.kanitlar)
     metin = ham.decode(kod.secilen, errors="replace")
 
@@ -280,7 +304,7 @@ def yonlendir(yol: Path) -> Karar:
         return k
 
     # --- Magika kisa dosyada guvenilmez: kendi olcumumuzle dogrula -----
-    kisa = _kisa_mi(ham)
+    kisa = _kisa_mi(ham, boyut)
     if kisa and guven < 1.0:
         k.notlar.append(
             f"kisa dosya ({ham.count(chr(10).encode()[0])} satir); "

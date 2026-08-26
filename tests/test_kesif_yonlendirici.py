@@ -180,14 +180,17 @@ def test_envanter_tek_bozuk_dosyada_cokmez(
     iyi2 = tmp_path / "iyi2.csv"
     iyi2.write_text("a,b\n1,2\n", encoding="utf-8")
 
-    gercek_read_bytes = Path.read_bytes
+    # Yonlendirici dosyanin TAMAMINI degil sinirli bir onegini okuyor
+    # (`_onek_oku`), bu yuzden okuma hatasi `Path.open` uzerinden simule
+    # edilir; `read_bytes` artik bu yolda cagrilmiyor.
+    gercek_open = Path.open
 
     def _kirik_okuma(self: Path, *a, **kw):
         if self.name == "bozuk.csv":
             raise PermissionError("izin reddedildi (simule)")
-        return gercek_read_bytes(self, *a, **kw)
+        return gercek_open(self, *a, **kw)
 
-    monkeypatch.setattr(Path, "read_bytes", _kirik_okuma)
+    monkeypatch.setattr(Path, "open", _kirik_okuma)
 
     env = envanter(tmp_path)
 
