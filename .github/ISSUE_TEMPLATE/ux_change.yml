@@ -1,0 +1,58 @@
+name: UX change or recommendation
+description: The product works but is confusing, ugly, or the wrong shape.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These are the hardest issues for an agent to act on, because "make it
+        nicer" has no test. Say what a person should be able to *do* afterwards
+        and it becomes checkable.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is confusing or wrong right now
+      description: Describe the experience, not the fix you have in mind.
+      placeholder: |
+        On the staging screen every report is expanded, so the page is a wall of
+        text and I cannot find the one warning that matters.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What should a person be able to do after this change
+      description: |
+        The closest thing to an acceptance test this issue will get. "Looks
+        better" cannot be verified; "sees the warnings without scrolling" can.
+      placeholder: See at a glance whether anything needs attention, then expand
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in the product
+      options:
+        - Data projects / upload
+        - Intake and routing
+        - Understanding and schema discovery
+        - Planner and proposal
+        - Guided pipeline / run controls
+        - Reports and artifacts
+        - Data library / catalogs
+        - Login and accounts
+        - Language (Turkish or English text)
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: language
+    attributes:
+      label: Language
+      options:
+        - label: This is about text rendering in the wrong language
+          required: false
