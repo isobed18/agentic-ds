@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,15 +45,46 @@ def _key(edge: dict[str, Any]) -> tuple[str, str, str, str]:
     scoring it as a miss would punish a correct answer for its phrasing.
     Cardinality is where direction actually matters, and that is scored below.
     """
-    left = (str(edge.get("from") or edge.get("from_table") or ""), _cols(edge, "from"))
-    right = (str(edge.get("to") or edge.get("to_table") or ""), _cols(edge, "to"))
+    left = (_table(edge.get("from") or edge.get("from_table")), _cols(edge, "from"))
+    right = (_table(edge.get("to") or edge.get("to_table")), _cols(edge, "to"))
     first, second = sorted([left, right])
     return (first[0], first[1], second[0], second[1])
 
 
+#: Extensions stripped when comparing a table to the file it came from.
+_DATA_SUFFIXES = (".csv", ".tsv", ".txt", ".parquet", ".pq", ".xlsx", ".xlsm", ".xls")
+
+
+def _table(name: Any) -> str:
+    """Compare `links.csv` and `links` as the same table.
+
+    The answer key is written in terms of files, because that is what a person
+    uploaded. The system reports tables, because that is what it loaded. Scoring
+    the difference would fail a correct run -- which it did, reporting 0.0 while
+    every join had in fact been found with the right cardinality.
+    """
+    text = str(name or "").strip()
+    lowered = text.lower()
+    for suffix in _DATA_SUFFIXES:
+        if lowered.endswith(suffix):
+            return text[: -len(suffix)]
+    return text
+
+
+def _column(name: Any) -> str:
+    """Compare `movieId` and `movie_id` as the same column.
+
+    The loader normalises headers to snake_case, so the key it reports is not
+    spelled the way the file spells it. Same split the loader uses, so the two
+    stay in step.
+    """
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(name or ""))
+    return re.sub(r"[^0-9a-zA-Z]+", "_", expanded).strip("_").lower()
+
+
 def _cols(edge: dict[str, Any], side: str) -> str:
     columns = edge.get(f"{side}_columns") or []
-    return ",".join(sorted(str(c) for c in columns))
+    return ",".join(sorted(_column(c) for c in columns))
 
 
 def _normalise_cardinality(value: Any) -> str:
@@ -78,12 +110,16 @@ def _normalise_cardinality(value: Any) -> str:
 def score(truth: dict[str, Any], measured: list[dict[str, Any]]) -> dict[str, Any]:
     expected = {_key(e): e for e in truth["relationships"]}
     false_friends = {_key(e) for e in truth.get("false_relationships", [])}
+    redundant = {_key(e) for e in truth.get("redundant_relationships", [])}
     found = {_key(e): e for e in measured}
 
     matched = sorted(expected.keys() & found.keys())
     missed = sorted(expected.keys() - found.keys())
-    extra = sorted(found.keys() - expected.keys())
+    extra = sorted(found.keys() - expected.keys() - redundant)
     invented = [k for k in extra if k in false_friends]
+    # Reported and defensible: excluded from the precision denominator so a
+    # correct answer is not marked down for saying something also true.
+    redundant_found = sorted(found.keys() & redundant)
 
     cardinality_right, cardinality_wrong = [], []
     overlap_right, overlap_wrong = [], []
@@ -122,7 +158,8 @@ def score(truth: dict[str, Any], measured: list[dict[str, Any]]) -> dict[str, An
             "found": len(found),
             "matched": len(matched),
             "recall": ratio(len(matched), len(expected)),
-            "precision": ratio(len(matched), len(found)),
+            "precision": ratio(len(matched), len(found) - len(redundant_found)),
+            "redundant_but_valid": [list(k) for k in redundant_found],
             "missed": [list(k) for k in missed],
             "unexpected": [list(k) for k in extra],
             # Scored separately from ordinary extras: proposing a join that the
