@@ -1,0 +1,271 @@
+"""The understanding benchmark's scorer, and the synthetic corpus behind its traps.
+
+A benchmark that cannot fail a bad run measures nothing, so most of this file is
+about making the scorer reject answers it should reject. The cardinality case is
+the one that matters: `links` and `ratings` both join `movies` on the same
+column with 100% overlap, and only distinctness of the child keys separates
+1:1 from N:1. A scorer that waves that through would rate a system that never
+measured cardinality as perfect.
+
+These tests never touch the network. `fetch.py` downloads the real corpus;
+`measure()` is exercised against a small frame written here, because asserting
+against live MovieLens would make the suite fail whenever GroupLens is down.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+BENCHMARK = ROOT / "benchmarks" / "understanding_v0"
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(f"bench_{name}", BENCHMARK / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+score_module = _load("score")
+fetch_module = _load("fetch")
+
+
+def _truth(relationships: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    return {"relationships": relationships, **extra}
+
+
+EDGE_RATINGS = {
+    "from": "ratings.csv",
+    "from_columns": ["movieId"],
+    "to": "movies.csv",
+    "to_columns": ["movieId"],
+    "cardinality": "N:1",
+    "overlap_rate": 1.0,
+}
+EDGE_LINKS = {
+    "from": "links.csv",
+    "from_columns": ["movieId"],
+    "to": "movies.csv",
+    "to_columns": ["movieId"],
+    "cardinality": "1:1",
+    "overlap_rate": 1.0,
+}
+
+
+def test_a_perfect_answer_scores_perfectly() -> None:
+    truth = _truth([EDGE_RATINGS, EDGE_LINKS])
+    report = score_module.score(truth, [dict(EDGE_RATINGS), dict(EDGE_LINKS)])
+    assert report["edges"]["recall"] == 1.0
+    assert report["edges"]["precision"] == 1.0
+    assert report["cardinality"]["accuracy"] == 1.0
+
+
+def test_confusing_one_to_one_with_many_to_one_is_caught() -> None:
+    """The sharpest signal in the benchmark. Both edges have 100% overlap; only
+    child-key distinctness tells them apart, so a system that never measured it
+    must not score as though it had."""
+    truth = _truth([EDGE_RATINGS, EDGE_LINKS])
+    sloppy = [dict(EDGE_RATINGS), {**EDGE_LINKS, "cardinality": "N:1"}]
+
+    report = score_module.score(truth, sloppy)
+    assert report["edges"]["recall"] == 1.0, "the edge itself was found"
+    assert report["cardinality"]["accuracy"] == 0.5
+    wrong = report["cardinality"]["wrong"][0]
+    assert wrong["expected"] == "1:1" and wrong["reported"] == "N:1"
+
+
+def test_inventing_edges_costs_precision_not_recall() -> None:
+    """Recall alone rewards proposing every column pair."""
+    truth = _truth([EDGE_RATINGS])
+    noisy = [
+        dict(EDGE_RATINGS),
+        {
+            "from": "tags.csv",
+            "from_columns": ["userId"],
+            "to": "movies.csv",
+            "to_columns": ["movieId"],
+            "cardinality": "N:1",
+        },
+    ]
+    report = score_module.score(truth, noisy)
+    assert report["edges"]["recall"] == 1.0
+    assert report["edges"]["precision"] == 0.5
+
+
+def test_a_documented_false_friend_is_reported_separately() -> None:
+    """Proposing a coincidence the corpus documents as one is a worse error than
+    proposing an unlisted but plausible join, so it is not buried in `unexpected`."""
+    false_friend = {
+        "from": "support_tickets.csv",
+        "from_columns": ["agent_id"],
+        "to": "products.csv",
+        "to_columns": ["sku"],
+    }
+    truth = _truth([EDGE_RATINGS], false_relationships=[false_friend])
+    report = score_module.score(truth, [dict(EDGE_RATINGS), dict(false_friend)])
+    assert report["edges"]["known_false_friends_proposed"], "must be named, not just counted"
+
+
+def test_direction_is_not_scored_as_a_miss() -> None:
+    """`ratings joins movies` and `movies is joined by ratings` are the same
+    finding phrased two ways. Cardinality is where direction actually matters."""
+    truth = _truth([EDGE_RATINGS])
+    flipped = [
+        {
+            "from": "movies.csv",
+            "from_columns": ["movieId"],
+            "to": "ratings.csv",
+            "to_columns": ["movieId"],
+            "cardinality": "N:1",
+        }
+    ]
+    assert score_module.score(truth, flipped)["edges"]["recall"] == 1.0
+
+
+def test_an_approximate_overlap_is_not_close_enough() -> None:
+    """Overlap is a count, not an estimate."""
+    truth = _truth([EDGE_RATINGS])
+    report = score_module.score(truth, [{**EDGE_RATINGS, "overlap_rate": 0.91}])
+    assert report["overlap"]["within_tolerance"] == 0
+    assert report["overlap"]["outside_tolerance"][0]["reported"] == 0.91
+
+
+def test_missing_every_edge_scores_zero_rather_than_erroring() -> None:
+    report = score_module.score(_truth([EDGE_RATINGS, EDGE_LINKS]), [])
+    assert report["edges"]["recall"] == 0.0
+    assert report["edges"]["precision"] is None, "precision over nothing is undefined, not 1.0"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("1:1", "1:1"), ("one-to-one", "1:1"), ("N-1", "N:1"), ("many_to_one", "N:1")],
+)
+def test_cardinality_spellings_are_normalised(raw: str, expected: str) -> None:
+    """Backends spell these differently; a formatting difference is not a defect."""
+    assert score_module._normalise_cardinality(raw) == expected
+
+
+def test_ground_truth_is_measured_from_the_files(tmp_path: Path) -> None:
+    """The answer key must be computed, never typed. This writes a corpus whose
+    correct answer is known by construction and checks `measure()` recovers it."""
+    pd.DataFrame(
+        {"movieId": [1, 2, 3], "title": ["a", "b", "c"], "genres": ["x|y", "x", "z"]}
+    ).to_csv(tmp_path / "movies.csv", index=False)
+    pd.DataFrame(
+        {
+            "userId": [1, 1, 2],
+            "movieId": [1, 2, 2],
+            "rating": [4.0, 3.5, 5.0],
+            "timestamp": [1, 2, 3],
+        }
+    ).to_csv(tmp_path / "ratings.csv", index=False)
+    pd.DataFrame({"userId": [1], "movieId": [1], "tag": ["t"], "timestamp": [1]}).to_csv(
+        tmp_path / "tags.csv", index=False
+    )
+    pd.DataFrame({"movieId": [1, 2, 3], "imdbId": [10, 20, 30], "tmdbId": [1.0, None, 3.0]}).to_csv(
+        tmp_path / "links.csv", index=False
+    )
+
+    truth = fetch_module.measure(tmp_path)
+
+    assert truth["generated"] is False
+    assert truth["primary_keys"]["movies.csv"] == ["movieId"]
+    links_edge = next(e for e in truth["relationships"] if e["from"] == "links.csv")
+    assert links_edge["cardinality"] == "1:1"
+    assert links_edge["overlap_rate"] == 1.0
+
+    implicit = truth["implicit_entities"][0]
+    assert implicit["key"] == "userId" and implicit["has_parent_table"] is False
+    assert implicit["tags_users_subset_of_rating_users"] is True
+
+    tmdb = next(q for q in truth["quality_issues"] if q["column"] == "tmdbId")
+    assert tmdb["missing_rows"] == 1, "counted from the frame, not asserted from memory"
+
+
+def test_readme_txt_is_recorded_as_a_known_current_failure(tmp_path: Path) -> None:
+    """The TXT routing gap must stay visible in the answer key rather than being
+    absorbed into the expected result, or fixing it would look like a regression.
+
+    Asserted against what `measure()` actually emits -- an earlier version of
+    this test built the dict it then checked, which proved nothing.
+    """
+    for name, frame in {
+        "movies.csv": pd.DataFrame({"movieId": [1], "title": ["a"], "genres": ["x"]}),
+        "ratings.csv": pd.DataFrame(
+            {"userId": [1], "movieId": [1], "rating": [4.0], "timestamp": [1]}
+        ),
+        "tags.csv": pd.DataFrame({"userId": [1], "movieId": [1], "tag": ["t"], "timestamp": [1]}),
+        "links.csv": pd.DataFrame({"movieId": [1], "imdbId": [1], "tmdbId": [1.0]}),
+    }.items():
+        frame.to_csv(tmp_path / name, index=False)
+
+    files = fetch_module.measure(tmp_path)["files"]
+
+    assert files["README.txt"]["route"] == "documents", "prose belongs on the document path"
+    assert files["README.txt"]["currently_misrouted_as_structured"] is True
+    assert "why" in files["README.txt"], "a known-failing entry has to say why"
+    assert files["movielens_analysis.pdf"]["route"] == "documents"
+
+
+# ------------------------------------------------------- synthetic traps
+
+def test_the_synthetic_corpus_carries_traps_real_data_does_not(tmp_path: Path) -> None:
+    """Real data is the benchmark; this fixture covers what it cannot.
+
+    MovieLens has no injected target leak, no national id numbers and no orphan
+    rows, so those paths would otherwise go unexercised. Generating them is fine
+    *here* -- the assertion is about the detector, not about the system's score,
+    and nobody is being told a generated join proves capability.
+    """
+    synthetic = _load_fixture()
+    truth = synthetic.build(tmp_path)
+
+    leak = truth["leaking_columns"][0]
+    assert (leak["table"], leak["column"]) == ("orders.csv", "refund_issued")
+
+    orders = pd.read_csv(tmp_path / "orders.csv")
+    customers = pd.read_csv(tmp_path / "customers.csv")
+    churn = dict(zip(customers["customer_id"], customers["churned"], strict=True))
+    merged = orders.assign(churn=orders["customer_id"].map(churn)).dropna(subset=["churn"])
+    agreement = (merged["refund_issued"] == merged["churn"]).mean()
+    assert 0.75 < agreement < 1.0, (
+        "the leak must be strong enough to matter and short of a perfect copy, "
+        "which would be trivially caught and prove less"
+    )
+
+    orphan_edge = next(e for e in truth["relationships"] if e["from"] == "orders.csv")
+    assert orphan_edge["orphan_rows"] > 0, "orphans are the point of this table"
+    assert orphan_edge["overlap_rate"] < 1.0
+
+    ids = pd.read_csv(tmp_path / "customers.csv")["national_id"].astype(str)
+    assert ids.map(_valid_turkish_id).all(), (
+        "checksum-valid ids distinguish a real detector from one matching column names"
+    )
+
+
+def _load_fixture():
+    spec = importlib.util.spec_from_file_location(
+        "synthetic_corpus", ROOT / "tests" / "fixtures" / "synthetic_corpus.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _valid_turkish_id(value: str) -> bool:
+    if len(value) != 11 or not value.isdigit() or value[0] == "0":
+        return False
+    digits = [int(c) for c in value]
+    odd, even = sum(digits[0:9:2]), sum(digits[1:8:2])
+    return digits[9] == (odd * 7 - even) % 10 and digits[10] == sum(digits[:10]) % 10
