@@ -27,13 +27,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # `kesif` burada cunku onsuz kesif testleri sessizce ATLANIR ve
-      # eskalasyon orani regresyon testi hic kosmaz. Yalnizca magika
-      # eklenir (~110 MB, pip cache'lenir). `kesif-mcp` ve `kesif-ocr`
-      # bilerek DISARIDA: ikisi de opsiyonel bilesenler ve testleri
-      # kurulu degilken atlanacak sekilde korumali.
       - name: Install
-        run: pip install -e ".[api,dev,sandbox,kesif]"
+        run: pip install -e ".[api,dev,sandbox]"
       - name: Lint
         run: ruff check src tests
       - name: Test

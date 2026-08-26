@@ -95,4 +95,31 @@ describe("staging source routing", () => {
     expect(state.documents.at(-1)?.status).toBe("failed");
     expect(state.error).toContain("invalid planner output");
   });
+
+  it("surfaces an escalated schema stage instead of hanging at Explain", () => {
+    const state = buildStagingRoutingState(profile, {
+      status: "awaiting_human",
+      current_stage: "schema_discovery",
+      events: [
+        { event: "source_discovery_ready" },
+        { event: "gate_decided", stage: "intake", verdict: "auto_proceed" },
+        { event: "gate_decided", stage: "schema_discovery", verdict: "retry" },
+        { event: "gate_decided", stage: "schema_discovery", verdict: "escalate" },
+      ],
+      pending_question: {
+        stage_id: "schema_discovery",
+        human_prompt: {
+          question: "Schema discovery needs a decision.",
+          context_summary: "No stable row grain could be verified.",
+        },
+      },
+    }, null);
+
+    expect(state.structured.map((step) => step.status)).toEqual([
+      "complete", "complete", "failed", "failed",
+    ]);
+    expect(state.synthesis).toBe("failed");
+    expect(state.proposal).toBe("failed");
+    expect(state.attention).toContain("No stable row grain");
+  });
 });

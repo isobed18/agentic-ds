@@ -40,6 +40,7 @@ export interface StagingRoutingState {
   ocrMode: string;
   documentFiles: DocumentFileProgress[];
   error?: string;
+  attention?: string;
 }
 
 export interface StagingProgressSnapshot {
@@ -48,6 +49,13 @@ export interface StagingProgressSnapshot {
   error?: string | null;
   events?: Array<Record<string, unknown>>;
   attempts?: Array<Record<string, unknown>>;
+  pending_question?: {
+    stage_id?: string;
+    human_prompt?: {
+      question?: string;
+      context_summary?: string;
+    } | null;
+  } | null;
 }
 
 export function routedFiles(profile: SourceProfile): RoutedSourceFile[] {
@@ -102,24 +110,32 @@ export function buildStagingRoutingState(
   const files = routedFiles(profile);
   const events = progress?.events ?? [];
   const eventNames = new Set(events.map((event) => String(event.event ?? "")));
-  const gateStages = new Set(
+  const successfulGateStages = new Set(
     events
-      .filter((event) => event.event === "gate_decided")
+      .filter((event) => event.event === "gate_decided"
+        && (!event.verdict || event.verdict === "auto_proceed"))
       .map((event) => String(event.stage ?? "")),
   );
   const discoveryReady = eventNames.has("source_discovery_ready");
-  const intakeReady = gateStages.has("intake");
-  const relationshipsReady = gateStages.has("schema_discovery");
+  const intakeReady = successfulGateStages.has("intake");
+  const relationshipsReady = successfulGateStages.has("schema_discovery");
   const documentReady = eventNames.has("document_understanding_ready");
   const documentFailed = eventNames.has("document_understanding_failed");
   const plannerFailed = Boolean(workspace?.planner_error && !workspace.recommended_plan);
-  const runFailed = plannerFailed
-    || ["failed", "interrupted"].includes(String(progress?.status ?? ""));
+  const runStatus = String(progress?.status ?? "");
+  const runFailed = plannerFailed || ["failed", "interrupted", "aborted"].includes(runStatus);
   const analysisStarted = eventNames.has("staging_analysis_started");
   const analysisReady = Boolean(workspace?.recommended_plan) && (
     eventNames.has("staging_analysis_ready") || progress?.status === "staged"
   );
   const currentStage = String(progress?.current_stage ?? "");
+  const needsHuman = runStatus === "awaiting_human";
+  const schemaBlocked = currentStage === "schema_discovery" && (needsHuman || runFailed);
+  const humanPrompt = progress?.pending_question?.human_prompt;
+  const attention = needsHuman
+    ? [humanPrompt?.question, humanPrompt?.context_summary].filter(Boolean).join(" ")
+      || "Understanding stopped because a decision is required."
+    : undefined;
   const latestExtraction = workspace?.document_extractions?.at(-1);
   const startEvent = [...events].reverse().find((event) => event.event === "document_understanding_started");
   const engine = String(latestExtraction?.engine ?? startEvent?.engine ?? "docling");
@@ -128,8 +144,8 @@ export function buildStagingRoutingState(
   const structured = files.some((file) => file.route === "structured") ? [
     { id: "inspect", label: "Inspect", status: statusAfter(discoveryReady, !discoveryReady) },
     { id: "profile", label: "Profile", status: statusAfter(intakeReady, currentStage === "intake") },
-    { id: "relationships", label: "Find relationships", status: statusAfter(relationshipsReady, currentStage === "schema_discovery") },
-    { id: "explain", label: "Explain", status: statusAfter(analysisReady, analysisStarted && relationshipsReady && !analysisReady) },
+    { id: "relationships", label: "Find relationships", status: statusAfter(relationshipsReady, currentStage === "schema_discovery" && !schemaBlocked, schemaBlocked) },
+    { id: "explain", label: "Explain", status: statusAfter(analysisReady, analysisStarted && relationshipsReady && !analysisReady, schemaBlocked) },
   ] satisfies RoutingSubstep[] : [];
 
   const documents = files.some((file) => file.route === "documents") ? [
@@ -155,9 +171,9 @@ export function buildStagingRoutingState(
     synthesis: statusAfter(
       analysisReady,
       analysisStarted && !analysisReady && !runFailed,
-      documentFailed || runFailed,
+      documentFailed || runFailed || schemaBlocked,
     ),
-    proposal: workspace?.recommended_plan ? "complete" : runFailed ? "failed" : "pending",
+    proposal: workspace?.recommended_plan ? "complete" : runFailed || schemaBlocked ? "failed" : "pending",
     engine,
     engineVersion: latestExtraction?.engine_version,
     ocrMode,
@@ -165,6 +181,7 @@ export function buildStagingRoutingState(
     error: typeof progress?.error === "string" && progress.error
       ? progress.error
       : workspace?.planner_error ?? undefined,
+    attention,
   };
 }
 

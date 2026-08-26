@@ -44,8 +44,6 @@ const TR: Record<string, string> = {
   "needs you": "sizi bekliyor",
 
   // gate verdicts and reasons
-  "The planner did not respond. Please try again.":
-    "Planner yanıt vermedi. Lütfen tekrar deneyin.",
   "Continued": "Devam etti",
   "Sent back": "Geri gönderildi",
   "Asked you": "Size soruldu",
@@ -688,6 +686,8 @@ const TR: Record<string, string> = {
   "Structured data": "Yapısal veri",
   "Structured files": "Yapısal dosyalar",
   "Needs review": "İnceleme gerekiyor",
+  "Understanding needs review": "Veri anlayışı inceleme gerektiriyor",
+  "Start a new understanding run": "Yeni bir veri anlama çalışması başlat",
   "Explain why": "Nedenini açıkla",
   "Inspect": "İncele",
   "Profile": "Profille",

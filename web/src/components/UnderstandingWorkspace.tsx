@@ -65,7 +65,7 @@ export function SourceSummary({ profile, onStart, busy }: { profile: SourceProfi
   );
 }
 
-export function UnderstandingProgress({ profile, runId, workspace }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null }) {
+export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onRetry?: () => void }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
@@ -74,6 +74,7 @@ export function UnderstandingProgress({ profile, runId, workspace }: { profile: 
     <CanvasSurface>
       <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.proposal === "failed" ? "blocked" : "pending"} />
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
+      {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </CanvasSurface>

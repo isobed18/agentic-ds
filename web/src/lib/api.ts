@@ -8,7 +8,7 @@
 
 export type { StageStatus } from "./status";
 import type { StageStatus } from "./status";
-import { activeLanguage, t } from "./i18n";
+import { activeLanguage } from "./i18n";
 
 export interface WorkflowNode {
   id: string;
@@ -661,27 +661,14 @@ export interface Hardening {
  */
 let redirectingToLogin = false;
 
-async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // The server composes some panel prose around measured values, so it needs to
   // know the language at fetch time; it cannot be translated afterwards.
   const separator = path.includes("?") ? "&" : "?";
-  const controller = timeoutMs ? new AbortController() : undefined;
-  const timeout = timeoutMs ? window.setTimeout(() => controller?.abort(), timeoutMs) : undefined;
-  let res: Response;
-  try {
-    res = await fetch(`${path}${separator}lang=${activeLanguage()}`, {
-      headers: { "Content-Type": "application/json" },
-      ...init,
-      ...(controller ? { signal: controller.signal } : {}),
-    });
-  } catch (error) {
-    if (controller?.signal.aborted) {
-      throw new Error(t("The planner did not respond. Please try again."));
-    }
-    throw error;
-  } finally {
-    if (timeout !== undefined) window.clearTimeout(timeout);
-  }
+  const res = await fetch(`${path}${separator}lang=${activeLanguage()}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
   if (res.status === 401) {
     // The session expired or was never established. The server answers API
     // calls with 401 rather than redirecting, precisely so this decision is
@@ -853,6 +840,6 @@ export const api = {
   directives: (runId: string) =>
     request<{ directives: Record<string, string[]> }>(`/api/runs/${runId}/directives`),
 
-  plannerChat: (body: unknown) => request<{ reply?: string; message?: string; [k: string]: unknown }>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }, 120_000),
+  plannerChat: (body: unknown) => request<{ reply?: string; message?: string; [k: string]: unknown }>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }),
   artifact: (id: string) => request<Record<string, unknown>>(`/api/artifacts/${id}`),
 };
