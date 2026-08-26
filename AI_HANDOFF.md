@@ -208,8 +208,9 @@ passed over `src` and `tests`; 17 frontend tests and the production build passed
 The loopback deployment health check returned 200 and an unauthenticated API
 request returned 401.
 
-**Still incomplete.** Narrative TXT files are currently treated as delimited
-tables. The guided PDF-table review/promotion UI and automatic ML-input refresh
+**Still incomplete.** Narrative TXT files are still offered to the delimited
+loader, though one that fails to parse no longer takes the whole source down
+with it -- it is reported as needing review and the other files load. The guided PDF-table review/promotion UI and automatic ML-input refresh
 are incomplete. Chart values are not trusted training data. Immediate hard
 cancel is absent. Many advanced graph components still lack graph-native
 executors.
@@ -222,6 +223,18 @@ subscription and no Anthropic API key, but it is remote inference.
 **Deployment.** The current working checkout is served behind Cloudflare Tunnel
 at `api.altspacelabs.com`, password-gated and bound to `127.0.0.1:8077`.
 `deploy/README.md` documents startup and the limits of this protection.
+
+Two things worth knowing before you touch intake. Column headers are slugged to
+snake_case with camelCase split first: `movieId` becomes `movie_id`, and several
+heuristics downstream read names as tokens, so folding that boundary away made
+integer keys invisible to relationship detection entirely. And
+`benchmarks/understanding_v0` measures understanding against real downloaded data
+with an answer key computed from the files; it found that defect, and one where a
+single unreadable file failed a whole source, on its first run. Fixtures written by
+someone who already knows the schema will not find either.
+
+The deployment serves from a git worktree on the `deploy` branch, not from the
+primary checkout. Do not switch branches in the served worktree.
 
 Start future architecture work at `docs/REPORT_INDEX.md` and update
 `docs/SYSTEM_ARCHITECTURE_REPORT.md` instead of creating another dated report.
