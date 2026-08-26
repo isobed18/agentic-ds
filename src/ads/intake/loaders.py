@@ -45,7 +45,19 @@ class LoadedTable:
 
 
 def _slugify(value: str) -> str:
-    slug = re.sub(r"[^0-9a-zA-Z]+", "_", str(value)).strip("_").lower()
+    """Normalise a header to snake_case, splitting camelCase rather than folding it.
+
+    `movieId` used to become `movieid`, which erased the word boundary and with
+    it every downstream heuristic that reads names as tokens: the identifier
+    check looked for an `id` token and found a single blob, so an integer
+    `movieId` was profiled as a continuous measurement and relationship
+    detection reported no joins at all on a dataset whose joins were complete.
+
+    Splitting first yields `movie_id`, which is both the convention the rest of
+    the codebase uses and the form those heuristics were written against.
+    """
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", expanded).strip("_").lower()
     return slug or "unnamed"
 
 
@@ -304,12 +316,42 @@ def load_path(path: str | Path) -> list[LoadedTable]:
     raise ValueError(f"Unsupported file type: {path.name} (suffix {suffix!r})")
 
 
-def load_directory(directory: str | Path) -> list[LoadedTable]:
-    """Load every supported file in a directory, sorted for deterministic order."""
+def load_directory_with_failures(
+    directory: str | Path,
+) -> tuple[list[LoadedTable], dict[str, str]]:
+    """Load every supported file, and report the ones that could not be read.
+
+    One unreadable file used to abort the whole directory. `.txt` is routed to
+    the delimited-text loader, so a prose README next to four clean CSVs raised
+    `Expected 1 fields in line 4, saw 5` out of here and the caller turned it
+    into a 400 -- the entire source became unprofilable because of a file nobody
+    wanted profiled. Uploading a folder that happens to contain a README was
+    enough to make the product unusable.
+
+    Failures are returned rather than raised, keyed by file name, so the caller
+    can show the file as unreadable and carry on with the rest. That is the
+    project's stated invariant: surface partial failures, never let a source
+    silently disappear -- and never let one file take the others down.
+    """
     directory = Path(directory)
     supported = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES
     tables: list[LoadedTable] = []
+    failures: dict[str, str] = {}
     for path in sorted(directory.iterdir()):
-        if path.is_file() and path.suffix.lower() in supported:
+        if not (path.is_file() and path.suffix.lower() in supported):
+            continue
+        try:
             tables.extend(load_path(path))
+        except Exception as exc:  # noqa: BLE001 - any reader failure is per-file news
+            failures[path.name] = str(exc).strip() or exc.__class__.__name__
+    return tables, failures
+
+
+def load_directory(directory: str | Path) -> list[LoadedTable]:
+    """Load every supported file in a directory, sorted for deterministic order.
+
+    Unreadable files are skipped. Use `load_directory_with_failures` when the
+    caller needs to tell someone which file was dropped and why.
+    """
+    tables, _ = load_directory_with_failures(directory)
     return tables

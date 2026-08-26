@@ -118,7 +118,10 @@ _FORMATTED_PHONE_RE = re.compile(r"^\+?[0-9][0-9 ()-]{7,18}[0-9]$")
 _URL_RE = re.compile(r"^(?:https?://|www[.])[^ ]+$", re.IGNORECASE)
 _STRUCTURED_ID_RE = re.compile(r"^(?=.{4,}$)(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
-_ID_NAME_PATTERNS = ("_id", "id_", "^id$", "_no$", "_key$", "code$", "_ref$", "uuid", "guid")
+#: A trailing token that names a key rather than a measurement: `customer_no`,
+#: `postal_code`, `sort_key`, `source_ref`. Only checked at the end, because
+#: `code_review` is not an identifier while `product_code` is.
+_ID_TRAILING_TOKENS = frozenset({"no", "key", "code", "ref"})
 # Cardinality above which an id-shaped name is treated as a key even when the
 # column repeats heavily — i.e. a foreign key rather than a primary key.
 _ID_MIN_CARDINALITY = 50
@@ -143,13 +146,25 @@ class ProfileOptions:
 
 
 def _looks_like_identifier_name(name: str) -> bool:
-    lowered = name.lower()
-    return any(
-        re.search(pattern, lowered)
-        if pattern.startswith("^") or pattern.endswith("$")
-        else pattern in lowered
-        for pattern in _ID_NAME_PATTERNS
-    )
+    """Decide whether a column name claims to be a key.
+
+    Matched on name *tokens*, not on substrings of the lowercased name. The
+    substring form missed every camelCase key -- `movieId` lowercases to
+    `movieid`, which contains none of `_id`, `id_` or `^id$` -- so an integer
+    `movieId` was classified `numeric_continuous`, excluded from `_JOINABLE`,
+    and relationship detection returned nothing at all for a four-table dataset
+    whose joins were 100% overlapping. camelCase keys are the norm in anything
+    exported from a JS, Java or Mongo schema, so this was not an edge case.
+
+    Tokens also remove a false positive the substring form had: `paid_amount`
+    contains `id_` and was read as a key.
+    """
+    tokens = _normalise_name_tokens(name)
+    if not tokens:
+        return False
+    if "id" in tokens or "uuid" in tokens or "guid" in tokens:
+        return True
+    return tokens[-1] in _ID_TRAILING_TOKENS
 
 
 @dataclass(frozen=True)

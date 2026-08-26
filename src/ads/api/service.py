@@ -79,7 +79,11 @@ from ads.documents import (
     promote_reviewed_document_tables,
 )
 from ads.gates import GatePolicy
-from ads.intake import detect_relationships, load_directory, profile_tables
+from ads.intake import (
+    detect_relationships,
+    load_directory_with_failures,
+    profile_tables,
+)
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
 from ads.llm import (
     DEFAULT_CLAUDE_TIMEOUT,
@@ -2721,7 +2725,7 @@ class ControlPlane:
             return persisted
 
         source_path = self.source_path(source_id)
-        loaded = load_directory(source_path)
+        loaded, unreadable = load_directory_with_failures(source_path)
         documents = load_pdf_directory(source_path)
         cards = profile_tables(loaded)
         if not cards and not documents:
@@ -2769,6 +2773,13 @@ class ControlPlane:
             else:
                 route = "unsupported"
                 reason = f"No staging adapter is registered for {suffix or 'this file type'}."
+            if name in unreadable:
+                # It has a supported extension and still could not be read --
+                # most often prose in a .txt, which the delimited loader is
+                # obliged to try. Shown as needing review rather than dropped,
+                # and no longer allowed to fail the whole source.
+                route = "needs_review"
+                reason = f"Could not be read as tabular data: {unreadable[name]}"
             source_files.append(
                 {
                     "name": name,
