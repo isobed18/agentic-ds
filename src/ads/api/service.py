@@ -81,7 +81,13 @@ from ads.documents import (
 from ads.gates import GatePolicy
 from ads.intake import detect_relationships, load_directory, profile_tables
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
-from ads.llm import LARGE, ClaudeCliClient, OllamaClient, StructuredLLM
+from ads.llm import (
+    DEFAULT_CLAUDE_TIMEOUT,
+    LARGE,
+    ClaudeCliClient,
+    OllamaClient,
+    StructuredLLM,
+)
 from ads.orchestration import (
     EdgeCondition,
     RunOutcome,
@@ -5066,7 +5072,14 @@ def create_app(
         if backend == "claude_cli":
             model = os.environ.get("ADS_CLAUDE_MODEL", "haiku")
             effort = os.environ.get("ADS_CLAUDE_EFFORT", "low")
-            timeout = float(os.environ.get("ADS_CLAUDE_TIMEOUT", "90"))
+            # Defaults to the client's own budget rather than undercutting it.
+            # 90s was the previous default and it expired during real staging
+            # synthesis: that call is one bounded request covering every routed
+            # source, so a mixed PDF/tabular project needs materially more than
+            # a single-table one. Set ADS_CLAUDE_TIMEOUT to tighten it again.
+            timeout = float(
+                os.environ.get("ADS_CLAUDE_TIMEOUT", str(DEFAULT_CLAUDE_TIMEOUT))
+            )
 
             def create_claude_cli() -> StructuredLLM:
                 return ClaudeCliClient(model=model, effort=effort, timeout=timeout)
