@@ -138,9 +138,15 @@ Current upload support:
 - Parquet and PQ;
 - PDF.
 
-Important limitation: TXT is currently treated as a delimited table. The intended product needs a
-content-aware TXT router that distinguishes a narrative report from structured/semi-structured
-data. Until that classifier exists, a narrative TXT can be misrouted as structured input.
+Important limitation: TXT is still routed to the delimited-text loader. The intended product needs
+a content-aware TXT router that distinguishes a narrative report from structured/semi-structured
+data. Until that classifier exists, a narrative TXT is offered to the CSV reader.
+
+What no longer happens is that this takes the source down with it. A prose file raised out of
+`load_directory`, and `source_profile` turned it into a 400, so a folder containing a README was
+unprofilable in its entirety with nothing naming the file at fault. Loader failures are now
+collected per file and the offending file is reported as `needs_review` carrying the parser's
+reason, while the rest of the source loads.
 
 ### 4.3 Intake is the first visible execution phase
 
@@ -517,7 +523,8 @@ Access policy.
 
 ## 10. Current gaps and next engineering priorities
 
-1. Add content-aware routing for TXT and other ambiguous semi-structured sources.
+1. Add content-aware routing for TXT and other ambiguous semi-structured sources. A prose
+   file no longer fails the whole source, but it is still offered to the CSV reader first.
 2. Add first-class durable source-use decisions and make Planner revisions/promotion update them.
 3. Complete the guided PDF candidate review/promote UI and reconnect accepted TableAssets into the
    ML input proposal.
@@ -539,7 +546,13 @@ At the 2026-08-26 audit:
 - all 28 frontend tests passed;
 - TypeScript compilation and the Vite production build passed, and the committed bundle under
   `src/ads/api/static` matches the sources;
-- both translation catalogues are complete: every `t()` key on either side has a Turkish entry.
+- both translation catalogues are complete: every `t()` key on either side has a Turkish entry;
+- `benchmarks/understanding_v0`, measured against the live deployment on real data (MovieLens
+  `ml-latest-small` plus the arXiv paper analysing it): relationship recall 3/3, precision 1.0,
+  cardinality 1.0 including the `links`-to-`movies` 1:1, and all three overlap rates within
+  tolerance. That benchmark found two defects on its first run -- camelCase integer keys were not
+  recognised as keys at all, so relationship detection returned nothing for the whole corpus, and
+  one unreadable file failed the entire source.
 
 Not repeated in this pass, and last verified at the preceding audit: the deployed loopback health
 endpoint returning 200, and an unauthenticated API request returning 401. The preceding audit ran
