@@ -83,9 +83,14 @@ from ads.intake import detect_relationships, load_directory, profile_tables
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
 from ads.llm import (
     DEFAULT_CLAUDE_TIMEOUT,
+    DEFAULT_DEEPSEEK_MODEL,
+    DEFAULT_DEEPSEEK_TIMEOUT,
+    DEFAULT_REQUESTS_PER_MINUTE,
     LARGE,
     ClaudeCliClient,
+    DeepSeekClient,
     OllamaClient,
+    RateLimiter,
     StructuredLLM,
 )
 from ads.orchestration import (
@@ -5063,11 +5068,23 @@ def create_app(
     from fastapi.responses import HTMLResponse, Response
     from fastapi.staticfiles import StaticFiles
 
+    # DeepSeek is a paid remote backend billed to one person's key. Every other
+    # backend is either local or a subscription the team already shares, so it
+    # is the only one that needs an owner. Read from the environment rather than
+    # from the branch below, so an injected ControlPlane is gated too. The
+    # allowlist is comma-separated so adding a teammate is a config change.
+    paid_backend = os.environ.get("ADS_LLM_BACKEND", "").strip().casefold() == "deepseek"
+    allowed_users = {
+        name.strip()
+        for name in os.environ.get("ADS_DEEPSEEK_USERS", "ishak-ads").split(",")
+        if name.strip()
+    }
+
     store = ArtifactStore(artifacts_dir)
     if plane is None:
         backend = os.environ.get("ADS_LLM_BACKEND", "ollama").strip().casefold()
-        if backend not in {"ollama", "claude_cli"}:
-            raise ValueError("ADS_LLM_BACKEND must be 'ollama' or 'claude_cli'")
+        if backend not in {"ollama", "claude_cli", "deepseek"}:
+            raise ValueError("ADS_LLM_BACKEND must be 'ollama', 'claude_cli', or 'deepseek'")
         llm_factory: Callable[[], StructuredLLM] | None = None
         if backend == "claude_cli":
             model = os.environ.get("ADS_CLAUDE_MODEL", "haiku")
@@ -5085,6 +5102,24 @@ def create_app(
                 return ClaudeCliClient(model=model, effort=effort, timeout=timeout)
 
             llm_factory = create_claude_cli
+        if backend == "deepseek":
+            ds_model = os.environ.get("ADS_DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL)
+            ds_timeout = float(
+                os.environ.get("ADS_DEEPSEEK_TIMEOUT", str(DEFAULT_DEEPSEEK_TIMEOUT))
+            )
+            ds_rpm = int(
+                os.environ.get("ADS_DEEPSEEK_RPM", str(DEFAULT_REQUESTS_PER_MINUTE))
+            )
+            # One limiter for the process, not one per agent call: the budget
+            # protects a single shared key, so every caller must draw from the
+            # same bucket or the ceiling means nothing.
+            ds_limiter = RateLimiter(requests_per_minute=ds_rpm)
+
+            def create_deepseek() -> StructuredLLM:
+                return DeepSeekClient(model=ds_model, timeout=ds_timeout, limiter=ds_limiter)
+
+            llm_factory = create_deepseek
+
         plane = ControlPlane(
             store=store,
             source_roots=tuple(Path(root) for root in source_roots or ()),
@@ -5152,7 +5187,8 @@ def create_app(
         return plane.run_options()
 
     @app.post("/api/planner/chat")
-    def planner_chat(body: dict[str, Any]) -> dict[str, Any]:
+    def planner_chat(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        _guard_paid_backend(request)
         try:
             return plane.planner_chat(
                 message=str(body["message"]),
@@ -5316,8 +5352,29 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id, "applied": applied}
 
+    def _guard_paid_backend(request: Request) -> None:
+        """Refuse work that would spend someone else's API key.
+
+        Enforced at the request boundary rather than inside the client: a run
+        executes on a worker thread that has no session, so the only place the
+        caller is still known is here.
+        """
+        if not paid_backend:
+            return
+        username = getattr(request.state, "username", None)
+        if username not in allowed_users:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "The DeepSeek backend is restricted to "
+                    f"{', '.join(sorted(allowed_users))}. Signed in as "
+                    f"{username or 'an unidentified session'}."
+                ),
+            )
+
     @app.post("/api/runs/staged")
-    def stage_run(body: dict[str, Any]) -> dict[str, Any]:
+    def stage_run(body: dict[str, Any], request: Request) -> dict[str, Any]:
+        _guard_paid_backend(request)
         try:
             configuration = dict(body.get("configuration") or {})
             automation_id = body.get("automation_id")
