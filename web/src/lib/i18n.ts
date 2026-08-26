@@ -540,6 +540,10 @@ const TR: Record<string, string> = {
     "Kişisel işaretlenen sütunlar modele girmez. Sınıflandırıcı bir sezgiseldir ve iki yönde de yanılır — koşu bunun üstüne inşa etmeden önce buradan düzeltin.",
   "changed": "değişti",
   "personal": "kişisel",
+  // Sensitivity classifications, rendered as a badge in the column tables.
+  // Codes, translated only for display -- the stored value stays `pii`.
+  "pii": "kişisel",
+  "internal": "dahili",
   "usable": "kullanılabilir",
   "Apply {n} changes": "{n} değişikliği uygula",
   "No changes": "Değişiklik yok",
@@ -848,6 +852,183 @@ const TR: Record<string, string> = {
   "train": "eğitim",
   "publish": "yayınlama",
   "template": "şablon",
+
+  // Home / Catalog. These are the first screen a new person sees, so an
+  // untranslated string here is the most visible kind of gap.
+  "Understand unfamiliar data": "Tanımadığınız veriyi anlayın",
+  "From mixed files to an agreed ML plan, with every source and decision visible.":
+    "Karışık dosyalardan üzerinde anlaşılmış bir ML planına; her kaynak ve karar görünür.",
+  "Recommended next action": "Önerilen sonraki adım",
+  "Give Agentic DS your files": "Dosyalarınızı Agentic DS'e verin",
+  "Intake routes every PDF, table, and ambiguous source. You review what becomes ML data before the base pipeline can run.":
+    "Veri alma her PDF'i, tabloyu ve belirsiz kaynağı yönlendirir. Temel boru hattı çalışmadan önce neyin ML verisi olacağını siz incelersiniz.",
+  "Start a data project": "Veri projesi başlat",
+  "Open data projects": "Veri projelerini aç",
+  "Continue an intake, review a proposed ML plan, or inspect a transparent run.":
+    "Bir veri almayı sürdürün, önerilen bir ML planını inceleyin ya da şeffaf bir çalıştırmayı denetleyin.",
+  "Review your data": "Verinizi inceleyin",
+  "Enforced guarantees. These are properties of the system, not preferences.":
+    "Zorunlu güvenceler. Bunlar sistemin özellikleridir, tercih değildir.",
+  "Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.":
+    "Profillenen kaynaklar. Yalnızca şema ve toplam istatistikler — ham satır saklanmaz ve gösterilmez.",
+  "Every run, with the decisions and gate outcomes it produced.":
+    "Her çalıştırma, ürettiği kararlar ve kapı sonuçlarıyla birlikte.",
+  "Trained artifacts with their measured holdout performance and provenance.":
+    "Ölçülen holdout performansı ve kökeniyle birlikte eğitilmiş artifact'lar.",
+  "Generated evaluation reports, downloadable as markdown.":
+    "Üretilen değerlendirme raporları, markdown olarak indirilebilir.",
+  "Candidate keys": "Aday anahtarlar",
+  "Training rows": "Eğitim satırları",
+  "Sensitive": "Hassas",
+  "Download": "İndir",
+  "Loading…": "Yükleniyor…",
+  "Loading experiments…": "Denemeler yükleniyor…",
+  "Loading models…": "Modeller yükleniyor…",
+  "Loading reports…": "Raporlar yükleniyor…",
+  "No datasets yet": "Henüz veri seti yok",
+  "No experiments yet": "Henüz deneme yok",
+  "No models yet": "Henüz model yok",
+  "No reports yet": "Henüz rapor yok",
+  "Drop files into data/ and run the pipeline to profile them.":
+    "Dosyaları data/ klasörüne bırakın ve profillemek için boru hattını çalıştırın.",
+  "Start a run from Workflows.": "Akışlar'dan bir çalıştırma başlatın.",
+  "Complete a run through the training stage to save a model.":
+    "Model kaydetmek için eğitim aşamasını içeren bir çalıştırmayı tamamlayın.",
+  "Reports appear once a run reaches the report stage.":
+    "Bir çalıştırma rapor aşamasına ulaştığında raporlar görünür.",
+
+  // Data projects workspace
+  "Data projects": "Veri projeleri",
+  "New data project": "Yeni veri projesi",
+  "No data projects yet": "Henüz veri projesi yok",
+  "Guided data science": "Rehberli veri bilimi",
+  "Understand unfamiliar files, agree on an ML plan, then run it transparently.":
+    "Tanımadığınız dosyaları anlayın, bir ML planı üzerinde anlaşın, sonra şeffaf biçimde çalıştırın.",
+  "Start with unfamiliar files": "Tanımadığınız dosyalarla başlayın",
+  "Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.":
+    "Tanımadığınız dosyaları ekleyin. Agentic DS bunları yönlendirir, nelerin kullanılabilir olduğunu açıklar ve temel ML boru hattını önerir.",
+  "Upload files": "Dosya yükle",
+  "Add files": "Dosya ekle",
+
+  // Intake and understanding
+  "Intake and source routing": "Veri alma ve kaynak yönlendirme",
+  "Discover, classify, and route": "Keşfet, sınıflandır ve yönlendir",
+  "Classify and route every file, then understand each source on the right path.":
+    "Her dosyayı sınıflandırıp yönlendirin, ardından her kaynağı doğru yolda anlayın.",
+  "Run Intake": "Veri almayı çalıştır",
+  "Source": "Kaynak",
+  "Enters ML": "ML'e girer",
+  "Context only": "Yalnızca bağlam",
+  "Extracted PDF tables stay review-only until a human promotes them.":
+    "Çıkarılan PDF tabloları, bir kişi terfi ettirene kadar yalnızca inceleme amaçlı kalır.",
+  "No trusted structured ML input is selected.": "Güvenilir yapısal ML girdisi seçilmedi.",
+  "Recommended continuation": "Önerilen devam",
+  "Review what enters ML and where the base pipeline will stop before accepting.":
+    "Kabul etmeden önce ML'e neyin gireceğini ve temel boru hattının nerede duracağını inceleyin.",
+  "Accept and add base pipeline": "Kabul et ve temel boru hattını ekle",
+  "Runs through the final report; hard safety gates still apply.":
+    "Nihai rapora kadar çalışır; katı güvenlik kapıları yine de geçerlidir.",
+  "Runs with {count} planned review checkpoints.":
+    "{count} planlı inceleme kontrol noktasıyla çalışır.",
+  "Staging stopped": "Hazırlık durdu",
+  "Planner synthesis failed": "Planlayıcı sentezi başarısız oldu",
+  "Blocked — no plan was created": "Engellendi — plan oluşturulmadı",
+  "Inspect failure": "Hatayı incele",
+
+  // Guided pipeline
+  "Data understood": "Veri anlaşıldı",
+  "Intake, routing, and synthesis complete": "Veri alma, yönlendirme ve sentez tamamlandı",
+  "ML inputs": "ML girdileri",
+  "ML objective": "ML hedefi",
+  "Enters ML now": "Şimdi ML'e giriyor",
+  "Document context": "Belge bağlamı",
+  "Documents inform understanding but do not silently become training rows.":
+    "Belgeler anlayışı besler ama sessizce eğitim satırına dönüşmez.",
+  "{count} extracted table candidates remain review-only until explicitly promoted.":
+    "{count} çıkarılmış tablo adayı, açıkça terfi ettirilene kadar yalnızca inceleme amaçlı kalır.",
+  "No trusted structured input is selected.": "Güvenilir yapısal girdi seçilmedi.",
+  "Grain": "Granülerlik",
+  "The objective will be finalized during problem discovery":
+    "Hedef, problem tanımı sırasında kesinleşecek",
+  "Execution scope": "Yürütme kapsamı",
+  "No optional human checkpoints; hard safety gates still apply.":
+    "İsteğe bağlı insan kontrol noktası yok; katı güvenlik kapıları yine de geçerlidir.",
+  "Review after {stage}": "{stage} sonrası incele",
+  "Planner rationale": "Planlayıcı gerekçesi",
+  "Run the established base pipeline through integration, analysis, training, evaluation, and reporting.":
+    "Yerleşik temel boru hattını birleştirme, analiz, eğitim, değerlendirme ve raporlama boyunca çalıştırın.",
+  "Pause after current stage": "Mevcut aşamadan sonra duraklat",
+  "Pause requested…": "Duraklatma istendi…",
+  "Retry from Intake": "Veri almadan yeniden dene",
+  "Review plan": "Planı incele",
+  "Review results": "Sonuçları incele",
+  "Inspection": "İnceleme",
+  "Open its stage inspection for measurements and provenance.":
+    "Ölçümler ve köken bilgisi için aşama incelemesini açın.",
+  "Artifact recorded": "Artifact kaydedildi",
+  "Open artifact": "Artifact'ı aç",
+  "No artifacts produced yet.": "Henüz artifact üretilmedi.",
+
+  // Stage workspace
+  "Findings": "Bulgular",
+  "Relationship map": "İlişki haritası",
+  "Optional instructions to attach to a rework…":
+    "Yeniden çalışmaya eklenecek isteğe bağlı talimatlar…",
+
+  // Schema map
+  "Base entity": "Temel varlık",
+  "Match confidence": "Eşleşme güveni",
+  "Share of child rows whose key was found in the parent.":
+    "Anahtarı üst tabloda bulunan alt satırların oranı.",
+  "High": "Yüksek",
+  "Medium": "Orta",
+  "Low": "Düşük",
+  "Unmeasured": "Ölçülmedi",
+  // Parameterised so the translation owns the word order: Turkish puts the
+  // postposition after the key, English puts the preposition before it.
+  "via {key}": "{key} üzerinden",
+  "aggregated from {table}": "{table} tablosundan toplandı",
+
+  // Launch dialog
+  "Close": "Kapat",
+  "No datasets found. Place source files under": "Veri seti bulunamadı. Kaynak dosyaları şuraya koyun:",
+
+  // Advanced / Experimental graph editor
+  "Advanced editor · Experimental": "Gelişmiş düzenleyici · Deneysel",
+  "Workflow": "İş akışı",
+  "Accepted data science workflow": "Kabul edilen veri bilimi iş akışı",
+  "Preparing workflow…": "İş akışı hazırlanıyor…",
+  "Save workflow": "İş akışını kaydet",
+  "Back to proposal": "Öneriye dön",
+  "Add component": "Bileşen ekle",
+  "Component inspector": "Bileşen inceleyici",
+  "Components expose registered contracts. Templates and visual groups are not runtime nodes.":
+    "Bileşenler kayıtlı sözleşmeleri açığa çıkarır. Şablonlar ve görsel gruplar çalışma zamanı düğümü değildir.",
+  "Connections require matching output and input contracts.":
+    "Bağlantılar, çıktı ve girdi sözleşmelerinin eşleşmesini gerektirir.",
+  "The accepted graph defines the plan; layout is visual state only.":
+    "Kabul edilen grafik planı tanımlar; yerleşim yalnızca görsel durumdur.",
+  "After this component": "Bu bileşenden sonra",
+  "Required input missing": "Zorunlu girdi eksik",
+  "Optional — not connected": "İsteğe bağlı — bağlı değil",
+  "Auto layout": "Otomatik yerleşim",
+  "Collapse branches": "Dalları daralt",
+  "Expand branch": "Dalı genişlet",
+  "workflow steps collapsed": "iş akışı adımı daraltıldı",
+  "Pause": "Duraklat",
+  "Pause for review": "İnceleme için duraklat",
+  "Review policy": "İnceleme politikası",
+  "Preferred reviewer": "Tercih edilen inceleyici",
+  "Human": "İnsan",
+  "Planner where policy permits": "Politikanın izin verdiği yerde Planlayıcı",
+  "Hard safety policy determines the allowed resolver and actions. This preference cannot override it.":
+    "Katı güvenlik politikası izin verilen çözücüyü ve eylemleri belirler. Bu tercih onu geçersiz kılamaz.",
+
+  // Deliberately identical in both languages: a product name, and a label whose
+  // only variable part is a number. Listed so a coverage audit reads as
+  // complete rather than flagging them again on every pass.
+  "Agentic Data Science": "Agentic Data Science",
+  "Artifact {number}": "Artifact {number}",
 };
 
 const CATALOGUE: Record<Language, Record<string, string>> = { tr: TR, en: {} };

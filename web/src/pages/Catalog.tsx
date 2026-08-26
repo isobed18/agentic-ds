@@ -127,7 +127,7 @@ export function Models() {
                 <h3 className="text-sm font-semibold">{m.display_name}</h3>
                 <p className="text-xs text-ink-mute">{m.estimator}</p>
               </div>
-              {m.saved && <Badge tone="ok">saved</Badge>}
+              {m.saved && <Badge tone="ok">{t("saved")}</Badge>}
             </div>
             <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
               <Pair label={`Holdout ${m.metric}`} value={num(m.holdout_score, 2)} />

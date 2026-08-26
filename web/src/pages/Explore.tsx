@@ -829,8 +829,8 @@ function TableList({
                             {(c.unique_rate * 100).toFixed(1)}%
                           </td>
                           <td className="py-1.5">
-                            {c.sensitivity !== "public" && <Badge tone="warn">{c.sensitivity}</Badge>}
-                            {c.is_unique && <Badge tone="ok">unique</Badge>}
+                            {c.sensitivity !== "public" && <Badge tone="warn">{t(c.sensitivity)}</Badge>}
+                            {c.is_unique && <Badge tone="ok">{t("unique")}</Badge>}
                           </td>
                         </tr>
                       ))}
