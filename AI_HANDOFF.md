@@ -212,10 +212,7 @@ request returned 401.
 tables. The guided PDF-table review/promotion UI and automatic ML-input refresh
 are incomplete. Chart values are not trusted training data. Immediate hard
 cancel is absent. Many advanced graph components still lack graph-native
-executors. The guided pipeline group map also contains stale ids for EDA and
-leakage (`exploratory_analysis`, `lineage_audit` instead of `eda`,
-`leakage_audit`), so those two live stage statuses/artifacts can be omitted
-until the map and its regression test are corrected.
+executors.
 
 **Model path.** Ollama remains the default self-hosted transport. The current
 private deployment is explicitly configured for `claude_cli`, model `haiku`,

@@ -9,6 +9,7 @@
  * Nothing is computed here. Severity was assigned when the measurement was
  * taken; this only collects and orders.
  */
+import { t } from "../lib/i18n";
 import { Badge, cx } from "./ui";
 
 export interface AttentionItem {
@@ -38,7 +39,7 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
     <aside className="card px-4 py-3.5">
       <header className="mb-2.5 flex items-center gap-2">
         <BellIcon />
-        <h3 className="flex-1 text-sm font-semibold text-ink">Needs attention</h3>
+        <h3 className="flex-1 text-sm font-semibold text-ink">{t("Needs attention")}</h3>
         <Badge tone={blocking ? "stop" : "warn"}>{ordered.length}</Badge>
       </header>
 

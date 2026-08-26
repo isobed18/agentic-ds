@@ -114,18 +114,33 @@ class ClaudeCliClient:
                 "dontAsk",
             ]
             started = time.perf_counter()
-            result = self._runner(
-                command,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                cwd=temporary,
-                env=_subscription_environment(),
-                timeout=self.timeout,
-                check=False,
-            )
+            try:
+                result = self._runner(
+                    command,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=temporary,
+                    env=_subscription_environment(),
+                    timeout=self.timeout,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                # `subprocess.run` raises this rather than returning, so without
+                # catching it the timeout escaped as a bare TimeoutExpired and
+                # surfaced in the UI as an unhandled error naming a command line
+                # nobody could act on. The staging synthesis is the call that
+                # hits it: one bounded request against every routed source, and
+                # a deployment configured well below the 300s default has no
+                # slack for a large mixed-source project.
+                raise RuntimeError(
+                    f"Claude CLI did not answer within {self.timeout:.0f}s "
+                    f"(model {self.model}, effort {self.effort}). Raise "
+                    f"ADS_CLAUDE_TIMEOUT, lower the effort, or reduce the "
+                    f"number of sources in one run."
+                ) from exc
             latency = time.perf_counter() - started
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()[-2_000:]
@@ -176,4 +191,4 @@ class ClaudeCliClient:
             return False
 
 
-__all__ = ["ClaudeCliClient"]
+__all__ = ["DEFAULT_CLAUDE_TIMEOUT", "ClaudeCliClient"]

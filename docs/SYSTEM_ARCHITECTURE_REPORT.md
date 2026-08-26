@@ -314,10 +314,12 @@ These groups are intended to be projections of the actual established workflow n
 statuses. Artifact chips are derived from attempt artifact ids. Clicking a group loads the
 stage-detail API; clicking an artifact loads a safe preview.
 
-Current defect: the Analyze and validate group still names `exploratory_analysis` and
-`lineage_audit`, while the established workflow exposes `eda` and `leakage_audit`. Until that map
-and its regression test are corrected, those two stages can be omitted from the group's live
-status, inspection, and artifact count. The underlying workflow still executes them.
+The group-to-stage map is now held to the workflow specification. The Analyze and validate group
+previously named `exploratory_analysis` (an artifact type) and `lineage_audit` (an id nothing
+produces) instead of `eda` and `leakage_audit`, so both stages executed but were omitted from that
+group's live status, inspection, and artifact count. `tests/test_guided_pipeline_groups.py` parses
+the map out of the component and fails if any group names a stage the workflow does not declare, or
+if an executed stage is displayed by no group.
 
 ### 4.11 Established base ML pipeline
 
@@ -407,6 +409,14 @@ Catalog UI text uses edge-selected translation:
 - backend: `src/ads/api/i18n.py`;
 - frontend: `web/src/lib/i18n.ts`;
 - language parameter: added by `web/src/lib/api.ts` to every request.
+
+Both catalogues are keyed on the English source string, so an untranslated string renders in
+English rather than as a missing-key placeholder. That degradation is deliberate, but it is also
+silent: 115 frontend keys reached `t()` with no Turkish entry, which left roughly a quarter of the
+interface — including Home, Data projects, and the guided pipeline — in English while the selected
+language was Turkish. Both catalogues are now complete, and `web/src/lib/i18n.test.ts` holds them
+there: it scans every source file for `t("...")` literals, fails on any key with no Turkish entry,
+and fails on a duplicate key, which silently overrides an earlier translation.
 
 ## 6. Graph architecture: default versus advanced
 
@@ -519,20 +529,21 @@ Access policy.
 8. Invalidate descendant node attempts after an accepted semantic graph edit.
 9. Lazy-load React Flow/ELK to reduce the initial JavaScript bundle.
 10. Replace single-account tunnel authentication before real multi-user deployment.
-11. Correct the guided-pipeline EDA/leakage stage-id map and add a regression test for every
-    established workflow stage.
 
 ## 11. Verification baseline
 
 At the 2026-08-26 audit:
 
-- the full Python suite passed;
+- the full Python suite passed: 884 passed, 6 skipped;
 - Ruff passed for `src` and `tests`;
-- all 17 frontend tests passed;
-- TypeScript compilation and the Vite production build passed;
-- the deployed loopback health endpoint returned 200;
-- an unauthenticated API request returned 401;
-- deployed code was commit `8862fa5` on `codex/graph-automation` in `agentic-ds-dev`.
+- all 28 frontend tests passed;
+- TypeScript compilation and the Vite production build passed, and the committed bundle under
+  `src/ads/api/static` matches the sources;
+- both translation catalogues are complete: every `t()` key on either side has a Turkish entry.
+
+Not repeated in this pass, and last verified at the preceding audit: the deployed loopback health
+endpoint returning 200, and an unauthenticated API request returning 401. The preceding audit ran
+against commit `8862fa5` on `codex/graph-automation` in `agentic-ds-dev`.
 
 ## 12. Non-negotiable invariants
 
