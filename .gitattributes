@@ -1,0 +1,12 @@
+# Satir sonlarini platformdan bagimsiz sabitle.
+#
+# NEDEN: CI'in `web` job'i derlenmis bundle'i yeniden uretip commit'lenmis
+# haliyle karsilastiriyor (`git diff --quiet -- src/ads/api/static`).
+# Windows'ta derleyip commit'lemek CRLF, ubuntu'daki CI ise LF uretiyor.
+# Icerik ayni, baytlar farkli -- ve CI kirmizi yaniyor. Uretilmis cikti
+# ile onu ureten kaynagi LF'e sabitlemek bu sinifi tamamen ortadan
+# kaldiriyor; kimin hangi isletim sisteminde calistigi onemsiz hale gelir.
+src/ads/api/static/*.html        text eol=lf
+src/ads/api/static/assets/*.js   text eol=lf
+src/ads/api/static/assets/*.css  text eol=lf
+web/index.html                   text eol=lf
