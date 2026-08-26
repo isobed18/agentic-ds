@@ -168,7 +168,11 @@ def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict
         return {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
 
     try:
-        env = _kesif_envanter(source_root)
+        # ocr=False ACIKCA: bu tarama kosum oncesi her istekte calisiyor ve
+        # OCR goruntu basina ~836 ms (metin dosyasinin ~100 kati). Taranmis
+        # belgeler "okumak OCR gerektiriyor" diye isaretlenir, uydurulmaz;
+        # okumak isteyen ayrica ister.
+        env = _kesif_envanter(source_root, ocr=False)
     except Exception as hata:  # olcum hicbir kosulda profili dusurmemeli
         return {"kullanildi": False, "sebep": f"olcum yapilamadi: {type(hata).__name__}"}
 

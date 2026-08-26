@@ -169,7 +169,30 @@ def _yapisal_dogrula(metin: str) -> tuple[str, str] | None:
     return None
 
 
-def yonlendir(yol: Path) -> Karar:
+def _ocr_ertelendi(k: Karar, ne: str) -> Karar:
+    """OCR yapilmadan, goruntunun ne oldugunu SOYLEYIP karari erteler.
+
+    Toplu taramada (envanter) OCR calistirilmaz: olculdu, goruntu basina
+    ~836 ms -- metin dosyasinin yaklasik 100 katı. Bir klasorde onlarca
+    taranmis belge varsa kosum oncesi ekran dakikalarca bekler.
+
+    Burada tahmin YOK: "bu bir goruntu, icerigini okumak OCR gerektiriyor
+    ve OCR calistirilmadi" denir. Okumak isteyen `ocr=True` ile acikca
+    ister. Bilinmeyen bir sey uydurmakla, bilinen bir sinirlamayi
+    bildirmek ayni sey degil.
+    """
+    k.deterministik = False
+    k.akis = Akis.YARGI
+    k.yargi_sebebi = (
+        f"{ne}: icerigi okumak OCR gerektiriyor, toplu taramada "
+        "calistirilmadi (goruntu basina ~836 ms). Okumak icin "
+        "yonlendir(yol, ocr=True)"
+    )
+    k.kanitlar.append(("OCR", "ertelendi — toplu tarama pahali islem yapmaz"))
+    return k
+
+
+def yonlendir(yol: Path, *, ocr: bool = True) -> Karar:
     ham, boyut = _onek_oku(yol)
     m = _magika.identify_path(yol)
     format_ = m.output.label
@@ -218,6 +241,8 @@ def yonlendir(yol: Path) -> Karar:
 
     # --- goruntu: OCR ile oku, ama Turkce sinirini gizleme --------------
     if format_ in GORUNTU_TURLERI:
+        if not ocr:
+            return _ocr_ertelendi(k, f"goruntu ({format_})")
         return _goruntu_karari(k, guven)
 
     if format_ in BELGE_TURLERI:
@@ -231,7 +256,7 @@ def yonlendir(yol: Path) -> Karar:
         # Taranmis bir PDF'te metin yoktur; belge akisina yollamak metin
         # cikaricinin bos donmesi, yani SESSIZ VERI KAYBI demektir.
         if format_ == "pdf":
-            return _pdf_karari(k)
+            return _pdf_karari(k, ocr=ocr)
         k.akis = Akis.BELGE
         k.notlar.append("belge cozumleyiciye gider")
         return k
@@ -377,7 +402,7 @@ def yonlendir(yol: Path) -> Karar:
     return k
 
 
-def _pdf_karari(k: Karar) -> Karar:
+def _pdf_karari(k: Karar, *, ocr: bool = True) -> Karar:
     """PDF'te metin katmani var mi OLC, yoksa taranmis gibi davran.
 
     Onceki surum butun PDF'leri "belge" sayiyordu. Taranmis bir fatura
@@ -425,6 +450,10 @@ def _pdf_karari(k: Karar) -> Karar:
     # Metin yok: bu pratikte bir goruntudur. Sayfaya gomulu goruntuyu
     # cikarip OCR yolundan gecir ki Turkce siniri ayni sekilde isaretlensin.
     k.notlar.append("metin katmani yok (taranmis); OCR yoluna alindi")
+
+    if not ocr:
+        # Gomulu goruntuyu cikarmak da pahali; kapiyi ONCE gec.
+        return _ocr_ertelendi(k, "taranmis PDF (metin katmani yok)")
 
     goruntuler = _pdf.gomulu_goruntuler(okuyucu)
     if not goruntuler:
@@ -568,7 +597,7 @@ def _goruntu_karari(k: Karar, guven: float,
     return k
 
 
-def _guvenli_yonlendir(yol: Path) -> Karar:
+def _guvenli_yonlendir(yol: Path, *, ocr: bool = True) -> Karar:
     """yonlendir() sarmalayicisi: okuma hatasi butun taramayi cokertmez.
 
     Bir izin hatasi, kopuk sembolik baglanti ya da tarama sirasinda
@@ -576,7 +605,7 @@ def _guvenli_yonlendir(yol: Path) -> Karar:
     hata da bir "karar verilemedi" durumudur; human feedback istenir.
     """
     try:
-        return yonlendir(yol)
+        return yonlendir(yol, ocr=ocr)
     except OSError as hata:
         try:
             boyut = yol.stat().st_size
@@ -589,13 +618,25 @@ def _guvenli_yonlendir(yol: Path) -> Karar:
         )
 
 
-def envanter(kok: Path, desen: str = "*") -> dict:
+def envanter(kok: Path, desen: str = "*", *, ocr: bool = False) -> dict:
     """Bir klasordeki butun dosyalari ucuz gecisten gecirip ozet cikar.
 
     Pahali islem yapilmaz. Amac, kullaniciya SECENEK sunabilmek icin
     once neyin geldigini bilmek.
+
+    `ocr` bilerek VARSAYILAN OLARAK KAPALI. Olculdu: bir goruntuyu OCR ile
+    okumak ~836 ms, sirasan bir metin dosyasi ~7 ms -- yaklasik 100 kat.
+    Bu fonksiyon `source_profile()` icinden kosum oncesi cagriliyor;
+    onlarca taranmis belge iceren bir klasorde acik OCR, "ucuz gecis"
+    vaadini bozup ekrani dakikalarca bekletirdi.
+
+    Kapali oldugunda goruntuler uydurulmaz: "goruntu, okumak OCR
+    gerektiriyor ve calistirilmadi" diye human feedback'e cikarlar.
+    Okumak isteyen `ocr=True` ile ya da tek dosya icin
+    `yonlendir(yol, ocr=True)` ile acikca ister.
     """
-    kararlar = [_guvenli_yonlendir(p) for p in sorted(kok.rglob(desen)) if p.is_file()]
+    kararlar = [_guvenli_yonlendir(p, ocr=ocr)
+                for p in sorted(kok.rglob(desen)) if p.is_file()]
     if not kararlar:
         return {"dosya_sayisi": 0, "kararlar": []}
 
