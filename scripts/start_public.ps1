@@ -1,5 +1,11 @@
 param(
-    [int]$Port = 8077
+    [int]$Port = 8077,
+    # Where the datasets and artifacts live. These default to this checkout, and
+    # a deployment is normally served from a checkout with no data/ of its own --
+    # so a deployment must pass them, and restart_public.ps1 carries the running
+    # server's values across rather than letting them fall back to the default.
+    [string]$Data = "",
+    [string]$Artifacts = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,11 +23,15 @@ if ($existing) {
     exit 0
 }
 
+$launcherArgs = @($launcher, "--port", $Port)
+if ($Data) { $launcherArgs += @("--data", $Data) }
+if ($Artifacts) { $launcherArgs += @("--artifacts", $Artifacts) }
+
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 
 $process = Start-Process `
     -FilePath $python `
-    -ArgumentList @($launcher, "--port", $Port) `
+    -ArgumentList $launcherArgs `
     -WorkingDirectory $root `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdoutLog `
