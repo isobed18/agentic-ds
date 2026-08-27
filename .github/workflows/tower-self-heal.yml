@@ -1,10 +1,12 @@
 # gh-tower: self-heal — diagnostic envelopes + agent fix routing on red CI.
 # Install at .github/workflows/tower-self-heal.yml
-# ⚠️ Edit `workflows:` below to match YOUR CI workflow name(s).
 name: tower-self-heal
 on:
   workflow_run:
-    workflows: ["CI"]
+    # Must match the `name:` in ci.yml exactly, and ours is lowercase. The
+    # template ships "CI", which matches no workflow here -- self-heal simply
+    # never fired, silently, which is the worst way for a safety net to fail.
+    workflows: ["ci"]
     types: [completed]
 
 permissions:
