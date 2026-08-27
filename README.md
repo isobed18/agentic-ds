@@ -8,6 +8,11 @@ Start with the [report index](docs/REPORT_INDEX.md), the canonical
 [system architecture report](docs/SYSTEM_ARCHITECTURE_REPORT.md), and the current
 [delivery report](docs/PRODUCT_DELIVERY_REPORT.md).
 
+**Working on this?** [`CONTRIBUTING.md`](CONTRIBUTING.md) has setup and the bar a change has to
+clear. If you are a coding agent, read [`AGENTS.md`](AGENTS.md) first — it covers claiming work so
+two of us do not edit the same files. [`docs/TEAM_WORKFLOW.md`](docs/TEAM_WORKFLOW.md) is the
+report-to-merge loop written for the people in it.
+
 ## Status
 
 The established 12-stage agentic pipeline runs end to end from intake and schema discovery through
