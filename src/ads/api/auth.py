@@ -320,15 +320,36 @@ class RateLimiter:
 def _client_key(request: Request) -> str:
     """Identify the caller for rate-limiting purposes.
 
-    ``CF-Connecting-IP`` is set by Cloudflare and cannot be spoofed by a client
-    *through* the tunnel, because the tunnel terminates at Cloudflare and the
-    header is rewritten there. It is trusted only as a rate-limit bucket, never
-    for authorisation, so the worst case of a wrong value is that an attacker
-    shares a bucket with someone else.
+    Behind a proxy every connection arrives from that proxy, so
+    ``request.client.host`` is the same value for everybody. Keying on it alone
+    would put the whole team in one bucket, where a handful of failures from any
+    single person locks out all of them -- a self-inflicted denial of service
+    rather than a leak.
+
+    ``CF-Connecting-IP`` is preferred because it is written by Cloudflare and a
+    client cannot spoof it *through* the tunnel: the tunnel terminates at
+    Cloudflare and the header is rewritten there. Anything arriving at the
+    origin by another route cannot reach this process at all, because the
+    listener is bound to loopback.
+
+    ``X-Forwarded-For`` is the fallback, and the **last** entry is the one
+    taken. Each hop appends the peer it saw, so the rightmost entry is the one
+    the nearest trusted proxy wrote and everything before it is caller-supplied
+    text. Reading the leftmost entry -- the usual way to recover an origin
+    address -- would hand out a free rate-limit bypass to anyone willing to
+    rotate a header they control.
+
+    This is a rate-limit bucket and never an authorisation input, so the worst
+    case of a wrong value is that two callers share a counter.
     """
-    forwarded = request.headers.get("cf-connecting-ip")
+    connecting = request.headers.get("cf-connecting-ip")
+    if connecting and connecting.strip():
+        return connecting.strip()
+    forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.strip()
+        hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
     if request.client is not None:
         return request.client.host
     return "unknown"
