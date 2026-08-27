@@ -549,6 +549,43 @@ _EXTRACTORS: dict[DocumentEngineId, Callable[[Path, dict[str, Any], Path], Extra
 }
 
 
+def _installed(engine: DocumentEngineId) -> bool:
+    """Whether the adapter for this engine can actually run here.
+
+    `_engine_version` already answers this for every engine, including the
+    marker/mineru workers that live in their own virtual environments: it
+    returns None when nothing is importable.
+    """
+    return _engine_version(engine) is not None
+
+
+def _resolve_engine(engine: DocumentEngineId) -> tuple[DocumentEngineId, str | None]:
+    """Substitute the built-in reader when the requested engine is absent.
+
+    Every engine but `text_layer` is an optional extra, and `docling` is the
+    default -- so any deployment that does not install it (the container image
+    omits it deliberately; docling pulls torch and the extras are isolated in
+    worker environments by design) asks for an engine that is not there.
+
+    Without this the lazy import inside the adapter raises ModuleNotFoundError
+    once per file, and because the loop turns per-file exceptions into warnings,
+    an entire source fails with `No module named docling` repeated for every PDF
+    -- which reads as a broken deployment rather than a missing optional extra.
+
+    `text_layer` needs only pypdf, which is a core dependency, so it is always
+    available. It extracts less: no OCR, no table structure. That is a real
+    downgrade and the caller is told, rather than being left to wonder why the
+    tables are missing.
+    """
+    if _installed(engine) or engine == "text_layer":
+        return engine, None
+    return "text_layer", (
+        f"{engine} is not installed here; used the built-in text-layer reader "
+        f"instead. Scanned pages and table structure will be missing. Install "
+        f"the documents-{engine} extra to use it."
+    )
+
+
 def extract_document_directory(
     directory: str | Path,
     *,
@@ -569,12 +606,15 @@ def extract_document_directory(
     ]
     if not documents:
         raise DocumentExtractionError("this source has no supported documents")
+    engine, substitution = _resolve_engine(engine)
     extractor = _EXTRACTORS[engine]
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     extracted: list[ExtractedDocument] = []
     file_results: list[DocumentFileResult] = []
     warnings: list[str] = []
+    if substitution is not None:
+        warnings.append(substitution)
     for index, path in enumerate(documents, start=1):
         file_started = time.perf_counter()
         if on_progress is not None:
