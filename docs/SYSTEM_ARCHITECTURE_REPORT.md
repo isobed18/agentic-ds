@@ -515,16 +515,16 @@ buttons, fields, links, inspectors, or dialogs.
 - `src/ads/api/auth.py` provides password hashing, signed secure sessions, and in-process rate
   limiting.
 - `deploy/cloudflared-config.yml` and `deploy/README.md` document the tunnel.
-- `scripts/serve_container.py` is the PaaS entry point. `serve_public.py` binds loopback and reads
-  `.auth.env` from disk, and neither survives a container, so this is a second entry point rather
-  than a flag that could switch the tunnel launcher off loopback by accident. It binds
-  `0.0.0.0:$PORT`, takes configuration from environment variables, and keeps the property that
-  matters: it refuses to boot without a credential, because the platform publishes a URL
-  immediately. It also refuses `claude_cli` and `ollama` at startup, since one needs a logged-in
-  Claude Code session and the other a model server, and neither exists in a container.
-- `Dockerfile` and `railway.json` build that image. Deployment is continuous by push: Railway
-  rebuilds `main`. `/data` must be a mounted volume -- a container filesystem is discarded on
-  every deploy, so uploads, artifacts and run state written anywhere else are lost.
+- `scripts/deploy_main.py` closes the loop between CI and the serving host. GitHub Actions runs
+  the tests; nothing was moving the result onto the machine behind the tunnel, so the deployment
+  worktree sat wherever it was last left -- it reached three commits behind `main` while looking
+  perfectly healthy, which is the failure mode of manual deployment: not an error, silence.
+  It works by pull rather than push, because the serving host has no inbound path of its own and
+  there is nothing for CI to deploy *to*. It fast-forwards only (a diverged deployment branch means
+  somebody committed on the serving host, and discarding that silently is worse than stopping),
+  never restarts on an unchanged commit (restarting drops in-flight runs), and after restarting
+  checks that `/api/runs` still answers 401 -- a server answering 200 there is one with
+  authentication off, and `--rollback-on-failure` returns it to the previous commit.
 
 Authentication protects the private test deployment, not multi-tenant production. There is no
 durable login audit and no independent Cloudflare Access policy.
