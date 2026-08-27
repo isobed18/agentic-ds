@@ -515,7 +515,16 @@ buttons, fields, links, inspectors, or dialogs.
 - `src/ads/api/auth.py` provides password hashing, signed secure sessions, and in-process rate
   limiting.
 - `deploy/cloudflared-config.yml` and `deploy/README.md` document the tunnel.
-- The compiled React bundle under `src/ads/api/static` is committed and served by FastAPI.
+- `scripts/serve_container.py` is the PaaS entry point. `serve_public.py` binds loopback and reads
+  `.auth.env` from disk, and neither survives a container, so this is a second entry point rather
+  than a flag that could switch the tunnel launcher off loopback by accident. It binds
+  `0.0.0.0:$PORT`, takes configuration from environment variables, and keeps the property that
+  matters: it refuses to boot without a credential, because the platform publishes a URL
+  immediately. It also refuses `claude_cli` and `ollama` at startup, since one needs a logged-in
+  Claude Code session and the other a model server, and neither exists in a container.
+- `Dockerfile` and `railway.json` build that image. Deployment is continuous by push: Railway
+  rebuilds `main`. `/data` must be a mounted volume -- a container filesystem is discarded on
+  every deploy, so uploads, artifacts and run state written anywhere else are lost.
 
 Authentication protects the private test deployment, not multi-tenant production. There is no
 durable login audit and no independent Cloudflare Access policy.

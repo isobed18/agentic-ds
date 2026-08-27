@@ -1,0 +1,32 @@
+# Keep the build context small and the image free of things that must never
+# reach a container image.
+
+# Credentials. `.auth.env` holds password hashes and the session secret; on a
+# PaaS these arrive as environment variables and must not be baked into a layer.
+.auth.env
+.runtime.env
+.env
+
+# Local state. `data/` is a mounted volume in the container, and shipping a
+# local copy would both bloat the image and confuse the volume.
+data/
+.venv/
+.document-envs/
+.document-models/
+
+# Frontend sources and toolchain. The built bundle under src/ads/api/static is
+# committed and force-included by the wheel, so node_modules is dead weight.
+web/node_modules/
+web/.vite/
+
+# Repo and tooling noise.
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+*.pyc
+benchmarks/
+tests/
+alternatives/
+design_assets/
