@@ -33,10 +33,11 @@ COPY . .
 
 RUN pip install --upgrade pip && pip install -e ".[api,kesif,sandbox]"
 
-# The volume mount point. Uploads, artifacts and run state must live here --
-# anything written elsewhere is discarded on the next deploy.
+# Where uploads, artifacts and run state live. Railway rejects a Dockerfile
+# `VOLUME` instruction outright -- volumes are attached on their side and mounted
+# over this path -- so this only declares where the app should look, and the
+# mount has to exist or every deploy starts empty.
 ENV ADS_DATA_DIR=/data
-VOLUME ["/data"]
 
 # The platform injects PORT and routes to it; 8080 is only for running locally.
 ENV PORT=8080
