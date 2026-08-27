@@ -27,7 +27,11 @@ interface GuidedPipelineProps {
   onOpenExecutions: () => void;
 }
 
-const GROUPS: Array<{ id: string; title: string; stages: string[] }> = [
+/** The fixed ML spine, shared with the proposed-plan preview so the shape shown
+ *  during staging is the shape that will actually run. Exported rather than
+ *  copied: tests/test_guided_pipeline_groups.py holds every id here to the
+ *  workflow spec, and a second hand-maintained list would not inherit that. */
+export const GROUPS: Array<{ id: string; title: string; stages: string[] }> = [
   { id: "prepare", title: "Prepare ML data", stages: ["integration"] },
   { id: "objective", title: "Define the objective", stages: ["problem_discovery"] },
   // `eda` and `leakage_audit` are the ids the established workflow declares.

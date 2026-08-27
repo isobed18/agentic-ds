@@ -18,6 +18,7 @@ import {
   type StagingRoutingState,
 } from "./stagingRoutingState";
 import { Badge, Empty, Spinner, cx } from "./ui";
+import { GROUPS } from "./GuidedPipeline";
 
 type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
 
@@ -114,6 +115,48 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
   );
 }
 
+/** The fixed ML pipeline, shown faded while it is still being proposed.
+ *
+ * Staging used to end at a single "Proposed plan" node and then jump to the
+ * editing canvas, which made the pipeline look like something being authored --
+ * a different screen, an editor, a blank-ish canvas -- when it is fixed and
+ * already known. Showing its real shape here, greyed out, says the opposite:
+ * this is what will run, staging is deciding what feeds it, and nothing is
+ * waiting on you to draw it.
+ *
+ * The shape comes from GuidedPipeline's GROUPS rather than a list of its own,
+ * so the preview cannot drift from what actually executes.
+ */
+function ProposedPipelinePreview({ proposal }: { proposal: "pending" | "ready" | "blocked" }) {
+  if (proposal === "blocked") return null;
+  const pending = proposal === "pending";
+  return (
+    <div
+      aria-label={t("Fixed ML pipeline")}
+      aria-busy={pending}
+      className={cx("flex w-[210px] shrink-0 flex-col gap-2 rounded-2xl border border-dashed p-3 transition-opacity", pending ? "border-line bg-surface/40 opacity-60" : "border-brand-200 bg-brand-50/40 opacity-90")}
+    >
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+        {pending && <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-brand-400 border-t-transparent" aria-hidden="true" />}
+        {pending ? t("Preparing the plan…") : t("Fixed ML pipeline")}
+      </p>
+      <ol className="flex flex-col gap-1">
+        {GROUPS.map((group, index) => (
+          <li key={group.id} className="flex items-center gap-2 rounded-lg bg-surface/70 px-2 py-1">
+            <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-surface-sunken text-[8px] font-semibold tabular-nums text-ink-faint">{index + 1}</span>
+            <span className="truncate text-[10px] text-ink-mute">{t(group.title)}</span>
+          </li>
+        ))}
+      </ol>
+      <p className="text-[9px] leading-relaxed text-ink-faint">
+        {pending
+          ? t("This pipeline is fixed. Staging is deciding which data feeds it.")
+          : t("Runs as shown once you accept the plan.")}
+      </p>
+    </div>
+  );
+}
+
 function RoutingGraph({ routing, workspace, onSelect, proposal }: { routing: StagingRoutingState; workspace: StagingWorkspace | null; onSelect: (selection: CanvasSelection) => void; proposal: "pending" | "ready" | "blocked" }) {
   const branches = [
     routing.structured.length ? { id: "structured" as const, title: t("Structured data"), files: routing.files.filter((file) => file.route === "structured"), steps: routing.structured } : null,
@@ -128,7 +171,7 @@ function RoutingGraph({ routing, workspace, onSelect, proposal }: { routing: Sta
   const documentCount = (workspace?.document_extractions ?? []).filter((item) => item.artifact_id).length;
   const reportCount = outputCount(["structured-brief", "document-brief", "understanding-synthesis"]);
   return (
-    <div className="flex min-w-[1180px] items-center justify-center gap-5 px-6 py-10">
+    <div className="flex min-w-[1430px] items-center justify-center gap-5 px-6 py-10">
       <PhaseNode title={t("Uploaded files")} subtitle={t("{count} files", { count: routing.files.length })} status="complete" onClick={() => onSelect("source")} footer={t("Inputs")} compact />
       <GraphEdge status="complete" />
       <PhaseNode title={t("Intake")} subtitle={t("Discover, classify, and route")} status={routing.discovery} onClick={() => onSelect("discovery")} artifactCount={measuredCount} compact />
@@ -144,6 +187,8 @@ function RoutingGraph({ routing, workspace, onSelect, proposal }: { routing: Sta
         <p className="mt-2 text-sm font-semibold text-ink">{t("Proposed plan")}</p>
         <p className="mt-1 text-[10px] text-ink-mute">{proposal === "ready" ? t("Ready for review") : proposal === "blocked" ? t("Blocked — no plan was created") : t("Created after synthesis")}</p>
       </button>
+      {proposal !== "blocked" && <GraphEdge status={proposal === "ready" ? "complete" : "pending"} />}
+      <ProposedPipelinePreview proposal={proposal} />
     </div>
   );
 }
