@@ -56,8 +56,14 @@ export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache
         <GraphEdge status="pending" />
         <div className="w-[270px] rounded-2xl border-2 border-dashed border-brand-300 bg-brand-50/80 p-5 text-left shadow-card">
           <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Recommended next step")}</p>
-          <button type="button" onClick={onStart} disabled={busy} className="mt-2 text-sm font-semibold text-ink hover:text-brand-700 disabled:opacity-60">{busy ? t("Starting…") : t("Run Intake")}</button>
           <p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{t("Classify and route every file, then understand each source on the right path.")}</p>
+          {/* A real button, full width of the card. It used to be bare text with
+              no padding, so the hit area was the glyphs of "Run Intake" itself:
+              the card looked like the control and swallowed every click that
+              missed the word. The card cannot become the button -- it holds a
+              checkbox, and nesting interactive elements is invalid -- so the
+              button grows to fill it instead. */}
+          <button type="button" onClick={onStart} disabled={busy} className="btn-primary mt-3 w-full justify-center text-sm">{busy ? t("Starting…") : t("Run Intake")}</button>
           <label className="mt-4 flex items-start gap-2 border-t border-brand-200 pt-3 text-[10px] leading-relaxed text-ink-mute"><input type="checkbox" className="mt-0.5" checked={reuseCache} onChange={(event) => onReuseCache(event.target.checked)} /><span><strong className="block text-ink">{t("Reuse matching understanding")}</strong>{t("Optional. Turn this off to rerun Intake and Schema Discovery for the same files.")}</span></label>
         </div>
       </div>
