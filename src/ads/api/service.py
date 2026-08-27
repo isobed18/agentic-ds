@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -103,6 +104,13 @@ from ads.llm import (
     OllamaClient,
     RateLimiter,
     StructuredLLM,
+)
+from ads.llm.budget import (
+    BudgetedLLM,
+    PerUserRateLimiter,
+    bind_user,
+    multipliers_from_env,
+    start_worker,
 )
 from ads.orchestration import (
     EdgeCondition,
@@ -2997,11 +3005,7 @@ class ControlPlane:
                         runtime.updated_at = _now()
                 self._persist_runtime(runtime)
 
-            threading.Thread(
-                target=analyse_documents,
-                name=f"ads-document-stage-{run_id}",
-                daemon=True,
-            ).start()
+            start_worker(analyse_documents, name=f"ads-document-stage-{run_id}")
             return {"run_id": run_id, "status": "staging", "profile": profile}
         fingerprint = self._source_fingerprint(source_id)
         with self._lock:
@@ -3087,13 +3091,10 @@ class ControlPlane:
 
             document_thread: threading.Thread | None = None
             if profile.get("documents"):
-                document_thread = threading.Thread(
-                    target=self._execute_document_understanding,
-                    args=(runtime,),
+                document_thread = start_worker(
+                    partial(self._execute_document_understanding, runtime),
                     name=f"ads-document-{run_id}",
-                    daemon=True,
                 )
-                document_thread.start()
 
             def analyse_cached() -> None:
                 try:
@@ -3120,11 +3121,7 @@ class ControlPlane:
                         runtime.updated_at = _now()
                 self._persist_runtime(runtime)
 
-            threading.Thread(
-                target=analyse_cached,
-                name=f"ads-stage-analysis-{run_id}",
-                daemon=True,
-            ).start()
+            start_worker(analyse_cached, name=f"ads-stage-analysis-{run_id}")
             return {
                 "run_id": run_id,
                 "status": "staging",
@@ -3184,13 +3181,10 @@ class ControlPlane:
 
         document_thread: threading.Thread | None = None
         if profile.get("documents"):
-            document_thread = threading.Thread(
-                target=self._execute_document_understanding,
-                args=(runtime,),
+            document_thread = start_worker(
+                partial(self._execute_document_understanding, runtime),
                 name=f"ads-document-{run_id}",
-                daemon=True,
             )
-            document_thread.start()
 
         event = self._event_recorder(runtime)
         runner = self.workflow_runner or run_workflow
@@ -3286,7 +3280,7 @@ class ControlPlane:
 
         # Held so the second half runs on this state rather than a fresh one.
         runtime.resume = (spec, registry, state, llm)
-        threading.Thread(target=execute, name=f"ads-stage-{run_id}", daemon=True).start()
+        start_worker(execute, name=f"ads-stage-{run_id}")
         return {
             "run_id": run_id,
             "status": "staging",
@@ -3480,7 +3474,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        threading.Thread(target=execute, name=f"ads-run-{run_id}", daemon=True).start()
+        start_worker(execute, name=f"ads-run-{run_id}")
         return run_id
 
     @staticmethod
@@ -3741,7 +3735,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        threading.Thread(target=execute, name=f"ads-ui-{run_id}", daemon=True).start()
+        start_worker(execute, name=f"ads-ui-{run_id}")
         return run_id
 
     @staticmethod
@@ -3963,7 +3957,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        threading.Thread(target=execute, name=f"ads-ui-resume-{run_id}", daemon=True).start()
+        start_worker(execute, name=f"ads-ui-resume-{run_id}")
 
     def _validate_configuration(
         self,
@@ -5244,6 +5238,26 @@ def create_app(
 
             llm_factory = create_deepseek
 
+        # Per-user budgets on top of whichever backend was chosen. The DeepSeek
+        # limiter above protects one shared API key; this protects people from
+        # each other, which is a different question and applies to the local
+        # backends too -- one runaway pipeline should not starve four colleagues
+        # of the same finite machine. One limiter for the process, because the
+        # buckets it holds are already per user and every caller must draw from
+        # the same ones or the ceiling means nothing.
+        agent_rpm = int(os.environ.get("ADS_AGENT_RPM", str(DEFAULT_REQUESTS_PER_MINUTE)))
+        user_limiter = PerUserRateLimiter(
+            requests_per_minute=agent_rpm,
+            multipliers=multipliers_from_env(),
+        )
+        if llm_factory is not None:
+            backend_factory = llm_factory
+
+            def create_budgeted() -> StructuredLLM:
+                return BudgetedLLM(backend_factory(), user_limiter)
+
+            llm_factory = create_budgeted
+
         plane = ControlPlane(
             store=store,
             source_roots=tuple(Path(root) for root in source_roots or ()),
@@ -5262,6 +5276,20 @@ def create_app(
     auth_config = config_from_env()
     if auth_config is not None and auth_config.enabled:
         install_auth(app, auth_config)
+
+    @app.middleware("http")
+    async def attribute_agent_calls(request: Request, call_next):
+        """Bind the caller for the duration of one request.
+
+        Agent calls happen several layers down, inside pipeline stages that have
+        no business knowing about authentication, so the username travels in a
+        context variable rather than through their signatures. Runs spawned from
+        here inherit it because `start_worker` copies the context; a thread
+        started any other way would execute as anonymous and quietly share the
+        anonymous budget with every other unattributed run.
+        """
+        with bind_user(getattr(request.state, "username", None)):
+            return await call_next(request)
 
     @app.middleware("http")
     async def select_language(request: Request, call_next):

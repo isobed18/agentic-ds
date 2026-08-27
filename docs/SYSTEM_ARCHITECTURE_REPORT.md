@@ -532,6 +532,19 @@ buttons, fields, links, inspectors, or dialogs.
   checks that `/api/runs` still answers 401 -- a server answering 200 there is one with
   authentication off, and `--rollback-on-failure` returns it to the previous commit.
 
+- `src/ads/llm/budget.py` gives each person their own agent budget. The DeepSeek limiter is one
+  bucket for the process, which is right for protecting one shared API key and wrong for the
+  question of *who* is spending it: with a single bucket whoever starts a pipeline first takes the
+  minute's allowance and everyone else blocks behind them, unable to tell a slow model from a busy
+  colleague. `ADS_AGENT_RPM` sets the per-user allowance (default 20/min) and
+  `ADS_AGENT_RPM_MULTIPLIERS` raises it for named accounts -- `ishak-ads=10` because the owner
+  paying for the key should not be the most throttled participant. It wraps whichever backend is
+  configured, including the local ones, since the reason to limit those is not cost but that one
+  runaway pipeline should not starve four colleagues of the same machine. Identity travels in a
+  context variable rather than through every pipeline signature, so background runs must be
+  started through `start_worker`, which copies the context; a plain thread would execute as
+  anonymous and share one bucket with every other unattributed run.
+
 Authentication protects the private test deployment, not multi-tenant production. There is no
 durable login audit and no independent Cloudflare Access policy.
 
