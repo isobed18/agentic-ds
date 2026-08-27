@@ -36,6 +36,13 @@ from ads.api.panels import (
     training_panels,
     validation_panels,
 )
+from ads.api.teams import (
+    OWNERSHIP_FILE,
+    OwnershipStore,
+    Teams,
+    load_teams,
+    may_view,
+)
 from ads.automation import (
     AutomationRevisionConflict,
     AutomationStore,
@@ -2509,7 +2516,28 @@ class ControlPlane:
 
     # ---------------------------------------------------------------- sources
 
-    def data_sources(self) -> list[dict[str, Any]]:
+    def _teams(self) -> Teams:
+        """Read the configuration on each use rather than caching it.
+
+        Parsing a short string is far cheaper than the confusion of a team
+        change that appears to have been ignored because the process is still
+        holding the value it read at boot.
+        """
+        return load_teams()
+
+    def _ownership(self) -> OwnershipStore:
+        root = self.upload_root if self.upload_root is not None else Path("data/uploads")
+        return OwnershipStore(root / OWNERSHIP_FILE)
+
+    def data_sources(self, *, viewer: str | None = None) -> list[dict[str, Any]]:
+        """Sources this person may see: their own, plus their team's.
+
+        `viewer` of None means unfiltered, which is what an internal caller with
+        no request behind it gets. Filtering happens here rather than in the
+        route so every listing path agrees on one rule.
+        """
+        teams = self._teams()
+        ownership = self._ownership()
         sources: list[dict[str, Any]] = []
         for root in self.source_roots:
             if not root.exists():
@@ -2523,15 +2551,37 @@ class ControlPlane:
                     sources.append({"source_id": child.name, "label": child.name})
         if self.upload_root is not None and self.upload_root.exists():
             for child in sorted(self.upload_root.iterdir()):
+                # `is_dir()` first. Listing the children of a *file* raises
+                # NotADirectoryError, so a stray .DS_Store, Thumbs.db or stray
+                # download in the upload root took down the whole Data library
+                # listing rather than being ignored.
+                if not child.is_dir() or child.name.startswith("."):
+                    continue
                 files = sorted(path.name for path in child.iterdir() if path.is_file())
-                if child.is_dir() and files:
-                    sources.append(
-                        {
-                            "source_id": f"upload:{child.name}",
-                            "label": f"upload ({len(files)} file{'s' if len(files) != 1 else ''})",
-                            "files": files,
-                        }
-                    )
+                if not files:
+                    continue
+                source_id = f"upload:{child.name}"
+                owner = ownership.owner_of(source_id)
+                visibility = ownership.visibility_of(source_id)
+                # `viewer is None` means no request is behind this call, so
+                # there is nobody to filter for. Running the rules anyway made
+                # every source invisible once teams were configured, because
+                # nobody shares a team with nobody -- background work would have
+                # silently skipped everything.
+                if viewer is not None and not may_view(
+                    viewer=viewer, owner=owner, visibility=visibility, teams=teams
+                ):
+                    continue
+                sources.append(
+                    {
+                        "source_id": source_id,
+                        "label": f"upload ({len(files)} file{'s' if len(files) != 1 else ''})",
+                        "files": files,
+                        "owner": owner,
+                        "visibility": visibility,
+                        "mine": bool(viewer and owner == viewer),
+                    }
+                )
         return sources
 
     def dataset_catalog(self) -> list[dict[str, Any]]:
@@ -2610,7 +2660,12 @@ class ControlPlane:
         return self.upload_root is not None and resolved == self.upload_root.resolve()
 
     def upload(
-        self, filename: str, content: bytes, *, source_id: str | None = None
+        self,
+        filename: str,
+        content: bytes,
+        *,
+        source_id: str | None = None,
+        owner: str | None = None,
     ) -> dict[str, Any]:
         """Persist one file, optionally appending it to an existing upload group."""
         safe_name = Path(filename).name
@@ -2625,6 +2680,9 @@ class ControlPlane:
             token = uuid.uuid4().hex[:12]
             target_dir = self.upload_root / token  # type: ignore[operator]
             target_dir.mkdir(parents=True, exist_ok=False)
+            # Recorded for the first file only. Appending to an existing group
+            # must not transfer it to whoever added the latest file.
+            self._ownership().record(f"upload:{token}", owner=owner)
         else:
             match = _UPLOAD_ID.fullmatch(source_id)
             if match is None:
@@ -5332,9 +5390,44 @@ def create_app(
     def runs() -> list[dict[str, Any]]:
         return [summary.to_dict() for summary in plane.list_runs()]
 
+    def _viewer(request: Request) -> str | None:
+        """Who is asking. Set by the auth middleware once the session is read."""
+        return getattr(request.state, "username", None)
+
     @app.get("/api/data-sources")
-    def data_sources() -> list[dict[str, Any]]:
-        return plane.data_sources()
+    def data_sources(request: Request) -> list[dict[str, Any]]:
+        return plane.data_sources(viewer=_viewer(request))
+
+    @app.post("/api/data-sources/{source_id}/visibility")
+    def set_source_visibility(
+        source_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
+        """Share a source with the team, or keep it to yourself.
+
+        Only the owner may change this. Anyone else gets 403 rather than 404:
+        they can already see the source, so pretending it does not exist would
+        be a lie they can disprove.
+        """
+        viewer = _viewer(request)
+        ownership = plane._ownership()
+        owner = ownership.owner_of(source_id)
+        if owner is None:
+            raise HTTPException(
+                status_code=400, detail="This source has no recorded owner."
+            )
+        if viewer != owner:
+            raise HTTPException(
+                status_code=403, detail=f"Only {owner} can change who sees this source."
+            )
+        try:
+            ownership.set_visibility(source_id, str(body.get("visibility", "")))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {
+            "source_id": source_id,
+            "owner": owner,
+            "visibility": ownership.visibility_of(source_id),
+        }
 
     @app.get("/api/catalog/datasets")
     def dataset_catalog() -> list[dict[str, Any]]:
@@ -5370,7 +5463,12 @@ def create_app(
         filename: str, request: Request, source_id: str | None = None
     ) -> dict[str, Any]:
         try:
-            return plane.upload(filename, await request.body(), source_id=source_id)
+            return plane.upload(
+                filename,
+                await request.body(),
+                source_id=source_id,
+                owner=_viewer(request),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
