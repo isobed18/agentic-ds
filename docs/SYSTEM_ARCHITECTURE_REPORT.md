@@ -515,6 +515,12 @@ buttons, fields, links, inspectors, or dialogs.
 - `src/ads/api/auth.py` provides password hashing, signed secure sessions, and in-process rate
   limiting.
 - `deploy/cloudflared-config.yml` and `deploy/README.md` document the tunnel.
+- `scripts/restart_public.ps1` is what `deploy_main.py` invokes. `start_public.ps1` exits early
+  when the port is already held -- it is a start, not a restart, and that guard is what stops a
+  second server racing the first for the same socket. Continuous deployment needs the opposite,
+  so this is a separate script rather than a flag, leaving the guard intact for anyone starting
+  by hand. It waits for the socket rather than the process, because a stopped process can hold
+  the port in TIME_WAIT long enough for the next bind to fail and look like a broken deploy.
 - `scripts/deploy_main.py` closes the loop between CI and the serving host. GitHub Actions runs
   the tests; nothing was moving the result onto the machine behind the tunnel, so the deployment
   worktree sat wherever it was last left -- it reached three commits behind `main` while looking
