@@ -258,3 +258,43 @@ def test_ondalik_sayilar_cumle_sayilmiyor(
 
     assert k.akis is Akis.TABLO
     assert k.sekil == "tablo"
+
+
+def test_parquet_tablo_akisina_gidiyor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parquet'in cozumleyicisi yok diye human feedback'e dusmesi hataydi.
+
+    `ads.intake` parquet'i sifir issue ile okuyor (olculdu: 15.000 x 6);
+    yonlendiricinin ayni dosya icin "karar veremedim" demesi eskalasyon
+    oranini bos yere sisiriyordu.
+    """
+    dosya = tmp_path / "olcumler.parquet"
+    dosya.write_bytes(b"PAR1" + bytes(64) + b"PAR1")
+    _sahte_magika(monkeypatch, "parquet", 0.99)
+
+    k = yonlendir(dosya)
+
+    assert k.akis is Akis.TABLO
+    assert k.deterministik is True
+    assert k.sekil == "tablo"
+
+
+def test_imzasiz_parquet_etiketi_human_feedbacke_dusuyor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Etikete degil imzaya guveniliyor.
+
+    Bu testin varlik sebebi: 'parquet'i taninan turler kumesine ekle'
+    seklindeki dar duzeltme testi gecerdi ama olcumu tahmine cevirirdi.
+    Magika 'parquet' dedigi halde imza yoksa karar VERILMEMELI.
+    """
+    dosya = tmp_path / "sahte.parquet"
+    dosya.write_bytes(b"bu bir parquet dosyasi degil")
+    _sahte_magika(monkeypatch, "parquet", 0.99)
+
+    k = yonlendir(dosya)
+
+    assert k.akis is Akis.YARGI
+    assert k.deterministik is False
+    assert "PAR1" in k.yargi_sebebi

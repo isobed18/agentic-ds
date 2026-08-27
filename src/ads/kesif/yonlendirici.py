@@ -45,6 +45,13 @@ KAPSAYICI_TURLERI = {"zip", "tar", "gzip", "7z", "rar"}
 # XLSX teknik olarak zip'tir ama KAPSAYICI DEGILDIR: sayfalardan olusan
 # bir tablo dosyasidir. Zip diye isaretlemek icerigini kaybettirirdi.
 CALISMA_KITABI_TURLERI = {"xlsx", "xlsm"}
+# Sutunlu ikili tablo. Parquet ne kapsayici ne belgedir: dosyanin
+# basinda ve sonunda 'PAR1' imzasini tasiyan bir tablo dosyasidir.
+# Cozumleyicisi tanimli olmadigi icin human feedback'e dusuyordu, oysa
+# `ads.intake` onu zaten sorunsuz okuyor.
+SUTUNLU_TABLO_TURLERI = {"parquet"}
+PARQUET_IMZA = b"PAR1"
+
 # Goruntu: metin SECILEMEZ, OCR gerekir. Taranmis tablo ve ekran
 # goruntusu bu yoldan gecer.
 GORUNTU_TURLERI = {"png", "jpeg", "jpg", "gif", "bmp", "tiff", "webp"}
@@ -204,6 +211,10 @@ def yonlendir(yol: Path) -> Karar:
     # --- calisma kitabi: sayfalari ac, tablo mu olc ---------------------
     if format_ in CALISMA_KITABI_TURLERI:
         return _calisma_kitabi_karari(k)
+
+    # --- sutunlu ikili tablo: imzayi dogrula ---------------------------
+    if format_ in SUTUNLU_TABLO_TURLERI:
+        return _sutunlu_tablo_karari(k)
 
     # --- goruntu: OCR ile oku, ama Turkce sinirini gizleme --------------
     if format_ in GORUNTU_TURLERI:
@@ -469,6 +480,39 @@ def _calisma_kitabi_karari(k: Karar) -> Karar:
         )
     k.notlar.append("sayfalar: " + ", ".join(
         f"{s.ad}({s.satir}x{s.sutun})" for s in tablolar[:5]))
+    return k
+
+
+def _sutunlu_tablo_karari(k: Karar) -> Karar:
+    """Parquet: PAR1 imzasini dogrula, tablo akisina ver.
+
+    Magika'nin etiketi bir IDDIA'dir; dosyanin gercekten parquet oldugunu
+    soyleyen sey bas ve sondaki imzadir. Imza okunabildigi icin bu bir
+    olgu sorusudur -- zip ailesinde `is_zipfile` ile yapilanin aynisi --
+    ve model guvenine bakilmadan karar verilir. Imza yoksa etikete
+    guvenip tablo demeyiz; karar human feedback'e kalir.
+    """
+    yol = Path(k.yol)
+    if k.boyut < 2 * len(PARQUET_IMZA):
+        bas = son = b""
+    else:
+        with yol.open("rb") as dosya:
+            bas = dosya.read(len(PARQUET_IMZA))
+            dosya.seek(-len(PARQUET_IMZA), 2)
+            son = dosya.read(len(PARQUET_IMZA))
+
+    if bas != PARQUET_IMZA or son != PARQUET_IMZA:
+        k.deterministik = False
+        k.akis = Akis.YARGI
+        k.yargi_sebebi = ("format 'parquet' etiketlendi ama PAR1 imzasi "
+                          "dogrulanamadi; human feedback gerekir")
+        return k
+
+    k.format_guveni = 1.0
+    k.sekil = "tablo"
+    k.akis = Akis.TABLO
+    k.kanitlar.append(("parquet imzasi", "bas ve sonda PAR1 dogrulandi"))
+    k.notlar.append("sutunlu ikili tablo; semayi cozumleyici okur")
     return k
 
 
