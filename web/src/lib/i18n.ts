@@ -96,6 +96,10 @@ const TR: Record<string, string> = {
   "Back": "Geri",
   "Ask": "Sor",
   "Tables": "Tablo",
+  "Table": "Tablo",
+  "Format": "Biçim",
+  "Keys": "Anahtarlar",
+  "Issues": "Sorunlar",
   "Personal": "Kişisel",
   "identifier": "tanımlayıcı",
   "categorical": "kategorik",
@@ -218,7 +222,7 @@ const TR: Record<string, string> = {
   "Your data": "Veriniz",
   "Workflows": "Akışlar",
   "Datasets": "Veri setleri",
-  "Experiments": "Denemeler",
+  "Experiments": "Deneyler",
   "Models": "Modeller",
   "Reports": "Raporlar",
   "Settings": "Ayarlar",
@@ -435,7 +439,7 @@ const TR: Record<string, string> = {
   "Missing": "Eksik",
   "Distinct": "Farklı",
   "unique": "benzersiz",
-  "sensitive": "hassas",
+  "sensitive": "kişisel veri",
   "notes": "not",
   "key": "anahtar",
   "documents": "belge",
@@ -592,8 +596,8 @@ const TR: Record<string, string> = {
   "Agent-suggested relationship (claim)": "Ajanın önerdiği bağ (iddia)",
   "Claim / Suggestion": "İddia / Öneri",
 
-  "header row inferred": "başlık satırı çıkarıldı",
-  "inconsistent delimiters": "tutarsız ayırıcılar düzeltildi",
+  "header row inferred": "başlık satırı olduğu çıkarımı yapıldı",
+  "inconsistent delimiters": "tutarsız ayırıcılar",
   "constant column": "sabit değerli sütun",
   "high missing rate": "yüksek eksik veri oranı",
   "mixed types": "karışık veri tipleri",
@@ -891,6 +895,8 @@ const TR: Record<string, string> = {
   "Continue an intake, review a proposed ML plan, or inspect a transparent run.":
     "Bir veri almayı sürdürün, önerilen bir ML planını inceleyin ya da şeffaf bir çalıştırmayı denetleyin.",
   "Review your data": "Verinizi inceleyin",
+  "Profiles, candidate keys and sensitive-column detection — schema and statistics only, never raw rows.":
+    "Profil çıkarma, aday anahtarlar ve kişisel veri içeren sütunların tespiti — yalnızca şema ve istatistikler; ham satırlar asla gösterilmez.",
   "Enforced guarantees. These are properties of the system, not preferences.":
     "Zorunlu güvenceler. Bunlar sistemin özellikleridir, tercih değildir.",
   "Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.":
@@ -903,10 +909,10 @@ const TR: Record<string, string> = {
     "Üretilen değerlendirme raporları, markdown olarak indirilebilir.",
   "Candidate keys": "Aday anahtarlar",
   "Training rows": "Eğitim satırları",
-  "Sensitive": "Hassas",
+  "Sensitive": "Kişisel veri",
   "Download": "İndir",
   "Loading…": "Yükleniyor…",
-  "Loading experiments…": "Denemeler yükleniyor…",
+  "Loading experiments…": "Deneyler yükleniyor…",
   "Loading models…": "Modeller yükleniyor…",
   "Loading reports…": "Raporlar yükleniyor…",
   "No datasets yet": "Henüz veri seti yok",
@@ -948,7 +954,7 @@ const TR: Record<string, string> = {
   "Extracted PDF tables stay review-only until a human promotes them.":
     "Çıkarılan PDF tabloları, bir kişi terfi ettirene kadar yalnızca inceleme amaçlı kalır.",
   "No trusted structured ML input is selected.": "Güvenilir yapısal ML girdisi seçilmedi.",
-  "Recommended continuation": "Önerilen devam",
+  "Recommended continuation": "Önerilen sonraki adımlar",
   "Review what enters ML and where the base pipeline will stop before accepting.":
     "Kabul etmeden önce ML'e neyin gireceğini ve temel boru hattının nerede duracağını inceleyin.",
   "Accept and add base pipeline": "Kabul et ve temel boru hattını ekle",

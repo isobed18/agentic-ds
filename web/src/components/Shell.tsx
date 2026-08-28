@@ -15,7 +15,7 @@ import { cx } from "./ui";
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
   { to: "/automation", label: "Data projects", icon: FlowIcon },
-  { to: "/datasets", label: "Data library", icon: DataIcon },
+  { to: "/datasets", label: "Datasets", icon: DataIcon },
   { to: "/experiments", label: "Experiments", icon: FlaskIcon },
   { to: "/models", label: "Models", icon: CubeIcon },
   { to: "/reports", label: "Reports", icon: DocIcon },

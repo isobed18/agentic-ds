@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { StagingWorkspace } from "../lib/api";
-import { automationView, sourceCounts } from "./automationWorkspaceState";
+import { automationView, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 
 describe("automation progressive disclosure", () => {
   it("never shows a graph before data exists", () => {
@@ -149,5 +149,28 @@ describe("a run outranks a missing source", () => {
         advancedGraph: false,
       }),
     ).toBe("empty");
+  });
+});
+
+describe("proposed workflow step labels", () => {
+  const workspace = {
+    pipeline_blueprint: {
+      components: [
+        {
+          id: "training",
+          catalog_id: "ml.train",
+          enabled: true,
+          kind: "agent",
+          title: { en: "Train models", tr: "Modelleri eğit" },
+        },
+      ],
+    },
+  } as unknown as StagingWorkspace;
+
+  it("uses the selected language instead of always reading English", () => {
+    // The proposal panel previously hardcoded title.en, leaving every numbered
+    // step in English while the rest of the panel was Turkish (#61).
+    expect(visibleWorkflowSteps(workspace, "tr")).toEqual(["Modelleri eğit"]);
+    expect(visibleWorkflowSteps(workspace, "en")).toEqual(["Train models"]);
   });
 });
