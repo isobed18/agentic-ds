@@ -58,6 +58,7 @@ from ads.contracts.documents import (
     DocumentExtraction,
     DocumentExtractionSummary,
     DocumentTableReview,
+    aligned_turkish,
 )
 from ads.contracts.gates import BUILTIN_PROFILES
 from ads.contracts.integration import IntegrationPlan
@@ -4870,6 +4871,9 @@ class ControlPlane:
                         "tables": tables,
                         "figures": figures,
                         "warnings": document.get("warnings", []),
+                        "warnings_tr": aligned_turkish(
+                            document.get("warnings", []), document.get("warnings_tr", [])
+                        ),
                         "duration_seconds": document.get("duration_seconds", 0),
                         "status": "ready",
                     }

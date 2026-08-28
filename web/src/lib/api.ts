@@ -489,6 +489,8 @@ export interface DocumentExtractionSummary {
   table_candidates: number;
   figure_candidates: number;
   warnings: string[];
+  /** Turkish counterpart of `warnings`, matched by position. */
+  warnings_tr?: string[];
   duration_seconds: number;
   files?: Array<{
     source_file: string;
@@ -498,6 +500,7 @@ export interface DocumentExtractionSummary {
     figure_candidates: number;
     duration_seconds: number;
     warnings: string[];
+    warnings_tr?: string[];
   }>;
 }
 
@@ -529,6 +532,7 @@ export interface ArtifactPreview {
     tables: Array<Record<string, unknown>>;
     figures: Array<Record<string, unknown>>;
     warnings: string[];
+    warnings_tr?: string[];
   }>;
   [key: string]: unknown;
 }
