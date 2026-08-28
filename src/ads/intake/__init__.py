@@ -7,6 +7,7 @@ LLM/deterministic split, a model that touched them would only add errors.
 
 from ads.intake.keys import (
     KeyDetectionOptions,
+    TooManyTablesForPairwiseDetection,
     detect_primary_keys,
     detect_relationships,
     measure_relationship,
@@ -41,6 +42,7 @@ __all__ = [
     "classify_sensitivity",
     "datacard_digest",
     "detect_primary_keys",
+    "TooManyTablesForPairwiseDetection",
     "detect_relationships",
     "infer_semantic_type",
     "load_csv",

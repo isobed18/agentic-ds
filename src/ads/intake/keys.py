@@ -55,6 +55,22 @@ class KeyDetectionOptions:
     detect_composite_keys: bool = True
     max_composite_width: int = _MAX_COMPOSITE_WIDTH
     max_candidates_per_pair: int = 5
+    max_pairwise_tables: int = 60
+    """Above this many tables, skip pairwise detection instead of hanging.
+
+    The pass compares every table against every other, so the work grows with
+    the square of the table count. 700 one-kilobyte CSVs -- a sharded export,
+    not 700 datasets anyone wants cross-referenced -- is roughly 245,000 pairs,
+    and the request died at Cloudflare's 100s edge timeout with no earlier sign
+    that anything was wrong (#86).
+
+    60 tables is 1,770 pairs, which stays well inside a request. The number is a
+    budget rather than a discovered limit: past it the honest answer is that
+    relationships were not measured, which the caller can say out loud. Silently
+    returning an empty list would be indistinguishable from having measured and
+    found nothing, and that is the one reading that must not happen -- a person
+    would conclude their tables are unrelated.
+    """
 
 
 def _normalize_for_join(series: pd.Series) -> pd.Series:
@@ -287,6 +303,23 @@ def _is_plausible_relationship(rel: RelationshipCandidate, options: KeyDetection
     )
 
 
+class TooManyTablesForPairwiseDetection(RuntimeError):
+    """Raised instead of running a pass that will not finish inside a request.
+
+    An exception rather than an empty list on purpose. Returning nothing reads
+    as "measured, found none", and a caller that believes that will tell someone
+    their tables are unrelated. Refusing forces the caller to decide what to say.
+    """
+
+    def __init__(self, table_count: int, limit: int) -> None:
+        self.table_count = table_count
+        self.limit = limit
+        super().__init__(
+            f"{table_count} tables exceeds the {limit}-table budget for pairwise "
+            "relationship detection"
+        )
+
+
 def detect_relationships(
     cards: list[DataCard],
     frames: dict[str, pd.DataFrame],
@@ -300,6 +333,8 @@ def detect_relationships(
     """
     options = options or KeyDetectionOptions()
     by_name = {c.table_name: c for c in cards}
+    if len(by_name) > options.max_pairwise_tables:
+        raise TooManyTablesForPairwiseDetection(len(by_name), options.max_pairwise_tables)
     results: list[RelationshipCandidate] = []
 
     for left_name, right_name in combinations(sorted(by_name), 2):
