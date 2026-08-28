@@ -88,6 +88,7 @@ from ads.documents import (
 )
 from ads.gates import GatePolicy
 from ads.intake import (
+    TooManyTablesForPairwiseDetection,
     detect_relationships,
     load_directory_with_failures,
     profile_tables,
@@ -2799,6 +2800,23 @@ class ControlPlane:
         # Measured before any run exists. This is what makes the pre-run screen
         # honest: the relationships shown are the same ones schema discovery
         # will reason over, not a picture drawn from column names.
+        #
+        # Past a table budget the pass is refused rather than run, because it
+        # compares every table with every other and a few hundred sharded files
+        # take it past the edge proxy's timeout -- the request died at 100s with
+        # nothing said (#86). The skip is reported rather than swallowed: an
+        # empty list would read as "measured, found none", and somebody would
+        # conclude their tables are unrelated.
+        relationships_measured = True
+        relationships_note: str | None = None
+        try:
+            relationship_candidates = detect_relationships(
+                cards, {table.name: table.frame for table in loaded}
+            )
+        except TooManyTablesForPairwiseDetection as exc:
+            relationships_measured = False
+            relationships_note = str(exc)
+            relationship_candidates = []
         relationships = [
             {
                 "from_table": candidate.from_table,
@@ -2811,9 +2829,7 @@ class ControlPlane:
                 "cardinality": candidate.cardinality,
                 "name_affinity": candidate.name_affinity,
             }
-            for candidate in detect_relationships(
-                cards, {table.name: table.frame for table in loaded}
-            )
+            for candidate in relationship_candidates
         ]
         source_root = Path(source_path).resolve()
         tables_by_file: dict[str, list[str]] = {}
@@ -2863,6 +2879,9 @@ class ControlPlane:
             "source_files": source_files,
             "kesif": kesif_ozeti,
             "relationships": relationships,
+            # So a caller can tell "none found" apart from "not measured".
+            "relationships_measured": relationships_measured,
+            "relationships_note": relationships_note,
             "documents": [document.public_summary() for document in documents],
             "tables": [
                 {
