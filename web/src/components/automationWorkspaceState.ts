@@ -9,7 +9,20 @@ export function automationView(input: {
   workspace: StagingWorkspace | null;
   advancedGraph: boolean;
 }): AutomationView {
-  if (!input.sourceId) return "empty";
+  // "empty" means nothing has ever been started here, and it renders the
+  // upload landing screen. A run that has produced a workspace is proof that
+  // something was started, so the two cannot both be true.
+  //
+  // They were: `applyWorkspace` fires `refreshAutomation()` without awaiting
+  // it, and that call ends in `setSourceId(record.source_id ?? "")`. Any moment
+  // where the refetched record comes back without a source -- a stale response
+  // landing after a newer one, a record read mid-write -- emptied `sourceId`
+  // and sent the screen back to "upload a file", one click after accepting a
+  // plan. Indistinguishable from having lost the project (#49).
+  //
+  // The run wins because it is the stronger evidence: a source id is a pointer
+  // that can go missing, a workspace is a produced artifact that cannot.
+  if (!input.sourceId && !(input.runId && input.workspace)) return "empty";
   if (!input.runId) return "source";
   if (input.advancedGraph) return "workflow";
   if (
