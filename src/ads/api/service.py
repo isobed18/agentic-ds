@@ -217,6 +217,18 @@ def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
+# Windows' classic MAX_PATH. A host can lift it with LongPathsEnabled, but that
+# is a per-machine opt-in outside this application's control, so the budget is
+# spent here either way rather than assumed away because one deployment happens
+# to have it switched on (#63).
+_MAX_UPLOAD_PATH = 260
+# The longest single name component NTFS and ext4 accept, long paths or not.
+# Counted in UTF-8 bytes because that is what the limit counts on Linux, and
+# Turkish file names are routine here: 'ğ' costs two of the 255.
+_MAX_UPLOAD_NAME_BYTES = 255
+# Below this many characters left for the file name, the upload root itself is
+# what is wrong, not the file: `2026-yili-calisma-takvimi.xlsx` is 30.
+_MIN_UPLOAD_NAME_BUDGET = 32
 _PLANNER_AGENTS = {"schema_discovery", "problem_discovery", "validation_strategy"}
 _PIPELINE_STAGES = {
     "intake",
@@ -359,6 +371,34 @@ class _StagingAnalysisReply(BaseModel):
     reports: list[_StagingAnalysisReport] = Field(default_factory=list, max_length=3)
     rationale_en: list[str] = Field(default_factory=list, max_length=4)
     rationale_tr: list[str] = Field(default_factory=list, max_length=4)
+
+
+def _check_upload_path_fits(target: Path) -> None:
+    """Refuse an upload whose path would not survive the write, before writing.
+
+    `Path(filename).name` stops traversal but caps nothing, so a long enough
+    name reached `write_bytes` and came back as a bare `OSError` naming a path
+    the uploader never typed. The limit is applied here instead, and applied
+    whether or not the host has Windows long-path support: that switch belongs
+    to whoever built the machine, and code that assumes it works everywhere it
+    was tested (#63).
+
+    The two failures are told apart on purpose. A name that overruns the budget
+    is the uploader's to fix; a root so deep that a reasonable name cannot fit
+    under it is the operator's, and saying "file name is too long" there would
+    send the wrong person looking.
+    """
+    directory = len(str(target.parent.resolve()))
+    # The separator the name will be joined with, plus the terminating NUL that
+    # MAX_PATH counts but `len` does not.
+    budget = _MAX_UPLOAD_PATH - directory - 2
+    if budget < _MIN_UPLOAD_NAME_BUDGET:
+        raise ValueError(
+            "the configured upload directory is too deep to store files safely; "
+            "move it closer to the drive root"
+        )
+    if len(target.name) > budget:
+        raise ValueError(f"file name is too long (limit {budget} characters here)")
 
 
 def _now() -> str:
@@ -2682,16 +2722,15 @@ class ControlPlane:
             raise ValueError("filename must contain a file name")
         if Path(safe_name).suffix.lower() not in _UPLOAD_SUFFIXES:
             raise ValueError("supported uploads are CSV/TSV, Excel, Parquet, or PDF")
+        if len(safe_name.encode("utf-8")) > _MAX_UPLOAD_NAME_BYTES:
+            raise ValueError("file name is too long")
         if not content:
             raise ValueError("uploaded file is empty")
 
         if source_id is None:
             token = uuid.uuid4().hex[:12]
             target_dir = self.upload_root / token  # type: ignore[operator]
-            target_dir.mkdir(parents=True, exist_ok=False)
-            # Recorded for the first file only. Appending to an existing group
-            # must not transfer it to whoever added the latest file.
-            self._ownership().record(f"upload:{token}", owner=owner)
+            new_group = True
         else:
             match = _UPLOAD_ID.fullmatch(source_id)
             if match is None:
@@ -2700,8 +2739,18 @@ class ControlPlane:
             if not target_dir.is_dir():
                 raise ValueError("upload group does not exist")
             token = match.group(1)
+            new_group = False
 
         target = target_dir / safe_name
+        # Before anything is created, so a name that cannot be written does not
+        # leave an empty upload group and an ownership record behind it.
+        _check_upload_path_fits(target)
+        if new_group:
+            target_dir.mkdir(parents=True, exist_ok=False)
+            # Recorded for the first file only. Appending to an existing group
+            # must not transfer it to whoever added the latest file.
+            self._ownership().record(f"upload:{token}", owner=owner)
+
         if target.exists():
             raise ValueError(f"upload group already contains {safe_name!r}")
         target.write_bytes(content)
