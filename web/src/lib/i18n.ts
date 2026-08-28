@@ -199,6 +199,7 @@ const TR: Record<string, string> = {
   "The plan did not pass the relationship and fan-out validators.": "Plan, ilişki ve fan-out doğrulayıcılarından geçemedi.",
   "The plan failed a trial execution against the real tables.": "Plan, gerçek tablolar üzerinde denenince başarısız oldu.",
   "artifacts": "artefakt",
+  "Zoom level": "Yakınlaştırma düzeyi",
   "Zoom in": "Yakınlaştır",
   "Zoom out": "Uzaklaştır",
   "Reset zoom": "Yakınlaştırmayı sıfırla",
