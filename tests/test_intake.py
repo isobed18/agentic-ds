@@ -28,6 +28,10 @@ from ads.intake import (
 from ads.intake.keys import KeyDetectionOptions, measure_relationship, name_affinity
 from ads.intake.profiler import datacard_digest, infer_semantic_type
 
+# The identifier guard is the real consumer of these names. Importing it, rather
+# than restating its regex here, means the two cannot drift apart silently.
+from ads.integration.executor import IntegrationError, _quote
+
 
 class TestLoaders:
     def test_all_tables_discovered(self, loaded_tables: list[LoadedTable]) -> None:
@@ -68,6 +72,46 @@ class TestLoaders:
         normalized, issues = normalize_columns(frame)
         assert list(normalized.columns) == ["column_0", "real_name"]
         assert "blank_column_name" in {i.code for i in issues}
+
+    def test_file_named_after_a_year_produces_a_usable_table_name(
+        self, tmp_path: Path
+    ) -> None:
+        """A year in the file name used to stop the run before any plan existed.
+
+        `2026-yili-calisma-takvimi-excel.xlsx` slugged to `2026_yili_...`, which
+        `_quote` refuses because a SQL identifier cannot start with a digit.
+        Intake and profiling both succeeded, then preparation died with
+        IntegrationError and no plan was produced.
+        """
+        path = tmp_path / "2026-yili-calisma-takvimi-excel.csv"
+        path.write_text("kalem,tutar\nkira,100\nsu,200\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert table.name.startswith("_2026_yili")
+        _quote(table.name)  # raises IntegrationError if it starts with a digit
+
+    def test_column_named_after_a_year_survives_sql_quoting(self) -> None:
+        """Same defect on the column side; a year in a header is just as common."""
+        frame = pd.DataFrame([[1, 2]], columns=["2024 Tutar", "kalem"])
+
+        normalized, issues = normalize_columns(frame)
+
+        assert list(normalized.columns) == ["_2024_tutar", "kalem"]
+        for name in normalized.columns:
+            _quote(name)
+        # The rename is surfaced, not applied silently.
+        assert "column_renamed" in {i.code for i in issues}
+
+    def test_quote_still_refuses_a_digit_leading_identifier(self) -> None:
+        """Guards the fix itself.
+
+        The two tests above would also pass if someone loosened `_IDENTIFIER_RE`
+        instead of fixing the slugger, which would reopen the injection surface
+        the guard exists to close.
+        """
+        with pytest.raises(IntegrationError):
+            _quote("2024_tutar")
 
     def test_empty_sheet_reported_not_crashed(self, tmp_path: Path) -> None:
         path = tmp_path / "book.xlsx"
