@@ -16,7 +16,7 @@ import CATALOG_SOURCE from "../pages/Catalog.tsx?raw";
 import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
 import { GROUPS } from "../components/GuidedPipeline";
-import { LANGUAGES, t } from "./i18n";
+import { LANGUAGES, localizedList, t } from "./i18n";
 
 function catalogueKeys(): string[] {
   const start = SOURCE.indexOf("const TR: Record<string, string> = {");
@@ -201,5 +201,20 @@ describe("translation", () => {
 
   it("leaves an unknown parameterised key readable", () => {
     expect(t("no such key {x}", { x: "7" })).toBe("no such key 7");
+  });
+});
+
+describe("server-composed prose", () => {
+  // Document extraction warnings carry measured counts and are written during
+  // a background stage, so they cannot go through the catalogue: both halves
+  // arrive from the server as parallel lists and one is picked here.
+  it("picks the Turkish half of a bilingual list", () => {
+    expect(localizedList(["OCR was skipped."], ["OCR atlandı."])).toEqual(["OCR atlandı."]);
+  });
+
+  it("falls back per entry for a run stored before the Turkish half existed", () => {
+    // Not a blank line, and not a shifted one: the fallback is positional.
+    expect(localizedList(["first", "second"], ["birinci"])).toEqual(["birinci", "second"]);
+    expect(localizedList(["only English"])).toEqual(["only English"]);
   });
 });

@@ -35,7 +35,14 @@ def test_docling_auto_ocr_skips_ocr_for_a_text_layer_pdf(tmp_path: Path, monkeyp
     enabled, warning = _docling_ocr_enabled(path, {"ocr": "auto"})
 
     assert enabled is False
-    assert warning == "ocr_auto_skipped:text_layer_sufficient:5/5_pages"
+    assert warning is not None
+    # A person reads this, so it is a sentence with the measured counts in it,
+    # not the `ocr_auto_skipped:text_layer_sufficient:5/5_pages` code it used
+    # to be. Both languages are composed together, at the point of measurement.
+    assert warning.en == (
+        "OCR was skipped — the document's own text layer already covers 5 of 5 pages."
+    )
+    assert "5" in warning.tr and ":" not in warning.tr
 
 
 def test_document_extraction_reports_truthful_per_file_progress(tmp_path: Path) -> None:
@@ -107,3 +114,59 @@ def test_planner_context_reserves_evidence_budget_for_every_document() -> None:
         sum(len(excerpt["text"]) for item in context for excerpt in item["selected_excerpts"])
         <= 2_000
     )
+
+
+def test_extraction_warnings_reach_the_reader_as_prose_in_both_languages(tmp_path: Path) -> None:
+    """Every warning is a sentence, not the machine code it used to be (#54).
+
+    A file that is not a PDF is the cheapest way to provoke a real warning
+    through the whole path: the engine records it, the per-file result carries
+    it, and the summary the Documents and Synthesize panels read folds it in.
+    """
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "broken.pdf").write_bytes(b"not really a pdf")
+
+    extraction = extract_document_directory(
+        source,
+        source_id="broken",
+        source_fingerprint="fingerprint",
+        engine="text_layer",
+        settings={"ocr": "never", "extract_tables": True, "extract_figures": True},
+        output_dir=tmp_path / "output",
+    )
+
+    summary = extraction.extraction_summary()
+    assert summary.warnings, "the unreadable PDF should have been reported"
+    assert len(summary.warnings) == len(summary.warnings_tr)
+    for english, turkish in zip(summary.warnings, summary.warnings_tr, strict=True):
+        assert english.startswith("The PDF could not be parsed")
+        assert turkish.startswith("PDF ayrıştırılamadı")
+        assert "pdf_parse_error" not in english and "pdf_parse_error" not in turkish
+    assert summary.files[0].warnings_tr == summary.warnings_tr
+
+
+def test_a_run_stored_before_turkish_warnings_still_reads_in_turkish() -> None:
+    """Old artifacts have no `warnings_tr`, and must not render as blank lines.
+
+    The two lists are positional, so a document whose Turkish half predates
+    this contract has to be padded rather than skipped -- otherwise the
+    artifact-level warnings that follow it shift onto the wrong sentences.
+    """
+    extraction = DocumentExtraction(
+        source_id="older-run",
+        source_fingerprint="fingerprint",
+        engine="text_layer",
+        documents=[
+            ExtractedDocument(source_file="a.pdf", warnings=["Only English was stored."]),
+        ],
+        warnings=["An artifact-level warning."],
+        warnings_tr=["Artifact düzeyinde bir uyarı."],
+        duration_seconds=1.0,
+    )
+
+    summary = extraction.extraction_summary()
+
+    assert summary.warnings == ["An artifact-level warning.", "Only English was stored."]
+    assert summary.warnings_tr == ["Artifact düzeyinde bir uyarı.", "Only English was stored."]
+    assert summary.files[0].warnings_tr == ["Only English was stored."]
