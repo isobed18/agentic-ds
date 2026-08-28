@@ -17,7 +17,7 @@ import {
   type RoutingSubstep,
   type StagingRoutingState,
 } from "./stagingRoutingState";
-import { Badge, Empty, Spinner, cx } from "./ui";
+import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
 import { GROUPS } from "./GuidedPipeline";
 import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_STEP, CANVAS_MIN_STEP, clampStep, isZoomGesture, scaledBox, zoomForStep, zoomPercent } from "./canvasZoom";
 import { ArtifactNodes } from "./ArtifactNodes";
@@ -261,7 +261,29 @@ function UnderstandingResults({ profile, workspace, onOpenArtifact }: { profile:
     </section>
     <EvidenceSection title={t("Measured / extracted facts")} tone="measured"><SourceFiles profile={profile} compact />{extraction?.artifact_id && <button type="button" className="mt-3 w-full rounded-lg border border-line px-3 py-3 text-left hover:border-brand-300" onClick={() => onOpenArtifact(extraction.artifact_id!)}><p className="text-xs font-semibold text-ink">{t("Document extraction")}</p><p className="mt-1 text-[11px] text-ink-mute">{t("{tables} candidate tables · {figures} figures/charts", { tables: extraction.table_candidates, figures: extraction.figure_candidates })}</p><p className="mt-2 text-[10px] font-medium text-brand-700">{t("Open extracted content and provenance")}</p></button>}</EvidenceSection>
     <EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection>
-    {workspace.reports.length ? <details className="group rounded-xl border border-violet-200 bg-violet-50/40"><summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 text-xs font-semibold text-violet-800"><span>▣</span><span className="flex-1">{t("Agent reports")}</span><Badge tone="neutral">{workspace.reports.length}</Badge><span className="transition group-open:rotate-180">⌄</span></summary><div className="space-y-3 border-t border-violet-200 p-4">{workspace.reports.map((report, index) => <article key={`${report.title.en}:${index}`} className="rounded-lg border border-violet-200 bg-surface px-3 py-3"><p className="text-xs font-semibold text-ink">{local(report.title)}</p><p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{local(report.summary)}</p>{report.findings.length > 0 && <ul className="mt-3 space-y-1">{report.findings.map((finding) => <li key={finding.en} className="text-[10px] leading-relaxed text-ink-mute">• {local(finding)}</li>)}</ul>}<button type="button" disabled={!reportIds[index]} onClick={() => reportIds[index] && onOpenArtifact(reportIds[index])} className="mt-3 text-[10px] font-semibold text-violet-700 disabled:text-ink-faint">{reportIds[index] ? t("Open report artifact") : t("Summary only")}</button></article>)}</div></details> : <Spinner label={t("The Planner is preparing an explanation…")} />}
+    {workspace.reports.length ? <AgentReports reports={workspace.reports} reportIds={reportIds} onOpenArtifact={onOpenArtifact} /> : <Spinner label={t("The Planner is preparing an explanation…")} />}
+  </div>;
+}
+
+/** The reports list, opened by the whole row rather than a native `<details>`.
+ *
+ * It used to be `<details>` with a `display: flex` `<summary>`, and clicking it
+ * did nothing (#51) -- a `<summary>` that is not `display: list-item` is not a
+ * dependable toggle across engines. Every other collapsible in the workspace is
+ * already a button holding its own open state (see `Disclosure` in ui.tsx), so
+ * this follows that rather than fighting the element: the row is one wide
+ * target, and the chevron is only its indicator.
+ */
+function AgentReports({ reports, reportIds, onOpenArtifact }: { reports: StagingWorkspace["reports"]; reportIds: string[]; onOpenArtifact: (artifactId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return <div className="rounded-xl border border-violet-200 bg-violet-50/40">
+    <button type="button" aria-expanded={open} onClick={() => setOpen((current) => !current)} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-xs font-semibold text-violet-800 transition hover:bg-violet-100/60">
+      <span aria-hidden="true">▣</span>
+      <span className="flex-1">{t("Agent reports")}</span>
+      <Badge tone="neutral">{reports.length}</Badge>
+      <Chevron open={open} size="md" />
+    </button>
+    {open && <div className="space-y-3 border-t border-violet-200 p-4">{reports.map((report, index) => <article key={`${report.title.en}:${index}`} className="rounded-lg border border-violet-200 bg-surface px-3 py-3"><p className="text-xs font-semibold text-ink">{local(report.title)}</p><p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{local(report.summary)}</p>{report.findings.length > 0 && <ul className="mt-3 space-y-1">{report.findings.map((finding) => <li key={finding.en} className="text-[10px] leading-relaxed text-ink-mute">• {local(finding)}</li>)}</ul>}<button type="button" disabled={!reportIds[index]} onClick={() => reportIds[index] && onOpenArtifact(reportIds[index])} className="mt-3 text-[10px] font-semibold text-violet-700 disabled:text-ink-faint">{reportIds[index] ? t("Open report artifact") : t("Summary only")}</button></article>)}</div>}
   </div>;
 }
 
