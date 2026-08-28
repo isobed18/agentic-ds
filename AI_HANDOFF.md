@@ -186,6 +186,11 @@ human is durable by design and is never downgraded.
 - **Keep ruff clean and the web build passing.** The committed bundle under
   `src/ads/api/static/` must match the frontend sources — CI fails if it does
   not, and the deployment has silently served a stale UI because of this.
+- **Land frontend PRs one at a time.** Vite names its output by content hash, so
+  two branches that both rebuild always collide on every asset — auto-merge
+  cannot resolve it and the second PR sits at `DIRTY`. The bundle is generated,
+  so the fix is to regenerate rather than to pick sides; `CONTRIBUTING.md` has
+  the exact sequence. Three PRs have needed it so far.
 
 ---
 
