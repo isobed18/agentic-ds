@@ -701,6 +701,29 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs?: number):
   return (await res.json()) as T;
 }
 
+
+export type DocumentTableDecisionInput = {
+  candidate_id: string;
+  decision: "accepted" | "rejected";
+};
+
+export type DocumentTableReviewResult = {
+  artifact_id: string;
+  extraction_artifact_id: string;
+  accepted: number;
+  rejected: number;
+};
+
+export type DocumentTablePromotionResult = {
+  review_artifact_id: string;
+  table_assets: Array<{
+    artifact_id: string;
+    rows: number;
+    columns: number;
+    fingerprint: string;
+  }>;
+};
+
 export const api = {
   authSession: () => request<{ username: string | null; authenticated: boolean }>("/api/auth/session"),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
@@ -783,6 +806,22 @@ export const api = {
     request<StagingWorkspace & { execution_plan_artifact_id: string }>(
       `/api/runs/${runId}/staging/plan/accept`,
       { method: "POST", body: JSON.stringify({ base_artifact_id: baseArtifactId }) },
+    ),
+  /** Record accept/reject decisions for extracted PDF table candidates.
+   *
+   * Two calls rather than one, because the backend keeps the decision and the
+   * promotion as separate artifacts: the review is the record of what a person
+   * decided, and it stands whether or not anything was promoted from it. */
+  reviewDocumentTables: (runId: string, decisions: DocumentTableDecisionInput[]) =>
+    request<DocumentTableReviewResult>(
+      `/api/runs/${runId}/staging/documents/review`,
+      { method: "POST", body: JSON.stringify({ decisions }) },
+    ),
+  /** Turn the accepted candidates of a review into real tables. */
+  promoteDocumentTables: (runId: string, reviewArtifactId: string) =>
+    request<DocumentTablePromotionResult>(
+      `/api/runs/${runId}/staging/documents/promote`,
+      { method: "POST", body: JSON.stringify({ review_artifact_id: reviewArtifactId }) },
     ),
   compileAutomation: (runId: string) =>
     request<{ artifact_id: string; workspace_artifact_id: string; plan: AutomationExecutionPlan }>(
