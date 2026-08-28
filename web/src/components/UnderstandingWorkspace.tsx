@@ -19,7 +19,7 @@ import {
 } from "./stagingRoutingState";
 import { Badge, Empty, Spinner, cx } from "./ui";
 import { GROUPS } from "./GuidedPipeline";
-import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_ZOOM, CANVAS_MIN_ZOOM, isZoomGesture, scaledBox, steppedZoom } from "./canvasZoom";
+import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_STEP, CANVAS_MIN_STEP, clampStep, isZoomGesture, scaledBox, zoomForStep, zoomPercent } from "./canvasZoom";
 import { ArtifactNodes } from "./ArtifactNodes";
 
 type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
@@ -81,12 +81,13 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
   return (
-    <CanvasSurface>
-      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
+    <CanvasSurface overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
       {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
+    </>}>
+      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
     </CanvasSurface>
   );
 }
@@ -106,13 +107,14 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
   }
 
   return (
-    <CanvasSurface>
-      <RoutingGraph routing={routing} workspace={workspace} onSelect={setSelection} proposal="ready" onOpenArtifact={(id) => void openArtifact(id)} />
-      <button type="button" onClick={() => setPlannerOpen(true)} className="fixed bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
+    <CanvasSurface overlay={<>
+      <button type="button" onClick={() => setPlannerOpen(true)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} busy={busy} />}
       {previewError && <p className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{previewError}</p>}
       {plannerOpen && <div className="absolute inset-y-0 right-0 z-30 flex w-[min(390px,92vw)] border-l border-line bg-surface shadow-2xl"><PlannerPanel runId={runId} sourceId={sourceId} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={onWorkspaceUpdated} starterPrompts={[t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")]} /></div>}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
+    </>}>
+      <RoutingGraph routing={routing} workspace={workspace} onSelect={setSelection} proposal="ready" onOpenArtifact={(id) => void openArtifact(id)} />
     </CanvasSurface>
   );
 }
@@ -292,11 +294,21 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, busy }: { prof
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-[10px] font-normal text-ink-mute">{step.detail}</span>}</span></li>)}</ol>; }
-function CanvasSurface({ children }: { children: React.ReactNode }) {
+/** The canvas, plus an overlay that is deliberately outside it.
+ *
+ * `children` are drawn into the scaled, scrolling content. `overlay` is not:
+ * anything docked over the canvas -- panels, dialogs, the Planner button --
+ * belongs there. A `position: fixed` element inside a transformed ancestor is
+ * positioned against that ancestor rather than the viewport, which is why the
+ * Planner button slid across the screen as the graph zoomed (#60), and being
+ * inside the pan area is why dragging across a panel's text panned the graph
+ * instead of selecting it (#56).
+ */
+function CanvasSurface({ children, overlay }: { children: React.ReactNode; overlay?: React.ReactNode }) {
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [step, setStep] = useState(0);
 
   // Attached by hand rather than through onWheel, because React's wheel handler
   // is passive and cannot call preventDefault -- without which ctrl+scroll
@@ -305,18 +317,19 @@ function CanvasSurface({ children }: { children: React.ReactNode }) {
     const node = viewport.current;
     if (!node) return;
     function onWheel(event: WheelEvent) {
-      // Plain scroll and two-finger trackpad panning are left alone; only the
-      // browser's own zoom gesture is taken over.
       if (!isZoomGesture(event)) return;
       event.preventDefault();
-      setZoom((current) => steppedZoom(current, event.deltaY < 0 ? 1 : -1));
+      setStep((current) => clampStep(current + (event.deltaY < 0 ? 1 : -1)));
     }
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
   }, []);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,[role='dialog']")) return;
+    // A press that lands on a control or inside a panel belongs there. Panels
+    // are asides docked over the canvas, and without them in this list a drag
+    // across their text panned the graph instead of selecting the text (#56).
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,aside,[role='dialog'],[data-no-pan]")) return;
     const node = viewport.current;
     if (!node) return;
     drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: node.scrollLeft, top: node.scrollTop };
@@ -338,19 +351,32 @@ function CanvasSurface({ children }: { children: React.ReactNode }) {
     setPanning(false);
   }
 
-  return <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("relative h-full min-h-[30rem] overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
-    <div style={scaledBox(zoom)}>
-      <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoom})`, transformOrigin: "top left" }}>{children}</div>
+  // The controls sit outside the scrolling element, not inside it. Inside, they
+  // rode the scaled content: zooming in moved the bar up the screen and zooming
+  // out did not bring it back the same way (#59), and anything else docked over
+  // the canvas drifted with it (#60).
+  return <div className="relative h-full min-h-[30rem]">
+    <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
+      <div style={scaledBox(step)}>
+        <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoomForStep(step)})`, transformOrigin: "top left" }}>{children}</div>
+      </div>
     </div>
-    <div className="sticky bottom-3 left-0 z-10 flex justify-end px-3">
-      <div className="flex items-center gap-1 rounded-xl border border-line bg-surface/95 p-1 shadow-card backdrop-blur">
-        <ZoomControl label={t("Zoom out")} disabled={zoom <= CANVAS_MIN_ZOOM} onClick={() => setZoom((current) => steppedZoom(current, -1))}>−</ZoomControl>
-        <button type="button" onClick={() => setZoom(1)} disabled={zoom === 1} title={t("Reset zoom")} className="min-w-[3rem] rounded-lg px-2 py-1 text-[10px] font-semibold tabular-nums text-ink-mute transition hover:bg-surface-sunken disabled:opacity-40">{Math.round(zoom * 100)}%</button>
-        <ZoomControl label={t("Zoom in")} disabled={zoom >= CANVAS_MAX_ZOOM} onClick={() => setZoom((current) => steppedZoom(current, 1))}>+</ZoomControl>
+    {overlay}
+    <div data-no-pan className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-end px-3">
+      <div className="pointer-events-auto flex items-center gap-1 rounded-xl border border-line bg-surface/95 p-1 shadow-card backdrop-blur">
+        <ZoomControl label={t("Zoom out")} disabled={step <= CANVAS_MIN_STEP} onClick={() => setStep((current) => clampStep(current - 1))}>−</ZoomControl>
+        <select aria-label={t("Zoom level")} value={step} onChange={(event) => setStep(clampStep(Number(event.target.value)))} className="min-w-[4.25rem] rounded-lg bg-transparent px-1 py-1 text-center text-[10px] font-semibold tabular-nums text-ink-mute outline-none transition hover:bg-surface-sunken">
+          {ZOOM_STEPS.map((value) => <option key={value} value={value}>{zoomPercent(value)}%</option>)}
+        </select>
+        <ZoomControl label={t("Zoom in")} disabled={step >= CANVAS_MAX_STEP} onClick={() => setStep((current) => clampStep(current + 1))}>+</ZoomControl>
       </div>
     </div>
   </div>;
 }
+
+/** Every selectable level, so the control can offer them directly rather than
+ *  only as increments (#58). */
+const ZOOM_STEPS = Array.from({ length: CANVAS_MAX_STEP - CANVAS_MIN_STEP + 1 }, (_, index) => CANVAS_MIN_STEP + index);
 
 function ZoomControl({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className="grid h-7 w-7 place-items-center rounded-lg text-sm font-semibold text-ink-soft transition hover:bg-surface-sunken disabled:opacity-40">{children}</button>;
