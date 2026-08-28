@@ -12,6 +12,10 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from ads.api import ControlPlane, create_app
+
+# Private, like `_quote` in test_intake: the budget the guard actually spends is
+# imported rather than restated, so the two cannot drift apart.
+from ads.api.service import _MIN_UPLOAD_NAME_BUDGET, _check_upload_path_fits
 from ads.contracts import (
     IntegrationPlan,
     Metric,
@@ -75,6 +79,73 @@ def test_sources_and_uploads_are_selectable_without_path_traversal(tmp_path: Pat
         pass
     else:
         raise AssertionError("source selection escaped the configured root")
+
+
+def test_a_long_file_name_is_refused_with_a_readable_message(tmp_path: Path) -> None:
+    """It used to reach `write_bytes` and surface as a bare OSError.
+
+    The limit is the application's own: nothing here asks the host whether it
+    has Windows long-path support, because that switch is not this program's to
+    rely on.
+    """
+    plane = _plane(tmp_path)
+
+    with pytest.raises(ValueError, match="file name is too long"):
+        plane.upload(f"{'a' * 300}.csv", b"id,target\n2,4\n")
+
+
+def test_a_refused_name_leaves_no_upload_group_behind(tmp_path: Path) -> None:
+    """The group used to be created before the name was known to be writable."""
+    plane = _plane(tmp_path)
+    before = plane.data_sources()
+
+    with pytest.raises(ValueError):
+        plane.upload(f"{'a' * 300}.csv", b"id,target\n2,4\n")
+
+    assert plane.data_sources() == before, "a rejected upload created a group"
+    uploads = tmp_path / "uploads"
+    assert not uploads.exists() or not any(uploads.iterdir())
+
+
+def test_a_name_that_fits_the_component_limit_can_still_overrun_the_path(
+    tmp_path: Path,
+) -> None:
+    """255 bytes is legal as a name and still too long once the root is joined.
+
+    This is the case the component check alone misses, and the one MAX_PATH is
+    actually about.
+    """
+    plane = _plane(tmp_path)
+    name = f"{'a' * 240}.csv"
+    assert len(name.encode("utf-8")) <= 255
+
+    with pytest.raises(ValueError, match="file name is too long"):
+        plane.upload(name, b"id,target\n2,4\n")
+
+
+def test_a_too_deep_upload_root_blames_the_root_not_the_file(tmp_path: Path) -> None:
+    """Saying "file name is too long" here would send the wrong person looking.
+
+    The helper is exercised directly rather than through `upload`: a root this
+    deep cannot be created at all on a host *without* long-path support, so
+    building a ControlPlane around one fails before the check is reached. The
+    branch belongs to hosts that do have it enabled -- which is the case the
+    guard exists for, since that setting is not this program's to depend on.
+    """
+    deep = tmp_path.joinpath(*["d" * 20] * 12)
+    assert len(str(deep)) > 260 - _MIN_UPLOAD_NAME_BUDGET
+
+    with pytest.raises(ValueError, match="upload directory is too deep"):
+        _check_upload_path_fits(deep / "table.csv")
+
+
+def test_an_ordinary_turkish_file_name_is_still_accepted(tmp_path: Path) -> None:
+    """The guard must not start rejecting the names this product actually gets."""
+    plane = _plane(tmp_path)
+
+    uploaded = plane.upload("2026-yili-calisma-takvimi-excel.csv", b"id,target\n2,4\n")
+
+    assert uploaded["files"] == ["2026-yili-calisma-takvimi-excel.csv"]
 
 
 def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
