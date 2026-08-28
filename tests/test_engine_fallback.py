@@ -46,9 +46,13 @@ def test_the_warning_names_the_engine_and_the_cost(monkeypatch) -> None:
     """A silent downgrade would leave somebody wondering why the tables vanished."""
     monkeypatch.setattr(extraction, "_engine_version", _absent("docling"))
     _, warning = extraction._resolve_engine("docling")
-    assert "docling" in warning
-    assert "documents-docling" in warning, "say how to get it back"
-    assert "table" in warning.casefold(), "say what is lost"
+    assert warning is not None
+    assert "docling" in warning.en
+    assert "documents-docling" in warning.en, "say how to get it back"
+    assert "table" in warning.en.casefold(), "say what is lost"
+    # A Turkish reader is owed the same three facts, not an English sentence.
+    assert "documents-docling" in warning.tr, "say how to get it back"
+    assert "tablo" in warning.tr.casefold(), "say what is lost"
 
 
 def test_an_installed_engine_is_left_alone(monkeypatch) -> None:
@@ -61,7 +65,8 @@ def test_every_optional_engine_degrades_the_same_way(monkeypatch, engine: str) -
     monkeypatch.setattr(extraction, "_engine_version", _absent(engine))
     resolved, warning = extraction._resolve_engine(engine)
     assert resolved == "text_layer"
-    assert engine in warning
+    assert warning is not None
+    assert engine in warning.en and engine in warning.tr
 
 
 def test_the_text_layer_is_never_substituted_for_itself(monkeypatch) -> None:

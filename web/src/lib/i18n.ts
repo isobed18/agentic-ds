@@ -1083,3 +1083,19 @@ export function t(text: string, params?: Record<string, string | number>): strin
 }
 
 export const activeLanguage = (): Language => active;
+
+/**
+ * The reader's half of a bilingual list the server stored.
+ *
+ * Some prose is composed on the server around measured values -- document
+ * extraction warnings carry page and row counts -- and is written during a
+ * background stage, where there is no reader to translate for. Both halves are
+ * stored as parallel lists and one is picked here.
+ *
+ * A run recorded before the Turkish half existed has only `en`, so each entry
+ * falls back to its English counterpart rather than to a blank line.
+ */
+export function localizedList(en: string[], tr?: string[] | null): string[] {
+  if (active !== "tr" || !tr?.length) return en;
+  return en.map((text, index) => tr[index] ?? text);
+}

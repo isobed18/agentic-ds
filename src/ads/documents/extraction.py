@@ -28,6 +28,18 @@ from ads.contracts.documents import (
     ExtractedTableCandidate,
 )
 from ads.documents.pdf import PDF_SUFFIXES, load_pdf
+from ads.documents.warnings import (
+    DocumentWarning,
+    document_unreadable,
+    engine_substituted,
+    ocr_auto_skipped,
+    ocr_unavailable,
+    pdf_issue,
+    split_warnings,
+    table_columns_truncated,
+    table_rows_truncated,
+    table_unreadable,
+)
 
 _MAX_MARKDOWN_CHARS = 5_000_000
 _MAX_PAGE_CHARS = 250_000
@@ -104,7 +116,9 @@ def _ocr_enabled(settings: dict[str, Any]) -> bool:
     return value is True or str(value).casefold() in {"auto", "always", "true", "1"}
 
 
-def _docling_ocr_enabled(path: Path, settings: dict[str, Any]) -> tuple[bool, str | None]:
+def _docling_ocr_enabled(
+    path: Path, settings: dict[str, Any]
+) -> tuple[bool, DocumentWarning | None]:
     """Resolve OCR auto from measured text coverage before loading OCR models."""
     requested = settings.get("ocr", "auto")
     if str(requested).casefold() != "auto":
@@ -113,8 +127,7 @@ def _docling_ocr_enabled(path: Path, settings: dict[str, Any]) -> tuple[bool, st
     text_pages = sum(len(page.text.strip()) >= 32 for page in parsed.pages)
     sufficient_text = parsed.page_count > 0 and text_pages / parsed.page_count >= 0.6
     if sufficient_text:
-        warning = f"ocr_auto_skipped:text_layer_sufficient:{text_pages}/{parsed.page_count}_pages"
-        return False, warning
+        return False, ocr_auto_skipped(text_pages, parsed.page_count)
     return True, None
 
 
@@ -145,13 +158,13 @@ def _table_from_frame(
     page_number: int | None,
     markdown: str = "",
     title: str | None = None,
-) -> tuple[ExtractedTableCandidate, list[str]]:
-    warnings: list[str] = []
+) -> tuple[ExtractedTableCandidate, list[DocumentWarning]]:
+    reported: list[DocumentWarning] = []
     if frame.shape[1] > _MAX_TABLE_COLUMNS:
-        warnings.append(f"table_{index}_columns_truncated:{frame.shape[1]}->{_MAX_TABLE_COLUMNS}")
+        reported.append(table_columns_truncated(index, frame.shape[1], _MAX_TABLE_COLUMNS))
         frame = frame.iloc[:, :_MAX_TABLE_COLUMNS]
     if frame.shape[0] > _MAX_TABLE_ROWS:
-        warnings.append(f"table_{index}_rows_truncated:{frame.shape[0]}->{_MAX_TABLE_ROWS}")
+        reported.append(table_rows_truncated(index, frame.shape[0], _MAX_TABLE_ROWS))
         frame = frame.iloc[:_MAX_TABLE_ROWS]
     columns = [str(value) for value in frame.columns]
     rows = [[_scalar(value) for value in row] for row in frame.itertuples(index=False, name=None)]
@@ -165,7 +178,7 @@ def _table_from_frame(
             rows=rows,
             markdown=_text(markdown, limit=500_000),
         ),
-        warnings,
+        reported,
     )
 
 
@@ -206,6 +219,7 @@ def _tables_from_markdown(markdown: str, source_file: str) -> list[ExtractedTabl
 def _text_layer(path: Path, settings: dict[str, Any], output_dir: Path) -> ExtractedDocument:
     del settings, output_dir
     parsed = load_pdf(path)
+    english, turkish = split_warnings([pdf_issue(parsed.issue)] if parsed.issue else [])
     markdown = "\n\n".join(
         f"<!-- page {page.number} -->\n\n{page.text}" for page in parsed.pages if page.text
     )
@@ -219,7 +233,8 @@ def _text_layer(path: Path, settings: dict[str, Any], output_dir: Path) -> Extra
             for page in parsed.pages
             if page.text
         ],
-        warnings=[parsed.issue] if parsed.issue else [],
+        warnings=english,
+        warnings_tr=turkish,
     )
 
 
@@ -269,7 +284,7 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
             )
 
     tables: list[ExtractedTableCandidate] = []
-    warnings: list[str] = [ocr_warning] if ocr_warning else []
+    reported: list[DocumentWarning] = [ocr_warning] if ocr_warning else []
     if settings.get("extract_tables", True):
         for index, item in enumerate(getattr(document, "tables", []), start=1):
             try:
@@ -283,9 +298,9 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
                     markdown=rendered,
                 )
                 tables.append(candidate)
-                warnings.extend(table_warnings)
+                reported.extend(table_warnings)
             except Exception as exc:
-                warnings.append(f"table_{index}_normalization_failed:{type(exc).__name__}")
+                reported.append(table_unreadable(index, type(exc).__name__))
 
     figures: list[ExtractedFigureCandidate] = []
     if settings.get("extract_figures", True):
@@ -304,6 +319,7 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
                     kind="picture",
                 )
             )
+    english, turkish = split_warnings(reported[:_MAX_WARNINGS])
     return ExtractedDocument(
         source_file=path.name,
         title=getattr(document, "name", None),
@@ -312,7 +328,8 @@ def _docling(path: Path, settings: dict[str, Any], output_dir: Path) -> Extracte
         pages=pages,
         tables=tables,
         figures=figures,
-        warnings=warnings[:_MAX_WARNINGS],
+        warnings=english,
+        warnings_tr=turkish,
     )
 
 
@@ -324,7 +341,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
     wants_layout = bool(
         settings.get("extract_tables", True) or settings.get("extract_figures", True)
     )
-    warnings: list[str] = []
+    reported: list[DocumentWarning] = []
     try:
         elements = partition_pdf(
             filename=str(path),
@@ -345,7 +362,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
         if "Tesseract" not in type(exc).__name__ and "tesseract" not in str(exc).casefold():
             raise
         elements = partition_pdf(filename=str(path), strategy="fast")
-        warnings.append("ocr_table_figure_fallback:text_layer_only:tesseract_unavailable")
+        reported.append(ocr_unavailable())
     page_parts: dict[int, list[str]] = {}
     tables: list[ExtractedTableCandidate] = []
     figures: list[ExtractedFigureCandidate] = []
@@ -370,7 +387,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
                     markdown=content,
                 )
                 tables.append(candidate)
-                warnings.extend(table_warnings)
+                reported.extend(table_warnings)
             else:
                 fallback = _tables_from_markdown(content, path.name)
                 tables.extend(fallback)
@@ -394,6 +411,7 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
         for number, parts in sorted(page_parts.items())
     ]
     markdown = "\n\n".join(f"<!-- page {page.page_number} -->\n\n{page.markdown}" for page in pages)
+    english, turkish = split_warnings(reported[:_MAX_WARNINGS])
     return ExtractedDocument(
         source_file=path.name,
         page_count=max(page_parts, default=0),
@@ -401,7 +419,8 @@ def _unstructured(path: Path, settings: dict[str, Any], output_dir: Path) -> Ext
         pages=pages,
         tables=tables,
         figures=figures,
-        warnings=warnings[:_MAX_WARNINGS],
+        warnings=english,
+        warnings_tr=turkish,
     )
 
 
@@ -559,7 +578,7 @@ def _installed(engine: DocumentEngineId) -> bool:
     return _engine_version(engine) is not None
 
 
-def _resolve_engine(engine: DocumentEngineId) -> tuple[DocumentEngineId, str | None]:
+def _resolve_engine(engine: DocumentEngineId) -> tuple[DocumentEngineId, DocumentWarning | None]:
     """Substitute the built-in reader when the requested engine is absent.
 
     Every engine but `text_layer` is an optional extra, and `docling` is the
@@ -579,11 +598,7 @@ def _resolve_engine(engine: DocumentEngineId) -> tuple[DocumentEngineId, str | N
     """
     if _installed(engine) or engine == "text_layer":
         return engine, None
-    return "text_layer", (
-        f"{engine} is not installed here; used the built-in text-layer reader "
-        f"instead. Scanned pages and table structure will be missing. Install "
-        f"the documents-{engine} extra to use it."
-    )
+    return "text_layer", engine_substituted(engine)
 
 
 def extract_document_directory(
@@ -612,9 +627,9 @@ def extract_document_directory(
     destination.mkdir(parents=True, exist_ok=True)
     extracted: list[ExtractedDocument] = []
     file_results: list[DocumentFileResult] = []
-    warnings: list[str] = []
+    reported: list[DocumentWarning] = []
     if substitution is not None:
-        warnings.append(substitution)
+        reported.append(substitution)
     for index, path in enumerate(documents, start=1):
         file_started = time.perf_counter()
         if on_progress is not None:
@@ -635,24 +650,27 @@ def extract_document_directory(
                 figure_candidates=len(document.figures),
                 duration_seconds=duration,
                 warnings=document.warnings,
+                warnings_tr=document.warnings_tr,
             )
             file_results.append(result)
             if on_progress is not None:
                 on_progress("file_ready", result.model_dump(mode="json"))
         except Exception as exc:
-            warning = f"{path.name}:{type(exc).__name__}:{str(exc)[:500]}"
-            warnings.append(warning)
+            warning = document_unreadable(path.name, f"{type(exc).__name__}: {str(exc)[:500]}")
+            reported.append(warning)
             result = DocumentFileResult(
                 source_file=path.name,
                 status="failed",
                 duration_seconds=time.perf_counter() - file_started,
-                warnings=[warning],
+                warnings=[warning.en],
+                warnings_tr=[warning.tr],
             )
             file_results.append(result)
             if on_progress is not None:
                 on_progress("file_failed", result.model_dump(mode="json"))
+    english, turkish = split_warnings(reported[:_MAX_WARNINGS])
     if not extracted:
-        raise DocumentExtractionError("; ".join(warnings) or f"{engine} produced no documents")
+        raise DocumentExtractionError("; ".join(english) or f"{engine} produced no documents")
     return DocumentExtraction(
         source_id=source_id,
         source_fingerprint=source_fingerprint,
@@ -662,7 +680,8 @@ def extract_document_directory(
         documents=extracted,
         file_results=file_results,
         duration_seconds=time.perf_counter() - started,
-        warnings=warnings[:_MAX_WARNINGS],
+        warnings=english,
+        warnings_tr=turkish,
     )
 
 

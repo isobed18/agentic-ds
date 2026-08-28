@@ -19,6 +19,20 @@ from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 DocumentEngineId = Literal["docling", "unstructured", "marker", "mineru", "text_layer"]
 
 
+def aligned_turkish(warnings: list[str], warnings_tr: list[str]) -> list[str]:
+    """Turkish warnings positionally matched to the English ones.
+
+    `warnings` and `warnings_tr` are parallel lists, and an artifact persisted
+    before the Turkish half existed has only the English one. Padding with the
+    English text keeps every index meaningful, so a reader on Turkish sees a
+    real sentence rather than a blank line for an old run.
+    """
+    return [
+        warnings_tr[index] if index < len(warnings_tr) else warning
+        for index, warning in enumerate(warnings)
+    ]
+
+
 class DocumentPageContent(FrozenModel):
     page_number: int = Field(ge=1)
     markdown: str = Field(max_length=250_000)
@@ -55,6 +69,7 @@ class ExtractedDocument(FrozenModel):
     tables: list[ExtractedTableCandidate] = Field(default_factory=list)
     figures: list[ExtractedFigureCandidate] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
     duration_seconds: float = Field(default=0.0, ge=0.0)
 
 
@@ -68,6 +83,7 @@ class DocumentFileResult(FrozenModel):
     figure_candidates: int = Field(default=0, ge=0)
     duration_seconds: float = Field(default=0.0, ge=0.0)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
 
 
 class DocumentExtractionSummary(FrozenModel):
@@ -83,6 +99,7 @@ class DocumentExtractionSummary(FrozenModel):
     figure_candidates: int = Field(ge=0)
     duration_seconds: float = Field(ge=0.0)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
     files: list[DocumentFileResult] = Field(default_factory=list)
 
 
@@ -101,9 +118,10 @@ class DocumentExtraction(Artifact):
     file_results: list[DocumentFileResult] = Field(default_factory=list)
     duration_seconds: float = Field(ge=0.0)
     warnings: list[str] = Field(default_factory=list)
+    warnings_tr: list[str] = Field(default_factory=list)
 
     def extraction_summary(self) -> DocumentExtractionSummary:
-        file_results = self.file_results or [
+        recorded = self.file_results or [
             DocumentFileResult(
                 source_file=item.source_file,
                 status="ready",
@@ -112,8 +130,17 @@ class DocumentExtraction(Artifact):
                 figure_candidates=len(item.figures),
                 duration_seconds=item.duration_seconds,
                 warnings=item.warnings,
+                warnings_tr=item.warnings_tr,
             )
             for item in self.documents
+        ]
+        # Persisted results predating the Turkish half are padded here rather
+        # than at each of the panels that read them.
+        file_results = [
+            item.model_copy(
+                update={"warnings_tr": aligned_turkish(item.warnings, item.warnings_tr)}
+            )
+            for item in recorded
         ]
         has_failed_file = any(item.status == "failed" for item in file_results)
         return DocumentExtractionSummary(
@@ -128,6 +155,17 @@ class DocumentExtraction(Artifact):
             figure_candidates=sum(len(item.figures) for item in self.documents),
             duration_seconds=self.duration_seconds,
             warnings=[*self.warnings, *(w for item in self.documents for w in item.warnings)],
+            # Concatenated the same way, one bilingual pair at a time, so the
+            # two lists stay index-aligned even when an artifact written before
+            # warnings had a Turkish half is loaded back.
+            warnings_tr=[
+                *aligned_turkish(self.warnings, self.warnings_tr),
+                *(
+                    w
+                    for item in self.documents
+                    for w in aligned_turkish(item.warnings, item.warnings_tr)
+                ),
+            ],
             files=file_results,
         )
 

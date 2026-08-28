@@ -25,7 +25,11 @@ export interface DocumentFileProgress {
   tableCandidates?: number;
   figureCandidates?: number;
   durationSeconds?: number;
-  warnings: string[];
+  /**
+   * Both languages, because the server composes these around measured values
+   * during a background stage and cannot know the reader. The view picks one.
+   */
+  warnings: LocalizedText[];
 }
 
 export interface StagingRoutingState {
@@ -208,7 +212,7 @@ function documentProgress(
       tableCandidates: numberOrUndefined(event.table_candidates),
       figureCandidates: numberOrUndefined(event.figure_candidates),
       durationSeconds: numberOrUndefined(event.duration_seconds),
-      warnings: Array.isArray(event.warnings) ? event.warnings.map(String) : [],
+      warnings: bilingual(stringList(event.warnings), stringList(event.warnings_tr)),
     });
   }
   for (const file of completed ?? []) {
@@ -219,7 +223,7 @@ function documentProgress(
       tableCandidates: file.table_candidates,
       figureCandidates: file.figure_candidates,
       durationSeconds: file.duration_seconds,
-      warnings: file.warnings,
+      warnings: bilingual(file.warnings, file.warnings_tr),
     });
   }
   return [...byName.values()];
@@ -227,4 +231,18 @@ function documentProgress(
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/**
+ * Pair two positionally aligned server lists into one bilingual list.
+ *
+ * A run recorded before warnings had a Turkish half carries only the English
+ * one, so each entry falls back to its English text instead of a blank line.
+ */
+function bilingual(en: string[], tr?: string[]): LocalizedText[] {
+  return en.map((text, index) => ({ en: text, tr: tr?.[index] ?? text }));
 }
