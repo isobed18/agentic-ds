@@ -37,6 +37,9 @@ BEKLENEN_AKIS: dict[str, Akis] = {
     "kayitlar.jsonl": Akis.AGAC,
     "mini.csv": Akis.TABLO,
     "notlar.txt": Akis.BELGE,
+    # Parquet cozumleyicisi yokken human feedback'e dusuyordu; parti bu
+    # formati hic icermedigi icin eskalasyon olcumu bunu gormemisti.
+    "olcumler.parquet": Akis.TABLO,
     "rapor.pdf": Akis.BELGE,
     "satis_2024.csv": Akis.TABLO,
     "sayfa.html": Akis.BELGE,
