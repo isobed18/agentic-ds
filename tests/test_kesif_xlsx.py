@@ -133,3 +133,54 @@ def test_bozuk_kitap_cokmez(tmp_path: Path) -> None:
 
     rapor = tablolu.incele(p)
     assert rapor.okunabilir is False
+
+
+def _baslikli_kitap(hedef: Path, sayfa_adlari: tuple[str, ...]) -> Path:
+    """Tablonun ustunde rapor basligi ve bos satir olan kitap.
+
+    Kurumsal disa aktarimin olagan sekli; kenar durum degil.
+    """
+    wb = Workbook()
+    wb.remove(wb.active)
+    for ad in sayfa_adlari:
+        ws = wb.create_sheet(ad)
+        ws.append(["2024 Yillik Satis Raporu"])
+        ws.append([])
+        ws.append(["urun_id", "adet", "tutar"])
+        for i in range(5):
+            ws.append([f"P{i:03d}", i, i * 10.5])
+    wb.save(hedef)
+    return hedef
+
+
+def test_baslik_ustunde_rapor_satiri_olan_sayfa_tablo_sayiliyor(tmp_path: Path) -> None:
+    """Baslik 1. satirda degilse sayfa "tablo degil" sayiliyordu.
+
+    Olculdu: iki sayfali physicians.xlsx icin kanit "2 sayfa acildi,
+    1 tanesi tablo" diyordu; ayni yanitta IKI sayfa da profillenmisti.
+    `ads.intake` bu sayfayi `header_row_inferred` ile zaten yukluyor.
+    """
+    p = _baslikli_kitap(tmp_path / "rapor.xlsx", ("Ocak",))
+
+    sonuc = tablolu.incele_yapi(p)
+
+    assert len(sonuc.tablo_sayfalari) == 1
+    sayfa = sonuc.sayfalar[0]
+    assert sayfa.tablo_mu is True
+    assert sayfa.baslik_satiri == 3
+    assert sayfa.basliklar[:3] == ["urun_id", "adet", "tutar"]
+
+
+def test_butun_sayfalari_baslikli_kitap_human_feedbacke_dusmuyor(tmp_path: Path) -> None:
+    """Asil zarar burada: butun sayfalar boyleyse kitap yargiya dusuyordu.
+
+    Yonlendiricide `if not tablolar` dali eskalasyon uretiyordu, oysa
+    dosya deterministik olarak okunabiliyor.
+    """
+    p = _baslikli_kitap(tmp_path / "yillik.xlsx", ("Ocak", "Subat"))
+
+    k = yonlendir(p)
+
+    assert k.akis is Akis.TABLO
+    assert k.deterministik is True
+    assert "2 tanesi tablo" in k.kanitlar[0][1]

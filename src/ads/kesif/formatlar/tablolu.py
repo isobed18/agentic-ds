@@ -32,6 +32,11 @@ ASGARI_SATIR = 2
 ASGARI_SUTUN = 2
 # Basliklarin bu orandan fazlasi bossa baslik satiri guvenilmez.
 BASLIK_DOLULUK_ESIGI = 0.5
+# Baslik her zaman ilk satirda degildir: kurumsal disa aktarimlar tablonun
+# ustune rapor basligi ve bos satir koyar. Yalnizca 1. satira bakmak boyle
+# bir sayfayi "tablo degil" saydiriyordu. `ads.intake._infer_header_row`
+# ayni pencereyi tariyor; sayi bilerek onunla ayni tutuldu.
+BASLIK_TARAMA_SATIRI = 20
 
 
 @dataclass
@@ -42,6 +47,9 @@ class Sayfa:
     basliklar: list[str] = field(default_factory=list)
     tablo_mu: bool = False
     bos_mu: bool = False
+    # Basligin bulundugu satir (1 tabanli). 1'den buyukse ustunde baslik
+    # ya da bos satir vardir; kanit metninde bunu soylemek gerekiyor.
+    baslik_satiri: int = 1
 
 
 @dataclass
@@ -58,6 +66,44 @@ def _oku_kitap(yol: Path, sadece_yapi: bool = True):
     # read_only: buyuk dosyalari belleğe almadan gezmek icin.
     # data_only: formul metni degil son hesaplanan deger.
     return load_workbook(yol, read_only=sadece_yapi, data_only=True)
+
+
+def _baslik_ara(ws, s: Sayfa, satir: int, sutun: int) -> None:
+    """Ilk dolu baslik satirini bul; yoksa 1. satiri kanit olarak birak.
+
+    Onceki surum basligi YALNIZCA 1. satirdan okuyordu. Ustunde rapor
+    basligi olan bir sayfa boylece doluluk esigini gecemiyor ve "tablo
+    degil" sayiliyordu -- oysa `ads.intake` ayni sayfayi
+    `header_row_inferred` ile sorunsuz yukluyor. Butun sayfalari boyle
+    olan bir kitap da yonlendiricide human feedback'e dusuyordu.
+    """
+    ilk_satir: list[str] = []
+    tarama = min(BASLIK_TARAMA_SATIRI, satir)
+
+    for i, ham in enumerate(
+        ws.iter_rows(min_row=1, max_row=tarama, values_only=True), start=1
+    ):
+        hucreler = [("" if h is None else str(h)) for h in ham]
+        if not hucreler:
+            continue
+        if not ilk_satir:
+            ilk_satir = hucreler
+        dolu = sum(1 for h in hucreler if h.strip())
+        if dolu / len(hucreler) < BASLIK_DOLULUK_ESIGI:
+            continue
+        # Basligin altinda en az bir veri satiri kalmali; aksi halde bu
+        # bir tablo degil, sayfanin son satiridir.
+        if satir - i + 1 < ASGARI_SATIR or sutun < ASGARI_SUTUN:
+            continue
+        s.basliklar = hucreler
+        s.baslik_satiri = i
+        s.tablo_mu = True
+        return
+
+    # Hicbir satir esigi gecmedi: kanit yine de 1. satir olsun ki rapor
+    # "ne gordugumuzu" gosterebilsin.
+    s.basliklar = ilk_satir
+    s.tablo_mu = False
 
 
 def incele_yapi(yol: Path) -> KitapSonuc:
@@ -84,15 +130,7 @@ def incele_yapi(yol: Path) -> KitapSonuc:
                 sonuc.sayfalar.append(s)
                 continue
 
-            ilk = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
-            s.basliklar = [("" if h is None else str(h)) for h in ilk]
-            dolu = sum(1 for h in s.basliklar if h.strip())
-            s.tablo_mu = (
-                satir >= ASGARI_SATIR
-                and sutun >= ASGARI_SUTUN
-                and s.basliklar
-                and dolu / len(s.basliklar) >= BASLIK_DOLULUK_ESIGI
-            )
+            _baslik_ara(ws, s, satir, sutun)
             sonuc.sayfalar.append(s)
     finally:
         kitap.close()
@@ -134,6 +172,10 @@ def incele(yol: Path) -> Rapor:
                   deger=(f"{s.satir} satir x {s.sutun} sutun"
                          + (f" | baslik: {', '.join(s.basliklar[:5])}"
                             if s.basliklar else "")
+                         # Baslik 1. satirda degilse bunu soylemek gerekiyor:
+                         # okuyan kisi ustteki satirlarin atlandigini gormeli.
+                         + (f" | baslik {s.baslik_satiri}. satirda"
+                            if s.tablo_mu and s.baslik_satiri > 1 else "")
                          + ("" if s.tablo_mu else "  (tablo degil)")))
             for s in sonuc.sayfalar[:8]
         ],
