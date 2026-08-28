@@ -8,6 +8,7 @@ decision.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -179,6 +180,53 @@ class TestLoaders:
 
         assert "mixed_column_types" not in {i.code for i in table.issues}
         assert pd.api.types.is_numeric_dtype(table.frame["tutar"])
+
+    def test_turkish_column_names_are_preserved(self) -> None:
+        """'Şube' used to arrive as 'ube'.
+
+        The slugger replaced every non-ASCII run with a separator, so Turkish
+        letters were deleted rather than transliterated. On data a customer
+        recognises, a column name that no longer resembles what they typed is
+        worse than a loud failure.
+        """
+        frame = pd.DataFrame([[1, 2, 3]], columns=["Şube", "Ürün", "Öğrenci Sayısı"])
+
+        normalized, _ = normalize_columns(frame)
+
+        assert list(normalized.columns) == ["şube", "ürün", "öğrenci_sayısı"]
+        for name in normalized.columns:
+            _quote(name)
+
+    def test_turkish_columns_that_used_to_collide_stay_distinct(self) -> None:
+        """'Ölçü' and 'ŞİŞLİ' both became 'l', then were deduped to 'l' and 'l_1'.
+
+        Two unrelated columns merging into one name is the damaging half of the
+        old behaviour: every downstream heuristic that reads names as tokens,
+        and the agent reading the DataCard, saw 'l' and 'l_1'.
+        """
+        frame = pd.DataFrame([[1, 2, 3]], columns=["Ölçü", "ŞİŞLİ", "Çıkış"])
+
+        normalized, issues = normalize_columns(frame)
+
+        assert list(normalized.columns) == ["ölçü", "şişli", "çıkış"]
+        assert "duplicate_column_name" not in {i.code for i in issues}
+
+    def test_dotted_capital_i_does_not_produce_a_combining_mark(self) -> None:
+        """Guards the one letter Python lowercases wrongly for Turkish.
+
+        `"İ".lower()` returns `i` followed by a combining dot above -- one
+        character becomes two -- and the result then fails the identifier rule.
+        Without the pre-map this test fails while the two above still pass.
+        """
+        frame = pd.DataFrame([[1]], columns=["İşlem"])
+
+        normalized, _ = normalize_columns(frame)
+
+        name = normalized.columns[0]
+        assert name == "işlem"
+        assert len(name) == len("işlem")
+        assert not any(unicodedata.combining(ch) for ch in name)
+        _quote(name)
 
     def test_empty_sheet_reported_not_crashed(self, tmp_path: Path) -> None:
         path = tmp_path / "book.xlsx"
