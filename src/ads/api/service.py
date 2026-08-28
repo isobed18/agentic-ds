@@ -2858,7 +2858,11 @@ class ControlPlane:
                 route = "unsupported"
                 unsupported_suffix = suffix or "this file type"
                 reason_en = f"No staging adapter is registered for {unsupported_suffix}."
-                reason_tr = f"{suffix or 'bu dosya türü'} için kayıtlı bir hazırlama bağdaştırıcısı yok."
+                reason_tr = (
+                    f"{unsupported_suffix} için kayıtlı bir hazırlama bağdaştırıcısı yok."
+                    if suffix
+                    else "Bu dosya türü için kayıtlı bir hazırlama bağdaştırıcısı yok."
+                )
             if name in unreadable:
                 # It has a supported extension and still could not be read --
                 # most often prose in a .txt, which the delimited loader is
