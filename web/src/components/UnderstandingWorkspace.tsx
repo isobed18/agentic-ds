@@ -286,7 +286,7 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, busy }: { prof
     const denied = recommendation === "no_pipeline";
     return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 border-t border-line pt-4"><button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation.")}</p></div>;
   }
-  const steps = visibleWorkflowSteps(workspace);
+  const steps = visibleWorkflowSteps(workspace, activeLanguage());
   const target = String(plan.configuration.target_column ?? "");
   const goal = String(plan.configuration.problem_title ?? (target ? t("Model {target}", { target }) : t("Analyze and explain the available evidence")));
   const structuredFiles = (profile.source_files ?? []).filter((file) => file.route === "structured").map((file) => file.name);

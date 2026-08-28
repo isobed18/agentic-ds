@@ -12,6 +12,8 @@
  * existing "Dikkat gerekiyor" with a different wording.
  */
 import { describe, expect, it } from "vitest";
+import CATALOG_SOURCE from "../pages/Catalog.tsx?raw";
+import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
 import { GROUPS } from "../components/GuidedPipeline";
 import { LANGUAGES, t } from "./i18n";
@@ -70,6 +72,35 @@ describe("labels the scanner cannot see", () => {
     const known = new Set(catalogueKeys());
     const missing = GROUPS.map((group) => group.title).filter((title) => !known.has(title));
     expect(missing, "stage titles reaching t() through a variable").toEqual([]);
+  });
+
+  it("keeps the datasets navigation label aligned with its page title", () => {
+    // NAV reaches t() through label, so the literal scanner cannot tell that
+    // this destination used a different name from the page it opens (#77).
+    expect(SHELL_SOURCE).toContain('{ to: "/datasets", label: "Datasets"');
+  });
+});
+
+describe("catalogue screens request translations at the render boundary", () => {
+  it("translates the Review your data card description", () => {
+    // The description rendered as raw English because it never reached t(); a
+    // catalogue entry alone would leave the same visible defect in place (#73).
+    expect(CATALOG_SOURCE).toContain(
+      't("Profiles, candidate keys and sensitive-column detection — schema and statistics only, never raw rows.")',
+    );
+  });
+
+  it("translates dataset badges and every table heading", () => {
+    // The general catalogue audit cannot find strings that never call t(), and
+    // several headings are used elsewhere, so only this render site proves #70.
+    expect(CATALOG_SOURCE).toContain('{d.sensitive_columns} {t("sensitive")}');
+    expect(CATALOG_SOURCE).toContain('{d.quality_issues} {t("issues")}');
+    expect(CATALOG_SOURCE).toContain('{d.tables} {t("tables")}');
+
+    const table = CATALOG_SOURCE.match(/<DataTable[\s\S]*?\/>/)?.[0] ?? "";
+    for (const heading of ["Table", "Format", "Rows", "Columns", "Keys", "Issues"]) {
+      expect(table, `${heading} heading on the datasets table`).toContain(`t("${heading}")`);
+    }
   });
 });
 
@@ -133,6 +164,29 @@ describe("translation", () => {
   it("renders Turkish for a key that has one", () => {
     expect(t("Needs attention")).toBe("Dikkat gerekiyor");
   });
+
+  it("uses the reviewed Turkish wording for catalogue and quality labels", () => {
+    // These entries existed, so coverage stayed green while the UI said the
+    // wrong thing. Assert the wording a Turkish reader actually sees (#77).
+    expect([
+      t("Experiments"),
+      t("Loading experiments…"),
+      t("Sensitive"),
+      t("sensitive"),
+      t("inconsistent delimiters"),
+      t("header row inferred"),
+      t("Recommended continuation"),
+    ]).toEqual([
+      "Deneyler",
+      "Deneyler yükleniyor…",
+      "Kişisel veri",
+      "kişisel veri",
+      "tutarsız ayırıcılar",
+      "başlık satırı olduğu çıkarımı yapıldı",
+      "Önerilen sonraki adımlar",
+    ]);
+  });
+
 
   it("degrades an untranslated string to English rather than a placeholder", () => {
     const unknown = "A sentence nobody has translated";
