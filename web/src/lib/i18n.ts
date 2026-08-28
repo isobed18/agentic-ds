@@ -117,6 +117,14 @@ const TR: Record<string, string> = {
   // id, because the id is a code and the rest of the catalogue is keyed on
   // source strings; `titleize` is what maps one to the other.
   "Intake": "Veri Alma",
+  "Prepare ML data": "ML verisini hazırla",
+  "Define the objective": "Hedefi tanımla",
+  "Analyze and validate": "Analiz et ve doğrula",
+  "Build and split": "Öznitelik üret ve böl",
+  "Train and evaluate": "Eğit ve değerlendir",
+  "Understand": "Anla",
+  "Choose ML inputs": "ML girdilerini seç",
+  "Run and review": "Çalıştır ve incele",
   "Schema Discovery": "Şema Keşfi",
   "Integration": "Birleştirme",
   "Problem Discovery": "Problem Keşfi",

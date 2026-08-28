@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import SOURCE from "./i18n.ts?raw";
+import { GROUPS } from "../components/GuidedPipeline";
 import { LANGUAGES, t } from "./i18n";
 
 function catalogueKeys(): string[] {
@@ -52,6 +53,25 @@ function calledKeys(): Map<string, string[]> {
   }
   return found;
 }
+
+describe("labels the scanner cannot see", () => {
+  /**
+   * The catalogue test above reads `t("literal")` out of the source, so a label
+   * that reaches `t()` through a variable is invisible to it. That is not a
+   * hypothetical: the five guided steps on the upload page and these six stage
+   * titles are both rendered as `t(variable)`, and both sat untranslated while
+   * the suite stayed green (#38).
+   *
+   * Fixing every dynamic call site is a larger change than the bug warrants.
+   * Pinning the lists that actually feed one is not, and it is the same list a
+   * Turkish reader sees on the pipeline graph.
+   */
+  it("translates every stage title on the pipeline graph", () => {
+    const known = new Set(catalogueKeys());
+    const missing = GROUPS.map((group) => group.title).filter((title) => !known.has(title));
+    expect(missing, "stage titles reaching t() through a variable").toEqual([]);
+  });
+});
 
 describe("the Turkish catalogue", () => {
   it("translates every string the interface asks for", () => {
