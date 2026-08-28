@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -58,17 +59,35 @@ def _slugify(value: str) -> str:
     Splitting first yields `movie_id`, which is both the convention the rest of
     the codebase uses and the form those heuristics were written against.
 
-    A leading digit is prefixed with an underscore. Names produced here become
-    SQL identifiers, and an identifier cannot begin with a digit: a workbook
-    called `2026-yili-calisma-takvimi.xlsx`, or a column called `2024 Tutar`,
-    reached `ads.integration.executor._quote` as `2026_yili_...` and stopped the
-    run outright with "Refusing to build SQL with unsafe identifier". A year in
-    a file name or a column header is ordinary, not malformed input, so the
-    slugger is what has to give. The rename is recorded as a `column_renamed`
-    issue like every other, so nothing changes silently.
+    Letters outside ASCII are kept. Folding them away deleted Turkish silently:
+    `Sube` became `ube`, `Cikis` became `k`, and `Olcu` and `SISLI` both collapsed
+    to `l`, so two unrelated columns were deduplicated into `l` and `l_1`. On data
+    a customer recognises, a column whose name no longer resembles what they typed
+    is worse than a loud failure. DuckDB carries these names in quoted identifiers
+    at no measurable cost, so there is nothing to buy by discarding them.
+
+    Two Unicode details this has to get right, both found by measurement:
+
+    * `"I".lower()` returns `i` plus a combining dot in Python -- five characters
+      become six -- and the result then fails the identifier rule. The dotted
+      capital is mapped before lowering, which is the one letter Python handles
+      wrongly for Turkish.
+    * macOS hands back decomposed (NFD) filenames, so the same visible name can
+      arrive as two different strings. Normalising to NFC first keeps `Sube` from
+      being two distinct columns depending on where the file came from.
+
+    A leading digit is then prefixed with an underscore. Names produced here
+    become SQL identifiers, and an identifier cannot begin with a digit: a
+    workbook called `2026-yili-calisma-takvimi.xlsx`, or a column called
+    `2024 Tutar`, reached `ads.integration.executor._quote` as `2026_yili_...`
+    and stopped the run outright with "Refusing to build SQL with unsafe
+    identifier". A year in a file name or a column header is ordinary, not
+    malformed input, so the slugger is what has to give. The rename is recorded
+    as a `column_renamed` issue like every other, so nothing changes silently.
     """
-    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
-    slug = re.sub(r"[^0-9a-zA-Z]+", "_", expanded).strip("_").lower()
+    text = unicodedata.normalize("NFC", str(value)).replace("İ", "i")
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", text)
+    slug = re.sub(r"[^\w]+", "_", expanded, flags=re.UNICODE).strip("_").lower()
     if not slug:
         return "unnamed"
     return f"_{slug}" if slug[0].isdigit() else slug

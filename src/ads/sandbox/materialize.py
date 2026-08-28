@@ -11,7 +11,10 @@ import pandas as pd
 from ads.sandbox.backend import ExecutionBackend
 from ads.training.frame_contracts import validate_frame_copy
 
-_SAFE_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Ayni kural `ads.integration.executor._IDENTIFIER_RE` ile birebir: Turkce
+# kolon adi tasiyan bir tabloyu sandbox'ta reddetmek, onu SQL'de kabul edip
+# burada dusurmek demekti.
+_SAFE_TABLE = re.compile(r"^[^\W\d]\w*$", re.UNICODE)
 _TRACKING_FILE = ".ads_materialized_frames.json"
 
 

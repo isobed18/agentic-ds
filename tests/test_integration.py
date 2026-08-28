@@ -200,6 +200,82 @@ class TestSqlSafety:
         with pytest.raises(IntegrationError, match="unknown column"):
             execute_plan(IntegrationPlanProposal.model_validate(bad), toy_frames)
 
+    @pytest.mark.parametrize(
+        "identifier",
+        [
+            'evil"; DROP TABLE x; --',
+            "a\"b",
+            "a'b",
+            "a b",
+            "a;b",
+            "a-b",
+            "tablo$x",
+            "",
+            "2024_tutar",
+        ],
+    )
+    def test_injection_vectors_still_rejected(self, toy_frames, identifier) -> None:
+        """The identifier rule accepts Turkish letters; it must accept nothing else.
+
+        Widening it to Unicode is only safe if what the guard actually defends
+        against -- escaping the quotes around an identifier -- stays closed. This
+        is the test that says so, one vector at a time rather than one example.
+        """
+        bad = _plan(base_grain=["physician_id"], base_table="physicians").model_dump()
+        bad["aggregations"][0]["output_name"] = identifier
+        with pytest.raises(IntegrationError, match="unsafe identifier"):
+            execute_plan(IntegrationPlanProposal.model_validate(bad), toy_frames)
+
+    def test_turkish_identifiers_run_end_to_end(self) -> None:
+        """Turkish column and table names used to be impossible to reach here.
+
+        `_slugify` deleted the letters upstream, so a column the customer called
+        'Şube' arrived as 'ube'. On defence-sector data a name that no longer
+        resembles what the customer typed is not a cosmetic problem. DuckDB
+        carries these names in quoted identifiers, so nothing was bought by
+        discarding them.
+        """
+        frames = {
+            "şubeler": pd.DataFrame({"şube_kodu": [1, 2], "şube": ["Ankara", "İzmir"]}),
+            "işlemler": pd.DataFrame(
+                {"şube_kodu": [1, 1, 2], "ölçüm": [10.0, 20.0, 30.0]}
+            ),
+        }
+        plan = IntegrationPlanProposal.model_validate(
+            {
+                "base_table": "şubeler",
+                "base_grain": ["şube_kodu"],
+                "grain_description": "Şube başına bir satır.",
+                "aggregations": [
+                    {
+                        "source_table": "işlemler",
+                        "output_name": "şube_ölçümleri",
+                        "group_by": ["şube_kodu"],
+                        "aggregations": {"toplam_ölçüm": "SUM(ölçüm)"},
+                        "rationale": "N:1.",
+                    }
+                ],
+                "joins": [
+                    {
+                        "left_table": "şubeler",
+                        "right_table": "şube_ölçümleri",
+                        "left_columns": ["şube_kodu"],
+                        "right_columns": ["şube_kodu"],
+                        "how": "left",
+                        "rationale": "Ölçümleri iliştir.",
+                    }
+                ],
+                "warnings": [],
+            }
+        )
+
+        result = execute_plan(plan, frames)
+
+        assert "şube" in result.frame.columns
+        assert "toplam_ölçüm" in result.frame.columns
+        toplam = dict(zip(result.frame["şube"], result.frame["toplam_ölçüm"], strict=True))
+        assert toplam == {"Ankara": 30.0, "İzmir": 30.0}
+
     def test_count_star_allowed(self, toy_frames) -> None:
         result = execute_plan(_plan(), toy_frames)
         assert result.frame["txn_count"].sum() == 5
