@@ -1,11 +1,11 @@
 """
 KESIF — olcum icin karma ornek parti
 
-Eskalasyon oranini uretmek icin kullanilan karma parti (25 dosya),
+Eskalasyon oranini uretmek icin kullanilan karma parti (26 dosya),
 once /tmp altinda geciciydi ve kayboldu; olculen sayi tekrarlanabilir
 degildi. Bu modul o partiyi DETERMINISTIK olarak yeniden uretir.
 
-Ikili dosyalar (zip, xlsx, pdf, bin) depoya konmaz, calisma aninda
+Ikili dosyalar (zip, xlsx, pdf, parquet, bin) depoya konmaz, calisma aninda
 uretilir: depo sismez, sayi her yerde ayni cikar.
 
 Kullanim:
@@ -238,6 +238,26 @@ def _xlsx_bayt() -> bytes:
     return tampon.getvalue()
 
 
+def _parquet_bayt() -> bytes:
+    """Gercek bir parquet: imzasi da semasi da uydurma degil.
+
+    Elle 'PAR1...PAR1' yazmak testi gecirirdi ama Magika'nin gercekten
+    'parquet' etiketi urettigini olcmezdi; parti bu yuzden kutuphaneyle
+    uretiliyor. pyarrow cekirdek bagimlilik, ekstra gerektirmez.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    tablo = pa.table({
+        "urun": ["klavye", "fare", "monitor", "kablo"],
+        "adet": [3, 7, 2, 12],
+        "tutar": [450.0, 210.5, 3400.0, 180.75],
+    })
+    tampon = io.BytesIO()
+    pq.write_table(tablo, tampon)
+    return tampon.getvalue()
+
+
 def yaz(kok: Path) -> Path:
     """Karma partiyi `kok` altina yazar ve dizini dondurur."""
     kok.mkdir(parents=True, exist_ok=True)
@@ -259,6 +279,7 @@ def yaz(kok: Path) -> Path:
     ]))
     (kok / "arsiv.zip").write_bytes(_zip_bayt())
     (kok / "tablo.xlsx").write_bytes(_xlsx_bayt())
+    (kok / "olcumler.parquet").write_bytes(_parquet_bayt())
     (kok / "ikili.bin").write_bytes(bytes(range(256)) * 8)
 
     return kok
