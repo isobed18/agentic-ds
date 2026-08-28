@@ -15,8 +15,10 @@ from __future__ import annotations
 import csv
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from ads.contracts.datacard import LoadIssue
@@ -150,6 +152,76 @@ def _drop_empty(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[LoadIssue]]:
     return frame.reset_index(drop=True), issues
 
 
+def _type_family(value: object) -> str:
+    """Group a Python value into the families DuckDB can hold in one column.
+
+    int and float travel together on purpose: a column mixing them is ordinary
+    and DuckDB widens it without complaint. bool rides with them because it is
+    an int subclass, so separating it would only produce false positives.
+    """
+    if isinstance(value, (bool, int, float)) or isinstance(value, (np.integer, np.floating)):
+        return "number"
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return "datetime"
+    if isinstance(value, str):
+        return "text"
+    return type(value).__name__
+
+
+def _resolve_mixed_types(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[LoadIssue]]:
+    """Make a column that holds more than one kind of value readable, and say so.
+
+    A work calendar puts a date in most rows and a day *count* in the row for a
+    multi-day holiday. Pandas keeps that column as object; `connection.register`
+    then hands it to DuckDB, which infers TIMESTAMP from the leading values and
+    dies on the integer:
+
+        Invalid Input Error: Failed to cast value:
+        Unimplemented type for cast (BIGINT -> TIMESTAMP)
+
+    A plain `SELECT *` was enough to trigger it, so the whole source became
+    unreadable over one awkward column. Worse, nothing noticed: no issue was
+    recorded and the profiler still called the column a datetime, so the
+    DataCard described it to the agent as something it is not.
+
+    Text is the one target that loses nothing -- every value survives as its own
+    string form -- and the conversion is reported like every other repair here,
+    so the human gate sees it rather than inheriting a quiet lie.
+    """
+    issues: list[LoadIssue] = []
+    out = frame
+
+    for column in frame.columns:
+        if frame[column].dtype != object:
+            continue
+        families: set[str] = set()
+        for value in frame[column]:
+            if value is None or (isinstance(value, float) and np.isnan(value)):
+                continue
+            families.add(_type_family(value))
+            if len(families) > 1:
+                break
+        if len(families) < 2:
+            continue
+
+        if out is frame:
+            out = frame.copy()
+        out[column] = out[column].map(lambda v: v if pd.isna(v) else str(v))
+        issues.append(
+            LoadIssue(
+                severity="warn",
+                code="mixed_column_types",
+                detail=(
+                    f"Column {column!r} holds more than one kind of value "
+                    f"({', '.join(sorted(families))}); read as text so nothing is "
+                    "lost. Verify this column is what you expect."
+                ),
+            )
+        )
+
+    return out, issues
+
+
 def _infer_header_row(raw: pd.DataFrame) -> int:
     """Find the most likely header row in a sheet with leading title/junk rows.
 
@@ -241,8 +313,9 @@ def load_csv(path: str | Path, *, name: str | None = None) -> LoadedTable:
     )
     frame, norm_issues = normalize_columns(frame)
     frame, empty_issues = _drop_empty(frame)
+    frame, mixed_issues = _resolve_mixed_types(frame)
     table.frame = frame
-    table.issues.extend(norm_issues + empty_issues)
+    table.issues.extend(norm_issues + empty_issues + mixed_issues)
     return table
 
 
@@ -250,12 +323,13 @@ def load_parquet(path: str | Path, *, name: str | None = None) -> LoadedTable:
     path = Path(path)
     frame = pd.read_parquet(path)
     frame, norm_issues = normalize_columns(frame)
+    frame, mixed_issues = _resolve_mixed_types(frame)
     return LoadedTable(
         name=name or _slugify(path.stem),
         frame=frame,
         source_uri=str(path.resolve()),
         source_format="parquet",
-        issues=norm_issues,
+        issues=norm_issues + mixed_issues,
     )
 
 
@@ -306,9 +380,12 @@ def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[Load
                 converted = pd.to_numeric(frame[col], errors="coerce")
                 if converted.notna().sum() >= frame[col].notna().sum() * 0.95:
                     frame[col] = converted
+        # Runs after the numeric recovery above, so a column that is genuinely
+        # numeric is repaired first and only a truly mixed one falls through.
+        frame, mixed_issues = _resolve_mixed_types(frame)
 
         table.frame = frame
-        table.issues.extend(norm_issues + empty_issues)
+        table.issues.extend(norm_issues + empty_issues + mixed_issues)
         tables.append(table)
 
     return tables
