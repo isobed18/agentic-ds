@@ -8,8 +8,10 @@ decision.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import pytest
 from tests.conftest import COMPENSATION, LEDGER, MASTER, TRANSACTIONS
@@ -112,6 +114,71 @@ class TestLoaders:
         """
         with pytest.raises(IntegrationError):
             _quote("2024_tutar")
+
+    def test_mixed_type_column_survives_duckdb(self, tmp_path: Path) -> None:
+        """A date column with one integer used to make the source unreadable.
+
+        DuckDB infers TIMESTAMP from the leading values of a pandas object
+        column and then refuses the integer, so a plain SELECT * died with
+        "Unimplemented type for cast (BIGINT -> TIMESTAMP)". A work calendar
+        produces exactly this: a date per row, and a day count for the row
+        covering a multi-day holiday.
+        """
+        path = tmp_path / "takvim.xlsx"
+        pd.DataFrame(
+            {
+                "tarih": [datetime(2026, 1, 1), datetime(2026, 4, 23), 9],
+                "aciklama": ["Yilbasi", "Ulusal Egemenlik", "Ramazan Bayrami"],
+            }
+        ).to_excel(path, index=False)
+
+        table = load_excel(path)[0]
+
+        connection = duckdb.connect()
+        try:
+            connection.register(table.name, table.frame)
+            rows = connection.execute(f'SELECT * FROM "{table.name}"').fetch_df()
+        finally:
+            connection.close()
+        assert len(rows) == 3
+        # Nothing is dropped: the integer survives as its own text.
+        assert "9" in set(table.frame["tarih"].astype(str))
+
+    def test_mixed_type_column_is_reported(self, tmp_path: Path) -> None:
+        """Surfaced, not quietly repaired.
+
+        The original defect was silent twice over: no issue was recorded and
+        the profiler still described the column as a datetime.
+        """
+        path = tmp_path / "takvim.xlsx"
+        pd.DataFrame(
+            {
+                "tarih": [datetime(2026, 1, 1), datetime(2026, 4, 23), 9],
+                "aciklama": ["a", "b", "c"],
+            }
+        ).to_excel(path, index=False)
+
+        table = load_excel(path)[0]
+
+        mixed = [i for i in table.issues if i.code == "mixed_column_types"]
+        assert len(mixed) == 1
+        assert mixed[0].severity == "warn"
+        assert "tarih" in mixed[0].detail
+
+    def test_int_and_float_together_are_not_flagged(self, tmp_path: Path) -> None:
+        """Guards the fix against being too eager.
+
+        Casting every object column to text would pass the two tests above
+        while destroying ordinary numeric columns. int and float in one column
+        is normal and DuckDB widens it without complaint.
+        """
+        path = tmp_path / "tutarlar.csv"
+        path.write_text("tutar,kalem\n1,kira\n2.5,su\n3,internet\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert "mixed_column_types" not in {i.code for i in table.issues}
+        assert pd.api.types.is_numeric_dtype(table.frame["tutar"])
 
     def test_empty_sheet_reported_not_crashed(self, tmp_path: Path) -> None:
         path = tmp_path / "book.xlsx"
