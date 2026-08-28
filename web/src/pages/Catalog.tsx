@@ -79,9 +79,9 @@ export function Datasets() {
             title={d.label}
             right={
               <div className="flex items-center gap-1.5">
-                {(d.sensitive_columns ?? 0) > 0 && <Badge tone="warn">{d.sensitive_columns} sensitive</Badge>}
-                {(d.quality_issues ?? 0) > 0 && <Badge tone="stop">{d.quality_issues} issues</Badge>}
-                {d.tables !== undefined && <Badge>{d.tables} tables</Badge>}
+                {(d.sensitive_columns ?? 0) > 0 && <Badge tone="warn">{d.sensitive_columns} {t("sensitive")}</Badge>}
+                {(d.quality_issues ?? 0) > 0 && <Badge tone="stop">{d.quality_issues} {t("issues")}</Badge>}
+                {d.tables !== undefined && <Badge>{d.tables} {t("tables")}</Badge>}
               </div>
             }
           >
@@ -99,7 +99,7 @@ export function Datasets() {
                   <Metric label={t("Sensitive")} value={String(d.sensitive_columns ?? 0)} />
                 </div>
                 <DataTable
-                  columns={["Table", "Format", "Rows", "Columns", "Keys", "Issues"]}
+                  columns={[t("Table"), t("Format"), t("Rows"), t("Columns"), t("Keys"), t("Issues")]}
                   rows={(d.table_summaries ?? []).map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
                 />
                 <p className="mt-3 text-xs text-ink-faint">{d.privacy}</p>
@@ -241,8 +241,7 @@ export function Home() {
         <Link to="/datasets" className="card px-5 py-4 hover:border-brand-500">
           <h3 className="text-sm font-semibold">{t("Review your data")}</h3>
           <p className="mt-1 text-xs leading-relaxed text-ink-mute">
-            Profiles, candidate keys and sensitive-column detection — schema and statistics
-            only, never raw rows.
+            {t("Profiles, candidate keys and sensitive-column detection — schema and statistics only, never raw rows.")}
           </p>
         </Link>
       </div>

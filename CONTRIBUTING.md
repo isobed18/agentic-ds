@@ -91,6 +91,32 @@ committed so the server runs from a checkout, and CI compares a fresh build
 against it. A source change without a rebuild means the deployment silently
 serves the previous UI. Line endings are pinned to LF by `.gitattributes`.
 
+Two frontend PRs open at once **will** conflict, and it is not bad luck. Vite
+names its output by content hash, so any two branches that both rebuild produce
+differently-named files; whichever lands second collides on every asset plus
+`index.html`. Auto-merge cannot resolve it, and the PR sits at `DIRTY` until
+somebody intervenes. This has cost a manual pass on three PRs so far.
+
+Nothing in the conflict is worth reading. The bundle is generated, so the
+resolution is always to regenerate it rather than to pick sides:
+
+```bash
+git rebase origin/main                        # conflicts, all under src/ads/api/static
+git checkout origin/main -- src/ads/api/static
+npm --prefix web run build
+git add -A src/ads/api/static
+git rebase --continue
+git push --force-with-lease
+```
+
+If a source file also conflicts, resolve that one normally first -- the recipe
+above is only for the generated output.
+
+The scheduling consequence is worth knowing before you start: land frontend
+changes one at a time. Two people rebuilding in parallel is a guaranteed manual
+merge for the second one, every time, regardless of whether the changes touch
+the same components.
+
 **Every new UI string needs a Turkish entry** in `web/src/lib/i18n.ts`.
 `i18n.test.ts` enforces it. The catalogue falls back to English, so a missing
 entry breaks nothing and quietly ships in the wrong language.

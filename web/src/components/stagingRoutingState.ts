@@ -1,4 +1,4 @@
-import type { SourceProfile, StagingWorkspace } from "../lib/api";
+import type { LocalizedText, SourceProfile, StagingWorkspace } from "../lib/api";
 
 export type RouteKind = "structured" | "documents" | "unsupported";
 export type ProgressStatus = "complete" | "running" | "pending" | "failed";
@@ -7,7 +7,7 @@ export interface RoutedSourceFile {
   name: string;
   format: string;
   route: RouteKind;
-  reason?: string;
+  reason?: LocalizedText;
   tableNames: string[];
 }
 

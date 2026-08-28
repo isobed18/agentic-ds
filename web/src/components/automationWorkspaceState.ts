@@ -1,4 +1,5 @@
 import type { SourceProfile, StagingWorkspace } from "../lib/api";
+import type { Language } from "../lib/i18n";
 
 export type AutomationView = "empty" | "source" | "understanding" | "proposal" | "guided_pipeline" | "workflow";
 
@@ -58,7 +59,7 @@ export function sourceCounts(profile: SourceProfile | null): {
   };
 }
 
-export function visibleWorkflowSteps(workspace: StagingWorkspace): string[] {
+export function visibleWorkflowSteps(workspace: StagingWorkspace, language: Language): string[] {
   const hidden = new Set([
     "data.upload",
     "data.profile_tables",
@@ -71,5 +72,5 @@ export function visibleWorkflowSteps(workspace: StagingWorkspace): string[] {
   return blueprint.components
     .filter((component) => component.enabled && !hidden.has(component.catalog_id ?? ""))
     .filter((component) => component.kind !== "template")
-    .map((component) => component.title.en);
+    .map((component) => component.title[language]);
 }

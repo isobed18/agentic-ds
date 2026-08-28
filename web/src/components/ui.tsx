@@ -70,11 +70,11 @@ export function Disclosure({
   );
 }
 
-export function Chevron({ open }: { open: boolean }) {
+export function Chevron({ open, size = "sm" }: { open: boolean; size?: "sm" | "md" }) {
   return (
     <svg
       viewBox="0 0 20 20"
-      className={cx("h-4 w-4 shrink-0 text-ink-faint transition-transform", open && "rotate-90")}
+      className={cx(size === "md" ? "h-5 w-5" : "h-4 w-4", "shrink-0 text-ink-faint transition-transform", open && "rotate-90")}
       fill="none"
       stroke="currentColor"
       strokeWidth="1.8"

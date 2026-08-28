@@ -88,6 +88,7 @@ from ads.documents import (
 )
 from ads.gates import GatePolicy
 from ads.intake import (
+    TooManyTablesForPairwiseDetection,
     detect_relationships,
     load_directory_with_failures,
     profile_tables,
@@ -2799,6 +2800,23 @@ class ControlPlane:
         # Measured before any run exists. This is what makes the pre-run screen
         # honest: the relationships shown are the same ones schema discovery
         # will reason over, not a picture drawn from column names.
+        #
+        # Past a table budget the pass is refused rather than run, because it
+        # compares every table with every other and a few hundred sharded files
+        # take it past the edge proxy's timeout -- the request died at 100s with
+        # nothing said (#86). The skip is reported rather than swallowed: an
+        # empty list would read as "measured, found none", and somebody would
+        # conclude their tables are unrelated.
+        relationships_measured = True
+        relationships_note: str | None = None
+        try:
+            relationship_candidates = detect_relationships(
+                cards, {table.name: table.frame for table in loaded}
+            )
+        except TooManyTablesForPairwiseDetection as exc:
+            relationships_measured = False
+            relationships_note = str(exc)
+            relationship_candidates = []
         relationships = [
             {
                 "from_table": candidate.from_table,
@@ -2811,9 +2829,7 @@ class ControlPlane:
                 "cardinality": candidate.cardinality,
                 "name_affinity": candidate.name_affinity,
             }
-            for candidate in detect_relationships(
-                cards, {table.name: table.frame for table in loaded}
-            )
+            for candidate in relationship_candidates
         ]
         source_root = Path(source_path).resolve()
         tables_by_file: dict[str, list[str]] = {}
@@ -2832,26 +2848,35 @@ class ControlPlane:
             suffix = path.suffix.lower()
             if suffix in structured_suffixes:
                 route = "structured"
-                reason = "A supported tabular format will be profiled deterministically."
+                reason_en = "A supported tabular format will be profiled deterministically."
+                reason_tr = "Desteklenen bir tablo biçimi belirlenimci şekilde profillenecek."
             elif suffix in PDF_SUFFIXES:
                 route = "documents"
-                reason = "A PDF will be sent to the selected document understanding engine."
+                reason_en = "A PDF will be sent to the selected document understanding engine."
+                reason_tr = "PDF, seçilen belge anlama motoruna gönderilecek."
             else:
                 route = "unsupported"
-                reason = f"No staging adapter is registered for {suffix or 'this file type'}."
+                unsupported_suffix = suffix or "this file type"
+                reason_en = f"No staging adapter is registered for {unsupported_suffix}."
+                reason_tr = (
+                    f"{unsupported_suffix} için kayıtlı bir hazırlama bağdaştırıcısı yok."
+                    if suffix
+                    else "Bu dosya türü için kayıtlı bir hazırlama bağdaştırıcısı yok."
+                )
             if name in unreadable:
                 # It has a supported extension and still could not be read --
                 # most often prose in a .txt, which the delimited loader is
                 # obliged to try. Shown as needing review rather than dropped,
                 # and no longer allowed to fail the whole source.
                 route = "needs_review"
-                reason = f"Could not be read as tabular data: {unreadable[name]}"
+                reason_en = f"Could not be read as tabular data: {unreadable[name]}"
+                reason_tr = f"Tablo verisi olarak okunamadı: {unreadable[name]}"
             source_files.append(
                 {
                     "name": name,
                     "format": suffix.lstrip(".") or "unknown",
                     "route": route,
-                    "reason": reason,
+                    "reason": {"en": reason_en, "tr": reason_tr},
                     "table_names": tables_by_file.get(name, []),
                 }
             )
@@ -2863,6 +2888,9 @@ class ControlPlane:
             "source_files": source_files,
             "kesif": kesif_ozeti,
             "relationships": relationships,
+            # So a caller can tell "none found" apart from "not measured".
+            "relationships_measured": relationships_measured,
+            "relationships_note": relationships_note,
             "documents": [document.public_summary() for document in documents],
             "tables": [
                 {
