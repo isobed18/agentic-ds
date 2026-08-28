@@ -326,7 +326,7 @@ export interface SourceProfile {
     name: string;
     format: string;
     route: "structured" | "documents" | "unsupported";
-    reason: string;
+    reason: LocalizedText;
     table_names: string[];
   }>;
   tables: ProfiledTable[];
