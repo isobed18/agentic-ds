@@ -18,6 +18,7 @@ sunulur.
 
 from __future__ import annotations
 
+import io
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,9 +64,15 @@ class KitapSonuc:
 
 
 def _oku_kitap(yol: Path, sadece_yapi: bool = True):
-    # read_only: buyuk dosyalari belleğe almadan gezmek icin.
+    # read_only: buyuk dosyalari bellege almadan gezmek icin.
     # data_only: formul metni degil son hesaplanan deger.
-    return load_workbook(yol, read_only=sadece_yapi, data_only=True)
+    #
+    # Dosya YOL yerine BAYT olarak veriliyor: openpyxl yolu alinca uzantiya
+    # bakip reddediyor ("does not support .txt file format"). Bu, icerikten
+    # xlsx oldugunu OLCTUGUMUZ bir dosyayi uzanti yuzunden geri cevirmek
+    # demekti -- keşif'in var olma sebebiyle tam ters. Bayt verildiginde
+    # openpyxl yapiyi okur, adina bakmaz.
+    return load_workbook(io.BytesIO(yol.read_bytes()), read_only=sadece_yapi, data_only=True)
 
 
 def _baslik_ara(ws, s: Sayfa, satir: int, sutun: int) -> None:
