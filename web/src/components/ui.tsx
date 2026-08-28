@@ -21,8 +21,24 @@ const TONE: Record<Tone, string> = {
   brand: "bg-brand-50 text-brand-700",
 };
 
-export function Badge({ children, tone = "neutral" }: { children: ReactNode; tone?: Tone }) {
-  return <span className={cx("chip", TONE[tone])}>{children}</span>;
+/**
+ * `truncate` is for badges holding a name the product does not control -- a file
+ * name, above all. Without it a long one stretched the chip past its card and
+ * put a horizontal scrollbar on the whole panel (#62).
+ *
+ * It takes two elements rather than one class. `.chip` is `inline-flex`, and
+ * `text-overflow` does not apply to a flex container's own text, so the
+ * ellipsis has to happen on a child; and both the chip and that child need
+ * `min-w-0`, because a flex item's automatic minimum is its content and it
+ * would otherwise refuse to shrink at all. `title` keeps the full name
+ * reachable on hover, the way the file chips in `BranchNode` already do.
+ */
+export function Badge({ children, tone = "neutral", title, truncate = false }: { children: ReactNode; tone?: Tone; title?: string; truncate?: boolean }) {
+  return (
+    <span className={cx("chip", TONE[tone], truncate && "min-w-0 max-w-full")} title={title}>
+      {truncate ? <span className="min-w-0 truncate">{children}</span> : children}
+    </span>
+  );
 }
 
 /** Map backend vocabulary to a visual tone in one place. */
