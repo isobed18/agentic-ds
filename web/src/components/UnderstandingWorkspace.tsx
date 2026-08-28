@@ -19,6 +19,7 @@ import {
 } from "./stagingRoutingState";
 import { Badge, Empty, Spinner, cx } from "./ui";
 import { GROUPS } from "./GuidedPipeline";
+import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_ZOOM, CANVAS_MIN_ZOOM, isZoomGesture, scaledBox, steppedZoom } from "./canvasZoom";
 
 type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
 
@@ -291,6 +292,25 @@ function CanvasSurface({ children }: { children: React.ReactNode }) {
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
+  const [zoom, setZoom] = useState(1);
+
+  // Attached by hand rather than through onWheel, because React's wheel handler
+  // is passive and cannot call preventDefault -- without which ctrl+scroll
+  // zooms the whole browser page instead of the graph.
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    function onWheel(event: WheelEvent) {
+      // Plain scroll and two-finger trackpad panning are left alone; only the
+      // browser's own zoom gesture is taken over.
+      if (!isZoomGesture(event)) return;
+      event.preventDefault();
+      setZoom((current) => steppedZoom(current, event.deltaY < 0 ? 1 : -1));
+    }
+    node.addEventListener("wheel", onWheel, { passive: false });
+    return () => node.removeEventListener("wheel", onWheel);
+  }, []);
+
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,[role='dialog']")) return;
     const node = viewport.current;
@@ -313,7 +333,23 @@ function CanvasSurface({ children }: { children: React.ReactNode }) {
     if (node?.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
     setPanning(false);
   }
-  return <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("relative h-full min-h-[30rem] overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}><div className="flex min-h-[860px] min-w-[1500px] items-center justify-center">{children}</div></div>;
+
+  return <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("relative h-full min-h-[30rem] overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
+    <div style={scaledBox(zoom)}>
+      <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoom})`, transformOrigin: "top left" }}>{children}</div>
+    </div>
+    <div className="sticky bottom-3 left-0 z-10 flex justify-end px-3">
+      <div className="flex items-center gap-1 rounded-xl border border-line bg-surface/95 p-1 shadow-card backdrop-blur">
+        <ZoomControl label={t("Zoom out")} disabled={zoom <= CANVAS_MIN_ZOOM} onClick={() => setZoom((current) => steppedZoom(current, -1))}>−</ZoomControl>
+        <button type="button" onClick={() => setZoom(1)} disabled={zoom === 1} title={t("Reset zoom")} className="min-w-[3rem] rounded-lg px-2 py-1 text-[10px] font-semibold tabular-nums text-ink-mute transition hover:bg-surface-sunken disabled:opacity-40">{Math.round(zoom * 100)}%</button>
+        <ZoomControl label={t("Zoom in")} disabled={zoom >= CANVAS_MAX_ZOOM} onClick={() => setZoom((current) => steppedZoom(current, 1))}>+</ZoomControl>
+      </div>
+    </div>
+  </div>;
+}
+
+function ZoomControl({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className="grid h-7 w-7 place-items-center rounded-lg text-sm font-semibold text-ink-soft transition hover:bg-surface-sunken disabled:opacity-40">{children}</button>;
 }
 function GraphEdge({ status }: { status: ProgressStatus }) { return <div className={cx("relative h-px w-10 shrink-0", status === "complete" ? "bg-ok-300" : status === "failed" ? "bg-stop-300" : "bg-slate-300")}><span className="absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t border-slate-400" />{status === "running" && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400 motion-reduce:animate-none" />}</div>; }
 function ForkConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 ${height / 2} H20 M20 ${height / 2} V8 M20 ${height / 2} V${height - 8} M20 8 H48 M20 ${height - 8} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : "#cbd5e1"} strokeWidth="1.5" /></svg>; }
