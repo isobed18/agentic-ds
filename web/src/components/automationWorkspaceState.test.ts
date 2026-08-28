@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+
+import type { StagingWorkspace } from "../lib/api";
 import { automationView, sourceCounts } from "./automationWorkspaceState";
 
 describe("automation progressive disclosure", () => {
@@ -91,5 +93,61 @@ describe("automation progressive disclosure", () => {
     expect(sourceCounts({ source_id: "pdfs", tables: [], documents, privacy: "safe" })).toEqual({
       files: 4, pdfs: 4, structured: 0, pages: 46, rows: 0,
     });
+  });
+});
+
+describe("a run outranks a missing source", () => {
+  /**
+   * The regression this exists for (#49): accepting a plan sent the screen back
+   * to the upload landing page, one click after the plan was approved. Nothing
+   * errored, so it read as the project having been lost.
+   *
+   * `applyWorkspace` fires `refreshAutomation()` without awaiting it, and that
+   * ends in `setSourceId(record.source_id ?? "")`. Any moment where the record
+   * comes back without a source emptied `sourceId`, and "empty" used to win
+   * ahead of every other check.
+   */
+  const accepted = {
+    run_id: "run-1",
+    recommended_plan: { status: "accepted", accepted: true },
+  } as unknown as StagingWorkspace;
+
+  it("stays on the pipeline when the source id vanishes mid-flow", () => {
+    expect(
+      automationView({
+        sourceId: "",
+        runId: "run-1",
+        runStatus: "succeeded",
+        workspace: accepted,
+        advancedGraph: false,
+      }),
+    ).toBe("guided_pipeline");
+  });
+
+  it("still shows the upload screen when nothing has been started", () => {
+    // The empty state has to keep working; this is the case it is for.
+    expect(
+      automationView({
+        sourceId: "",
+        runId: null,
+        runStatus: null,
+        workspace: null,
+        advancedGraph: false,
+      }),
+    ).toBe("empty");
+  });
+
+  it("shows the upload screen for a run id with no workspace behind it", () => {
+    // A run id alone is a pointer that can dangle. Only a produced workspace
+    // proves work happened.
+    expect(
+      automationView({
+        sourceId: "",
+        runId: "run-1",
+        runStatus: "queued",
+        workspace: null,
+        advancedGraph: false,
+      }),
+    ).toBe("empty");
   });
 });
