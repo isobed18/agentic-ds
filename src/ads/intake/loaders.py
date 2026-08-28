@@ -55,10 +55,21 @@ def _slugify(value: str) -> str:
 
     Splitting first yields `movie_id`, which is both the convention the rest of
     the codebase uses and the form those heuristics were written against.
+
+    A leading digit is prefixed with an underscore. Names produced here become
+    SQL identifiers, and an identifier cannot begin with a digit: a workbook
+    called `2026-yili-calisma-takvimi.xlsx`, or a column called `2024 Tutar`,
+    reached `ads.integration.executor._quote` as `2026_yili_...` and stopped the
+    run outright with "Refusing to build SQL with unsafe identifier". A year in
+    a file name or a column header is ordinary, not malformed input, so the
+    slugger is what has to give. The rename is recorded as a `column_renamed`
+    issue like every other, so nothing changes silently.
     """
     expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
     slug = re.sub(r"[^0-9a-zA-Z]+", "_", expanded).strip("_").lower()
-    return slug or "unnamed"
+    if not slug:
+        return "unnamed"
+    return f"_{slug}" if slug[0].isdigit() else slug
 
 
 def normalize_columns(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[LoadIssue]]:
