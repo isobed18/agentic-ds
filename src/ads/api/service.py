@@ -2848,26 +2848,31 @@ class ControlPlane:
             suffix = path.suffix.lower()
             if suffix in structured_suffixes:
                 route = "structured"
-                reason = "A supported tabular format will be profiled deterministically."
+                reason_en = "A supported tabular format will be profiled deterministically."
+                reason_tr = "Desteklenen bir tablo biçimi belirlenimci şekilde profillenecek."
             elif suffix in PDF_SUFFIXES:
                 route = "documents"
-                reason = "A PDF will be sent to the selected document understanding engine."
+                reason_en = "A PDF will be sent to the selected document understanding engine."
+                reason_tr = "PDF, seçilen belge anlama motoruna gönderilecek."
             else:
                 route = "unsupported"
-                reason = f"No staging adapter is registered for {suffix or 'this file type'}."
+                unsupported_suffix = suffix or "this file type"
+                reason_en = f"No staging adapter is registered for {unsupported_suffix}."
+                reason_tr = f"{suffix or 'bu dosya türü'} için kayıtlı bir hazırlama bağdaştırıcısı yok."
             if name in unreadable:
                 # It has a supported extension and still could not be read --
                 # most often prose in a .txt, which the delimited loader is
                 # obliged to try. Shown as needing review rather than dropped,
                 # and no longer allowed to fail the whole source.
                 route = "needs_review"
-                reason = f"Could not be read as tabular data: {unreadable[name]}"
+                reason_en = f"Could not be read as tabular data: {unreadable[name]}"
+                reason_tr = f"Tablo verisi olarak okunamadı: {unreadable[name]}"
             source_files.append(
                 {
                     "name": name,
                     "format": suffix.lstrip(".") or "unknown",
                     "route": route,
-                    "reason": reason,
+                    "reason": {"en": reason_en, "tr": reason_tr},
                     "table_names": tables_by_file.get(name, []),
                 }
             )
