@@ -38,12 +38,64 @@ def test_dataset_catalog_is_useful_and_never_serves_source_values(tmp_path: Path
     response = TestClient(create_app(plane=plane)).get("/api/catalog/datasets")
 
     assert response.status_code == 200
-    payload = response.json()[0]
+    payload = response.json()["items"][0]
     assert payload["tables"] == 1
     assert payload["rows"] == 2
     assert payload["table_summaries"][0]["name"] == "customers"
     assert secret not in response.text
     assert "second-person" not in response.text
+
+
+def test_dataset_catalog_paginates_and_only_profiles_the_page(tmp_path: Path) -> None:
+    """The catalog profiled every source on every load, so /datasets slowed
+    without bound as datasets accumulated (#72). It now returns one page and
+    profiles only the sources on it."""
+    plane = _plane(tmp_path)
+    for i in range(30):
+        source = plane.source_roots[0] / f"set-{i:03d}"
+        source.mkdir()
+        (source / "rows.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+
+    profiled: list[str] = []
+    original = plane.source_profile
+
+    def counting_profile(source_id: str) -> dict:
+        profiled.append(source_id)
+        return original(source_id)
+
+    plane.source_profile = counting_profile  # type: ignore[method-assign]
+    client = TestClient(create_app(plane=plane))
+
+    first = client.get("/api/catalog/datasets?page=1&page_size=25").json()
+    assert first["total"] == 30
+    assert first["page_size"] == 25
+    assert len(first["items"]) == 25
+    # Only the visible page was profiled, not all 30 sources.
+    assert len(profiled) == 25
+
+    second = client.get("/api/catalog/datasets?page=2&page_size=25").json()
+    assert len(second["items"]) == 5
+    # Stable order: no source appears on both pages.
+    first_ids = {item["source_id"] for item in first["items"]}
+    second_ids = {item["source_id"] for item in second["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_dataset_catalog_search_filters_by_label(tmp_path: Path) -> None:
+    """A search bar filters by label so browsing is not the only option (#72)."""
+    plane = _plane(tmp_path)
+    for name in ("customers", "orders", "customer_events"):
+        source = plane.source_roots[0] / name
+        source.mkdir()
+        (source / "rows.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+
+    result = TestClient(create_app(plane=plane)).get(
+        "/api/catalog/datasets?search=customer"
+    ).json()
+
+    assert result["total"] == 2
+    labels = sorted(item["label"] for item in result["items"])
+    assert labels == ["customer_events", "customers"]
 
 
 def test_dataset_catalog_summarises_pdf_only_sources(tmp_path: Path) -> None:
@@ -62,7 +114,7 @@ def test_dataset_catalog_summarises_pdf_only_sources(tmp_path: Path) -> None:
     response = TestClient(create_app(plane=plane)).get("/api/catalog/datasets")
 
     assert response.status_code == 200
-    payload = response.json()[0]
+    payload = response.json()["items"][0]
     assert payload["tables"] == 0
     assert payload["documents"] == 1
     assert payload["document_pages"] == 1

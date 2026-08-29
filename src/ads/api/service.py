@@ -2713,60 +2713,96 @@ class ControlPlane:
                 )
         return sources
 
-    def dataset_catalog(self) -> list[dict[str, Any]]:
-        """Row-free summaries backing the Datasets product surface."""
-        catalog: list[dict[str, Any]] = []
-        for source in self.data_sources():
-            item = dict(source)
-            try:
-                profile = self.source_profile(source["source_id"])
-                tables = profile["tables"]
-                documents = profile["documents"]
-                columns = [column for table in tables for column in table["columns"]]
-                item.update(
-                    {
-                        "tables": len(tables),
-                        "rows": sum(table["rows"] for table in tables),
-                        "columns": sum(table["columns_count"] for table in tables),
-                        "candidate_keys": sum(len(table["candidate_keys"]) for table in tables),
-                        "quality_issues": sum(len(table["issues"]) for table in tables),
-                        "sensitive_columns": sum(
-                            column["sensitivity"] == "pii" for column in columns
-                        ),
-                        "table_summaries": [
-                            {
-                                "name": table["name"],
-                                "format": table["format"],
-                                "rows": table["rows"],
-                                "columns": table["columns_count"],
-                                "candidate_keys": len(table["candidate_keys"]),
-                                "issues": table["issues"],
-                            }
-                            for table in tables
-                        ],
-                        # A PDF-only source has no tables, so every table-derived
-                        # field above is zero and the row read as empty/broken
-                        # (#69). Carry a document summary too so the surface can
-                        # show what such a source actually contains.
-                        "documents": len(documents),
-                        "document_pages": sum(
-                            document.get("pages", 0) for document in documents
-                        ),
-                        "document_summaries": [
-                            {
-                                "name": document["name"],
-                                "format": document.get("format", "pdf"),
-                                "pages": document.get("pages", 0),
-                            }
-                            for document in documents
-                        ],
-                        "privacy": profile["privacy"],
-                    }
-                )
-            except (KeyError, OSError, ValueError) as exc:
-                item["profile_error"] = str(exc)
-            catalog.append(item)
-        return catalog
+    #: Cap on `page_size` so a caller cannot ask the server to profile an
+    #: unbounded slice in one request and undo the reason pagination exists.
+    _DATASET_PAGE_MAX = 100
+
+    def dataset_catalog(
+        self, *, search: str | None = None, page: int = 1, page_size: int = 25
+    ) -> dict[str, Any]:
+        """Paginated, searchable row-free summaries backing /datasets.
+
+        Profiling is the cost here: `source_profile()` re-measures a source,
+        and the old catalog profiled *every* source on *every* load, so the
+        page slowed without bound as datasets accumulated (#72) -- a single
+        121 MB source alone once cost 4.91s of a 5.22s load. Listing sources
+        and searching their labels is cheap; only the page actually shown is
+        profiled, so the per-load cost tracks page size, not the total.
+        """
+        page_size = max(1, min(page_size, self._DATASET_PAGE_MAX))
+        page = max(1, page)
+        sources = self.data_sources()
+        needle = (search or "").strip().casefold()
+        if needle:
+            sources = [
+                source
+                for source in sources
+                if needle in str(source.get("label", "")).casefold()
+            ]
+        # Stable order so a given page holds the same rows across loads;
+        # data_sources() already sorts within each root but not across them.
+        sources.sort(key=lambda source: str(source.get("label", "")).casefold())
+        total = len(sources)
+        start = (page - 1) * page_size
+        window = sources[start : start + page_size]
+        return {
+            "items": [self._dataset_summary(source) for source in window],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def _dataset_summary(self, source: dict[str, Any]) -> dict[str, Any]:
+        """Profile one source into its row-free catalog entry."""
+        item = dict(source)
+        try:
+            profile = self.source_profile(source["source_id"])
+            tables = profile["tables"]
+            documents = profile["documents"]
+            columns = [column for table in tables for column in table["columns"]]
+            item.update(
+                {
+                    "tables": len(tables),
+                    "rows": sum(table["rows"] for table in tables),
+                    "columns": sum(table["columns_count"] for table in tables),
+                    "candidate_keys": sum(len(table["candidate_keys"]) for table in tables),
+                    "quality_issues": sum(len(table["issues"]) for table in tables),
+                    "sensitive_columns": sum(
+                        column["sensitivity"] == "pii" for column in columns
+                    ),
+                    "table_summaries": [
+                        {
+                            "name": table["name"],
+                            "format": table["format"],
+                            "rows": table["rows"],
+                            "columns": table["columns_count"],
+                            "candidate_keys": len(table["candidate_keys"]),
+                            "issues": table["issues"],
+                        }
+                        for table in tables
+                    ],
+                    # A PDF-only source has no tables, so every table-derived
+                    # field above is zero and the row read as empty/broken
+                    # (#69). Carry a document summary too so the surface can
+                    # show what such a source actually contains.
+                    "documents": len(documents),
+                    "document_pages": sum(
+                        document.get("pages", 0) for document in documents
+                    ),
+                    "document_summaries": [
+                        {
+                            "name": document["name"],
+                            "format": document.get("format", "pdf"),
+                            "pages": document.get("pages", 0),
+                        }
+                        for document in documents
+                    ],
+                    "privacy": profile["privacy"],
+                }
+            )
+        except (KeyError, OSError, ValueError) as exc:
+            item["profile_error"] = str(exc)
+        return item
 
     def source_path(self, source_id: str) -> Path:
         candidates = [root / source_id for root in self.source_roots]
@@ -5745,8 +5781,10 @@ def create_app(
         }
 
     @app.get("/api/catalog/datasets")
-    def dataset_catalog() -> list[dict[str, Any]]:
-        return plane.dataset_catalog()
+    def dataset_catalog(
+        search: str | None = None, page: int = 1, page_size: int = 25
+    ) -> dict[str, Any]:
+        return plane.dataset_catalog(search=search, page=page, page_size=page_size)
 
     @app.get("/api/catalog/experiments")
     def experiment_catalog() -> list[dict[str, Any]]:

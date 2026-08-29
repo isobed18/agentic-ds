@@ -115,6 +115,14 @@ export interface DatasetSummary {
   privacy?: string;
 }
 
+/** One page of {@link DatasetSummary}, with the unfiltered total behind it. */
+export interface DatasetPage {
+  items: DatasetSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface ModelSummary {
   artifact_id: string;
   run_id: string;
@@ -866,7 +874,14 @@ export const api = {
     request<SourceProfile>(`/api/data-sources/${encodeURIComponent(id)}/profile`),
   defaultStagingPipeline: (id: string) =>
     request<PipelineBlueprint>(`/api/data-sources/${encodeURIComponent(id)}/pipeline-blueprint`),
-  datasets: () => request<DatasetSummary[]>("/api/catalog/datasets"),
+  datasets: (opts: { search?: string; page?: number; pageSize?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.search) params.set("search", opts.search);
+    if (opts.page) params.set("page", String(opts.page));
+    if (opts.pageSize) params.set("page_size", String(opts.pageSize));
+    const query = params.toString();
+    return request<DatasetPage>(`/api/catalog/datasets${query ? `?${query}` : ""}`);
+  },
 
   /**
    * Upload one file. Omit `sourceId` for the first file of a new group and pass
