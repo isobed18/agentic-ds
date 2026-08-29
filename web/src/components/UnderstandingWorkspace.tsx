@@ -200,11 +200,11 @@ function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact }
   );
 }
 
-function BranchNode({ title, files, steps, artifactIds, onClick, onOpenArtifact }: { title: string; files: RoutedSourceFile[]; steps: RoutingSubstep[]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+export function BranchNode({ title, files, steps, artifactIds, onClick, onOpenArtifact }: { title: string; files: RoutedSourceFile[]; steps: RoutingSubstep[]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   const status: ProgressStatus = steps.some((step) => step.status === "failed") ? "failed" : steps.some((step) => step.status === "running") ? "running" : steps.every((step) => step.status === "complete") ? "complete" : "pending";
   const secondary = steps.find((step) => step.detail)?.detail;
   return <div className="relative"><button type="button" onClick={onClick} className={cx("w-full rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", status === "running" && "border-brand-400 ring-4 ring-brand-50", status === "failed" && "border-stop-300")}>
-    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-ink">{title}</p><p className="mt-0.5 text-[10px] text-ink-mute">{t("{count} files", { count: files.length })}</p></div><StatusMark status={status} /></div>
+    <div className="flex items-start gap-3"><StatusMark status={status} /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-ink">{title}</p><p className="mt-0.5 text-[10px] text-ink-mute">{t("{count} files", { count: files.length })}</p></div></div>
     <div className="mt-3 flex flex-wrap gap-1">{files.slice(0, 3).map((file) => <span key={file.name} title={file.name} className="max-w-[120px] truncate rounded-md bg-surface-sunken px-2 py-1 text-[9px] font-medium text-ink-mute">{file.name}</span>)}{files.length > 3 && <span className="rounded-md bg-surface-sunken px-2 py-1 text-[9px] text-ink-faint">+{files.length - 3}</span>}</div>
     {secondary && <p className="mt-2 text-[9px] font-medium text-ink-mute">{t(secondary)}</p>}
     <ol className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">{steps.map((step) => <li key={step.id} className={cx("min-w-0 text-[10px]", step.status === "running" ? "font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "text-stop-700" : "text-ink-faint")}><span className="mr-1">{step.status === "complete" ? "✓" : step.status === "running" ? "●" : step.status === "failed" ? "!" : "○"}</span>{t(step.label)}</li>)}</ol>
