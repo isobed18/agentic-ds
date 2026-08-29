@@ -150,6 +150,7 @@ const TR: Record<string, string> = {
   "Or upload files — CSV, Parquet, Excel. Several files become one dataset.": "Ya da dosya yükleyin — CSV, Parquet, Excel. Birkaç dosya tek veri seti olur.",
   "on the server, or upload them below.": "sunucuya koyun ya da aşağıdan yükleyin.",
   "Uploading…": "Yükleniyor…",
+  "Uploading {name}": "{name} yükleniyor",
   "issues": "sorun",
   "Reading the data and its schema…": "Veri ve şeması okunuyor…",
   "Applied when the run continues. Nothing below is decided yet.": "Koşu devam ettiğinde uygulanır. Aşağıdakilerin hiçbiri henüz kararlaştırılmadı.",
