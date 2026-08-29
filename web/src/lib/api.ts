@@ -676,6 +676,15 @@ export interface Hardening {
  */
 let redirectingToLogin = false;
 
+// Carries the HTTP status so callers can branch on it (e.g. retry a 409
+// automation-revision conflict) without pattern-matching the message string.
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   // The server composes some panel prose around measured values, so it needs to
   // know the language at fetch time; it cannot be translated afterwards.
@@ -710,7 +719,7 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs?: number):
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 240)}` : ""}`);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 240)}` : ""}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -763,6 +772,32 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ expected_revision: expectedRevision, changes }),
     }),
+  /**
+   * #87: a rename (one fast PUT) and a large batch upload (whose final PUT binds
+   * the new source) race on the same automation revision. Whichever lands first
+   * bumps the revision, so the slower flow's PUT carries a now-stale
+   * `expected_revision` and the server rejects it with 409 — dropping the change
+   * with no retry and no sign to the user. For the upload this orphaned the just
+   * -uploaded files, unattached to the project that was renamed. Each update
+   * touches only its own disjoint fields (name vs source_id), so re-applying the
+   * same change onto the latest revision cannot clobber the other flow: on a
+   * conflict, refetch the current revision and retry.
+   */
+  async updateAutomationSafely(
+    id: string,
+    expectedRevision: number,
+    changes: Record<string, unknown>,
+  ): Promise<AutomationDefinition> {
+    let revision = expectedRevision;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await api.updateAutomation(id, revision, changes);
+      } catch (caught) {
+        if (attempt >= 3 || !(caught instanceof ApiError) || caught.status !== 409) throw caught;
+        revision = (await api.automation(id)).revision;
+      }
+    }
+  },
   deleteAutomation: (id: string) =>
     request<{ automation_id: string; definitions: number; revisions: number }>(
       `/api/automations/${encodeURIComponent(id)}`,
