@@ -16,6 +16,14 @@ describe("the automation data controls", () => {
     expect(language).toBeGreaterThan(addFiles);
   });
 
+  it("discards an abandoned empty data project when the editor unmounts (#83)", () => {
+    // "+ New data project" persists a backend record before any file is chosen.
+    // Leaving without a source used to strand it in the library forever; the
+    // editor now discards it on unmount.
+    expect(SOURCE).toContain("isAbandonedDraft(automation, sourceId)");
+    expect(SOURCE).toContain("api.deleteAutomation(automation!.automation_id)");
+  });
+
   it("surfaces the human gate escalation so a stuck run can be answered (#81)", () => {
     // The gate-answering UI (ApprovalCard) was only ever rendered from the
     // unrouted Workflows page, so an `awaiting_human` run sat stuck with no

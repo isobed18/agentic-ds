@@ -9,7 +9,7 @@ import {
   UnderstandingAndProposal,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
-import { automationView, preferredExecution } from "../components/automationWorkspaceState";
+import { automationView, isAbandonedDraft, preferredExecution } from "../components/automationWorkspaceState";
 import { Badge, Empty, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -124,6 +124,19 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [advancedGraph, setAdvancedGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // Discard a "+ New data project" that was created but never given a file, so
+  // leaving the editor does not strand an empty "Untitled automation" card in
+  // the library forever (#83). The cleanup reads the latest state through a ref
+  // because an unmount-only effect would otherwise close over stale values.
+  const abandonRef = useRef({ automation, sourceId });
+  abandonRef.current = { automation, sourceId };
+  useEffect(() => () => {
+    const { automation, sourceId } = abandonRef.current;
+    if (isAbandonedDraft(automation, sourceId)) {
+      void api.deleteAutomation(automation!.automation_id).catch(() => { /* best-effort cleanup */ });
+    }
+  }, []);
 
   const refreshAutomation = useCallback(async () => {
     const [record, history] = await Promise.all([

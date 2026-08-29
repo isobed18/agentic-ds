@@ -1,7 +1,39 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunSummary, StagingWorkspace } from "../lib/api";
-import { automationView, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
+import type { AutomationDefinition, RunSummary, StagingWorkspace } from "../lib/api";
+import { automationView, isAbandonedDraft, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
+
+describe("discarding an abandoned data project (#83)", () => {
+  const automation = (over: Partial<AutomationDefinition> = {}) => ({
+    schema_version: "1", automation_id: "automation-000000000001", name: "Untitled automation",
+    status: "draft", revision: 1, source_id: null, pipeline_blueprint: null,
+    pipeline_layout: { version: "1", nodes: [], collapsed_branches: [] },
+    execution_ids: [], created_at: "", updated_at: "",
+    ...over,
+  }) as unknown as AutomationDefinition;
+
+  it("discards a draft that never got a source or a run", () => {
+    expect(isAbandonedDraft(automation(), "")).toBe(true);
+  });
+
+  it("keeps one where a source was chosen (locally or on the record)", () => {
+    expect(isAbandonedDraft(automation(), "upload:abc")).toBe(false);
+    expect(isAbandonedDraft(automation({ source_id: "upload:abc" }), "")).toBe(false);
+  });
+
+  it("keeps one that has already been executed", () => {
+    expect(isAbandonedDraft(automation({ execution_ids: ["run-a1b2c3d4"] as unknown as AutomationDefinition["execution_ids"] }), "")).toBe(false);
+  });
+
+  it("keeps a saved or errored project with real content behind it", () => {
+    expect(isAbandonedDraft(automation({ status: "saved" }), "")).toBe(false);
+    expect(isAbandonedDraft(automation({ status: "error" }), "")).toBe(false);
+  });
+
+  it("never touches a record that has not loaded yet", () => {
+    expect(isAbandonedDraft(null, "")).toBe(false);
+  });
+});
 
 describe("automation progressive disclosure", () => {
   it("never shows a graph before data exists", () => {
