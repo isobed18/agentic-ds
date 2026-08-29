@@ -21,7 +21,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ads.agents.runtime import DEFAULT_AGENT_RUNTIME_POLICY, AgentRuntimePolicy
 from ads.api import i18n
@@ -140,7 +140,7 @@ from ads.staging import (
     document_engine_catalog,
     validate_executable_blueprint,
 )
-from ads.store import ArtifactStore
+from ads.store import ArtifactNotFoundError, ArtifactStore
 
 # Kesif (dosya tanima) opsiyonel bir ekstra: `.[kesif]`. Kurulu degilse
 # profil ciktisi kesif alanlari olmadan uretilir, hicbir sey kirilmaz.
@@ -2091,6 +2091,46 @@ class ControlPlane:
         )
         self._persist_runtime(runtime)
 
+        # #64: reuse a prior extraction of byte-identical documents rather than
+        # paying the full (minutes-long) OCR cost again. Keyed on content, so a
+        # re-upload with a fresh source_id and mtime — which `_source_fingerprint`
+        # could never recognise — still hits.
+        content_fingerprint = self._document_content_fingerprint(runtime.source_id)
+        cache_path = (
+            self._document_cache_path(content_fingerprint, engine, dict(component.settings))
+            if content_fingerprint is not None
+            else None
+        )
+        if cache_path is not None:
+            cached = self._reuse_cached_extraction(cache_path, engine)
+            if cached is not None:
+                ref = self.store.put(
+                    cached,
+                    run_id=runtime.run_id,
+                    stage_exec_id="document_understanding",
+                    name=f"document_{engine}",
+                )
+                runtime.configuration.pop("document_extraction_error", None)
+                runtime.configuration["document_extraction_artifact_id"] = ref.artifact_id
+                runtime.configuration["document_extraction_duration_seconds"] = (
+                    cached.duration_seconds
+                )
+                runtime.events.append(
+                    {
+                        "event": "document_understanding_ready",
+                        "at": _now(),
+                        "engine": engine,
+                        "artifact_id": ref.artifact_id,
+                        "documents": len(cached.documents),
+                        "pages": sum(item.page_count for item in cached.documents),
+                        "reused_cache": True,
+                    }
+                )
+                runtime.updated_at = _now()
+                self._persist_runtime(runtime)
+                self._persist_staging_workspace(runtime)
+                return
+
         def record_file_progress(name: str, payload: dict[str, Any]) -> None:
             with self._lock:
                 runtime.events.append(
@@ -2145,6 +2185,11 @@ class ControlPlane:
                     }
                 )
             else:
+                # Only a clean extraction is cached: a partial failure may be
+                # transient, so a re-upload should get a fresh attempt rather
+                # than a memoised error.
+                if cache_path is not None:
+                    self._write_document_cache(cache_path, ref.artifact_id)
                 runtime.events.append(
                     {
                         "event": "document_understanding_ready",
@@ -2853,6 +2898,80 @@ class ControlPlane:
                 json.dumps({"fingerprint": fingerprint, "profile": profile}), encoding="utf-8"
             )
             temporary.replace(path)
+        except OSError:
+            pass
+
+    def _document_content_fingerprint(self, source_id: str) -> str | None:
+        """Hash the bytes of a source's documents so an identical re-upload is a cache hit.
+
+        #64: OCR reran from scratch on a byte-identical PDF because the only
+        skip-check keyed on `_source_fingerprint`, which is name/size/mtime — a
+        second upload gets a fresh source_id and a new mtime, so it never
+        matched. This reads document content instead. The cost is bounded to the
+        files the extractor would read anyway, and only the documents, not the
+        whole (possibly 121 MB) source. The relative path is folded in because
+        the extraction embeds each file's name in `source_file` and candidate
+        ids, so identical bytes under a different name are a different output.
+        Returns None when there are no extractable documents, so the caller
+        skips the cache rather than keying on emptiness.
+        """
+        root = Path(self.source_path(source_id))
+        digest = hashlib.sha256()
+        found = False
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.suffix.lower() in PDF_SUFFIXES:
+                found = True
+                digest.update(str(path.relative_to(root)).encode("utf-8"))
+                digest.update(b"\x00")
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda stream=stream: stream.read(1 << 20), b""):
+                        digest.update(chunk)
+                digest.update(b"\x00")
+        return digest.hexdigest() if found else None
+
+    def _document_cache_path(
+        self, content_fingerprint: str, engine: str, settings: dict[str, Any]
+    ) -> Path:
+        """Where a reusable extraction is recorded, keyed by content + engine + settings.
+
+        Settings are part of the key because they change the output (OCR mode,
+        table detection), so a reuse only fires when the inputs the extractor
+        actually saw are identical.
+        """
+        settings_key = json.dumps(
+            settings, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+        )
+        digest = hashlib.sha256(
+            f"{content_fingerprint}\x00{engine}\x00{settings_key}".encode()
+        ).hexdigest()
+        return self.store.root.parent / "cache" / "documents" / f"{digest}.json"
+
+    def _reuse_cached_extraction(
+        self, cache_path: Path, engine: str
+    ) -> DocumentExtraction | None:
+        """Load a previously extracted, fully successful artifact if one is on record."""
+        if not cache_path.is_file():
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # A truncated cache file is a performance problem, never a
+            # correctness one: fall through and re-extract.
+            return None
+        artifact_id = payload.get("artifact_id") if isinstance(payload, dict) else None
+        if not isinstance(artifact_id, str) or not self.store.exists(artifact_id):
+            return None
+        try:
+            return self.store.load(artifact_id, DocumentExtraction)
+        except (ArtifactNotFoundError, ValidationError):
+            return None
+
+    def _write_document_cache(self, cache_path: Path, artifact_id: str) -> None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = cache_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"artifact_id": artifact_id}), encoding="utf-8")
+            temporary.replace(cache_path)
         except OSError:
             pass
 

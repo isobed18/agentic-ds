@@ -226,6 +226,69 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
         plane.start_staged_run(staged["run_id"])
 
 
+def test_identical_document_content_reuses_extraction_across_uploads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#64: re-uploading byte-identical PDFs must not re-run OCR.
+
+    The only skip-check keyed on `_source_fingerprint` (name/size/mtime), so a
+    second upload — a fresh source_id with a new mtime, exactly the #53 scenario
+    — never matched and paid the full extraction cost again. Two different owners
+    are used so the upload dedupe does not collapse them into one source.
+    """
+    pdf_path = tmp_path / "brief.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=400)
+    writer.add_metadata({"/Title": "Local briefing"})
+    with pdf_path.open("wb") as stream:
+        writer.write(stream)
+    content = pdf_path.read_bytes()
+
+    from ads.api import service as service_module
+
+    real_extract = service_module.extract_document_directory
+    calls = {"count": 0}
+
+    def counting_extract(*args, **kwargs):
+        calls["count"] += 1
+        return real_extract(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "extract_document_directory", counting_extract)
+
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: object()
+
+    def _stage_documents(name: str, owner: str) -> dict:
+        uploaded = plane.upload(name, content, owner=owner)
+        blueprint = plane.default_staging_pipeline(uploaded["source_id"])
+        node = next(
+            item for item in blueprint["components"] if item["id"] == "understand-documents"
+        )
+        node["settings"]["engine"] = "text_layer"
+        node["settings"]["ocr"] = "never"
+        staged = plane.stage_run(uploaded["source_id"], {"pipeline_blueprint": blueprint})
+        deadline = time.time() + 10
+        while (
+            plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline
+        ):
+            time.sleep(0.02)
+        return plane.progress(staged["run_id"])
+
+    first = _stage_documents("brief.pdf", owner="ishak-ads")
+    assert first["status"] == "staged"
+    assert calls["count"] == 1
+
+    second = _stage_documents("brief.pdf", owner="emre-ads")
+    assert second["status"] == "staged"
+    assert calls["count"] == 1, "identical PDF content re-ran extraction instead of reusing it"
+    reused = [
+        event
+        for event in second["events"]
+        if event["event"] == "document_understanding_ready" and event.get("reused_cache")
+    ]
+    assert reused, "second run did not report a cache reuse"
+
+
 def test_http_start_and_progress_vertical_slice(tmp_path: Path, monkeypatch) -> None:
     plane = _plane(tmp_path)
     entered = threading.Event()
