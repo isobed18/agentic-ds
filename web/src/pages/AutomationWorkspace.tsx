@@ -120,6 +120,10 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [reuseCache, setReuseCache] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Per-file upload progress and a handle to abort it, so a large file no
+  // longer shows a static "Uploading…" with no percentage and no way out (#84).
+  const [uploadProgress, setUploadProgress] = useState<{ index: number; total: number; name: string; fraction: number } | null>(null);
+  const uploadAbort = useRef<AbortController | null>(null);
   const [dragging, setDragging] = useState(false);
   const [advancedGraph, setAdvancedGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,10 +231,28 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       setError(t("The data project is still loading. Try again in a moment."));
       return;
     }
+    const controller = new AbortController();
+    uploadAbort.current = controller;
     setUploading(true); setError(null);
-    try { let group: string | undefined; for (const file of selected) group = (await api.upload(file, group)).source_id; if (group) { const saved = await api.updateAutomation(automationId, automation.revision, { source_id: group }); setAutomation(saved); setSourceId(group); } }
-    catch (caught) { setError(messageOf(caught)); } finally { setUploading(false); }
+    try {
+      let group: string | undefined;
+      for (let i = 0; i < selected.length; i++) {
+        const file = selected[i];
+        setUploadProgress({ index: i, total: selected.length, name: file.name, fraction: 0 });
+        const result = await api.upload(file, group, {
+          signal: controller.signal,
+          onProgress: (fraction) => setUploadProgress({ index: i, total: selected.length, name: file.name, fraction }),
+        });
+        group = result.source_id;
+      }
+      if (group) { const saved = await api.updateAutomation(automationId, automation.revision, { source_id: group }); setAutomation(saved); setSourceId(group); }
+    }
+    // A cancelled upload is a deliberate action, not an error to report.
+    catch (caught) { if ((caught as { name?: string })?.name !== "AbortError") setError(messageOf(caught)); }
+    finally { setUploading(false); setUploadProgress(null); uploadAbort.current = null; }
   }
+
+  function cancelUpload() { uploadAbort.current?.abort(); }
 
   async function selectExistingSource(nextSourceId: string) {
     if (!automation || !nextSourceId || busy) return;
@@ -313,6 +335,20 @@ function AutomationEditor({ automationId }: { automationId: string }) {
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
       {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
+      {/* Live upload progress with a working cancel: an accidental large file
+          can be aborted instead of forcing a tab refresh (#84). */}
+      {uploading && uploadProgress && (
+        <div className="mx-4 mt-3 flex shrink-0 items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2 text-xs text-ink">
+              <span className="truncate">{t("Uploading {name}", { name: uploadProgress.name })}{uploadProgress.total > 1 ? ` (${uploadProgress.index + 1}/${uploadProgress.total})` : ""}</span>
+              <span className="shrink-0 text-ink-mute">{Math.round(uploadProgress.fraction * 100)}%</span>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-sunken"><div className="h-full rounded-full bg-brand-500 transition-[width]" style={{ width: `${Math.round(uploadProgress.fraction * 100)}%` }} /></div>
+          </div>
+          <button type="button" className="btn-ghost !py-1 text-xs text-stop-700" onClick={cancelUpload}>{t("Cancel")}</button>
+        </div>
+      )}
       {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
       <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>

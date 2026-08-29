@@ -887,19 +887,42 @@ export const api = {
    * Upload one file. Omit `sourceId` for the first file of a new group and pass
    * the returned id for every file after it, so a multi-table dataset arrives
    * as one source rather than several.
+   *
+   * Uses XHR rather than fetch so an upload can report progress and be aborted:
+   * fetch exposes neither, so a large file left a static "Uploading…" with no
+   * percentage and no way to cancel except refreshing the tab (#84). `signal`
+   * cancels the in-flight request; `onProgress` receives 0..1 as bytes are sent.
    */
-  upload: async (file: File, sourceId?: string) => {
-    const query = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : "";
-    const res = await fetch(`/api/uploads/${encodeURIComponent(file.name)}${query}`, {
-      method: "POST",
-      body: file,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(body ? JSON.parse(body).detail ?? body : `${res.status}`);
-    }
-    return (await res.json()) as { source_id: string; label: string; files: string[] };
-  },
+  upload: (
+    file: File,
+    sourceId?: string,
+    opts: { signal?: AbortSignal; onProgress?: (fraction: number) => void } = {},
+  ) =>
+    new Promise<{ source_id: string; label: string; files: string[]; reused?: boolean }>((resolve, reject) => {
+      const query = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : "";
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/uploads/${encodeURIComponent(file.name)}${query}`);
+      xhr.upload.onprogress = (event) => {
+        if (opts.onProgress && event.lengthComputable) opts.onProgress(event.loaded / event.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { reject(new Error("Malformed upload response")); }
+          return;
+        }
+        let detail = xhr.responseText;
+        try { detail = JSON.parse(xhr.responseText).detail ?? detail; } catch { /* not JSON */ }
+        reject(new Error(detail || String(xhr.status)));
+      };
+      xhr.onerror = () => reject(new Error("Upload failed"));
+      xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+      if (opts.signal) {
+        if (opts.signal.aborted) { xhr.abort(); return; }
+        opts.signal.addEventListener("abort", () => xhr.abort(), { once: true });
+      }
+      xhr.send(file);
+    }),
   experiments: () => request<ExperimentSummary[]>("/api/catalog/experiments"),
   models: () => request<ModelSummary[]>("/api/catalog/models"),
   reports: () => request<ReportSummary[]>("/api/catalog/reports"),

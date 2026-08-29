@@ -16,6 +16,18 @@ describe("the automation data controls", () => {
     expect(language).toBeGreaterThan(addFiles);
   });
 
+  it("shows upload progress and a working cancel button (#84)", () => {
+    // A large file used to show a static "Uploading…" with no percentage and no
+    // way out but a tab refresh. The flow now drives an AbortController and a
+    // per-file progress bar.
+    expect(SOURCE).toContain("new AbortController()");
+    expect(SOURCE).toContain("signal: controller.signal");
+    expect(SOURCE).toContain("onProgress:");
+    expect(SOURCE).toContain("setUploadProgress");
+    expect(SOURCE).toContain("onClick={cancelUpload}");
+    expect(SOURCE).toContain('t("Uploading {name}"');
+  });
+
   it("discards an abandoned empty data project when the editor unmounts (#83)", () => {
     // "+ New data project" persists a backend record before any file is chosen.
     // Leaving without a source used to strand it in the library forever; the
