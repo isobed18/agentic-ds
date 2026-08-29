@@ -59,6 +59,190 @@ EDGE_LINKS = {
     "cardinality": "1:1",
     "overlap_rate": 1.0,
 }
+EDGE_TAGS = {
+    "from": "tags.csv",
+    "from_columns": ["movieId"],
+    "to": "movies.csv",
+    "to_columns": ["movieId"],
+    "cardinality": "N:1",
+    "overlap_rate": 1.0,
+}
+
+WHOLE_TRUTH = _truth(
+    [EDGE_RATINGS, EDGE_LINKS],
+    files={
+        "movies.csv": {"route": "structured"},
+        "README.txt": {"route": "documents", "currently_misrouted_as_structured": True},
+    },
+    primary_keys={
+        "movies.csv": ["movieId"],
+        "ratings.csv": ["userId", "movieId"],
+        "tags.csv": [],
+    },
+    implicit_entities=[
+        {
+            "key": "userId",
+            "appears_in": ["ratings.csv", "tags.csv"],
+            "has_parent_table": False,
+        }
+    ],
+    quality_issues=[
+        {
+            "table": "links.csv",
+            "column": "tmdbId",
+            "issue": "missing values",
+            "missing_rows": 8,
+        },
+        {
+            "table": "movies.csv",
+            "column": "genres",
+            "issue": "pipe-delimited multi-value column, not categorical",
+        },
+    ],
+)
+
+WHOLE_RUN = {
+    "relationships": [dict(EDGE_RATINGS), dict(EDGE_LINKS)],
+    "files": {
+        "movies.csv": {"route": "structured"},
+        "README.txt": {"route": "documents"},
+    },
+    "primary_keys": {
+        "movies": ["movie_id"],
+        "ratings": ["user_id", "movie_id"],
+        "tags": [],
+    },
+    "implicit_entities": [
+        {
+            "key": "user_id",
+            "appears_in": ["ratings", "tags"],
+            "has_parent_table": False,
+        }
+    ],
+    "quality_issues": [
+        {
+            "table": "links",
+            "column": "tmdb_id",
+            "issue": "missing_values",
+            "missing_rows": 8,
+        },
+        {
+            "table": "movies",
+            "column": "genres",
+            "issue": "multi_value_delimited",
+        },
+    ],
+}
+
+
+def test_a_whole_understanding_answer_reports_each_category_score() -> None:
+    report = score_module.score(WHOLE_TRUTH, WHOLE_RUN)
+
+    assert report["routing"]["accuracy"] == 1.0
+    assert report["primary_keys"]["accuracy"] == 1.0
+    assert report["implicit_entities"]["recall"] == 1.0
+    assert report["implicit_entities"]["parent_table_accuracy"] == 1.0
+    assert report["quality"]["recall"] == 1.0
+    assert report["quality"]["precision"] == 1.0
+    assert report["quality"]["detail_accuracy"] == 1.0
+
+
+def test_a_stage_response_scores_routes_and_candidate_keys_from_its_profile() -> None:
+    truth = _truth(
+        [],
+        files={"movies.csv": {"route": "structured"}},
+        primary_keys={"movies.csv": ["movieId"], "tags.csv": []},
+    )
+    stage_response = {
+        "run_id": "run-1",
+        "profile": {
+            "source_files": [{"name": "movies.csv", "route": "structured"}],
+            "tables": [
+                {"name": "movies", "candidate_keys": [["movie_id"]]},
+                {"name": "tags", "candidate_keys": []},
+            ],
+            "relationships": [],
+        },
+    }
+
+    report = score_module.score(truth, stage_response)
+
+    assert report["routing"]["accuracy"] == 1.0
+    assert report["primary_keys"]["accuracy"] == 1.0
+
+
+def test_wrong_routes_move_the_routing_score() -> None:
+    bad = {**WHOLE_RUN, "files": {**WHOLE_RUN["files"], "README.txt": {"route": "structured"}}}
+
+    routing = score_module.score(WHOLE_TRUTH, bad)["routing"]
+
+    assert routing["accuracy"] == 0.5
+    assert routing["wrong"][0]["file"] == "readme.txt"
+    assert routing["wrong"][0]["known_current_failure"] is True
+
+
+def test_wrong_composite_and_invented_absent_keys_move_the_key_score() -> None:
+    bad = {
+        **WHOLE_RUN,
+        "primary_keys": {
+            "movies": ["movie_id"],
+            "ratings": ["movie_id"],
+            "tags": ["tag"],
+        },
+    }
+
+    keys = score_module.score(WHOLE_TRUTH, bad)["primary_keys"]
+
+    assert keys["accuracy"] == pytest.approx(1 / 3, abs=0.0001)
+    assert keys["absence_accuracy"] == 0.0
+    assert {item["table"] for item in keys["wrong"]} == {"ratings", "tags"}
+
+
+def test_missing_an_entity_without_a_parent_moves_the_entity_score() -> None:
+    bad = {**WHOLE_RUN, "implicit_entities": []}
+
+    entities = score_module.score(WHOLE_TRUTH, bad)["implicit_entities"]
+
+    assert entities["recall"] == 0.0
+    assert entities["missed"]
+
+
+def test_inventing_a_parent_table_moves_the_entity_attribute_score() -> None:
+    bad_entity = {**WHOLE_RUN["implicit_entities"][0], "has_parent_table": True}
+    bad = {**WHOLE_RUN, "implicit_entities": [bad_entity]}
+
+    entities = score_module.score(WHOLE_TRUTH, bad)["implicit_entities"]
+
+    assert entities["recall"] == 1.0, "the shared user entity itself was noticed"
+    assert entities["parent_table_accuracy"] == 0.0
+    assert entities["wrong_parent_table"]
+
+
+def test_missed_and_invented_quality_findings_move_both_quality_scores() -> None:
+    bad = {
+        **WHOLE_RUN,
+        "quality_issues": [
+            WHOLE_RUN["quality_issues"][0],
+            {"table": "ratings", "column": "rating", "issue": "missing_values"},
+        ],
+    }
+
+    quality = score_module.score(WHOLE_TRUTH, bad)["quality"]
+
+    assert quality["recall"] == 0.5
+    assert quality["precision"] == 0.5
+    assert quality["missed"] and quality["unexpected"]
+
+
+def test_a_wrong_measured_quality_count_moves_detail_accuracy() -> None:
+    wrong_count = {**WHOLE_RUN["quality_issues"][0], "missing_rows": 7}
+    bad = {**WHOLE_RUN, "quality_issues": [wrong_count, WHOLE_RUN["quality_issues"][1]]}
+
+    quality = score_module.score(WHOLE_TRUTH, bad)["quality"]
+
+    assert quality["recall"] == 1.0, "the finding identity is still right"
+    assert quality["detail_accuracy"] == 0.0
+    assert quality["wrong_details"][0]["expected"] == 8
 
 
 def test_a_perfect_answer_scores_perfectly() -> None:
@@ -67,6 +251,31 @@ def test_a_perfect_answer_scores_perfectly() -> None:
     assert report["edges"]["recall"] == 1.0
     assert report["edges"]["precision"] == 1.0
     assert report["cardinality"]["accuracy"] == 1.0
+
+
+def test_the_recorded_relationship_baseline_remains_exact() -> None:
+    redundant = [
+        {
+            "from": child,
+            "from_columns": ["movieId"],
+            "to": "links.csv",
+            "to_columns": ["movieId"],
+        }
+        for child in ("ratings.csv", "tags.csv")
+    ]
+    truth = _truth(
+        [EDGE_RATINGS, EDGE_TAGS, EDGE_LINKS],
+        redundant_relationships=redundant,
+    )
+    measured = [dict(EDGE_RATINGS), dict(EDGE_TAGS), dict(EDGE_LINKS), *redundant]
+
+    report = score_module.score(truth, measured)
+
+    assert report["edges"]["recall"] == 1.0
+    assert report["edges"]["precision"] == 1.0
+    assert report["cardinality"]["accuracy"] == 1.0
+    assert report["overlap"]["within_tolerance"] == 3
+    assert report["overlap"]["scored_over"] == 3
 
 
 def test_confusing_one_to_one_with_many_to_one_is_caught() -> None:
