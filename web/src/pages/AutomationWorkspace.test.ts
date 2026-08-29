@@ -15,4 +15,18 @@ describe("the automation data controls", () => {
     expect(addFiles).toBeGreaterThan(picker);
     expect(language).toBeGreaterThan(addFiles);
   });
+
+  it("no longer shows a header save indicator that only tracked two fields (#79)", () => {
+    // The "Saved/Saving…/Unsaved changes" indicator read as a project-wide
+    // save status but only tracked the name field and the advanced pipeline
+    // graph -- and the advanced graph already has its own "Save workflow"
+    // button (PipelineBuilder). It was removed; nothing here should reference
+    // save state any more.
+    expect(SOURCE).not.toContain("saveState");
+    expect(SOURCE).not.toContain('t("Unsaved changes")');
+    const toolbar = SOURCE.match(/<div className="ml-auto flex items-center gap-2">([\s\S]*?)<\/div>/)?.[1] ?? "";
+    // LanguagePicker is now the last control in the toolbar.
+    expect(toolbar).toContain("<LanguagePicker");
+    expect(toolbar.indexOf("<span")).toBe(-1);
+  });
 });
