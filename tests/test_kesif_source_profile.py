@@ -23,7 +23,7 @@ pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
 import pandas as pd  # noqa: E402
 
 from ads.api import service as svc  # noqa: E402
-from ads.kesif.yonlendirici import Akis, yonlendir  # noqa: E402
+from ads.file_detection.router import Flow, route  # noqa: E402
 
 
 def _kaynak(kok: Path) -> Path:
@@ -57,7 +57,7 @@ def _profil_uret(kok: Path) -> tuple[dict, list[dict]]:
             "reason": "test",
             "table_names": [],
         })
-    ozet = svc._kesif_olcumu(kok.resolve(), source_files)
+    ozet = svc._measure_file_detection(kok.resolve(), source_files)
     return ozet, source_files
 
 
@@ -151,7 +151,7 @@ def test_olcum_cokerse_profil_yine_de_uretilir(tmp_path: Path, monkeypatch) -> N
     def _patlayan(*a, **kw):
         raise RuntimeError("simule edilmis olcum hatasi")
 
-    monkeypatch.setattr(svc, "_kesif_envanter", _patlayan)
+    monkeypatch.setattr(svc, "_file_inventory", _patlayan)
     ozet, dosyalar = _profil_uret(kok)
 
     assert ozet["kullanildi"] is False
@@ -164,7 +164,7 @@ def test_kesif_yokken_profil_yine_uretilir(tmp_path: Path, monkeypatch) -> None:
     kok = _kaynak(tmp_path / "kaynak")
     (kok / "a.csv").write_text("x,y\n1,2\n", encoding="utf-8")
 
-    monkeypatch.setattr(svc, "_kesif_envanter", None)
+    monkeypatch.setattr(svc, "_file_inventory", None)
     ozet, dosyalar = _profil_uret(kok)
 
     assert ozet == {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
@@ -180,14 +180,14 @@ def test_uzantisi_yalan_soyleyen_pdf_karantinaya_alinir(tmp_path: Path) -> None:
     bundan sonra o kolon uzerinde akil yurutuyordu.
     """
     from ads.api.service import ControlPlane
-    from ads.kesif.ornek_parti import _pdf_bayt
+    from ads.file_detection.sample_batch import _pdf_bytes
     from ads.store import ArtifactStore
 
     kaynak = tmp_path / "data" / "karisik"
     kaynak.mkdir(parents=True)
     pd.DataFrame({"id": [1, 2], "deger": ["a", "b"]}).to_csv(kaynak / "temiz.csv", index=False)
     (kaynak / "musteri_listesi.csv").write_bytes(
-        _pdf_bayt(["Aylik Faaliyet Raporu", "Ocak 2026 doneminde satis hacmi artti."])
+        _pdf_bytes(["Aylik Faaliyet Raporu", "Ocak 2026 doneminde satis hacmi artti."])
     )
 
     plane = ControlPlane(
@@ -248,13 +248,13 @@ def test_calisma_kitabi_yanlis_uzantiyla_da_aciliyor(tmp_path: Path) -> None:
     Sebep: "does not support .txt file format". Yani olcum dogru yapiliyor,
     sonra karar yine uzantiya birakiliyordu -- katmanin var olma sebebiyle ters.
     """
-    from ads.kesif.ornek_parti import _xlsx_bayt
+    from ads.file_detection.sample_batch import _xlsx_bytes
 
     yol = tmp_path / "rapor.txt"
-    yol.write_bytes(_xlsx_bayt())
+    yol.write_bytes(_xlsx_bytes())
 
-    k = yonlendir(yol)
+    k = route(yol)
 
     assert k.format == "xlsx"
-    assert k.akis is Akis.TABLO
+    assert k.akis is Flow.TABLE
     assert k.deterministik is True

@@ -234,7 +234,7 @@ def inspect(yol: Path) -> Report:
     rapor.bulgular.append(Finding(
         baslik=("Goruntuden tablo yapisi cikarildi" if tablo_mu
                 else "Goruntuden metin cikarildi"),
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama=(f"{len(sonuc.hucreler)} hucre, {len(sonuc.satirlar)} satir"
                   + (f", {sonuc.sutun_sayisi} sutun." if tablo_mu else ".")),
         kanitlar=[
@@ -246,7 +246,7 @@ def inspect(yol: Path) -> Report:
     if sayisal:
         rapor.bulgular.append(Finding(
             baslik="Sayisal hucreler taninmis",
-            onem=Severity.BILGI,
+            onem=Severity.INFO,
             aciklama=f"{len(sayisal)} hucre sayi bicimine uyuyor.",
             kanitlar=[
                 Evidence(olcum="ortalama guven",
@@ -263,7 +263,7 @@ def inspect(yol: Path) -> Report:
     if dusuk:
         rapor.bulgular.append(Finding(
             baslik=f"{len(dusuk)} hucre dusuk guvenle okundu",
-            onem=Severity.DIKKAT,
+            onem=Severity.WARNING,
             aciklama="Bu hucreler ayrica gozden gecirilmeli.",
             kanitlar=[Evidence(olcum=h.metin, deger=f"{h.guven:.3f}") for h in dusuk[:5]],
         ))
@@ -275,7 +275,7 @@ def turkish_unverified_finding() -> Finding:
     _, gerekce = model_supports_turkish()
     return Finding(
         baslik="Turkce metin dogrulanamadi — model sozlugu yetersiz",
-        onem=Severity.KRITIK,
+        onem=Severity.CRITICAL,
         aciklama=(
             "Tanima modelinin sozlugunde Turkce'ye ozgu harfler yok. Model "
             "bu harfleri uretemez; yerine ASCII benzerini koyar ve bunu "
@@ -305,15 +305,3 @@ def turkish_unverified_finding() -> Finding:
             ),
         ],
     )
-
-
-Hucre = Cell
-OcrSonuc = OcrResult
-rec_model_yolu = recognition_model_path
-model_sozlugu = model_dictionary
-turkce_kapsami = turkish_coverage
-turkce_sozlukte_var_mi = model_supports_turkish
-sayi_mi = is_number
-oku = read
-incele = inspect
-turkce_dogrulanamadi_bulgusu = turkish_unverified_finding

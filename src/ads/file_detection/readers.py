@@ -179,9 +179,3 @@ def read_workbook(yol: Path, secimler: dict[str, str],
         "sayisal_sutunlar": [str(k) for k in sayisal],
         "onizleme": df.head(satir).astype(str).to_dict(orient="records"),
     }
-
-
-oku_tablo = read_table
-oku_pdf = read_pdf
-oku_goruntu = read_image
-oku_calisma_kitabi = read_workbook

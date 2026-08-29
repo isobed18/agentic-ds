@@ -292,11 +292,3 @@ def detect_delimiter(ornek: str) -> DelimiterResult:
         return DelimiterResult(secilen, "dusuk", sayimlar)
 
     return DelimiterResult(",", "dusuk", sayimlar)
-
-
-KodlamaSonuc = EncodingResult
-kodlama_tespit = detect_encoding
-SayiBicimSonuc = NumberFormatResult
-sayi_bicimi_tespit = detect_number_format
-AyracSonuc = DelimiterResult
-ayrac_tespit = detect_delimiter

@@ -44,7 +44,7 @@ def inspect(yol: Path) -> Report:
     else:
         rapor.bulgular.append(Finding(
             baslik="Kodlama belirlendi",
-            onem=Severity.BILGI,
+            onem=Severity.INFO,
             aciklama=f"Dosya {kod.secilen} olarak okunuyor.",
             kanitlar=[Evidence(olcum=o, deger=d) for o, d in kod.kanitlar],
         ))
@@ -76,7 +76,7 @@ def inspect(yol: Path) -> Report:
     }
     rapor.bulgular.append(Finding(
         baslik="Ayrac belirlendi",
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama=f"Ayrac {ayr.ayrac!r}; her satirda tutarli.",
         kanitlar=[Evidence(olcum="aday sayimlari",
                         deger=", ".join(f"{k!r}={v}" for k, v in ayr.sayimlar.items()))],
@@ -154,7 +154,7 @@ def _encoding_finding(kod) -> Finding:
 
     return Finding(
         baslik="Kodlama belirsiz" + (" — karar verilemedi" if emin_degil else ""),
-        onem=Severity.KRITIK,
+        onem=Severity.CRITICAL,
         aciklama=aciklama,
         kanitlar=kanitlar,
         secenekler=secenekler,
@@ -165,7 +165,7 @@ def _number_finding(sutun: str, bic) -> Finding | None:
     if bic.guven == "dusuk":
         return Finding(
             baslik=f"'{sutun}' sutununda karisik sayi bicimi",
-            onem=Severity.KRITIK,
+            onem=Severity.CRITICAL,
             aciklama="Ayni sutunda hem Turkce hem Ingilizce bicimli sayi var. "
                      "Tek bir ayarla dogru okunamaz.",
             kanitlar=[
@@ -193,7 +193,7 @@ def _number_finding(sutun: str, bic) -> Finding | None:
     if bic.ondalik == ",":
         return Finding(
             baslik=f"'{sutun}' sutunu Turkce sayi biciminde",
-            onem=Severity.KRITIK,
+            onem=Severity.CRITICAL,
             aciklama="Ondalik ayraci virgul. Varsayilan okumada bu sutun "
                      "METNE doner ve butun sayisal analiz duser.",
             kanitlar=[
@@ -227,7 +227,7 @@ def _date_finding(sutun: str, adet: int, toplam: int, degerler: list[str]) -> Fi
     ornek = next((d for d in degerler if TARIH_KALIBI.match(d or "")), "")
     return Finding(
         baslik=f"'{sutun}' sutunu tarih gorunumlu",
-        onem=Severity.DIKKAT,
+        onem=Severity.WARNING,
         aciklama="Degerler tarih kalibina uyuyor ama tip cikariminda "
                  "metin/kategorik olarak gecer.",
         kanitlar=[
@@ -264,7 +264,7 @@ def _plain_text_report(rapor: Report, metin: str, kod, ayr) -> Report:
     }
     rapor.bulgular.append(Finding(
         baslik="Tablo degil, serbest metin",
-        onem=Severity.DIKKAT,
+        onem=Severity.WARNING,
         aciklama="Satirlar arasinda tutarli bir ayrac yok. Dosya tablo "
                  "olarak degil, metin olarak ele alinmali.",
         kanitlar=[
@@ -295,7 +295,7 @@ def _prose_safety_finding() -> Finding:
     """Serbest metin ajanin baglamina girer: talimat enjeksiyonu yuzeyi."""
     return Finding(
         baslik="Serbest metin ajan baglamina girecek",
-        onem=Severity.DIKKAT,
+        onem=Severity.WARNING,
         aciklama="Tablo disi icerik modele metin olarak ulasir. Belgeye "
                  "gomulu bir talimat, model tarafindan talimat sanilabilir.",
         kanitlar=[Evidence(olcum="icerik turu", deger="yapilandirilmamis metin")],
@@ -310,6 +310,3 @@ def _prose_safety_finding() -> Finding:
                     parametre={"mod": "ozet"}),
         ],
     )
-
-
-incele = inspect

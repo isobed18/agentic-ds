@@ -18,10 +18,10 @@ from openpyxl import Workbook
 # testlerini degil.
 pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
 
-from ads.kesif.formatlar import tablolu  # noqa: E402
-from ads.kesif.model import Onem  # noqa: E402
-from ads.kesif.okuyucu import oku_calisma_kitabi  # noqa: E402
-from ads.kesif.yonlendirici import Akis, yonlendir  # noqa: E402
+from ads.file_detection.formats import tabular  # noqa: E402
+from ads.file_detection.models import Severity  # noqa: E402
+from ads.file_detection.readers import read_workbook  # noqa: E402
+from ads.file_detection.router import Flow, route  # noqa: E402
 
 
 def _kitap(hedef: Path, bos_sayfa: bool = True, ikinci_tablo: bool = True) -> Path:
@@ -43,17 +43,17 @@ def _kitap(hedef: Path, bos_sayfa: bool = True, ikinci_tablo: bool = True) -> Pa
 
 
 def test_xlsx_kapsayici_degil_tablo_akisina_gidiyor(tmp_path: Path) -> None:
-    k = yonlendir(_kitap(tmp_path / "kitap.xlsx"))
+    k = route(_kitap(tmp_path / "kitap.xlsx"))
 
     assert k.format in {"xlsx", "xlsm"}
-    assert k.akis is Akis.TABLO, "XLSX artik kapsayici sayilmamali"
-    assert k.akis is not Akis.KAPSAYICI
+    assert k.akis is Flow.TABLE, "XLSX artik kapsayici sayilmamali"
+    assert k.akis is not Flow.CONTAINER
     assert k.deterministik is True
     assert any("calisma kitabi" in a for a, _ in k.kanitlar)
 
 
 def test_sayfalar_acilip_yapilari_olculuyor(tmp_path: Path) -> None:
-    sonuc = tablolu.incele_yapi(_kitap(tmp_path / "kitap.xlsx"))
+    sonuc = tabular.inspect_structure(_kitap(tmp_path / "kitap.xlsx"))
 
     assert not sonuc.hata
     adlar = {s.ad for s in sonuc.sayfalar}
@@ -64,12 +64,12 @@ def test_sayfalar_acilip_yapilari_olculuyor(tmp_path: Path) -> None:
 
 
 def test_birden_cok_tablo_sayfasi_tercih_sorusu_olarak_sunuluyor(tmp_path: Path) -> None:
-    rapor = tablolu.incele(_kitap(tmp_path / "kitap.xlsx"))
+    rapor = tabular.inspect(_kitap(tmp_path / "kitap.xlsx"))
 
     secimli = [b for b in rapor.bulgular if b.secenekler]
     assert len(secimli) == 1
     b = secimli[0]
-    assert b.onem is Onem.DIKKAT
+    assert b.onem is Severity.WARNING
     assert "TERCIH" in b.aciklama
     sayfalar = {s.parametre["sayfa"] for s in b.secenekler}
     assert sayfalar == {"satis", "stok"}
@@ -78,7 +78,7 @@ def test_birden_cok_tablo_sayfasi_tercih_sorusu_olarak_sunuluyor(tmp_path: Path)
 
 def test_tek_tablo_sayfasinda_secim_sorulmuyor(tmp_path: Path) -> None:
     """Tek sayfa varsa ortada bir tercih yok; gereksiz soru sorulmaz."""
-    rapor = tablolu.incele(
+    rapor = tabular.inspect(
         _kitap(tmp_path / "tek.xlsx", bos_sayfa=False, ikinci_tablo=False))
 
     assert not [b for b in rapor.bulgular if b.secenekler]
@@ -92,12 +92,12 @@ def test_tablo_olmayan_kitap_human_feedbacke_dusuyor(tmp_path: Path) -> None:
     p = tmp_path / "tablosuz.xlsx"
     wb.save(p)
 
-    k = yonlendir(p)
+    k = route(p)
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
 
-    rapor = tablolu.incele(p)
-    kritik = [b for b in rapor.bulgular if b.onem is Onem.KRITIK]
+    rapor = tabular.inspect(p)
+    kritik = [b for b in rapor.bulgular if b.onem is Severity.CRITICAL]
     assert len(kritik) == 1
     assert kritik[0].secenekler[0].parametre == {"mod": "human_feedback"}
 
@@ -105,19 +105,19 @@ def test_tablo_olmayan_kitap_human_feedbacke_dusuyor(tmp_path: Path) -> None:
 def test_secilen_sayfa_okunuyor(tmp_path: Path) -> None:
     p = _kitap(tmp_path / "kitap.xlsx")
 
-    varsayilan = oku_calisma_kitabi(p, {})
+    varsayilan = read_workbook(p, {})
     assert varsayilan["basarili"] is True
     assert varsayilan["secim_yapildi"] is False
     assert set(varsayilan["tum_tablo_sayfalari"]) == {"satis", "stok"}
 
-    secili = oku_calisma_kitabi(p, {"sayfa": "stok"})
+    secili = read_workbook(p, {"sayfa": "stok"})
     assert secili["sayfa"] == "stok"
     assert secili["satir_sayisi"] == 2
     assert secili["onizleme"][0]["kod"] == "A1"
 
 
 def test_olmayan_sayfa_istenirse_uydurmuyor(tmp_path: Path) -> None:
-    sonuc = oku_calisma_kitabi(_kitap(tmp_path / "kitap.xlsx"), {"sayfa": "yok"})
+    sonuc = read_workbook(_kitap(tmp_path / "kitap.xlsx"), {"sayfa": "yok"})
 
     assert sonuc["basarili"] is False
     assert "yok" in sonuc["hata"]
@@ -128,10 +128,10 @@ def test_bozuk_kitap_cokmez(tmp_path: Path) -> None:
     p = tmp_path / "bozuk.xlsx"
     p.write_bytes(b"bu bir xlsx degil")
 
-    sonuc = tablolu.incele_yapi(p)
+    sonuc = tabular.inspect_structure(p)
     assert sonuc.hata
 
-    rapor = tablolu.incele(p)
+    rapor = tabular.inspect(p)
     assert rapor.okunabilir is False
 
 
@@ -162,7 +162,7 @@ def test_baslik_ustunde_rapor_satiri_olan_sayfa_tablo_sayiliyor(tmp_path: Path) 
     """
     p = _baslikli_kitap(tmp_path / "rapor.xlsx", ("Ocak",))
 
-    sonuc = tablolu.incele_yapi(p)
+    sonuc = tabular.inspect_structure(p)
 
     assert len(sonuc.tablo_sayfalari) == 1
     sayfa = sonuc.sayfalar[0]
@@ -179,8 +179,8 @@ def test_butun_sayfalari_baslikli_kitap_human_feedbacke_dusmuyor(tmp_path: Path)
     """
     p = _baslikli_kitap(tmp_path / "yillik.xlsx", ("Ocak", "Subat"))
 
-    k = yonlendir(p)
+    k = route(p)
 
-    assert k.akis is Akis.TABLO
+    assert k.akis is Flow.TABLE
     assert k.deterministik is True
     assert "2 tanesi tablo" in k.kanitlar[0][1]

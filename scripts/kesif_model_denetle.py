@@ -29,24 +29,24 @@ from pathlib import Path
 PROJE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJE / "src"))
 
-from ads.kesif.formatlar.goruntu import (  # noqa: E402
+from ads.file_detection.formats.image import (  # noqa: E402
     MODEL_ORTAM_DEGISKENI,
     TURKCE_HARFLER,
-    model_sozlugu,
-    rec_model_yolu,
-    turkce_kapsami,
+    model_dictionary,
+    recognition_model_path,
+    turkish_coverage,
 )
 
 
 def denetle(yol: str | None) -> int:
-    hedef = yol or rec_model_yolu()
+    hedef = yol or recognition_model_path()
     print(f"model : {hedef}")
     if not Path(hedef).exists():
         print("HATA  : dosya bulunamadi")
         return 2
 
     try:
-        sozluk = model_sozlugu(hedef)
+        sozluk = model_dictionary(hedef)
     except Exception as e:  # noqa: BLE001 - kullaniciya sebebi gosterilecek
         print(f"HATA  : sozluk okunamadi — {type(e).__name__}: {e}")
         return 2
@@ -54,7 +54,7 @@ def denetle(yol: str | None) -> int:
     tokenlar = sozluk.split("\n") if "\n" in sozluk else list(sozluk)
     print(f"sozluk: {len(tokenlar)} token")
 
-    tam, eksik, gerekce = turkce_kapsami(hedef)
+    tam, eksik, gerekce = turkish_coverage(hedef)
     print()
     print("TURKCE HARF KAPSAMI")
     for h in TURKCE_HARFLER:

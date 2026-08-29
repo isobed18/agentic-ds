@@ -24,13 +24,6 @@ class TextShape(StrEnum):
     PROSE = "serbest_metin"
     AMBIGUOUS = "belirsiz"
 
-    TABLO = TABLE
-    SABIT_GENISLIK = FIXED_WIDTH
-    ANAHTAR_DEGER = KEY_VALUE
-    SERBEST_METIN = PROSE
-    BELIRSIZ = AMBIGUOUS
-
-
 @dataclass
 class ShapeResult:
     sekil: TextShape
@@ -214,16 +207,16 @@ def detect_shape(metin: str) -> ShapeResult:
     """Metnin seklini olc. Kanit yetmezse karar VERME."""
     satirlar = _nonempty_lines(metin)
     if not satirlar:
-        return ShapeResult(TextShape.BELIRSIZ, "dusuk",
+        return ShapeResult(TextShape.AMBIGUOUS, "dusuk",
                           [("icerik", "bos veya sadece bosluk")],
                           yargi_gerekir=True)
 
     olcumler = {
-        TextShape.TABLO: _delimiter_signal(satirlar),
-        TextShape.SABIT_GENISLIK: _fixed_width_signal(satirlar),
+        TextShape.TABLE: _delimiter_signal(satirlar),
+        TextShape.FIXED_WIDTH: _fixed_width_signal(satirlar),
         TextShape.LOG: _log_signal(satirlar),
-        TextShape.ANAHTAR_DEGER: _key_value_signal(satirlar),
-        TextShape.SERBEST_METIN: _prose_signal(satirlar),
+        TextShape.KEY_VALUE: _key_value_signal(satirlar),
+        TextShape.PROSE: _prose_signal(satirlar),
     }
 
     kanitlar = [(s.value, f"{p:.2f} — {aciklama}")
@@ -241,27 +234,27 @@ def detect_shape(metin: str) -> ShapeResult:
     # tam (b) yuzunden human feedback'e dusuyordu.
     seviye_var = bool(LOG_SEVIYE.search("\n".join(satirlar)))
     if (olcumler[TextShape.LOG][0] >= 0.7
-            and birinci[0] is TextShape.TABLO
+            and birinci[0] is TextShape.TABLE
             and seviye_var):
         birinci, ikinci = (TextShape.LOG, olcumler[TextShape.LOG][0]), birinci
-    elif (birinci[0] is TextShape.TABLO
-            and olcumler[TextShape.TABLO][0] >= 0.95
+    elif (birinci[0] is TextShape.TABLE
+            and olcumler[TextShape.TABLE][0] >= 0.95
             and not seviye_var):
         # Tutarli ayrac kesin: tarih sutunu log kanitti sayilmaz.
         ikinci = max(
-            ((s, p) for s, p in siralı if s not in (TextShape.TABLO, TextShape.LOG)),
-            key=lambda x: x[1], default=(TextShape.BELIRSIZ, 0.0),
+            ((s, p) for s, p in siralı if s not in (TextShape.TABLE, TextShape.LOG)),
+            key=lambda x: x[1], default=(TextShape.AMBIGUOUS, 0.0),
         )
 
     if birinci[1] < ESIK_KARAR:
         return ShapeResult(
-            TextShape.BELIRSIZ, "dusuk", kanitlar, siralı[:3],
+            TextShape.AMBIGUOUS, "dusuk", kanitlar, siralı[:3],
             yargi_gerekir=True,
         )
 
     if birinci[1] - ikinci[1] < ESIK_FARK:
         return ShapeResult(
-            TextShape.BELIRSIZ, "dusuk",
+            TextShape.AMBIGUOUS, "dusuk",
             kanitlar + [("celiski",
                          f"{birinci[0].value} ({birinci[1]:.2f}) ve "
                          f"{ikinci[0].value} ({ikinci[1]:.2f}) yakin")],
@@ -270,8 +263,3 @@ def detect_shape(metin: str) -> ShapeResult:
 
     guven = "yuksek" if birinci[1] >= 0.8 else "orta"
     return ShapeResult(birinci[0], guven, kanitlar, siralı[:3])
-
-
-Sekil = TextShape
-SekilSonuc = ShapeResult
-sekil_tespit = detect_shape

@@ -16,7 +16,7 @@ from .router import Decision
 
 ORNEK_AZAMI_KARAKTER = 600
 
-GECERLI_AKISLAR = ["tablo", "belge", "agac", "kapsayici", "islenemez"]
+VALID_FLOWS = ["tablo", "belge", "agac", "kapsayici", "islenemez"]
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class FlowOption:
     aciklama: str
 
 
-SECENEKLER: list[FlowOption] = [
+FLOW_OPTIONS: list[FlowOption] = [
     FlowOption("tablo", "satir ve sutunu olan, tiplenebilir veri"),
     FlowOption("belge", "serbest metin, log, yapilandirilmamis icerik"),
     FlowOption("agac", "ic ice kayit yapisi (json, xml, anahtar-deger)"),
@@ -34,7 +34,7 @@ SECENEKLER: list[FlowOption] = [
 ]
 
 # (soru metni, secenekler) -> (secilen akis, kisa gerekce)
-Cevaplayici = Callable[[str, list[FlowOption]], tuple[str, str]]
+Responder = Callable[[str, list[FlowOption]], tuple[str, str]]
 
 
 @dataclass
@@ -129,7 +129,7 @@ def _ask_cli(soru: str, secenekler: list[FlowOption]) -> tuple[str, str]:
     return akis, gerekce
 
 
-def ask(karar: Decision, cevaplayici: Cevaplayici | None = None) -> HumanResult:
+def ask(karar: Decision, cevaplayici: Responder | None = None) -> HumanResult:
     """Deterministik katmanin cozemedigi tek dosya icin human feedback iste.
 
     `cevaplayici` verilmezse terminalden interaktif sorar (varsayilan:
@@ -144,13 +144,13 @@ def ask(karar: Decision, cevaplayici: Cevaplayici | None = None) -> HumanResult:
     soru = _build_question_text(karar)
 
     try:
-        akis, gerekce = cevaplayici(soru, SECENEKLER)
+        akis, gerekce = cevaplayici(soru, FLOW_OPTIONS)
     except (EOFError, KeyboardInterrupt):
         return HumanResult(
             yol=karar.yol, akis="", hata="human feedback alinamadi (iptal/EOF)"
         )
 
-    if akis not in GECERLI_AKISLAR:
+    if akis not in VALID_FLOWS:
         return HumanResult(
             yol=karar.yol, akis="", gerekce=gerekce, hata=f"gecersiz akis: {akis!r}"
         )
@@ -176,7 +176,7 @@ def ask(karar: Decision, cevaplayici: Cevaplayici | None = None) -> HumanResult:
 # Yani "tahmin yok" ilkesi bozulmaz: tahmin yapiliyorsa oldugu gibi
 # etiketlenir ve sonradan denetlenebilir.
 
-SEKIL_AKIS: dict[str, str] = {
+SHAPE_TO_FLOW: dict[str, str] = {
     "tablo": "tablo",
     "sabit_genislik": "tablo",
     "log": "belge",
@@ -185,7 +185,7 @@ SEKIL_AKIS: dict[str, str] = {
 }
 
 # Sekil olculemediginde formatin kendisi ne soyluyor.
-FORMAT_AKIS: dict[str, str] = {
+FORMAT_TO_FLOW: dict[str, str] = {
     "csv": "tablo", "tsv": "tablo", "ignorefile": "tablo",
     "json": "agac", "jsonl": "agac", "xml": "agac",
     "yaml": "agac", "toml": "agac", "ini": "agac",
@@ -200,8 +200,8 @@ def most_reasonable_flow(karar: Decision) -> tuple[str, str]:
 
     Doner: (akis, hangi kuralin tetiklendigi). Model cagrilmaz.
     """
-    if karar.sekil in SEKIL_AKIS:
-        return SEKIL_AKIS[karar.sekil], f"sekil olcumu '{karar.sekil}'"
+    if karar.sekil in SHAPE_TO_FLOW:
+        return SHAPE_TO_FLOW[karar.sekil], f"sekil olcumu '{karar.sekil}'"
 
     # Kisa, tek sutunlu CSV/TSV dosyalarinda ayirac olcumu dogal olarak
     # sonucsuz kalabilir ve Magika bunlari dusuk guvenle ``txt`` diye
@@ -212,8 +212,8 @@ def most_reasonable_flow(karar: Decision) -> tuple[str, str]:
     if uzanti in {"csv", "tsv"}:
         return "tablo", f"dosya uzantisi '.{uzanti}' (sekil belirsiz)"
 
-    if karar.format in FORMAT_AKIS:
-        return FORMAT_AKIS[karar.format], f"format '{karar.format}'"
+    if karar.format in FORMAT_TO_FLOW:
+        return FORMAT_TO_FLOW[karar.format], f"format '{karar.format}'"
 
     # Hicbir sey bilinmiyorsa: veriyi ATMA. Metin olarak islenebilen her
     # sey belge akisina girebilir; "islenemez" demek veri kaybidir ve
@@ -250,7 +250,7 @@ class ResidualReport:
         return sum(1 for y in self.yanitlar if y.kaynak == "otomatik_varsayilan")
 
 
-def resolve_residual(envanter_sonucu: dict, cevaplayici: Cevaplayici | None = None,
+def resolve_residual(envanter_sonucu: dict, cevaplayici: Responder | None = None,
                otomatik: bool = False) -> ResidualReport:
     """Envanterdeki SADECE human feedback gerektiren dosyalari coz.
 
@@ -270,13 +270,3 @@ def resolve_residual(envanter_sonucu: dict, cevaplayici: Cevaplayici | None = No
     for k in artik:
         r.yanitlar.append(resolve_automatically(k) if otomatik else ask(k, cevaplayici))
     return r
-
-
-AkisSecenegi = FlowOption
-InsanSonucu = HumanResult
-onizleme_hazirla = prepare_preview
-sor = ask
-en_makul_akis = most_reasonable_flow
-otomatik_coz = resolve_automatically
-ArtikRapor = ResidualReport
-artigi_coz = resolve_residual
