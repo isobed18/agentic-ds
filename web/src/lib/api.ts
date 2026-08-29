@@ -61,7 +61,7 @@ export interface AutomationDefinition {
   schema_version: "1";
   automation_id: string;
   name: string;
-  status: "draft" | "saved";
+  status: "draft" | "saved" | "error";
   revision: number;
   source_id?: string | null;
   pipeline_blueprint?: PipelineBlueprint | null;

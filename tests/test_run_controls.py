@@ -46,6 +46,42 @@ def _resident(plane: ControlPlane, run_id: str, **blackboard) -> str:
     return run_id
 
 
+def _runtime(plane: ControlPlane, run_id: str, *, status: str, automation_id: str) -> _RuntimeRun:
+    state = RunState(run_id=run_id, store=plane.store, profile=BUILTIN_PROFILES["full_auto"])
+    return _RuntimeRun(
+        run_id=run_id,
+        source_id="upload:x",
+        state=state,
+        configuration={"automation_id": automation_id},
+        status=status,
+    )
+
+
+def test_a_failed_run_moves_its_automation_to_error_status(plane: ControlPlane) -> None:
+    """Every failure path sets status="failed" then persists, so the persist
+    hook is the one place that catches them all and marks the automation (#82).
+    A failed run used to leave it at `draft`, identical to one never started."""
+    assert plane.automation_store is not None
+    automation = plane.automation_store.create("Document analysis")
+
+    plane._persist_runtime(
+        _runtime(plane, "run-fail0001", status="failed", automation_id=automation.automation_id)
+    )
+
+    assert plane.automation_store.get(automation.automation_id).status == "error"
+
+
+def test_a_running_run_persist_does_not_flag_the_automation(plane: ControlPlane) -> None:
+    assert plane.automation_store is not None
+    automation = plane.automation_store.create("Document analysis")
+
+    plane._persist_runtime(
+        _runtime(plane, "run-ok000001", status="running", automation_id=automation.automation_id)
+    )
+
+    assert plane.automation_store.get(automation.automation_id).status == "draft"
+
+
 class TestRunMode:
     def test_manual_checkpoints_every_stage(self, plane: ControlPlane) -> None:
         supervision = plane._normalise_supervision({})

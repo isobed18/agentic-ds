@@ -146,6 +146,25 @@ class AutomationStore:
                 },
             )
 
+    def mark_error(self, automation_id: str) -> AutomationDefinition:
+        """Record that a run failed before this automation ever saved a workspace.
+
+        Only a never-saved `draft` is moved: a `saved` automation already has
+        working content and stays distinguishable, and a later successful run
+        flips either back to `saved` through `sync_workspace`. Idempotent -- once
+        it is `error` it is no longer `draft`, so repeated failure persists are
+        no-ops.
+        """
+        with self._lock:
+            current = self.get(automation_id)
+            if current.status != "draft":
+                return current
+            return self.update(
+                automation_id,
+                expected_revision=current.revision,
+                changes={"status": "error"},
+            )
+
     def _target(self, automation_id: str) -> Path:
         suffix = automation_id.removeprefix("automation-")
         if (

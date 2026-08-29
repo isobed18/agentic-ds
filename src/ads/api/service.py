@@ -721,6 +721,14 @@ class ControlPlane:
             pipeline_layout=workspace.pipeline_layout,
         )
 
+    def _mark_automation_error(self, runtime: _RuntimeRun) -> None:
+        """Move a failed run's automation out of `draft` so the library can tell
+        a run that failed apart from one that was never started (#82)."""
+        automation_id = runtime.configuration.get("automation_id")
+        if not automation_id or self.automation_store is None:
+            return
+        self.automation_store.mark_error(str(automation_id))
+
     def planner_chat(
         self,
         *,
@@ -4422,6 +4430,11 @@ class ControlPlane:
             temporary = target.with_suffix(".json.tmp")
             temporary.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
             temporary.replace(target)
+        # Every failure path sets status="failed" then persists here, so this is
+        # the one place that catches them all (#82). Done outside the lock above
+        # since it touches a different store; mark_error is a no-op once set.
+        if runtime.status == "failed":
+            self._mark_automation_error(runtime)
 
     #: Snapshot states that only a live worker in this process can be making
     #: progress on. `awaiting_human` is deliberately absent: it is durable by

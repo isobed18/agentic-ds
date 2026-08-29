@@ -677,6 +677,7 @@ const TR: Record<string, string> = {
   "Opening automation…": "Otomasyon açılıyor…",
   "Saved": "Kaydedildi",
   "Draft": "Taslak",
+  "Error": "Hata",
   "{count} executions": "{count} çalışma",
   "Never executed": "Hiç çalıştırılmadı",
   "No automations yet": "Henüz otomasyon yok",

@@ -72,6 +72,41 @@ def test_execution_history_is_attached_without_becoming_editor_state(tmp_path) -
     assert second.pipeline_blueprint is None
 
 
+def test_failed_run_marks_a_never_saved_automation_as_error(tmp_path) -> None:
+    """A failed run left its automation at `draft`, indistinguishable from one
+    never started (#82). mark_error moves a never-saved draft to `error`."""
+    store = AutomationStore(tmp_path / "automations")
+    created = store.create("Report analysis")
+    assert created.status == "draft"
+
+    errored = store.mark_error(created.automation_id)
+
+    assert errored.status == "error"
+    assert AutomationStore(tmp_path / "automations").get(created.automation_id).status == "error"
+
+
+def test_mark_error_leaves_a_saved_automation_untouched_and_is_idempotent(tmp_path) -> None:
+    """A `saved` automation already has working content, so a later failure must
+    not downgrade it; and repeated failure persists must not keep bumping it."""
+    store = AutomationStore(tmp_path / "automations")
+    created = store.create("Reusable")
+    saved = store.update(
+        created.automation_id,
+        expected_revision=created.revision,
+        changes={"status": "saved"},
+    )
+
+    assert store.mark_error(created.automation_id).status == "saved"
+
+    fresh = store.create("Fresh")
+    first = store.mark_error(fresh.automation_id)
+    second = store.mark_error(fresh.automation_id)
+    assert first.status == "error"
+    # No further revision bump once it is already error.
+    assert second.revision == first.revision
+    assert saved.revision == 2
+
+
 def test_automation_store_deletes_definition_and_revisions(tmp_path) -> None:
     store = AutomationStore(tmp_path / "automations")
     created = store.create("Disposable")
