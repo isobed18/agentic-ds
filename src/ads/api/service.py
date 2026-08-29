@@ -246,6 +246,12 @@ _PIPELINE_STAGES = {
     "report",
 }
 
+# #65: the document-only "is ML applicable" verdict was one unseeded LLM call,
+# so identical PDFs could yield different verdicts run-to-run. A fixed seed makes
+# the first attempt reproducible; the retry offsets it so an unexplained verdict
+# gets a genuinely different roll rather than the same empty answer again.
+_STAGING_ANALYSIS_SEED = 20240711
+
 
 class _PlannerLocalizedText(BaseModel):
     """A bilingual fragment emitted in one local-model response."""
@@ -2311,7 +2317,7 @@ class ControlPlane:
                         system=system,
                         prompt=prompt,
                         json_schema=_StagingAnalysisReply.model_json_schema(),
-                        profile=LARGE,
+                        profile=LARGE.with_seed(_STAGING_ANALYSIS_SEED + _attempt),
                     )
                     if response.parsed is None:
                         raise ValueError(
@@ -2378,6 +2384,21 @@ class ControlPlane:
                             ],
                         }
                     )
+                    # #65: a model that returns a verdict but no words for it left
+                    # the UI showing generic boilerplate. Reject the unexplained
+                    # verdict and re-roll (the retry uses a different seed) rather
+                    # than papering over it. Only when the model gave no decision
+                    # at all is the legacy default above the intended answer, so
+                    # that path is left to pass on the first try.
+                    provided_decision = raw_result.get("pipeline_decision")
+                    explained = bool(
+                        (raw_result.get("decision_reason_en") or "").strip()
+                        and (raw_result.get("decision_reason_tr") or "").strip()
+                    )
+                    if provided_decision and not explained and _attempt == 0:
+                        raise ValueError(
+                            "planner returned a pipeline decision with no explanation"
+                        )
                     break
                 except (TimeoutError, subprocess.TimeoutExpired):
                     raise

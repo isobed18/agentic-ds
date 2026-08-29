@@ -39,6 +39,11 @@ class ModelProfile:
     num_ctx: int = 16384
     keep_alive: str = "30m"
     """Keep weights resident between calls; reloading a 17GB model dominates latency."""
+    seed: int | None = None
+    """Fix the sampler so identical inputs reproduce. temperature=0 alone does not
+    guarantee this on parallelized local inference — non-associative floating-point
+    accumulation still varies run-to-run — so a stage that must be reproducible
+    (#65: the document-only "is ML applicable" verdict) sets an explicit seed."""
 
     def with_temperature(self, temperature: float) -> ModelProfile:
         return ModelProfile(
@@ -46,6 +51,16 @@ class ModelProfile:
             temperature=temperature,
             num_ctx=self.num_ctx,
             keep_alive=self.keep_alive,
+            seed=self.seed,
+        )
+
+    def with_seed(self, seed: int) -> ModelProfile:
+        return ModelProfile(
+            name=self.name,
+            temperature=self.temperature,
+            num_ctx=self.num_ctx,
+            keep_alive=self.keep_alive,
+            seed=seed,
         )
 
 
@@ -156,6 +171,8 @@ class OllamaClient:
                 "num_ctx": profile.num_ctx,
             },
         }
+        if profile.seed is not None:
+            payload["options"]["seed"] = profile.seed
 
         started = time.perf_counter()
         response = self._client.post(f"{self.base_url}/api/chat", json=payload)

@@ -65,7 +65,9 @@ class _PlannerLLM:
     def generate_structured(
         self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
     ) -> LLMResponse:
-        self.calls.append({"system": system, "prompt": prompt, "schema": json_schema})
+        self.calls.append(
+            {"system": system, "prompt": prompt, "schema": json_schema, "profile": profile}
+        )
         if self.fail_first and len(self.calls) == 1:
             return LLMResponse(
                 text='{"reply":"unfinished',
@@ -106,6 +108,33 @@ class _PlannerLLM:
                         "settings": {"engine": "text_layer"},
                     }
                 },
+            },
+        )
+
+
+class _UnexplainedThenExplainedLLM:
+    """Returns a verdict with no reason first, then a real reason on the re-roll."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def generate_structured(
+        self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
+    ) -> LLMResponse:
+        self.calls.append({"profile": profile})
+        explained = len(self.calls) > 1
+        return LLMResponse(
+            text="",
+            model=profile.name,
+            latency_s=0.01,
+            parsed={
+                "reply": "Understanding is complete.",
+                "pipeline_decision": "no_pipeline",
+                "decision_reason_en": (
+                    "No target column exists across the documents." if explained else ""
+                ),
+                "decision_reason_tr": "Belgelerde hedef sütun yok." if explained else "",
+                "reports": [],
             },
         )
 
@@ -252,6 +281,38 @@ class TestStagingRunsTheFirstStages:
         assert workspace["planner_error"] is None
         assert workspace["reports"][0]["title"]["tr"] == "Boru hattı hazırlığı"
         assert workspace["recommended_plan"] is not None
+
+    def test_the_verdict_call_is_seeded_for_reproducibility(self, client: TestClient) -> None:
+        """#65: an unseeded call let identical inputs produce different verdicts.
+
+        temperature=0 does not pin local inference; a seed does. This asserts the
+        seed reaches the model rather than the run-to-run outcome, which needs a
+        real backend to observe.
+        """
+        planner = _PlannerLLM()
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+
+        _stage(client)
+
+        assert planner.calls[0]["profile"].seed is not None
+
+    def test_a_verdict_without_an_explanation_is_rejected_and_re_rolled(
+        self, client: TestClient
+    ) -> None:
+        """#65: a model that returns a verdict but no words for it used to be
+        accepted and shown as generic boilerplate. It must be re-rolled instead,
+        on a different seed so the second attempt is not the same empty answer."""
+        planner = _UnexplainedThenExplainedLLM()
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+
+        run_id = _stage(client)
+        workspace = client.get(f"/api/runs/{run_id}/staging").json()
+
+        assert len(planner.calls) == 2, "the unexplained verdict was not re-rolled"
+        assert planner.calls[0]["profile"].seed != planner.calls[1]["profile"].seed
+        summary = workspace["recommended_plan"]["decision_summary"]
+        assert summary["en"] == "No target column exists across the documents."
+        assert workspace["recommended_plan"]["pipeline_recommendation"] == "no_pipeline"
 
 
 class TestContinuingKeepsTheWork:
