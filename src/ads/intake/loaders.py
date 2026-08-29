@@ -93,6 +93,33 @@ def _slugify(value: str) -> str:
     return f"_{slug}" if slug[0].isdigit() else slug
 
 
+def _table_name_from_stem(stem: str) -> tuple[str, LoadIssue | None]:
+    """Name a table after its file, reporting the rename like every other repair.
+
+    A table name becomes a SQL identifier and, because `data_paths` is handed to
+    the agent's `execute_python` tool, a Python variable in generated code -- so
+    it cannot start with a digit. `_slugify` already prefixes one (`00000` ->
+    `_00000`), which is what keeps a sharded/numbered export (`00000.csv`,
+    `00001.csv`) from failing deep in a run with "Table name '00000' cannot be
+    materialized safely for execution" (#89).
+
+    That prefix used to be silent: unlike a renamed column, a renamed table
+    recorded no `LoadIssue`, so the one transformation the uploader most needed
+    to see -- their file `00000.csv` is now the table `_00000` -- surfaced only
+    as a cryptic failure from a subsystem they had never heard of, if at all.
+    Report it at intake, at the point the name is assigned, the same way
+    `normalize_columns` reports a column rename.
+    """
+    name = _slugify(stem)
+    if name == stem:
+        return name, None
+    return name, LoadIssue(
+        severity="info",
+        code="table_name_normalized",
+        detail=f"File {stem!r} was named table {name!r} so it is a usable identifier.",
+    )
+
+
 def normalize_columns(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[LoadIssue]]:
     """Normalize column names, recording every change.
 
@@ -300,12 +327,15 @@ def _sniff_csv(path: Path) -> tuple[str, str]:
 def load_csv(path: str | Path, *, name: str | None = None) -> LoadedTable:
     path = Path(path)
     encoding, delimiter = _sniff_csv(path)
+    table_name, rename_issue = _table_name_from_stem(path.stem)
     table = LoadedTable(
-        name=name or _slugify(path.stem),
+        name=name or table_name,
         frame=pd.DataFrame(),
         source_uri=str(path.resolve()),
         source_format="csv",
     )
+    if name is None and rename_issue is not None:
+        table.issues.append(rename_issue)
     if encoding != "utf-8-sig":
         table.add_issue("info", "encoding_fallback", f"Read using encoding {encoding!r}.")
     if delimiter != ",":
@@ -343,12 +373,16 @@ def load_parquet(path: str | Path, *, name: str | None = None) -> LoadedTable:
     frame = pd.read_parquet(path)
     frame, norm_issues = normalize_columns(frame)
     frame, mixed_issues = _resolve_mixed_types(frame)
+    table_name, rename_issue = _table_name_from_stem(path.stem)
+    issues = norm_issues + mixed_issues
+    if name is None and rename_issue is not None:
+        issues.append(rename_issue)
     return LoadedTable(
-        name=name or _slugify(path.stem),
+        name=name or table_name,
         frame=frame,
         source_uri=str(path.resolve()),
         source_format="parquet",
-        issues=norm_issues + mixed_issues,
+        issues=issues,
     )
 
 
@@ -360,7 +394,8 @@ def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[Load
     how they relate.
     """
     path = Path(path)
-    prefix = name_prefix or _slugify(path.stem)
+    stem_name, rename_issue = _table_name_from_stem(path.stem)
+    prefix = name_prefix or stem_name
     book = pd.read_excel(path, sheet_name=None, header=None)
 
     tables: list[LoadedTable] = []
@@ -372,6 +407,8 @@ def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[Load
             source_format="excel",
             sheet_name=str(sheet_name),
         )
+        if name_prefix is None and rename_issue is not None:
+            table.issues.append(rename_issue)
 
         if raw.empty:
             table.add_issue("warn", "empty_sheet", f"Sheet {sheet_name!r} is empty; skipped.")
