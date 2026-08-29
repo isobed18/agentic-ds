@@ -95,4 +95,21 @@ describe("understanding node status placement", () => {
     expect(title).toBeGreaterThan(-1);
     expect(statusMark).toBeLessThan(title);
   });
+
+  it("lets a node be resized from its edges (#67)", () => {
+    // The node had a hardcoded width and no resize affordance at all. Every
+    // node type now carries the shared edge/corner handles.
+    const markup = renderToStaticMarkup(createElement(BranchNode, {
+      title: "Structured data",
+      files: [],
+      steps: [],
+      artifactIds: [],
+      onClick: () => undefined,
+      onOpenArtifact: () => undefined,
+    }));
+
+    expect(markup).toContain("cursor-ew-resize");
+    expect(markup).toContain("cursor-ns-resize");
+    expect(markup).toContain("cursor-nwse-resize");
+  });
 });
