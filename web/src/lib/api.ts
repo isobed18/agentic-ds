@@ -109,6 +109,9 @@ export interface DatasetSummary {
   quality_issues?: number;
   sensitive_columns?: number;
   table_summaries?: { name: string; format: string; rows: number; columns: number; candidate_keys: number; issues: string[] }[];
+  documents?: number;
+  document_pages?: number;
+  document_summaries?: { name: string; format: string; pages: number }[];
   privacy?: string;
 }
 

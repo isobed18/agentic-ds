@@ -2708,6 +2708,7 @@ class ControlPlane:
             try:
                 profile = self.source_profile(source["source_id"])
                 tables = profile["tables"]
+                documents = profile["documents"]
                 columns = [column for table in tables for column in table["columns"]]
                 item.update(
                     {
@@ -2729,6 +2730,22 @@ class ControlPlane:
                                 "issues": table["issues"],
                             }
                             for table in tables
+                        ],
+                        # A PDF-only source has no tables, so every table-derived
+                        # field above is zero and the row read as empty/broken
+                        # (#69). Carry a document summary too so the surface can
+                        # show what such a source actually contains.
+                        "documents": len(documents),
+                        "document_pages": sum(
+                            document.get("pages", 0) for document in documents
+                        ),
+                        "document_summaries": [
+                            {
+                                "name": document["name"],
+                                "format": document.get("format", "pdf"),
+                                "pages": document.get("pages", 0),
+                            }
+                            for document in documents
                         ],
                         "privacy": profile["privacy"],
                     }
