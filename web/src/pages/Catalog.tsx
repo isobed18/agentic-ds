@@ -178,7 +178,10 @@ export function Experiments() {
       {data?.length === 0 && <Empty title={t("No experiments yet")} hint={t("Start a run from Workflows.")} />}
       <div className="space-y-2">
         {data?.map((e) => (
-          <Link key={e.run_id} to={`/automation?view=runs&run=${encodeURIComponent(e.run_id)}`} className="card block px-4 py-3 hover:border-ink-faint">
+          // Carry the automation id so the link opens that run's workspace. Without
+          // it, /automation has no `automation` param and falls back to the project
+          // library, dropping the run entirely -- the run was never reachable (#68).
+          <Link key={e.run_id} to={`/automation?${typeof e.automation_id === "string" && e.automation_id ? `automation=${encodeURIComponent(e.automation_id)}&` : ""}view=runs&run=${encodeURIComponent(e.run_id)}`} className="card block px-4 py-3 hover:border-ink-faint">
             <div className="flex items-center gap-2">
               <span className="font-mono text-xs text-ink">{e.run_id}</span>
               {typeof e.status === "string" && <Badge tone={toneFor(e.status)}>{e.status.replace(/_/g, " ")}</Badge>}

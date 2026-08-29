@@ -1,7 +1,25 @@
-import type { SourceProfile, StagingWorkspace } from "../lib/api";
+import type { RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
 
 export type AutomationView = "empty" | "source" | "understanding" | "proposal" | "guided_pipeline" | "workflow";
+
+/**
+ * Which run the Executions panel should show. #68: a deep-link from
+ * /experiments names a specific run (`?run=<id>`), but the panel used to seed
+ * its selection from `executions[0]` and ignore the URL, so clicking any run
+ * other than the most recent still opened the most recent. Honour the named run
+ * when it is in the list; fall back to the most recent only when it is not.
+ */
+export function preferredExecution(
+  executions: RunSummary[],
+  preferredRunId: string | null,
+): RunSummary | null {
+  if (preferredRunId) {
+    const match = executions.find((item) => item.run_id === preferredRunId);
+    if (match) return match;
+  }
+  return executions[0] ?? null;
+}
 
 export function automationView(input: {
   sourceId: string;

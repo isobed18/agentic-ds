@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { StagingWorkspace } from "../lib/api";
-import { automationView, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
+import type { RunSummary, StagingWorkspace } from "../lib/api";
+import { automationView, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 
 describe("automation progressive disclosure", () => {
   it("never shows a graph before data exists", () => {
@@ -149,6 +149,33 @@ describe("a run outranks a missing source", () => {
         advancedGraph: false,
       }),
     ).toBe("empty");
+  });
+});
+
+describe("which execution a deep-link selects", () => {
+  // #68: /experiments links to /automation?...&run=<id>. The Executions panel
+  // used to seed from executions[0] and ignore the URL, so any run but the most
+  // recent opened the most recent instead.
+  const runs = [
+    { run_id: "run-newest" },
+    { run_id: "run-middle" },
+    { run_id: "run-oldest" },
+  ] as unknown as RunSummary[];
+
+  it("selects the run named in the URL, not the most recent", () => {
+    expect(preferredExecution(runs, "run-oldest")?.run_id).toBe("run-oldest");
+  });
+
+  it("falls back to the most recent when no run is named", () => {
+    expect(preferredExecution(runs, null)?.run_id).toBe("run-newest");
+  });
+
+  it("falls back to the most recent when the named run is not in the list", () => {
+    expect(preferredExecution(runs, "run-deleted")?.run_id).toBe("run-newest");
+  });
+
+  it("returns null when there are no executions", () => {
+    expect(preferredExecution([], "run-oldest")).toBeNull();
   });
 });
 
