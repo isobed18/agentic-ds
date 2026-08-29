@@ -754,14 +754,12 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
         encoding="utf-8"
     )
     assert '{ to: "/explore", label: "Your data"' not in shell
-    # The route, not the label. What this pins is that the nav moved off
-    # /explore and onto /datasets; the wording is a product decision and was
-    # deliberately changed once already -- the nav said "Data library" while the
-    # page it opened titled itself "Datasets", which is the inconsistency #77
-    # was filed about. A test that pins copy turns fixing copy into a failure.
-    assert '{ to: "/datasets"' in shell
-    assert 'path="/explore" element={<Navigate to="/datasets" replace />}' in app
-    assert '{ to: "/automation", label: "Data projects"' in shell
+    # #111 makes projects the only top-level concept: the sidebar is Home,
+    # Projects and Settings, and the removed catalogues (including /explore's old
+    # /datasets target) redirect to the project-first home rather than dead-end.
+    assert '{ to: "/datasets"' not in shell
+    assert 'path="/explore" element={<Navigate to="/" replace />}' in app
+    assert '{ to: "/automation", label: "Projects"' in shell
     assert 'path="/automation"' in app
     assert "<AutomationWorkspace" in automation
     # Progressive disclosure keeps upload, understanding/proposal, and the accepted

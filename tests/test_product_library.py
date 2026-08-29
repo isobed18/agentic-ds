@@ -374,25 +374,31 @@ def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) ->
     declares it, and "it leads to something real" is asserted against the API
     that fills it — a route to a page whose endpoint 404s would satisfy
     neither half alone.
+
+    #111 makes projects the only top-level concept, so the sidebar is Home,
+    Projects and Settings; the four global catalogues (Datasets, Experiments,
+    Models, Reports) are gone as destinations and their bookmarks redirect to
+    the project-first home rather than 404.
     """
     shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
     app_routes = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
 
-    destinations = (
-        "/automation",
-        "/datasets",
-        "/experiments",
-        "/models",
-        "/reports",
-        "/settings",
-    )
+    destinations = ("/", "/automation", "/settings")
     for destination in destinations:
         assert f'"{destination}"' in shell, f"{destination} is missing from the sidebar"
         assert f'path="{destination}"' in app_routes, f"{destination} has no route"
 
+    # The removed catalogues are no longer sidebar destinations, and their old
+    # deep links redirect home instead of dead-ending.
+    for gone in ("/datasets", "/experiments", "/models", "/reports"):
+        assert f'label: "{gone}"' not in shell
+        assert f'to="{gone}"' not in shell
+        assert f'<Route path="{gone}" element={{<Navigate to="/"' in app_routes
+
     client = TestClient(create_app(plane=_plane(tmp_path)))
-    for endpoint in ("datasets", "experiments", "models", "reports"):
-        assert client.get(f"/api/catalog/{endpoint}").status_code == 200
+    # Home, Projects and Settings each lead to a real endpoint.
+    assert client.get("/api/home").status_code == 200
+    assert client.get("/api/automations").status_code == 200
     assert client.get("/api/hardening").status_code == 200
 
 

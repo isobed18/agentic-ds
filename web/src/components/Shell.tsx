@@ -12,13 +12,13 @@ import { api } from "../lib/api";
 import { LANGUAGES, currentLanguage, setLanguage } from "../lib/i18n";
 import { cx } from "./ui";
 
+// #111: projects are the only top-level concept, so the sidebar is Home,
+// Projects and Settings. The four global catalogues (Datasets, Experiments,
+// Models, Reports) are gone -- their outputs are browsed inside the project
+// that produced them.
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
-  { to: "/automation", label: "Data projects", icon: FlowIcon },
-  { to: "/datasets", label: "Datasets", icon: DataIcon },
-  { to: "/experiments", label: "Experiments", icon: FlaskIcon },
-  { to: "/models", label: "Models", icon: CubeIcon },
-  { to: "/reports", label: "Reports", icon: DocIcon },
+  { to: "/automation", label: "Projects", icon: FlowIcon },
   { to: "/settings", label: "Settings", icon: GearIcon },
 ];
 
@@ -161,10 +161,6 @@ const box = "h-[18px] w-[18px] shrink-0";
 function LogoIcon() { return <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" {...S} strokeWidth={2}><path d="M4 17 9 9l4 5 3-4 4 7" /><circle cx="9" cy="9" r="1.6" /></svg>; }
 function HomeIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" /></svg>; }
 function FlowIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><rect x="3" y="4" width="6" height="5" rx="1.4" /><rect x="15" y="4" width="6" height="5" rx="1.4" /><rect x="9" y="15" width="6" height="5" rx="1.4" /><path d="M6 9v3h12V9M12 12v3" /></svg>; }
-function DataIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><ellipse cx="12" cy="6" rx="7.5" ry="3" /><path d="M4.5 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" /></svg>; }
-function FlaskIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M10 3v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V3M9 3h6M7.5 14h9" /></svg>; }
-function CubeIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></svg>; }
-function DocIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg>; }
 function GearIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg>; }
 
 

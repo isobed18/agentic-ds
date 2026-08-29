@@ -1,15 +1,16 @@
 import { t } from "../lib/i18n";
 /**
- * Sidebar destinations: Datasets, Experiments, Models, Reports, Settings, Home.
+ * The two remaining top-level destinations: Home and Settings.
  *
- * The brief requires these to be functional rather than decorative — a saved
- * model must actually appear under Models, a generated report under Reports.
- * Each reads the catalog endpoints the backend already exposes.
+ * #111 makes projects the only top-level concept, so the four global catalogues
+ * (Datasets, Experiments, Models, Reports) are gone -- their outputs now live
+ * inside the project that produced them (see ProjectContents). Home is the
+ * project-first browsing surface; Settings shows the enforced guarantees.
  */
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, DataTable, Disclosure, Empty, Metric, Spinner, toneFor } from "../components/ui";
-import { api, type DatasetPage, type ExperimentSummary, type Hardening, type HomeOutput, type HomeOverview, type HomeProject, type ModelSummary, type ProjectState, type ReportSummary } from "../lib/api";
+import { Badge, Disclosure, Empty, Metric, Spinner } from "../components/ui";
+import { api, type Hardening, type HomeOutput, type HomeOverview, type HomeProject, type ProjectState } from "../lib/api";
 
 function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -60,221 +61,6 @@ function renderValue(v: unknown): React.ReactNode {
       .join("  ");
   }
   return String(v);
-}
-
-const fmt = (n: number) => n.toLocaleString();
-const num = (n: number, d = 4) => (Number.isFinite(n) ? n.toFixed(d) : "—");
-
-export function Datasets() {
-  // Server-side pagination: the catalog profiles only the page it returns, so
-  // /datasets no longer slows without bound as datasets accumulate (#72).
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const { data, error, loading } = useAsync<DatasetPage>(
-    () => api.datasets({ search, page, pageSize }),
-    [search, page, pageSize],
-  );
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-  const lastPage = Math.max(1, Math.ceil(total / pageSize));
-
-  const pager = (
-    <div className="flex items-center gap-2">
-      <button
-        className="btn-ghost !py-1 text-xs"
-        disabled={page <= 1 || loading}
-        onClick={() => setPage((p) => Math.max(1, p - 1))}
-      >
-        {t("Previous")}
-      </button>
-      <span className="text-xs text-ink-mute">{t("Page {page} of {pages}", { page, pages: lastPage })}</span>
-      <button
-        className="btn-ghost !py-1 text-xs"
-        disabled={page >= lastPage || loading}
-        onClick={() => setPage((p) => p + 1)}
-      >
-        {t("Next")}
-      </button>
-    </div>
-  );
-
-  return (
-    <Page title={t("Datasets")} subtitle={t("Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.")}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder={t("Search datasets…")}
-            className="field text-sm"
-          />
-          <label className="flex items-center gap-1.5 text-xs text-ink-mute">
-            <select
-              value={pageSize}
-              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
-              className="field text-xs"
-            >
-              {[25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
-            {t("per page")}
-          </label>
-        </div>
-        {pager}
-      </div>
-      {loading && <Spinner label={t("Loading datasets…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
-      {!loading && total === 0 && (
-        search
-          ? <Empty title={t("No datasets match your search")} hint={t("Try a different name, or clear the search.")} />
-          : <Empty title={t("No datasets yet")} hint={t("Drop files into data/ and run the pipeline to profile them.")} />
-      )}
-      <div className="space-y-3">
-        {items.map((d) => (
-          <Disclosure
-            key={d.source_id}
-            title={d.label}
-            right={
-              <div className="flex items-center gap-1.5">
-                {(d.sensitive_columns ?? 0) > 0 && <Badge tone="warn">{d.sensitive_columns} {t("sensitive")}</Badge>}
-                {(d.quality_issues ?? 0) > 0 && <Badge tone="stop">{d.quality_issues} {t("issues")}</Badge>}
-                {(d.tables ?? 0) > 0 && <Badge>{d.tables} {t("tables")}</Badge>}
-                {(d.documents ?? 0) > 0 && <Badge>{d.documents} {t("documents")}</Badge>}
-              </div>
-            }
-          >
-            {/* An unreadable folder arrives with a profile_error and none of the
-                measured fields, so say what went wrong rather than rendering a
-                row of zeroes that looks like a real empty dataset. */}
-            {d.profile_error ? (
-              <p className="rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">{d.profile_error}</p>
-            ) : (
-              <>
-                {(d.tables ?? 0) > 0 && (
-                  <>
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      <Metric label={t("Rows")} value={fmt(d.rows ?? 0)} />
-                      <Metric label={t("Columns")} value={String(d.columns ?? 0)} />
-                      <Metric label={t("Candidate keys")} value={String(d.candidate_keys ?? 0)} />
-                      <Metric label={t("Sensitive")} value={String(d.sensitive_columns ?? 0)} />
-                    </div>
-                    <DataTable
-                      columns={[t("Table"), t("Format"), t("Rows"), t("Columns"), t("Keys"), t("Issues")]}
-                      rows={(d.table_summaries ?? []).map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
-                    />
-                  </>
-                )}
-                {/* A PDF-only source has no tables; the table metrics above would
-                    all be zero and the DataTable empty, which read as a broken
-                    dataset (#69). Render what it actually holds instead. */}
-                {(d.documents ?? 0) > 0 && (
-                  <div className={(d.tables ?? 0) > 0 ? "mt-4" : ""}>
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      <Metric label={t("Documents")} value={String(d.documents ?? 0)} />
-                      <Metric label={t("Pages")} value={String(d.document_pages ?? 0)} />
-                    </div>
-                    <DataTable
-                      columns={[t("Document"), t("Format"), t("Pages")]}
-                      rows={(d.document_summaries ?? []).map((s) => [s.name, s.format, s.pages])}
-                    />
-                  </div>
-                )}
-                <p className="mt-3 text-xs text-ink-faint">{d.privacy}</p>
-              </>
-            )}
-          </Disclosure>
-        ))}
-      </div>
-      {total > 0 && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-ink-mute">{t("Showing {shown} of {total}", { shown: items.length, total })}</p>
-          {pager}
-        </div>
-      )}
-    </Page>
-  );
-}
-
-export function Models() {
-  const { data, error, loading } = useAsync<ModelSummary[]>(() => api.models());
-  return (
-    <Page title={t("Models")} subtitle={t("Trained artifacts with their measured holdout performance and provenance.")}>
-      {loading && <Spinner label={t("Loading models…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title={t("No models yet")} hint={t("Complete a run through the training stage to save a model.")} />}
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {data?.map((m) => (
-          <article key={m.artifact_id} className="card px-4 py-3.5">
-            <div className="mb-2 flex items-start justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-semibold">{m.display_name}</h3>
-                <p className="text-xs text-ink-mute">{m.estimator}</p>
-              </div>
-              {m.saved && <Badge tone="ok">{t("saved")}</Badge>}
-            </div>
-            <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
-              <Pair label={`Holdout ${m.metric}`} value={num(m.holdout_score, 2)} />
-              <Pair label={t("CV mean")} value={num(m.cv_mean, 2)} />
-              <Pair label={t("CV std")} value={num(m.cv_std, 2)} />
-              <Pair label={t("Training rows")} value={fmt(m.training_rows)} />
-            </dl>
-            <p className="mt-2.5 border-t border-line-soft pt-2 font-mono text-[10.5px] text-ink-faint">
-              run {m.run_id} · {m.candidate_count} candidates
-            </p>
-          </article>
-        ))}
-      </div>
-    </Page>
-  );
-}
-
-export function Reports() {
-  const { data, error, loading } = useAsync<ReportSummary[]>(() => api.reports());
-  return (
-    <Page title={t("Reports")} subtitle={t("Generated evaluation reports, downloadable as markdown.")}>
-      {loading && <Spinner label={t("Loading reports…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title={t("No reports yet")} hint={t("Reports appear once a run reaches the report stage.")} />}
-      <div className="space-y-2">
-        {data?.map((r) => (
-          <article key={r.artifact_id} className="card flex items-center gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <h3 className="truncate text-sm font-medium">{String(r.title ?? "Evaluation report")}</h3>
-              <p className="font-mono text-[11px] text-ink-faint">run {r.run_id}</p>
-            </div>
-            <a href={`/api/reports/${r.artifact_id}/download`} className="btn-ghost !py-1.5 text-xs" download>
-              {t("Download")}
-            </a>
-          </article>
-        ))}
-      </div>
-    </Page>
-  );
-}
-
-export function Experiments() {
-  const { data, error, loading } = useAsync<ExperimentSummary[]>(() => api.experiments());
-  return (
-    <Page title={t("Experiments")} subtitle={t("Every run, with the decisions and gate outcomes it produced.")}>
-      {loading && <Spinner label={t("Loading experiments…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title={t("No experiments yet")} hint={t("Start a run from Workflows.")} />}
-      <div className="space-y-2">
-        {data?.map((e) => (
-          // Carry the automation id so the link opens that run's workspace. Without
-          // it, /automation has no `automation` param and falls back to the project
-          // library, dropping the run entirely -- the run was never reachable (#68).
-          <Link key={e.run_id} to={`/automation?${typeof e.automation_id === "string" && e.automation_id ? `automation=${encodeURIComponent(e.automation_id)}&` : ""}view=runs&run=${encodeURIComponent(e.run_id)}`} className="card block px-4 py-3 hover:border-ink-faint">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-ink">{e.run_id}</span>
-              {typeof e.status === "string" && <Badge tone={toneFor(e.status)}>{e.status.replace(/_/g, " ")}</Badge>}
-            </div>
-          </Link>
-        ))}
-      </div>
-    </Page>
-  );
 }
 
 export function Settings() {
@@ -448,14 +234,5 @@ export function Home() {
         </div>
       )}
     </Page>
-  );
-}
-
-function Pair({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[10px] uppercase tracking-wide text-ink-faint">{label}</dt>
-      <dd className="text-sm font-semibold text-ink">{value}</dd>
-    </div>
   );
 }
