@@ -923,6 +923,12 @@ export const api = {
       }
       xhr.send(file);
     }),
+  /** Remove one file from an upload group; `deleted` is true if that was its last. */
+  removeSourceFile: (sourceId: string, filename: string) =>
+    request<{ source_id: string; files: string[]; deleted: boolean; label?: string }>(
+      `/api/data-sources/${encodeURIComponent(sourceId)}/files/${encodeURIComponent(filename)}`,
+      { method: "DELETE" },
+    ),
   experiments: () => request<ExperimentSummary[]>("/api/catalog/experiments"),
   models: () => request<ModelSummary[]>("/api/catalog/models"),
   reports: () => request<ReportSummary[]>("/api/catalog/reports"),
