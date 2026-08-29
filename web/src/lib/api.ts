@@ -339,25 +339,25 @@ export interface SourceProfile {
     route: "structured" | "documents" | "unsupported";
     reason: LocalizedText;
     table_names: string[];
-    // Measured from content by ads.kesif, not from the extension. Optional
+    // Measured from content by ads.file_detection, not from the extension. Optional
     // because the extra may not be installed, in which case the API omits it.
-    kesif_akis?: string;
-    kesif_deterministik?: boolean;
-    kesif_kanit?: string;
-    kesif_sebep?: string;
-    kesif_uyusmazlik?: boolean;
+    detected_flow?: string;
+    detection_deterministic?: boolean;
+    detection_evidence?: string;
+    detection_reason?: string;
+    detection_conflicts_with_extension?: boolean;
   }>;
   tables: ProfiledTable[];
   documents?: ProfiledDocument[];
   relationships?: MeasuredRelationship[];
   privacy: string;
-  kesif?: {
-    kullanildi: boolean;
-    sebep?: string;
-    dosya_sayisi?: number;
-    deterministik?: number;
-    yargi_gerektiren?: number;
-    uyusmazlik?: number;
+  file_detection?: {
+    used: boolean;
+    reason?: string;
+    file_count?: number;
+    deterministic_count?: number;
+    adjudication_required_count?: number;
+    extension_conflict_count?: number;
   };
 }
 

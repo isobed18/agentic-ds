@@ -17,7 +17,7 @@ const profile: SourceProfile = {
 
 /**
  * A PDF that someone renamed to .csv. The route comes from the extension and
- * says "structured"; kesif measured the content and says "belge". Until the
+ * says "structured"; file detection measured the content and says "belge". Until the
  * two are wired together this disagreement is the only warning anyone gets,
  * and it was being dropped on the floor between the API and the screen (#103).
  */
@@ -31,10 +31,10 @@ const misnamed: SourceProfile = {
       route: "structured",
       reason: { en: "A supported tabular format will be profiled deterministically.", tr: "A supported tabular format will be profiled deterministically." },
       table_names: ["musteri_listesi"],
-      kesif_akis: "belge",
-      kesif_deterministik: true,
-      kesif_kanit: "metin katmani: 1 sayfa, sayfa basina 104 karakter",
-      kesif_uyusmazlik: true,
+      detected_flow: "belge",
+      detection_deterministic: true,
+      detection_evidence: "metin katmani: 1 sayfa, sayfa basina 104 karakter",
+      detection_conflicts_with_extension: true,
     },
   ],
   tables: [],
@@ -52,7 +52,7 @@ describe("staging source routing", () => {
     expect(file.route).toBe("structured");
   });
 
-  it("leaves the measurement undefined when the kesif extra is absent", () => {
+  it("leaves the measurement undefined when file detection is absent", () => {
     const [file] = routedFiles(profile);
     expect(file.measuredFlow).toBeUndefined();
     expect(file.contradictsExtension).toBeUndefined();
