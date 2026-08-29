@@ -1062,9 +1062,10 @@ export const api = {
       `/api/data-sources/${encodeURIComponent(sourceId)}/files/${encodeURIComponent(filename)}`,
       { method: "DELETE" },
     ),
-  experiments: () => request<ExperimentSummary[]>("/api/catalog/experiments"),
-  models: () => request<ModelSummary[]>("/api/catalog/models"),
-  reports: () => request<ReportSummary[]>("/api/catalog/reports"),
+  // #111: the global experiment/model/report catalogues are no longer browsed
+  // as destinations -- these outputs are read per-project through
+  // projectContents. The dataset catalogue endpoint stays (the source picker in
+  // LaunchDialog lists reusable sources from it).
   hardening: () => request<Hardening>("/api/hardening"),
   /** Move a column between pii and internal before the classification is used. */
   overrideSensitivity: (runId: string, columns: Record<string, "pii" | "internal">) =>

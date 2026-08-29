@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import CATALOG_SOURCE from "../pages/Catalog.tsx?raw";
+import PROJECT_CONTENTS_SOURCE from "../components/ProjectContents.tsx?raw";
 import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import STAGING_ROUTING_SOURCE from "../components/stagingRoutingState.ts?raw";
 import UNDERSTANDING_WORKSPACE_SOURCE from "../components/UnderstandingWorkspace.tsx?raw";
@@ -76,10 +77,14 @@ describe("labels the scanner cannot see", () => {
     expect(missing, "stage titles reaching t() through a variable").toEqual([]);
   });
 
-  it("keeps the datasets navigation label aligned with its page title", () => {
-    // NAV reaches t() through label, so the literal scanner cannot tell that
-    // this destination used a different name from the page it opens (#77).
-    expect(SHELL_SOURCE).toContain('{ to: "/datasets", label: "Datasets"');
+  it("pins the top-level navigation labels the scanner cannot see", () => {
+    // NAV reaches t() through `label`, so the literal scanner cannot see these
+    // destinations at all (#77). #111 reduces the top level to Home, Projects
+    // and Settings; pin the labels so they stay translated and named as the
+    // customer expects ("Projects", not the internal "automation").
+    expect(SHELL_SOURCE).toContain('{ to: "/", label: "Home"');
+    expect(SHELL_SOURCE).toContain('{ to: "/automation", label: "Projects"');
+    expect(SHELL_SOURCE).toContain('{ to: "/settings", label: "Settings"');
   });
 
   it("translates every staging progress label and detail", () => {
@@ -107,16 +112,14 @@ describe("catalogue screens request translations at the render boundary", () => 
     );
   });
 
-  it("translates dataset badges and every table heading", () => {
-    // The general catalogue audit cannot find strings that never call t(), and
-    // several headings are used elsewhere, so only this render site proves #70.
-    expect(CATALOG_SOURCE).toContain('{d.sensitive_columns} {t("sensitive")}');
-    expect(CATALOG_SOURCE).toContain('{d.quality_issues} {t("issues")}');
-    expect(CATALOG_SOURCE).toContain('{d.tables} {t("tables")}');
-
-    const table = CATALOG_SOURCE.match(/<DataTable[\s\S]*?\/>/)?.[0] ?? "";
+  it("translates every project data table heading", () => {
+    // #70/#111: the dataset table used to live on the removed global Datasets
+    // page; the same measured data is now the project's own Data tab. Several
+    // headings are reused elsewhere, so only this render site proves they still
+    // reach t() rather than shipping in English.
+    const table = PROJECT_CONTENTS_SOURCE.match(/<DataTable[\s\S]*?\/>/)?.[0] ?? "";
     for (const heading of ["Table", "Format", "Rows", "Columns", "Keys", "Issues"]) {
-      expect(table, `${heading} heading on the datasets table`).toContain(`t("${heading}")`);
+      expect(table, `${heading} heading on the project data table`).toContain(`t("${heading}")`);
     }
   });
 });
