@@ -54,7 +54,7 @@ export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache
   const [sourceOpen, setSourceOpen] = useState(false);
   const counts = sourceCounts(profile);
   return (
-    <CanvasSurface>
+    <CanvasSurface docked={sourceOpen} overlay={sourceOpen ? <Inspector title={t("Uploaded files")} eyebrow={t("Source")} onClose={() => setSourceOpen(false)}><SourceOverview profile={profile} /></Inspector> : undefined}>
       <div className="flex min-w-[570px] items-center gap-10 px-10 py-16">
         <PhaseNode title={t("Uploaded files")} subtitle={t("{count} files", { count: counts.files })} status="complete" onClick={() => setSourceOpen(true)} footer={t("Click to inspect files")} />
         <GraphEdge status="pending" />
@@ -71,7 +71,6 @@ export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache
           <label className="mt-4 flex items-start gap-2 border-t border-brand-200 pt-3 text-[10px] leading-relaxed text-ink-mute"><input type="checkbox" className="mt-0.5" checked={reuseCache} onChange={(event) => onReuseCache(event.target.checked)} /><span><strong className="block text-ink">{t("Reuse matching understanding")}</strong>{t("Optional. Turn this off to rerun Intake and Schema Discovery for the same files.")}</span></label>
         </div>
       </div>
-      {sourceOpen && <Inspector title={t("Uploaded files")} eyebrow={t("Source")} onClose={() => setSourceOpen(false)}><SourceOverview profile={profile} /></Inspector>}
     </CanvasSurface>
   );
 }
@@ -82,7 +81,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
   return (
-    <CanvasSurface overlay={<>
+    <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
       {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
@@ -108,7 +107,7 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
   }
 
   return (
-    <CanvasSurface overlay={<>
+    <CanvasSurface docked={selection !== null} overlay={<>
       <button type="button" onClick={() => setPlannerOpen(true)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} busy={busy} runId={runId} />}
       {previewError && <p className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{previewError}</p>}
@@ -319,17 +318,17 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, busy }: { prof
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-[10px] font-normal text-ink-mute">{step.detail}</span>}</span></li>)}</ol>; }
-/** The canvas, plus an overlay that is deliberately outside it.
+/** The canvas, plus chrome that is deliberately outside its pan/zoom content.
  *
  * `children` are drawn into the scaled, scrolling content. `overlay` is not:
- * anything docked over the canvas -- panels, dialogs, the Planner button --
- * belongs there. A `position: fixed` element inside a transformed ancestor is
+ * inspectors, dialogs, and the Planner button belong there. A `position: fixed`
+ * element inside a transformed ancestor is
  * positioned against that ancestor rather than the viewport, which is why the
  * Planner button slid across the screen as the graph zoomed (#60), and being
  * inside the pan area is why dragging across a panel's text panned the graph
  * instead of selecting it (#56).
  */
-function CanvasSurface({ children, overlay }: { children: React.ReactNode; overlay?: React.ReactNode }) {
+export function CanvasSurface({ children, overlay, docked = false }: { children: React.ReactNode; overlay?: React.ReactNode; docked?: boolean }) {
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
@@ -352,7 +351,7 @@ function CanvasSurface({ children, overlay }: { children: React.ReactNode; overl
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     // A press that lands on a control or inside a panel belongs there. Panels
-    // are asides docked over the canvas, and without them in this list a drag
+    // are asides docked beside the canvas, and without them in this list a drag
     // across their text panned the graph instead of selecting the text (#56).
     if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,aside,[role='dialog'],[data-no-pan]")) return;
     const node = viewport.current;
@@ -376,12 +375,15 @@ function CanvasSurface({ children, overlay }: { children: React.ReactNode; overl
     setPanning(false);
   }
 
+  // The inspector used to be fixed over a full-width viewport, so opening it
+  // made the right-hand nodes unreachable even after panning (#40). A second
+  // grid column makes the viewport surrender the exact width the panel takes.
   // The controls sit outside the scrolling element, not inside it. Inside, they
   // rode the scaled content: zooming in moved the bar up the screen and zooming
   // out did not bring it back the same way (#59), and anything else docked over
   // the canvas drifted with it (#60).
-  return <div className="relative h-full min-h-[30rem]">
-    <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
+  return <div className="relative grid h-full min-h-[30rem]" style={{ gridTemplateColumns: docked ? "minmax(0, 1fr) min(440px, 94vw)" : "minmax(0, 1fr)" }}>
+    <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
       <div style={scaledBox(step)}>
         <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoomForStep(step)})`, transformOrigin: "top left" }}>{children}</div>
       </div>
@@ -411,7 +413,7 @@ function ForkConnector({ branches, status }: { branches: number; status: Progres
 function MergeConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 8 H28 M0 ${height - 8} H28 M28 8 V${height - 8} M28 ${height / 2} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : status === "running" ? "#4f7cff" : "#cbd5e1"} strokeWidth="1.5" /><path d={`M43 ${height / 2 - 4} L48 ${height / 2} L43 ${height / 2 + 4}`} fill="none" stroke="#94a3b8" strokeWidth="1.5" /></svg>; }
 function StatusMark({ status }: { status: ProgressStatus }) { return <span className={cx("relative grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[9px]", status === "complete" ? "border-ok-300 bg-ok-50 text-ok-700" : status === "running" ? "border-brand-400 bg-brand-50 text-brand-700" : status === "failed" ? "border-stop-300 bg-stop-50 text-stop-700" : "border-line bg-surface text-ink-faint")}>{status === "complete" ? "✓" : status === "running" ? <><span>●</span><span className="absolute inset-0 animate-ping rounded-full bg-brand-300 opacity-40 motion-reduce:animate-none" /></> : status === "failed" ? "!" : "○"}</span>; }
 function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><div className="flex items-start justify-between gap-3"><StatusMark status={status} /><Badge tone={status === "complete" ? "ok" : status === "failed" ? "stop" : status === "running" ? "brand" : "neutral"}>{t(status === "complete" ? "Complete" : status === "running" ? "Processing" : status === "failed" ? "Failed" : "Waiting")}</Badge></div><p className="mt-3 text-sm font-semibold text-ink">{title}</p><p className="mt-1 text-[11px] text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 text-[10px] font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "w-[190px] p-4" : "w-[230px] p-5", "rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <div className="relative shrink-0">{card}<ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact ?? (() => {})} /></div>; }
-function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) { return <aside className="fixed inset-y-[58px] right-0 z-20 w-[min(440px,94vw)] overflow-y-auto border-l border-line bg-surface p-5 shadow-2xl"><header className="flex items-start gap-3 border-b border-line pb-4"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header><div className="mt-5">{children}</div></aside>; }
+export function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) { return <aside className="z-20 h-full w-full overflow-y-auto border-l border-line bg-surface p-5 shadow-2xl"><header className="flex items-start gap-3 border-b border-line pb-4"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header><div className="mt-5">{children}</div></aside>; }
 function EvidenceSection({ title, tone, children }: { title: string; tone: "measured" | "interpretation"; children: React.ReactNode }) { return <section className={cx("rounded-xl border p-4", tone === "measured" ? "border-sky-200 bg-sky-50/40" : "border-violet-200 bg-violet-50/40")}><p className={cx("text-[10px] font-semibold uppercase tracking-[0.12em]", tone === "measured" ? "text-sky-700" : "text-violet-700")}>{title}</p><div className="mt-3">{children}</div></section>; }
 function SourceFiles({ profile, compact = false }: { profile: SourceProfile; compact?: boolean }) { const files = buildStagingRoutingState(profile, null, null).files; return <div className={compact ? "mt-2 space-y-1.5" : "mt-3 space-y-2"}>{files.map((file) => <div key={`${file.route}:${file.name}`} className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2"><FileBadge format={file.format} /><span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{file.name}</span><span className="text-[10px] text-ink-mute">{t(file.route === "structured" ? "Structured" : file.route === "documents" ? "Document" : "Needs review")}</span></div>)}</div>; }
 function FileBadge({ format }: { format: string }) { return <span className="rounded bg-surface-sunken px-2 py-0.5 text-[9px] font-semibold uppercase text-ink-mute">{format}</span>; }
