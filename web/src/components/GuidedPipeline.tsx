@@ -13,6 +13,7 @@ import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel } from "../lib/status";
 import { Badge, Empty, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
+import { ResizableNode } from "./ResizableNode";
 
 interface GuidedPipelineProps {
   runId: string;
@@ -173,7 +174,7 @@ function PlanSummary({ profile, workspace, structured, documents, candidateTable
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file) => <Badge key={file} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
 
 function GuidedNode({ title, subtitle, status, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
-  return <div className="relative shrink-0"><button type="button" onClick={onClick} className={cx("w-[205px] rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300")}><div className="flex items-center justify-between"><StatusDot status={status} /><Badge tone={isSucceeded(status) ? "ok" : isAttention(status) ? "stop" : isActive(status) ? "brand" : "neutral"}>{statusLabel(status)}</Badge></div><p className="mt-3 text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p></button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></div>;
+  return <ResizableNode className="relative shrink-0" defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300")}><div className="flex items-center justify-between"><StatusDot status={status} /><Badge tone={isSucceeded(status) ? "ok" : isAttention(status) ? "stop" : isActive(status) ? "brand" : "neutral"}>{statusLabel(status)}</Badge></div><p className="mt-3 text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p></button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 function Arrow({ active, complete }: { active: boolean; complete: boolean }) { return <div className={cx("relative h-px w-8 shrink-0", complete ? "bg-ok-300" : "bg-slate-300")}><span className="absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t border-slate-400" />{active && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400" />}</div>; }
