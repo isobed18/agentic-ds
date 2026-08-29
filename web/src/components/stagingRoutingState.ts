@@ -11,6 +11,40 @@ export interface RoutedSourceFile {
   tableNames: string[];
 }
 
+export interface FilePage {
+  shown: RoutedSourceFile[];
+  total: number;
+  /** The requested page, clamped into [1, lastPage]. */
+  page: number;
+  lastPage: number;
+}
+
+/**
+ * One page of an in-memory routed-file list (#98).
+ *
+ * The "Yapısal veri" panel rendered every routed file in one flat, unbounded
+ * list; a sharded upload (hundreds of 00000.csv-style files) made it a single
+ * unscrollable column with no way to find one file. This filters by file name,
+ * then slices to the page -- the same search + page-size + paging design as the
+ * /datasets catalog (#72). The requested page is clamped, so when a search
+ * shrinks the list below the current page the view falls back to the last real
+ * page instead of showing an empty page past the end.
+ */
+export function pageOfFiles(
+  files: RoutedSourceFile[],
+  options: { search: string; page: number; pageSize: number },
+): FilePage {
+  const query = options.search.trim().toLowerCase();
+  const filtered = query
+    ? files.filter((file) => file.name.toLowerCase().includes(query))
+    : files;
+  const total = filtered.length;
+  const lastPage = Math.max(1, Math.ceil(total / options.pageSize));
+  const page = Math.min(Math.max(1, options.page), lastPage);
+  const start = (page - 1) * options.pageSize;
+  return { shown: filtered.slice(start, start + options.pageSize), total, page, lastPage };
+}
+
 export interface RoutingSubstep {
   id: string;
   label: string;

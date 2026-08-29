@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SourceProfile } from "../lib/api";
-import { buildStagingRoutingState, routedFiles } from "./stagingRoutingState";
+import { buildStagingRoutingState, pageOfFiles, routedFiles, type RoutedSourceFile } from "./stagingRoutingState";
 
 const profile: SourceProfile = {
   source_id: "mixed",
@@ -145,5 +145,48 @@ describe("staging source routing", () => {
     expect(state.synthesis).toBe("failed");
     expect(state.proposal).toBe("failed");
     expect(state.attention).toContain("No stable row grain");
+  });
+});
+
+describe("paginating the routed-file list (#98)", () => {
+  const files: RoutedSourceFile[] = Array.from({ length: 60 }, (_, i) => ({
+    name: `${String(i).padStart(5, "0")}.csv`,
+    format: "csv",
+    route: "structured",
+    tableNames: [],
+  }));
+
+  it("returns one page-size slice and the true total", () => {
+    const result = pageOfFiles(files, { search: "", page: 1, pageSize: 25 });
+    expect(result.shown).toHaveLength(25);
+    expect(result.shown[0].name).toBe("00000.csv");
+    expect(result.total).toBe(60);
+    expect(result.lastPage).toBe(3);
+  });
+
+  it("slices the requested page", () => {
+    const result = pageOfFiles(files, { search: "", page: 3, pageSize: 25 });
+    expect(result.shown).toHaveLength(10);
+    expect(result.shown[0].name).toBe("00050.csv");
+  });
+
+  it("filters by file name before paging", () => {
+    const result = pageOfFiles(files, { search: "00045", page: 1, pageSize: 25 });
+    expect(result.total).toBe(1);
+    expect(result.shown.map((f) => f.name)).toEqual(["00045.csv"]);
+  });
+
+  it("matches the search case-insensitively", () => {
+    // Uppercase query still matches the lowercase ".csv" every file carries.
+    expect(pageOfFiles(files, { search: "CSV", page: 1, pageSize: 100 }).total).toBe(60);
+  });
+
+  it("clamps a page left stale by a narrowing search instead of showing an empty page", () => {
+    // On page 3 of the full list, then the user types a filter matching two
+    // files: page 3 no longer exists, so it falls back to the last real page.
+    const result = pageOfFiles(files, { search: "00001", page: 3, pageSize: 25 });
+    expect(result.total).toBe(1);
+    expect(result.page).toBe(1);
+    expect(result.shown.map((f) => f.name)).toEqual(["00001.csv"]);
   });
 });

@@ -12,6 +12,7 @@ import { PlannerPanel } from "./PlannerPanel";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
   buildStagingRoutingState,
+  pageOfFiles,
   type ProgressStatus,
   type RoutedSourceFile,
   type RoutingSubstep,
@@ -227,7 +228,36 @@ function RoutingInspector({ selection, profile, workspace, routing, onClose, onO
 }
 
 function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
-  return <div className="space-y-2">{files.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div>{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}</div>)}</div>;
+  // #98: this list had no bound, so a sharded upload made the Yapısal veri panel
+  // one unscrollable column with no way to find a file. Search + page size +
+  // paging, mirroring the /datasets catalog (#72). State resets to page 1 when
+  // the filter or page size changes; the helper clamps a stale page.
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const { shown, total, page: current, lastPage } = pageOfFiles(files, { search, page, pageSize });
+  const pager = (
+    <div className="flex items-center gap-1.5">
+      <button type="button" className="btn-ghost !py-1 text-[10px]" disabled={current <= 1} onClick={() => setPage(current - 1)}>{t("Previous")}</button>
+      <span className="text-[10px] text-ink-mute">{t("Page {page} of {pages}", { page: current, pages: lastPage })}</span>
+      <button type="button" className="btn-ghost !py-1 text-[10px]" disabled={current >= lastPage} onClick={() => setPage(current + 1)}>{t("Next")}</button>
+    </div>
+  );
+  return <div className="space-y-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t("Search files…")} className="field !h-7 text-[11px]" />
+        <label className="flex items-center gap-1 text-[10px] text-ink-mute"><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="field !h-7 text-[10px]">{[25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}</select>{t("per page")}</label>
+      </div>
+      {pager}
+    </div>
+    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div>{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}</div>)}
+    {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
+      {pager}
+    </div>
+  </div>;
 }
 
 function StructuredDetails({ profile, workspace, routing }: { profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState }) {
