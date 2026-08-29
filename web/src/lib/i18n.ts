@@ -774,6 +774,8 @@ const TR: Record<string, string> = {
   "Next": "Sonraki",
   "Page {page} of {pages}": "Sayfa {page} / {pages}",
   "Search datasets…": "Veri kümelerinde ara…",
+  "Search files…": "Dosyalarda ara…",
+  "No files match your search": "Aramanızla eşleşen dosya yok",
   "per page": "sayfa başına",
   "Showing {shown} of {total}": "{total} sonuçtan {shown} tanesi gösteriliyor",
   "No datasets match your search": "Aramanızla eşleşen veri kümesi yok",
