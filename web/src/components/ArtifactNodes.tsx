@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { t } from "../lib/i18n";
+import { api, type ArtifactPreview } from "../lib/api";
+import { activeLanguage, t } from "../lib/i18n";
 import { keepRevealed, nextToReveal, revealDelay } from "./artifactReveal";
+import { artifactTitle } from "./artifactTitle";
 
 /** Reveal ids one at a time, in the order they first appeared.
  *
@@ -37,42 +39,108 @@ export function useSequentialReveal(ids: string[], intervalMs = 420): string[] {
   return shown;
 }
 
-/** The artifacts a stage produced, as round nodes hanging off it.
+/** Fetch each artifact's display title once, when the list is first expanded.
  *
- * These were a single chip reading "3 artifacts" -- true, and unreadable at a
- * glance: the count told you something existed without telling you it had
- * arrived just now, and there was nothing to aim at. As nodes they are objects
- * in the graph, which is what they are.
+ * #66: the only per-artifact title lookup is `artifactPreview(id)`, one at a
+ * time when a modal opens. Surfacing the title next to the node means fetching
+ * them up front — but only on expand, and only once each, so a collapsed node
+ * costs nothing and a poll that re-reports the same ids does not re-fetch.
+ */
+function useArtifactTitles(ids: string[], enabled: boolean): Record<string, string> {
+  const [previews, setPreviews] = useState<Record<string, ArtifactPreview>>({});
+  const requested = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    for (const id of ids) {
+      if (requested.current.has(id)) continue;
+      requested.current.add(id);
+      void api
+        .artifactPreview(id)
+        .then((preview) => {
+          if (!cancelled) setPreviews((current) => ({ ...current, [id]: preview }));
+        })
+        .catch(() => {
+          // A failed title is a missing label, never a broken node: allow a
+          // later expand to try again rather than leaving the row blank forever.
+          requested.current.delete(id);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, ids.join("|")]);
+
+  const language = activeLanguage();
+  const titles: Record<string, string> = {};
+  for (const id of ids) {
+    const preview = previews[id];
+    titles[id] = preview ? artifactTitle(preview, language, t) : t("Loading…");
+  }
+  return titles;
+}
+
+/** The artifacts a stage produced, behind a single "Artifacts (N)" opener.
+ *
+ * The badge under a node used to be inconsistent (#46: inline here, absolute
+ * elsewhere, at three different offsets) and led nowhere useful (#45). This is
+ * one shared control every node type gets identically: a pill that straddles
+ * the node's bottom edge, and toggles a dashed list of numbered artifacts —
+ * each captioned with its own title so you can see what an artifact is without
+ * opening it (#66). The count still ticks up one per poll (`useSequentialReveal`),
+ * which is the live-progress signal the old round nodes existed to give.
  */
 export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: string) => void }) {
   const shown = useSequentialReveal(ids);
+  const [open, setOpen] = useState(false);
+  const titles = useArtifactTitles(shown, open);
   if (!ids.length) return null;
   return (
-    <div className="pointer-events-none absolute -bottom-14 left-0 right-0 flex flex-col items-center">
-      {/* Stem from the stage node down to its artifacts, so the connection is
-          drawn rather than implied by proximity. */}
-      <span className="h-3 w-px bg-line" aria-hidden="true" />
-      <ul className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5" aria-label={t("Artifacts")}>
-        {shown.map((id, index) => (
-          <li key={id}>
-            <button
-              type="button"
-              onClick={() => onOpen(id)}
-              title={t("Artifact {number}", { number: index + 1 })}
-              className="artifact-node grid h-8 w-8 place-items-center rounded-full border border-brand-300 bg-brand-50 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 hover:bg-brand-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
-            >
-              {index + 1}
-            </button>
-          </li>
-        ))}
-        {shown.length < ids.length && (
-          <li aria-hidden="true">
-            <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-line text-[10px] text-ink-faint">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
-            </span>
-          </li>
-        )}
-      </ul>
+    <div className="absolute bottom-0 left-1/2 z-10 flex -translate-x-1/2 translate-y-1/2 flex-col items-center">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+      >
+        {t("Artifacts ({count})", { count: shown.length })}
+      </button>
+      {open && (
+        <ol className="pointer-events-auto mt-2 flex flex-col gap-2" aria-label={t("Artifacts")}>
+          {shown.map((id, index) => (
+            <li key={id} className="flex items-center gap-2">
+              {/* The numbered circle straddles the dashed line down the list,
+                  the way the opener straddles the node edge above it. */}
+              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-brand-300 bg-brand-50 text-[10px] font-semibold tabular-nums text-brand-700">
+                {index + 1}
+                {index < shown.length - 1 && (
+                  <span
+                    className="absolute left-1/2 top-full h-2 w-px -translate-x-1/2 border-l border-dashed border-line"
+                    aria-hidden="true"
+                  />
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => onOpen(id)}
+                title={titles[id]}
+                className="artifact-node max-w-[210px] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[10px] text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+              >
+                {titles[id]}
+              </button>
+            </li>
+          ))}
+          {shown.length < ids.length && (
+            <li aria-hidden="true" className="flex items-center gap-2">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-dashed border-line">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
+              </span>
+            </li>
+          )}
+        </ol>
+      )}
     </div>
   );
 }

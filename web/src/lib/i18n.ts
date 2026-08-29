@@ -520,6 +520,7 @@ const TR: Record<string, string> = {
   "Attempts": "Denemeler",
   "Decision history": "Karar geçmişi",
   "Artifacts": "Çıktılar",
+  "Artifacts ({count})": "Çıktılar ({count})",
   "attempt": "deneme",
   "This stage has not run yet": "Bu aşama henüz çalışmadı",
   "No output recorded": "Kaydedilmiş çıktı yok",
