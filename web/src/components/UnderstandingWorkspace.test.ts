@@ -2,7 +2,7 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { BranchNode, CanvasSurface, DockedPanel, Inspector } from "./UnderstandingWorkspace";
+import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector } from "./UnderstandingWorkspace";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 
 Object.defineProperty(globalThis, "localStorage", {
@@ -94,6 +94,31 @@ describe("understanding node status placement", () => {
     expect(statusMark).toBeGreaterThan(-1);
     expect(title).toBeGreaterThan(-1);
     expect(statusMark).toBeLessThan(title);
+  });
+
+  it("shows a fallback instead of a blank body for an empty artifact (#74)", () => {
+    // An artifact with no summary, no findings and a non-document type used to
+    // render a literally blank dialog body under a generic "ARTIFACT" eyebrow.
+    const markup = renderToStaticMarkup(createElement(ArtifactDialog, {
+      preview: { artifact_id: "a".repeat(64), artifact_type: "artifact", findings: [] },
+      onClose: () => undefined,
+    }));
+
+    expect(markup).toContain("Artifact kaydedildi");
+  });
+
+  it("does not show the fallback when the artifact has findings (#74)", () => {
+    const markup = renderToStaticMarkup(createElement(ArtifactDialog, {
+      preview: {
+        artifact_id: "b".repeat(64),
+        artifact_type: "schema_discovery",
+        findings: [{ en: "Two candidate keys", tr: "İki aday anahtar" }],
+      },
+      onClose: () => undefined,
+    }));
+
+    expect(markup).not.toContain("Artifact kaydedildi");
+    expect(markup).toContain("İki aday anahtar");
   });
 
   it("lets a node be resized from its edges (#67)", () => {

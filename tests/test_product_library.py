@@ -46,6 +46,29 @@ def test_dataset_catalog_is_useful_and_never_serves_source_values(tmp_path: Path
     assert "second-person" not in response.text
 
 
+def test_artifact_preview_reports_the_real_type_for_unrecognised_artifacts(
+    tmp_path: Path,
+) -> None:
+    """An artifact the preview did not special-case reported a generic
+    "artifact" type, so it opened under a meaningless "ARTIFACT" eyebrow (#74).
+    The index knows the real type; the preview now reports it."""
+    plane = _plane(tmp_path)
+    card = DataCard(
+        table_name="customers",
+        source_uri="fixture://customers.csv",
+        source_format="csv",
+        n_rows=2,
+        n_columns=1,
+        columns=[],
+        profiled_rows=2,
+    )
+    ref = plane.store.put(card, run_id="run-x", stage_exec_id="intake")
+
+    preview = plane.artifact_preview(ref.artifact_id)
+
+    assert preview["artifact_type"] == "data_card"
+
+
 def test_dataset_catalog_paginates_and_only_profiles_the_page(tmp_path: Path) -> None:
     """The catalog profiled every source on every load, so /datasets slowed
     without bound as datasets accumulated (#72). It now returns one page and

@@ -202,6 +202,23 @@ class ArtifactStore:
     def _payload_path(self, artifact_id: str) -> Path:
         return self.objects_dir / artifact_id[:2] / artifact_id / "payload.json"
 
+    def type_of(self, artifact_id: str) -> ArtifactType | None:
+        """The indexed type of one artifact, or None if it is not indexed.
+
+        The preview endpoint reads a payload straight off disk and could only
+        report a generic "artifact" type for anything it did not special-case,
+        so unrecognised artifacts opened under a meaningless "ARTIFACT" eyebrow
+        (#74). The index already records the real type.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT artifact_type FROM artifacts WHERE artifact_id=? LIMIT 1",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ArtifactType(row["artifact_type"])
+
     def blob_dir(self, artifact_id: str) -> Path:
         """Directory for large binary side-payloads (parquet, pickled pipelines)."""
         path = self.objects_dir / artifact_id[:2] / artifact_id / "blobs"
