@@ -15,7 +15,49 @@ const profile: SourceProfile = {
   documents: [],
 };
 
+/**
+ * A PDF that someone renamed to .csv. The route comes from the extension and
+ * says "structured"; kesif measured the content and says "belge". Until the
+ * two are wired together this disagreement is the only warning anyone gets,
+ * and it was being dropped on the floor between the API and the screen (#103).
+ */
+const misnamed: SourceProfile = {
+  source_id: "yalan",
+  privacy: "safe",
+  source_files: [
+    {
+      name: "musteri_listesi.csv",
+      format: "csv",
+      route: "structured",
+      reason: { en: "A supported tabular format will be profiled deterministically.", tr: "A supported tabular format will be profiled deterministically." },
+      table_names: ["musteri_listesi"],
+      kesif_akis: "belge",
+      kesif_deterministik: true,
+      kesif_kanit: "metin katmani: 1 sayfa, sayfa basina 104 karakter",
+      kesif_uyusmazlik: true,
+    },
+  ],
+  tables: [],
+  documents: [],
+};
+
 describe("staging source routing", () => {
+  it("carries the measured type through to the screen", () => {
+    const [file] = routedFiles(misnamed);
+    expect(file.measuredFlow).toBe("belge");
+    expect(file.contradictsExtension).toBe(true);
+    expect(file.measuredEvidence).toContain("metin katmani");
+    // The route itself is untouched: this release makes the measurement
+    // visible, it does not yet let it decide.
+    expect(file.route).toBe("structured");
+  });
+
+  it("leaves the measurement undefined when the kesif extra is absent", () => {
+    const [file] = routedFiles(profile);
+    expect(file.measuredFlow).toBeUndefined();
+    expect(file.contradictsExtension).toBeUndefined();
+  });
+
   it("keeps every uploaded file attached to exactly one visible route", () => {
     expect(routedFiles(profile).map((file) => [file.name, file.route])).toEqual([
       ["employees.csv", "structured"],

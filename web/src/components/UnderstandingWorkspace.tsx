@@ -227,6 +227,43 @@ function RoutingInspector({ selection, profile, workspace, routing, onClose, onO
   </Inspector>;
 }
 
+/**
+ * What ads.kesif measured, in words a tester can act on.
+ *
+ * Written as literal t() calls rather than a lookup table so the i18n scanner
+ * can see them; a label reaching t() through a variable is invisible to it and
+ * ships in English (#38).
+ */
+function measuredFlowLabel(flow: string): string {
+  if (flow === "tablo") return t("Table");
+  if (flow === "belge") return t("Document");
+  if (flow === "agac") return t("Structured tree");
+  if (flow === "kapsayici") return t("Archive");
+  if (flow === "islenemez") return t("Unreadable");
+  return t("Needs a decision");
+}
+
+/**
+ * The measurement beside the route, because today they can disagree.
+ *
+ * The route above is decided by the file's extension. kesif measures the
+ * content. A PDF renamed to .csv is routed as structured and read as a table
+ * while the measurement says "pdf", and until the two are wired together the
+ * only place that shows up is here (#103).
+ */
+function MeasuredType({ file }: { file: RoutedSourceFile }) {
+  if (!file.measuredFlow) return null;
+  const disagrees = file.contradictsExtension === true;
+  return <div className={cx("mt-2 rounded-lg px-2 py-2", disagrees ? "bg-warn-50" : "bg-surface-sunken")}>
+    <div className="flex items-center gap-1.5">
+      <span className={cx("text-[9px] font-semibold uppercase tracking-wide", disagrees ? "text-warn-800" : "text-ink-faint")}>{disagrees ? t("Extension and measurement disagree") : t("Measured from content")}</span>
+      <span className={cx("rounded-full px-1.5 py-0.5 text-[9px] font-semibold", disagrees ? "bg-warn-100 text-warn-800" : "bg-surface text-ink-mute")}>{measuredFlowLabel(file.measuredFlow)}</span>
+    </div>
+    {file.measuredEvidence && <p className="mt-1 break-words text-[10px] leading-relaxed text-ink-mute">{file.measuredEvidence}</p>}
+    {file.measuredDeterministic === false && file.needsDecisionBecause && <p className="mt-1 break-words text-[10px] leading-relaxed text-warn-700">{t("Needs a decision")}: {file.needsDecisionBecause}</p>}
+  </div>;
+}
+
 function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
   // #98: this list had no bound, so a sharded upload made the Yapısal veri panel
   // one unscrollable column with no way to find a file. Search + page size +
@@ -251,7 +288,7 @@ function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
       </div>
       {pager}
     </div>
-    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div>{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}</div>)}
+    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div>{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
     {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
