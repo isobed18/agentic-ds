@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { CanvasSurface, Inspector } from "./UnderstandingWorkspace";
+import { BranchNode, CanvasSurface, Inspector } from "./UnderstandingWorkspace";
 
 Object.defineProperty(globalThis, "localStorage", {
   value: { getItem: () => null },
@@ -37,5 +37,26 @@ describe("the understanding inspector layout", () => {
     expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(440px, 94vw)");
     expect(classNameFor(markup, "aside").split(" ")).toEqual(expect.arrayContaining(["h-full", "w-full"]));
     expect(classNameFor(markup, "aside").split(" ")).not.toContain("fixed");
+  });
+});
+
+describe("understanding node status placement", () => {
+  it("puts the branch status before its title, matching the other node cards", () => {
+    // The regression this exists for (#47). BranchNode alone put its status
+    // mark on the right; every other reachable node card starts on the left.
+    const markup = renderToStaticMarkup(createElement(BranchNode, {
+      title: "Structured data",
+      files: [{ name: "orders.csv", format: "csv", route: "structured", tableNames: ["orders"] }],
+      steps: [{ id: "profile", label: "Profile", status: "complete" }],
+      artifactIds: [],
+      onClick: () => undefined,
+      onOpenArtifact: () => undefined,
+    }));
+
+    const statusMark = markup.indexOf("relative grid h-5 w-5");
+    const title = markup.indexOf(">Structured data<");
+    expect(statusMark).toBeGreaterThan(-1);
+    expect(title).toBeGreaterThan(-1);
+    expect(statusMark).toBeLessThan(title);
   });
 });
