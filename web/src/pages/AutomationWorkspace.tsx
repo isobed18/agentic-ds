@@ -93,6 +93,21 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
     }
   }
 
+  // #101: re-run an existing project's files as a new, independent project.
+  // Creates a fresh automation on the same source and opens it, so the flow
+  // starts clean without re-uploading anything.
+  async function duplicate(item: AutomationDefinition) {
+    setBusy(true); setError(null);
+    try {
+      const copy = await api.duplicateAutomation(item, t("{name} (copy)", { name: item.name }));
+      onOpen(copy.automation_id);
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(item: AutomationDefinition) {
     if (!window.confirm(t("Delete this data project? Its execution history will be kept."))) return;
     setError(null);
@@ -117,7 +132,7 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
             {items.map((item) => {
               // #88: the run this project currently has in progress, if any.
               const active = item.automation_id ? activeRuns.get(item.automation_id) : undefined;
-              return <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className="w-full p-5 pr-12 text-left"><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2>{active ? <Badge tone="brand"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />{statusLabel(active.status)}</Badge> : <Badge tone={item.status === "saved" ? "ok" : item.status === "error" ? "stop" : "neutral"}>{t(item.status === "saved" ? "Saved" : item.status === "error" ? "Error" : "Draft")}</Badge>}</div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>{active && <button type="button" title={t("Pause after current stage")} disabled={stopping === item.automation_id} onClick={() => void stopRun(active)} className="absolute bottom-3 right-3 rounded-lg border border-line px-2.5 py-1 text-[11px] font-medium text-stop-700 hover:bg-stop-50 disabled:opacity-40">{stopping === item.automation_id ? t("Pause requested…") : t("Stop run")}</button>}<button type="button" aria-label={t("Delete data project")} title={t("Delete data project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>;
+              return <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className={cx("w-full p-5 text-left", item.source_id ? "pr-20" : "pr-12")}><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2>{active ? <Badge tone="brand"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />{statusLabel(active.status)}</Badge> : <Badge tone={item.status === "saved" ? "ok" : item.status === "error" ? "stop" : "neutral"}>{t(item.status === "saved" ? "Saved" : item.status === "error" ? "Error" : "Draft")}</Badge>}</div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>{active && <button type="button" title={t("Pause after current stage")} disabled={stopping === item.automation_id} onClick={() => void stopRun(active)} className="absolute bottom-3 right-3 rounded-lg border border-line px-2.5 py-1 text-[11px] font-medium text-stop-700 hover:bg-stop-50 disabled:opacity-40">{stopping === item.automation_id ? t("Pause requested…") : t("Stop run")}</button>}{item.source_id && <button type="button" aria-label={t("Re-run these files as a new data project")} title={t("Re-run these files as a new data project")} disabled={busy} onClick={() => void duplicate(item)} className="absolute right-12 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40">⧉</button>}<button type="button" aria-label={t("Delete data project")} title={t("Delete data project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>;
             })}
             {!items.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No data projects yet")} hint={t("Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.")} /></div>}
           </div>

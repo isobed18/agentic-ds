@@ -767,6 +767,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  /**
+   * #101: start a fresh data project on the same files as an existing one, so a
+   * person can re-run the same source as a clean project -- its own name and
+   * execution history -- without re-uploading. Only the source binding is
+   * carried over; the plan, layout and run history begin empty, which is what
+   * "start the flow fresh" means. A project with no files has nothing to
+   * duplicate, so the new record is left blank for the caller to fill.
+   */
+  async duplicateAutomation(source: AutomationDefinition, name: string): Promise<AutomationDefinition> {
+    const created = await api.createAutomation(name);
+    if (!source.source_id) return created;
+    return api.updateAutomation(created.automation_id, created.revision, { source_id: source.source_id });
+  },
   updateAutomation: (id: string, expectedRevision: number, changes: Record<string, unknown>) =>
     request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}`, {
       method: "PUT",
