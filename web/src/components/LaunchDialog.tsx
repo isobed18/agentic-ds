@@ -41,8 +41,10 @@ export function LaunchDialog({
       .then((list) => { if (!cancelled) setSources(list); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
-    api.datasets()
-      .then((list) => { if (!cancelled) setCatalog(list); })
+    // Enrichment only (row/table counts merged onto the source picker), so a
+    // single full page is enough; the picker still works without it.
+    api.datasets({ pageSize: 100 })
+      .then((page) => { if (!cancelled) setCatalog(page.items); })
       .catch(() => { /* the counts are enrichment; the list still works */ });
     return () => { cancelled = true; };
   }, []);

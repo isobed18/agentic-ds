@@ -9,7 +9,7 @@ import { t } from "../lib/i18n";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge, DataTable, Disclosure, Empty, Metric, Spinner, toneFor } from "../components/ui";
-import { api, type DatasetSummary, type ExperimentSummary, type Hardening, type ModelSummary, type ReportSummary } from "../lib/api";
+import { api, type DatasetPage, type ExperimentSummary, type Hardening, type ModelSummary, type ReportSummary } from "../lib/api";
 
 function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -66,14 +66,72 @@ const fmt = (n: number) => n.toLocaleString();
 const num = (n: number, d = 4) => (Number.isFinite(n) ? n.toFixed(d) : "—");
 
 export function Datasets() {
-  const { data, error, loading } = useAsync<DatasetSummary[]>(() => api.datasets());
+  // Server-side pagination: the catalog profiles only the page it returns, so
+  // /datasets no longer slows without bound as datasets accumulate (#72).
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const { data, error, loading } = useAsync<DatasetPage>(
+    () => api.datasets({ search, page, pageSize }),
+    [search, page, pageSize],
+  );
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+
+  const pager = (
+    <div className="flex items-center gap-2">
+      <button
+        className="btn-ghost !py-1 text-xs"
+        disabled={page <= 1 || loading}
+        onClick={() => setPage((p) => Math.max(1, p - 1))}
+      >
+        {t("Previous")}
+      </button>
+      <span className="text-xs text-ink-mute">{t("Page {page} of {pages}", { page, pages: lastPage })}</span>
+      <button
+        className="btn-ghost !py-1 text-xs"
+        disabled={page >= lastPage || loading}
+        onClick={() => setPage((p) => p + 1)}
+      >
+        {t("Next")}
+      </button>
+    </div>
+  );
+
   return (
     <Page title={t("Datasets")} subtitle={t("Profiled sources. Schema and aggregate statistics only — no raw rows are stored or shown.")}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            placeholder={t("Search datasets…")}
+            className="field text-sm"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-ink-mute">
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="field text-xs"
+            >
+              {[25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {t("per page")}
+          </label>
+        </div>
+        {pager}
+      </div>
       {loading && <Spinner label={t("Loading datasets…")} />}
       {error && <p className="text-sm text-stop-700">{error}</p>}
-      {data?.length === 0 && <Empty title={t("No datasets yet")} hint={t("Drop files into data/ and run the pipeline to profile them.")} />}
+      {!loading && total === 0 && (
+        search
+          ? <Empty title={t("No datasets match your search")} hint={t("Try a different name, or clear the search.")} />
+          : <Empty title={t("No datasets yet")} hint={t("Drop files into data/ and run the pipeline to profile them.")} />
+      )}
       <div className="space-y-3">
-        {data?.map((d) => (
+        {items.map((d) => (
           <Disclosure
             key={d.source_id}
             title={d.label}
@@ -128,6 +186,12 @@ export function Datasets() {
           </Disclosure>
         ))}
       </div>
+      {total > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-ink-mute">{t("Showing {shown} of {total}", { shown: items.length, total })}</p>
+          {pager}
+        </div>
+      )}
     </Page>
   );
 }
@@ -239,7 +303,9 @@ export function Settings() {
 
 export function Home() {
   const models = useAsync<ModelSummary[]>(() => api.models());
-  const datasets = useAsync<DatasetSummary[]>(() => api.datasets());
+  // Only the total is shown here, so ask for the smallest page (size 1) and
+  // read `total` rather than profiling every source for a headline count.
+  const datasets = useAsync<DatasetPage>(() => api.datasets({ pageSize: 1 }));
   const reports = useAsync<ReportSummary[]>(() => api.reports());
 
   return (
@@ -250,7 +316,7 @@ export function Home() {
         <ol className="mt-6 grid gap-2 sm:grid-cols-5">{["Upload", "Intake", "Understand", "Agree on plan", "Run and review"].map((step, index) => <li key={step} className="rounded-lg border border-brand-100 bg-surface/80 px-3 py-3"><span className="text-[10px] font-semibold text-brand-700">{index + 1}</span><p className="mt-1 text-xs font-medium text-ink">{t(step)}</p></li>)}</ol>
       </section>
       <div className="mb-5 flex flex-wrap gap-2">
-        <Metric label={t("Datasets")} value={String(datasets.data?.length ?? "—")} />
+        <Metric label={t("Datasets")} value={String(datasets.data?.total ?? "—")} />
         <Metric label={t("Models")} value={String(models.data?.length ?? "—")} />
         <Metric label={t("Reports")} value={String(reports.data?.length ?? "—")} />
       </div>
