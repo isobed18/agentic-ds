@@ -83,7 +83,7 @@ describe("labels the scanner cannot see", () => {
     // and Settings; pin the labels so they stay translated and named as the
     // customer expects ("Projects", not the internal "automation").
     expect(SHELL_SOURCE).toContain('{ to: "/", label: "Home"');
-    expect(SHELL_SOURCE).toContain('{ to: "/automation", label: "Projects"');
+    expect(SHELL_SOURCE).toContain('{ to: "/projects", label: "Projects"');
     expect(SHELL_SOURCE).toContain('{ to: "/settings", label: "Settings"');
   });
 

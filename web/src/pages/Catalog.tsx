@@ -112,7 +112,7 @@ function stateLabel(project: HomeProject): string {
 
 /** A project opens in its workspace; a project with runs opens on its latest. */
 export function projectHref(project: HomeProject): string {
-  const base = `/automation?automation=${encodeURIComponent(project.project_id)}`;
+  const base = `/projects?automation=${encodeURIComponent(project.project_id)}`;
   return project.latest_run_id
     ? `${base}&view=runs&run=${encodeURIComponent(project.latest_run_id)}`
     : base;
@@ -120,7 +120,7 @@ export function projectHref(project: HomeProject): string {
 
 export function outputHref(output: HomeOutput): string | null {
   if (!output.project_id) return null;
-  return `/automation?automation=${encodeURIComponent(output.project_id)}&view=runs&run=${encodeURIComponent(output.run_id)}`;
+  return `/projects?automation=${encodeURIComponent(output.project_id)}&view=runs&run=${encodeURIComponent(output.run_id)}`;
 }
 
 /**
@@ -151,8 +151,8 @@ export function Home() {
           <Metric label={t("Needs attention")} value={String(totals?.failed ?? "—")} />
           <Metric label={t("Completed")} value={String(totals?.completed ?? "—")} />
         </div>
-        <Link to="/automation" className="btn-primary">
-          {t("Start a data project")} →
+        <Link to="/projects" className="btn-primary">
+          {t("New project")} →
         </Link>
       </div>
 

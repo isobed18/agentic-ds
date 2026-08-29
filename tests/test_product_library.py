@@ -383,10 +383,14 @@ def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) ->
     shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
     app_routes = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
 
-    destinations = ("/", "/automation", "/settings")
+    destinations = ("/", "/projects", "/settings")
     for destination in destinations:
         assert f'"{destination}"' in shell, f"{destination} is missing from the sidebar"
         assert f'path="{destination}"' in app_routes, f"{destination} has no route"
+
+    # #111 settles the customer-facing route on /projects; the old /automation
+    # deep links still resolve, carrying their ?automation=<id> query across.
+    assert 'path="/automation" element={<RedirectWithQuery to="/projects"' in app_routes
 
     # The removed catalogues are no longer sidebar destinations, and their old
     # deep links redirect home instead of dead-ending.

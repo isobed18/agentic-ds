@@ -24,12 +24,12 @@ const project = (over: Partial<HomeProject>): HomeProject => ({
 
 describe("home links", () => {
   it("opens a project with no runs on its workspace", () => {
-    expect(projectHref(project({}))).toBe("/automation?automation=automation-abc123def456");
+    expect(projectHref(project({}))).toBe("/projects?automation=automation-abc123def456");
   });
 
   it("opens a project with runs on its latest run", () => {
     expect(projectHref(project({ latest_run_id: "run-9" }))).toBe(
-      "/automation?automation=automation-abc123def456&view=runs&run=run-9",
+      "/projects?automation=automation-abc123def456&view=runs&run=run-9",
     );
   });
 
@@ -44,7 +44,7 @@ describe("home links", () => {
       created_at: "2026-01-01T00:00:00+00:00",
     };
     expect(outputHref(output)).toBe(
-      "/automation?automation=automation-abc123def456&view=runs&run=run-9",
+      "/projects?automation=automation-abc123def456&view=runs&run=run-9",
     );
   });
 

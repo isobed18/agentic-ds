@@ -981,6 +981,18 @@ const TR: Record<string, string> = {
   "No projects match your search": "Aramanızla eşleşen proje yok",
   "No outputs match your search": "Aramanızla eşleşen çıktı yok",
 
+  // Projects workspace. #111 settles the customer-facing name on "project(s)";
+  // the internal storage/execution vocabulary stays "automation".
+  "New project": "Yeni proje",
+  "Delete this project? Its execution history will be kept.":
+    "Bu proje silinsin mi? Çalıştırma geçmişi korunacak.",
+  "Re-run these files as a new project": "Bu dosyaları yeni bir proje olarak yeniden çalıştır",
+  "Delete project": "Projeyi sil",
+  "This project is still loading. Try again in a moment.":
+    "Proje hâlâ yükleniyor. Birazdan tekrar deneyin.",
+  "Opening project…": "Proje açılıyor…",
+  "Untitled project": "Adsız proje",
+  "Project name": "Proje adı",
   // Data projects workspace
   "Data projects": "Veri projeleri",
   // Project-contained tabs (#80, #111): a project's own data, models and reports.

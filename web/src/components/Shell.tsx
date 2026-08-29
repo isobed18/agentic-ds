@@ -18,7 +18,7 @@ import { cx } from "./ui";
 // that produced them.
 const NAV = [
   { to: "/", label: "Home", icon: HomeIcon, end: true },
-  { to: "/automation", label: "Projects", icon: FlowIcon },
+  { to: "/projects", label: "Projects", icon: FlowIcon },
   { to: "/settings", label: "Settings", icon: GearIcon },
 ];
 
@@ -29,7 +29,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
     () => localStorage.getItem(COLLAPSE_KEY) === "1",
   );
   const location = useLocation();
-  const isAutomationEditor = location.pathname.startsWith("/automation");
+  const isAutomationEditor = location.pathname.startsWith("/projects");
 
   useEffect(() => {
     localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0");
