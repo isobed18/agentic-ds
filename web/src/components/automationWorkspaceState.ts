@@ -1,5 +1,28 @@
-import type { RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
+import type { AutomationDefinition, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
+
+/**
+ * Whether a data project was created but never actually used, so leaving the
+ * editor should discard it rather than leave clutter behind (#83).
+ *
+ * "+ New data project" persists a backend record the instant it is clicked,
+ * before any file is chosen. One still carrying no source and no run when the
+ * person navigates away was never started and never will be -- indistinguishable
+ * in the library from a real "Untitled automation" except that it is abandoned.
+ * A `saved`/`error` project has real content or a run behind it and is kept.
+ */
+export function isAbandonedDraft(
+  automation: AutomationDefinition | null,
+  sourceId: string,
+): boolean {
+  return Boolean(
+    automation
+    && automation.status === "draft"
+    && !sourceId
+    && !automation.source_id
+    && automation.execution_ids.length === 0,
+  );
+}
 
 export type AutomationView = "empty" | "source" | "understanding" | "proposal" | "guided_pipeline" | "workflow";
 
