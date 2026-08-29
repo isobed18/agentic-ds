@@ -248,6 +248,58 @@ def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
     assert "Campaign" not in outputs
 
 
+def test_home_leads_with_projects_that_need_attention_and_finds_output_by_label(
+    tmp_path: Path,
+) -> None:
+    """#111: the home page is the project-first browsing surface. It leads with
+    the project waiting on a person, reports each project's state, and lets an
+    output be rediscovered by label when its project has been forgotten."""
+    plane = _plane(tmp_path)
+    uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
+    waiting = plane.automation_store.create("Churn campaign")
+    finished = plane.automation_store.create("Retention model")
+    plane.automation_store.attach_execution(
+        finished.automation_id, run_id="finished-run", source_id=uploaded["source_id"]
+    )
+    plane.automation_store.attach_execution(
+        waiting.automation_id, run_id="waiting-run", source_id=uploaded["source_id"]
+    )
+    _snapshot(plane, "finished-run", "completed")
+    _snapshot(plane, "waiting-run", "awaiting_human")
+    report = FinalReport(evaluation_artifact_id="a" * 64, markdown="# Holdout summary")
+    plane.store.put(report, run_id="finished-run", stage_exec_id="report", name="final_report")
+    client = TestClient(create_app(plane=plane))
+
+    overview = client.get("/api/home").json()
+
+    assert overview["totals"] == {
+        "projects": 2,
+        "executions": 2,
+        "running": 0,
+        "awaiting_human": 1,
+        "failed": 0,
+        "completed": 1,
+    }
+    # The project waiting on a person leads, regardless of recency.
+    assert overview["projects"][0]["name"] == "Churn campaign"
+    assert overview["projects"][0]["state"] == "awaiting_human"
+    assert overview["projects"][0]["needs_attention"] is True
+    states = {p["name"]: p["state"] for p in overview["projects"]}
+    assert states["Retention model"] == "completed"
+    # The report is discoverable by its heading, labelled with its owning project.
+    produced = overview["recent"]
+    assert [item["kind"] for item in produced] == ["report"]
+    assert produced[0]["project_name"] == "Retention model"
+    assert produced[0]["label"] == "Holdout summary"
+
+    # Search spans both project names and produced-output labels.
+    by_output = client.get("/api/home?search=holdout").json()
+    assert [p["name"] for p in by_output["projects"]] == []
+    assert [item["run_id"] for item in by_output["recent"]] == ["finished-run"]
+    by_project = client.get("/api/home?search=churn").json()
+    assert [p["name"] for p in by_project["projects"]] == ["Churn campaign"]
+
+
 def test_executed_reusable_source_cannot_be_mutated(tmp_path: Path) -> None:
     """#111: output history is immutable, so its reusable input must not be
     edited underneath every project that references it."""

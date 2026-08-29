@@ -152,6 +152,45 @@ export interface ExperimentSummary {
   [k: string]: unknown;
 }
 
+/** One project as the home page shows it: state, size, and where to resume. */
+export type ProjectState = "running" | "awaiting_human" | "failed" | "completed" | "idle";
+
+export interface HomeProject {
+  project_id: string;
+  name: string;
+  status: "draft" | "saved" | "error";
+  source_id: string | null;
+  execution_count: number;
+  updated_at: string;
+  state: ProjectState;
+  needs_attention: boolean;
+  latest_run_id: string | null;
+}
+
+/** A model or report a project produced, project-labelled for rediscovery. */
+export interface HomeOutput {
+  kind: "model" | "report";
+  project_id: string | null;
+  project_name: string | null;
+  run_id: string;
+  artifact_id: string;
+  label: string;
+  created_at: string;
+}
+
+export interface HomeOverview {
+  projects: HomeProject[];
+  totals: {
+    projects: number;
+    executions: number;
+    running: number;
+    awaiting_human: number;
+    failed: number;
+    completed: number;
+  };
+  recent: HomeOutput[];
+}
+
 export type FactValue = string | number | boolean;
 
 /**
@@ -775,6 +814,14 @@ export const api = {
   workflow: (runId?: string | null) =>
     request<Workflow>(runId ? `/api/workflow?run_id=${encodeURIComponent(runId)}` : "/api/workflow"),
   runs: () => request<RunSummary[]>("/api/runs"),
+  /**
+   * The project-first home read model: every project's state plus the recent
+   * work projects produced, both filtered by one search so a forgotten output
+   * still leads back to its project (#111). Global catalogues no longer exist
+   * as destinations, so this endpoint carries the browsing job they had.
+   */
+  home: (search?: string) =>
+    request<HomeOverview>(`/api/home${search ? `?search=${encodeURIComponent(search)}` : ""}`),
   automations: () => request<AutomationDefinition[]>("/api/automations"),
   automation: (id: string) => request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}`),
   createAutomation: (name: string) =>

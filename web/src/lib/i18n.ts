@@ -955,6 +955,32 @@ const TR: Record<string, string> = {
   "Reports appear once a run reaches the report stage.":
     "Bir çalıştırma rapor aşamasına ulaştığında raporlar görünür.",
 
+  // Project-first home (#111): projects are the only top-level concept, so the
+  // home page reports their state and carries the browsing job the deleted
+  // global catalogues used to do.
+  "Your projects": "Projeleriniz",
+  "Everything lives inside a project — see what each is doing and what it has produced.":
+    "Her şey bir projenin içinde yaşar — her birinin ne yaptığını ve ne ürettiğini görün.",
+  "Running": "Çalışıyor",
+  "Completed": "Tamamlandı",
+  "Not started": "Başlatılmadı",
+  "Projects": "Projeler",
+  "Search projects and outputs…": "Projelerde ve çıktılarda ara…",
+  "No projects yet": "Henüz proje yok",
+  "Create a project and its data, runs and reports will appear here.":
+    "Bir proje oluşturun; verisi, çalıştırmaları ve raporları burada görünecek.",
+  "{count} runs": "{count} çalıştırma",
+  "No runs yet": "Henüz çalıştırma yok",
+  "No data attached": "Veri bağlı değil",
+  "Recently produced": "Son üretilenler",
+  "in {project}": "{project} içinde",
+  "No project": "Proje yok",
+  "Nothing produced yet": "Henüz bir şey üretilmedi",
+  "Models and reports appear here as your projects finish runs.":
+    "Projeleriniz çalıştırmaları tamamladıkça modeller ve raporlar burada görünür.",
+  "No projects match your search": "Aramanızla eşleşen proje yok",
+  "No outputs match your search": "Aramanızla eşleşen çıktı yok",
+
   // Data projects workspace
   "Data projects": "Veri projeleri",
   "The data project is still loading. Try again in a moment.":

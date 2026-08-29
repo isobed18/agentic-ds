@@ -761,6 +761,127 @@ class ControlPlane:
             ],
         }
 
+    @staticmethod
+    def _project_state(statuses: list[str], project_status: str) -> str:
+        """Collapse a project's execution statuses into one headline state.
+
+        Precedence answers the question the home page asks first -- "does
+        anything need me?" -- so live work outranks a waiting prompt, which
+        outranks a failure to review, which outranks a finished result. A
+        project that never ran but whose start failed before it saved a
+        workspace reads as failed too (#82), not as an untouched draft.
+        """
+        seen = set(statuses)
+        if seen & {"running", "queued", "staging", "resuming"}:
+            return "running"
+        if "awaiting_human" in seen:
+            return "awaiting_human"
+        if seen & {"interrupted", "failed", "error"} or (
+            not statuses and project_status == "error"
+        ):
+            return "failed"
+        if "completed" in seen:
+            return "completed"
+        return "idle"
+
+    def home_overview(self, *, search: str | None = None) -> dict[str, Any]:
+        """Assemble the project-first home: every project's state and the work
+        projects have produced, so a person sees what is running, what is
+        waiting on them, and can rediscover an output whose project they forgot.
+
+        The global catalogues used to carry the browsing job; #111 removes them
+        as destinations, so that job moves here. Search spans project names and
+        the labels of recent project-owned models and reports, which is the case
+        the catalogues served -- finding a thing whose project is forgotten.
+        """
+        assert self.automation_store is not None
+        query = (search or "").strip().lower()
+        runs = {run.run_id: run for run in self.list_runs()}
+        owner_of: dict[str, tuple[str, str]] = {}
+        projects: list[dict[str, Any]] = []
+        for project in self.automation_store.list():
+            statuses: list[str] = []
+            for run_id in project.execution_ids:
+                owner_of[run_id] = (project.automation_id, project.name)
+                run = runs.get(run_id)
+                if run is not None:
+                    statuses.append(run.status)
+            state = self._project_state(statuses, project.status)
+            latest_run = next(
+                (rid for rid in reversed(project.execution_ids) if rid in runs),
+                None,
+            )
+            projects.append(
+                {
+                    "project_id": project.automation_id,
+                    "name": project.name,
+                    "status": project.status,
+                    "source_id": project.source_id,
+                    "execution_count": len(project.execution_ids),
+                    "updated_at": project.updated_at.isoformat(),
+                    "state": state,
+                    "needs_attention": state in {"awaiting_human", "failed"},
+                    "latest_run_id": latest_run,
+                }
+            )
+        totals = {
+            "projects": len(projects),
+            "executions": sum(item["execution_count"] for item in projects),
+            "running": sum(item["state"] == "running" for item in projects),
+            "awaiting_human": sum(item["state"] == "awaiting_human" for item in projects),
+            "failed": sum(item["state"] == "failed" for item in projects),
+            "completed": sum(item["state"] == "completed" for item in projects),
+        }
+        recent: list[dict[str, Any]] = []
+        for run in runs.values():
+            owner = owner_of.get(run.run_id)
+            project_id = owner[0] if owner else None
+            project_name = owner[1] if owner else None
+            for model in self._model_summaries(run):
+                recent.append(
+                    {
+                        "kind": "model",
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "run_id": run.run_id,
+                        "artifact_id": model["artifact_id"],
+                        "label": model["display_name"] or "Trained model",
+                        "created_at": model["created_at"],
+                    }
+                )
+            for report in self._report_summaries(run):
+                recent.append(
+                    {
+                        "kind": "report",
+                        "project_id": project_id,
+                        "project_name": project_name,
+                        "run_id": run.run_id,
+                        "artifact_id": report["artifact_id"],
+                        "label": report["preview"] or "Evaluation report",
+                        "created_at": report["created_at"],
+                    }
+                )
+        recent.sort(key=lambda item: item["created_at"] or "", reverse=True)
+        if query:
+            projects = [item for item in projects if query in item["name"].lower()]
+            recent = [
+                item
+                for item in recent
+                if query in item["label"].lower()
+                or query in (item["project_name"] or "").lower()
+                or query in item["run_id"].lower()
+            ]
+        # Needs-attention projects first, then most recently touched: the home
+        # page leads with what a person has to act on, not an alphabetical wall.
+        # Two stable passes -- recency within each attention group.
+        projects.sort(key=lambda item: item["updated_at"], reverse=True)
+        projects.sort(key=lambda item: not item["needs_attention"])
+        return {
+            "projects": projects,
+            "totals": totals,
+            "recent": recent[:20],
+        }
+
     def attach_automation_execution(
         self,
         automation_id: str,
@@ -5924,6 +6045,10 @@ def create_app(
         return [
             summary.to_dict() for summary in plane.list_runs() if summary.run_id in execution_ids
         ]
+
+    @app.get("/api/home")
+    def home(search: str | None = None) -> dict[str, Any]:
+        return plane.home_overview(search=search)
 
     @app.get("/api/projects/{project_id}/contents")
     def project_contents(project_id: str) -> dict[str, Any]:
