@@ -148,7 +148,12 @@ export function buildStagingRoutingState(
   const structured = files.some((file) => file.route === "structured") ? [
     { id: "inspect", label: "Inspect", status: statusAfter(discoveryReady, !discoveryReady) },
     { id: "profile", label: "Profile", status: statusAfter(intakeReady, currentStage === "intake") },
-    { id: "relationships", label: "Find relationships", status: statusAfter(relationshipsReady, currentStage === "schema_discovery" && !schemaBlocked, schemaBlocked) },
+    {
+      id: "relationships",
+      label: "Review schema and describe data",
+      status: statusAfter(relationshipsReady, currentStage === "schema_discovery" && !schemaBlocked, schemaBlocked),
+      detail: "Includes relationship and sensitive-column checks.",
+    },
     { id: "explain", label: "Explain", status: statusAfter(analysisReady, analysisStarted && relationshipsReady && !analysisReady, schemaBlocked) },
   ] satisfies RoutingSubstep[] : [];
 

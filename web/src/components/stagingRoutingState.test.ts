@@ -51,6 +51,30 @@ describe("staging source routing", () => {
     ]);
   });
 
+  it("names all of the work that keeps schema discovery running", () => {
+    // The regression this exists for (#43). A single table has no relationship
+    // search to perform, but the schema stage stayed labelled "Find
+    // relationships" during its sensitivity and comprehension model calls.
+    const singleTable = {
+      ...profile,
+      source_files: profile.source_files?.filter((file) => file.name === "employees.csv"),
+    };
+    const state = buildStagingRoutingState(singleTable, {
+      status: "staging",
+      current_stage: "schema_discovery",
+      events: [
+        { event: "source_discovery_ready" },
+        { event: "gate_decided", stage: "intake" },
+      ],
+    }, null);
+
+    expect(state.structured[2]).toMatchObject({
+      label: "Review schema and describe data",
+      detail: "Includes relationship and sensitive-column checks.",
+      status: "running",
+    });
+  });
+
   it("blocks synthesis and the proposal after a document failure", () => {
     const state = buildStagingRoutingState(profile, {
       status: "failed",

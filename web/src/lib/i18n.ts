@@ -711,6 +711,8 @@ const TR: Record<string, string> = {
   "Inspect": "İncele",
   "Profile": "Profille",
   "Find relationships": "İlişkileri bul",
+  "Review schema and describe data": "Şemayı incele ve veriyi açıkla",
+  "Includes relationship and sensitive-column checks.": "İlişki ve hassas sütun kontrollerini içerir.",
   "Extract": "Çıkar",
   "Verify": "Doğrula",
   "Explain": "Açıkla",

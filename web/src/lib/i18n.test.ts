@@ -14,6 +14,8 @@
 import { describe, expect, it } from "vitest";
 import CATALOG_SOURCE from "../pages/Catalog.tsx?raw";
 import SHELL_SOURCE from "../components/Shell.tsx?raw";
+import STAGING_ROUTING_SOURCE from "../components/stagingRoutingState.ts?raw";
+import UNDERSTANDING_WORKSPACE_SOURCE from "../components/UnderstandingWorkspace.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
 import { GROUPS } from "../components/GuidedPipeline";
 import { LANGUAGES, localizedList, t } from "./i18n";
@@ -78,6 +80,19 @@ describe("labels the scanner cannot see", () => {
     // NAV reaches t() through label, so the literal scanner cannot tell that
     // this destination used a different name from the page it opens (#77).
     expect(SHELL_SOURCE).toContain('{ to: "/datasets", label: "Datasets"');
+  });
+
+  it("translates every staging progress label and detail", () => {
+    // Staging labels reach t() through RoutingSubstep fields, so the general
+    // literal-call scanner cannot see them. Pin the source list directly; an
+    // untranslated detail would otherwise ship quietly in English (#43).
+    const visibleText = [...STAGING_ROUTING_SOURCE.matchAll(/\b(?:label|detail):\s*"((?:[^"\\]|\\.)*)"/g)]
+      .map((match) => match[1]);
+    expect(visibleText.length, "no staging labels parsed").toBeGreaterThan(5);
+    const known = new Set(catalogueKeys());
+    expect(visibleText.filter((label) => !known.has(label))).toEqual([]);
+    expect(UNDERSTANDING_WORKSPACE_SOURCE).toContain("{t(step.detail)}");
+    expect(UNDERSTANDING_WORKSPACE_SOURCE).toContain("{t(secondary)}");
   });
 });
 
