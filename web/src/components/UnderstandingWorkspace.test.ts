@@ -40,6 +40,28 @@ describe("the understanding inspector layout", () => {
     expect(classNameFor(markup, "aside").split(" ")).not.toContain("fixed");
   });
 
+  it("keeps the inspector header docked while only the body scrolls (#75)", () => {
+    // overflow-y-auto used to sit on the <aside> itself, so a long panel
+    // scrolled its title and × out of view with no way to close it.
+    const markup = renderToStaticMarkup(createElement(Inspector, {
+      title: "Details",
+      eyebrow: "Staging",
+      onClose: () => undefined,
+      children: createElement("p", null, "SCROLL_BODY"),
+    }));
+
+    const asideClass = classNameFor(markup, "aside");
+    expect(asideClass).not.toContain("overflow-y-auto");
+    expect(asideClass).toContain("flex-col");
+    // The header (bordered, pinned) sits before the scrolling container, so its
+    // close button stays put; the body content lives inside that container.
+    const headerIndex = classNameFor(markup, "header").length ? markup.indexOf("<header") : -1;
+    const scrollIndex = markup.indexOf("overflow-y-auto");
+    expect(headerIndex).toBeGreaterThan(-1);
+    expect(scrollIndex).toBeGreaterThan(headerIndex);
+    expect(markup.indexOf("SCROLL_BODY")).toBeGreaterThan(scrollIndex);
+  });
+
   it("gives the planner and inspector separate dock columns", () => {
     // The regression this exists for (#48). The planner used to be an
     // absolute right-edge overlay above the inspector, so opening it swallowed

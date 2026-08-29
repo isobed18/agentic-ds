@@ -138,10 +138,14 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
     </div>
 
-    {selected && <aside className="fixed inset-y-[58px] right-0 z-20 w-[min(440px,94vw)] overflow-y-auto border-l border-line bg-surface p-5 shadow-2xl">
-      <header className="flex items-start gap-3 border-b border-line pb-4"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(selected === "summary" ? "Accepted ML plan" : "Base ML pipeline")}</p><h2 className="mt-1 text-base font-semibold text-ink">{t(selected === "summary" ? "What will run" : groups.find((group) => group.id === selected)?.title ?? "Stage details")}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" onClick={() => setSelected(null)}>×</button></header>
-      {error && <p className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
-      {selected === "summary" ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} /> : <div className="mt-5 space-y-4">{groups.find((group) => group.id === selected)?.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>}
+    {selected && <aside className="fixed inset-y-[58px] right-0 z-20 flex w-[min(440px,94vw)] flex-col border-l border-line bg-surface shadow-2xl">
+      <header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(selected === "summary" ? "Accepted ML plan" : "Base ML pipeline")}</p><h2 className="mt-1 text-base font-semibold text-ink">{t(selected === "summary" ? "What will run" : groups.find((group) => group.id === selected)?.title ?? "Stage details")}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" onClick={() => setSelected(null)}>×</button></header>
+      {/* Scroll only the body: overflow used to sit on the aside, so the header
+          and its × scrolled out of reach on a long panel (#75). */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+        {error && <p className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+        {selected === "summary" ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} /> : <div className="mt-5 space-y-4">{groups.find((group) => group.id === selected)?.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>}
+      </div>
     </aside>}
     {preview && <ArtifactModal preview={preview} onClose={() => setPreview(null)} />}
   </PanCanvas>;
