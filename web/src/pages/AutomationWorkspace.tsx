@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PipelineBuilder } from "../components/PipelineBuilder";
 import { GuidedPipeline } from "../components/GuidedPipeline";
+import { ApprovalCard } from "../components/GateApproval";
 import { LanguagePicker } from "../components/Shell";
 import {
   SourceSummary,
@@ -14,6 +15,7 @@ import {
   api,
   type AutomationDefinition,
   type DataSource,
+  type GateDecision,
   type PipelineBlueprint,
   type RunSummary,
   type SourceProfile,
@@ -109,6 +111,10 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [profile, setProfile] = useState<SourceProfile | null>(null);
   const [runId, setRunId] = useState<string | null>(params.get("run"));
   const [runStatus, setRunStatus] = useState<string | null>(null);
+  // The gate escalation a run stopped on. StageWorkspace could render it, but
+  // that screen was never routed, so a run in `awaiting_human` sat stuck with
+  // no way to answer it (#81). Surfaced here, where the run is actually shown.
+  const [pendingQuestion, setPendingQuestion] = useState<GateDecision | null>(null);
   const [workspace, setWorkspace] = useState<StagingWorkspace | null>(null);
   const [blueprint, setBlueprint] = useState<PipelineBlueprint | null>(null);
   const [reuseCache, setReuseCache] = useState(false);
@@ -159,9 +165,30 @@ function AutomationEditor({ automationId }: { automationId: string }) {
 
   useEffect(() => {
     if (!runId || !["queued", "staging", "running"].includes(runStatus ?? "")) return;
-    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); if (typeof progress.error === "string" && progress.error) setError(progress.error); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
+    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); if (typeof progress.error === "string" && progress.error) setError(progress.error); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
     return () => window.clearInterval(timer);
   }, [runId, runStatus]);
+
+  // Polling stops once a run reaches `awaiting_human`, and a run opened from a
+  // deep-link or page refresh never polled at all -- so fetch the pending gate
+  // question directly whenever the run is waiting on a person (#81).
+  useEffect(() => {
+    if (!runId || runStatus !== "awaiting_human") { setPendingQuestion(null); return; }
+    let cancelled = false;
+    void api.runProgress(runId)
+      .then((progress) => { if (!cancelled) setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); })
+      .catch((caught) => setError(messageOf(caught)));
+    return () => { cancelled = true; };
+  }, [runId, runStatus]);
+
+  // A gate answer is accepted once and the run leaves `awaiting_human`, so
+  // re-read its status to clear the card and let polling pick up the resume.
+  const onGateAnswered = useCallback(() => {
+    if (!runId) return;
+    void api.runProgress(runId)
+      .then((progress) => { setRunStatus(String(progress.status ?? "")); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); })
+      .catch((caught) => setError(messageOf(caught)));
+  }, [runId]);
 
   function applyWorkspace(next: StagingWorkspace) {
     setWorkspace(next); setRunId(next.run_id); if (next.pipeline_blueprint) setBlueprint(next.pipeline_blueprint);
@@ -269,6 +296,10 @@ function AutomationEditor({ automationId }: { automationId: string }) {
         <div className="ml-auto flex items-center gap-2">{activeView === "editor" && <select aria-label={t("Choose uploaded data")} title={t("Choose uploaded data")} value={sourceId} onChange={(event) => void selectExistingSource(event.target.value)} className="h-8 max-w-[220px] rounded-lg border border-line bg-surface px-2 text-[11px] text-ink"><option value="">{t("Choose uploaded data")}</option>{sources.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select>}{activeView === "editor" && <button type="button" disabled={!automation} className="btn-ghost !h-8 !w-8 !p-0 text-lg disabled:opacity-40" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}<LanguagePicker /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+      {/* A stage gate that escalated to a human: shown here, above the run, so
+          it is reachable regardless of tab -- the run cannot resume until it is
+          answered (#81). */}
+      {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
       {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
       <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>

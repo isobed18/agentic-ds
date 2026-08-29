@@ -16,6 +16,18 @@ describe("the automation data controls", () => {
     expect(language).toBeGreaterThan(addFiles);
   });
 
+  it("surfaces the human gate escalation so a stuck run can be answered (#81)", () => {
+    // The gate-answering UI (ApprovalCard) was only ever rendered from the
+    // unrouted Workflows page, so an `awaiting_human` run sat stuck with no
+    // reachable screen. AutomationWorkspace now mounts it, gated on the run's
+    // pending gate question.
+    expect(SOURCE).toContain("<ApprovalCard");
+    expect(SOURCE).toContain("pendingQuestion");
+    expect(SOURCE).toContain("pending_question");
+    // It is gated on the run actually having a human prompt to answer.
+    expect(SOURCE).toContain("pendingQuestion?.human_prompt");
+  });
+
   it("no longer shows a header save indicator that only tracked two fields (#79)", () => {
     // The "Saved/Saving…/Unsaved changes" indicator read as a project-wide
     // save status but only tracked the name field and the advanced pipeline
