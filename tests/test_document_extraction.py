@@ -116,12 +116,13 @@ def test_planner_context_reserves_evidence_budget_for_every_document() -> None:
     )
 
 
-def test_extraction_warnings_reach_the_reader_as_prose_in_both_languages(tmp_path: Path) -> None:
+def test_file_warnings_reach_the_reader_once_as_prose_in_both_languages(tmp_path: Path) -> None:
     """Every warning is a sentence, not the machine code it used to be (#54).
 
     A file that is not a PDF is the cheapest way to provoke a real warning
-    through the whole path: the engine records it, the per-file result carries
-    it, and the summary the Documents and Synthesize panels read folds it in.
+    through the whole path: the engine records it and the per-file result
+    carries it. Copying it to summary warnings made the Documents panel render
+    the same warning a second time without its file name (#55).
     """
     source = tmp_path / "source"
     source.mkdir()
@@ -137,21 +138,21 @@ def test_extraction_warnings_reach_the_reader_as_prose_in_both_languages(tmp_pat
     )
 
     summary = extraction.extraction_summary()
-    assert summary.warnings, "the unreadable PDF should have been reported"
-    assert len(summary.warnings) == len(summary.warnings_tr)
-    for english, turkish in zip(summary.warnings, summary.warnings_tr, strict=True):
+    assert summary.warnings == []
+    assert summary.warnings_tr == []
+    file_result = summary.files[0]
+    assert len(file_result.warnings) == len(file_result.warnings_tr)
+    for english, turkish in zip(file_result.warnings, file_result.warnings_tr, strict=True):
         assert english.startswith("The PDF could not be parsed")
         assert turkish.startswith("PDF ayrıştırılamadı")
         assert "pdf_parse_error" not in english and "pdf_parse_error" not in turkish
-    assert summary.files[0].warnings_tr == summary.warnings_tr
 
 
 def test_a_run_stored_before_turkish_warnings_still_reads_in_turkish() -> None:
     """Old artifacts have no `warnings_tr`, and must not render as blank lines.
 
-    The two lists are positional, so a document whose Turkish half predates
-    this contract has to be padded rather than skipped -- otherwise the
-    artifact-level warnings that follow it shift onto the wrong sentences.
+    The two per-file lists are positional, so a document whose Turkish half
+    predates this contract has to be padded rather than skipped.
     """
     extraction = DocumentExtraction(
         source_id="older-run",
@@ -167,6 +168,6 @@ def test_a_run_stored_before_turkish_warnings_still_reads_in_turkish() -> None:
 
     summary = extraction.extraction_summary()
 
-    assert summary.warnings == ["An artifact-level warning.", "Only English was stored."]
-    assert summary.warnings_tr == ["Artifact düzeyinde bir uyarı.", "Only English was stored."]
+    assert summary.warnings == ["An artifact-level warning."]
+    assert summary.warnings_tr == ["Artifact düzeyinde bir uyarı."]
     assert summary.files[0].warnings_tr == ["Only English was stored."]

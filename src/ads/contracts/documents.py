@@ -154,18 +154,11 @@ class DocumentExtraction(Artifact):
             table_candidates=sum(len(item.tables) for item in self.documents),
             figure_candidates=sum(len(item.figures) for item in self.documents),
             duration_seconds=self.duration_seconds,
-            warnings=[*self.warnings, *(w for item in self.documents for w in item.warnings)],
-            # Concatenated the same way, one bilingual pair at a time, so the
-            # two lists stay index-aligned even when an artifact written before
-            # warnings had a Turkish half is loaded back.
-            warnings_tr=[
-                *aligned_turkish(self.warnings, self.warnings_tr),
-                *(
-                    w
-                    for item in self.documents
-                    for w in aligned_turkish(item.warnings, item.warnings_tr)
-                ),
-            ],
+            # File warnings already live on `files`; copying them here made the
+            # Documents panel show each warning twice, once without attribution
+            # (#55). This level is reserved for extraction-wide engine issues.
+            warnings=self.warnings,
+            warnings_tr=aligned_turkish(self.warnings, self.warnings_tr),
             files=file_results,
         )
 
