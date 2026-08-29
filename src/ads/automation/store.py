@@ -96,6 +96,15 @@ class AutomationStore:
                 raise AutomationRevisionConflict(
                     f"automation revision changed from {expected_revision} to {current.revision}"
                 )
+            next_source_id = changes.get("source_id", current.source_id)
+            # #111: execution ids are the project's output ownership boundary.
+            # Letting a project point at different data afterwards relabelled
+            # every historical output as if the new source had produced it.
+            if current.execution_ids and next_source_id != current.source_id:
+                raise ValueError(
+                    "a project source cannot change after its first execution; "
+                    "create a new project for different data"
+                )
             payload = current.model_dump(mode="python")
             payload.update(changes)
             payload["revision"] = current.revision + 1

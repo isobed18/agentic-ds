@@ -718,6 +718,49 @@ class ControlPlane:
             changes=changes,
         ).model_dump(mode="json")
 
+    def project_contents(self, project_id: str) -> dict[str, Any]:
+        """Return one project's inputs and outputs without a global catalogue join."""
+        assert self.automation_store is not None
+        project = self.automation_store.get(project_id)
+        execution_ids = set(project.execution_ids)
+        executions = [run for run in self.list_runs() if run.run_id in execution_ids]
+        source = next(
+            (
+                item
+                for item in self.data_sources()
+                if item["source_id"] == project.source_id
+            ),
+            None,
+        )
+        references = (
+            [
+                {
+                    "project_id": item.automation_id,
+                    "name": item.name,
+                }
+                for item in self.automation_store.list()
+                if item.source_id == project.source_id
+            ]
+            if project.source_id
+            else []
+        )
+        return {
+            "project": project.model_dump(mode="json"),
+            "data": self._dataset_summary(source) if source else None,
+            "source_references": references,
+            "executions": [self._experiment_summary(run) for run in executions],
+            "models": [
+                model
+                for run in executions
+                for model in self._model_summaries(run)
+            ],
+            "reports": [
+                report
+                for run in executions
+                for report in self._report_summaries(run)
+            ],
+        }
+
     def attach_automation_execution(
         self,
         automation_id: str,
@@ -2948,6 +2991,14 @@ class ControlPlane:
             match = _UPLOAD_ID.fullmatch(source_id)
             if match is None:
                 raise ValueError("source_id is not a valid upload group")
+            if self._source_has_execution_history(source_id):
+                # #111: a reused source may feed several independent projects.
+                # Mutating its bytes after any run would silently change the
+                # data shown beside immutable outputs in every one of them.
+                raise ValueError(
+                    "a source used by an execution is immutable; upload the files "
+                    "as a new source"
+                )
             target_dir = self.upload_root / match.group(1)  # type: ignore[operator]
             if not target_dir.is_dir():
                 raise ValueError("upload group does not exist")
@@ -2989,6 +3040,11 @@ class ControlPlane:
         match = _UPLOAD_ID.fullmatch(source_id)
         if match is None:
             raise ValueError("source_id is not a valid upload group")
+        if self._source_has_execution_history(source_id):
+            raise ValueError(
+                "a source used by an execution is immutable; create a new project "
+                "with different data"
+            )
         recorded_owner = self._ownership().owner_of(source_id)
         if recorded_owner is not None and owner is not None and recorded_owner != owner:
             raise PermissionError(f"Only {recorded_owner} can change this source.")
@@ -3013,6 +3069,14 @@ class ControlPlane:
             "files": remaining,
             "deleted": False,
         }
+
+    def _source_has_execution_history(self, source_id: str) -> bool:
+        """Whether changing this reusable source would invalidate project history."""
+        assert self.automation_store is not None
+        return any(
+            project.source_id == source_id and bool(project.execution_ids)
+            for project in self.automation_store.list()
+        )
 
     def _source_fingerprint(self, source_id: str) -> str:
         """Identify a source by what its files are, not by when we last looked.
@@ -5430,96 +5494,98 @@ class ControlPlane:
 
     def experiment_catalog(self) -> list[dict[str, Any]]:
         """Runs enriched with safe configuration, progress, and gate summaries."""
-        catalog: list[dict[str, Any]] = []
-        for summary in self.list_runs():
-            try:
-                progress = self.progress(summary.run_id)
-            except KeyError:
-                progress = {}
-            decisions = self.gate_decisions(summary.run_id)
-            attempts = progress.get("attempts", [])
-            catalog.append(
-                {
-                    **summary.to_dict(),
-                    "configuration": progress.get("configuration", {}),
-                    "completed_stages": sum(
-                        item.get("verdict") == "auto_proceed" for item in attempts
-                    ),
-                    "attempts": len(attempts),
-                    "retries": sum(item.get("verdict") == "retry" for item in attempts),
-                    "human_stops": sum(item.get("verdict") == "escalate" for item in attempts),
-                    "latest_gate": decisions[-1] if decisions else None,
-                    "deletable": summary.status not in {"queued", "running", "staging"},
-                }
-            )
-        return catalog
+        return [self._experiment_summary(summary) for summary in self.list_runs()]
+
+    def _experiment_summary(self, summary: RunSummary) -> dict[str, Any]:
+        try:
+            progress = self.progress(summary.run_id)
+        except KeyError:
+            progress = {}
+        decisions = self.gate_decisions(summary.run_id)
+        attempts = progress.get("attempts", [])
+        return {
+            **summary.to_dict(),
+            "configuration": progress.get("configuration", {}),
+            "completed_stages": sum(
+                item.get("verdict") == "auto_proceed" for item in attempts
+            ),
+            "attempts": len(attempts),
+            "retries": sum(item.get("verdict") == "retry" for item in attempts),
+            "human_stops": sum(item.get("verdict") == "escalate" for item in attempts),
+            "latest_gate": decisions[-1] if decisions else None,
+            "deletable": summary.status not in {"queued", "running", "staging"},
+        }
 
     def model_catalog(self) -> list[dict[str, Any]]:
         """Saved trained-model artifacts across runs, with no training rows."""
+        return [model for run in self.list_runs() for model in self._model_summaries(run)]
+
+    def _model_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         models: list[dict[str, Any]] = []
-        for run in self.list_runs():
-            for artifact in self.artifacts(run.run_id):
-                if artifact["type"] != ArtifactType.TRAINED_MODEL.value:
-                    continue
-                payload = self.artifact_payload(artifact["artifact_id"])
-                winner_id = payload.get("winner_id")
-                winner = next(
-                    (
-                        item
-                        for item in payload.get("results", [])
-                        if item.get("candidate_id") == winner_id
-                    ),
-                    {},
-                )
-                metric = next(
-                    (
-                        item
-                        for item in winner.get("metrics", [])
-                        if item.get("metric") == payload.get("primary_metric")
-                    ),
-                    {},
-                )
-                models.append(
-                    {
-                        "artifact_id": artifact["artifact_id"],
-                        "run_id": run.run_id,
-                        "created_at": artifact["created_at"],
-                        "winner_id": winner_id,
-                        "display_name": winner.get("display_name", winner_id),
-                        "estimator": winner.get("estimator_class"),
-                        "metric": payload.get("primary_metric"),
-                        "holdout_score": metric.get("holdout_score"),
-                        "cv_mean": metric.get("cv_mean"),
-                        "cv_std": metric.get("cv_std"),
-                        "saved": bool(payload.get("model_blob")),
-                        "candidate_count": len(payload.get("results", [])),
-                        "training_rows": payload.get("training_row_count"),
-                    }
-                )
+        for artifact in self.artifacts(run.run_id):
+            if artifact["type"] != ArtifactType.TRAINED_MODEL.value:
+                continue
+            payload = self.artifact_payload(artifact["artifact_id"])
+            winner_id = payload.get("winner_id")
+            winner = next(
+                (
+                    item
+                    for item in payload.get("results", [])
+                    if item.get("candidate_id") == winner_id
+                ),
+                {},
+            )
+            metric = next(
+                (
+                    item
+                    for item in winner.get("metrics", [])
+                    if item.get("metric") == payload.get("primary_metric")
+                ),
+                {},
+            )
+            models.append(
+                {
+                    "artifact_id": artifact["artifact_id"],
+                    "run_id": run.run_id,
+                    "created_at": artifact["created_at"],
+                    "winner_id": winner_id,
+                    "display_name": winner.get("display_name", winner_id),
+                    "estimator": winner.get("estimator_class"),
+                    "metric": payload.get("primary_metric"),
+                    "holdout_score": metric.get("holdout_score"),
+                    "cv_mean": metric.get("cv_mean"),
+                    "cv_std": metric.get("cv_std"),
+                    "saved": bool(payload.get("model_blob")),
+                    "candidate_count": len(payload.get("results", [])),
+                    "training_rows": payload.get("training_row_count"),
+                }
+            )
         return models
 
     def report_catalog(self) -> list[dict[str, Any]]:
         """Final report artifacts with safe previews and export ids."""
+        return [report for run in self.list_runs() for report in self._report_summaries(run)]
+
+    def _report_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         reports: list[dict[str, Any]] = []
-        for run in self.list_runs():
-            for artifact in self.artifacts(run.run_id):
-                if artifact["type"] != ArtifactType.FINAL_REPORT.value:
-                    continue
-                payload = self.artifact_payload(artifact["artifact_id"])
-                markdown = str(payload.get("markdown", ""))
-                preview = " ".join(
-                    line.lstrip("# ") for line in markdown.splitlines() if line.strip()
-                )[:320]
-                reports.append(
-                    {
-                        "artifact_id": artifact["artifact_id"],
-                        "run_id": run.run_id,
-                        "created_at": artifact["created_at"],
-                        "characters": len(markdown),
-                        "preview": preview,
-                        "evaluation_artifact_id": payload.get("evaluation_artifact_id"),
-                    }
-                )
+        for artifact in self.artifacts(run.run_id):
+            if artifact["type"] != ArtifactType.FINAL_REPORT.value:
+                continue
+            payload = self.artifact_payload(artifact["artifact_id"])
+            markdown = str(payload.get("markdown", ""))
+            preview = " ".join(
+                line.lstrip("# ") for line in markdown.splitlines() if line.strip()
+            )[:320]
+            reports.append(
+                {
+                    "artifact_id": artifact["artifact_id"],
+                    "run_id": run.run_id,
+                    "created_at": artifact["created_at"],
+                    "characters": len(markdown),
+                    "preview": preview,
+                    "evaluation_artifact_id": payload.get("evaluation_artifact_id"),
+                }
+            )
         return reports
 
     def hardening_status(self) -> dict[str, Any]:
@@ -5858,6 +5924,15 @@ def create_app(
         return [
             summary.to_dict() for summary in plane.list_runs() if summary.run_id in execution_ids
         ]
+
+    @app.get("/api/projects/{project_id}/contents")
+    def project_contents(project_id: str) -> dict[str, Any]:
+        try:
+            return plane.project_contents(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/runs")
     def runs() -> list[dict[str, Any]]:

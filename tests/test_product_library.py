@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ads.api import ControlPlane, create_app
@@ -184,6 +185,85 @@ def test_experiments_models_reports_and_hardening_have_real_endpoints(
     assert hardening["agents"]["tool_allowlists"] is True
     assert hardening["sandbox"]["network"] == "none"
     assert hardening["sandbox"]["root_filesystem"] == "read-only"
+
+
+def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
+    tmp_path: Path,
+) -> None:
+    """#111: two projects may reuse one input, but one project's output view
+    must never acquire the other project's report from the global store."""
+    plane = _plane(tmp_path)
+    uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
+    first = plane.automation_store.create("Retention")
+    second = plane.automation_store.create("Campaign")
+    plane.automation_store.attach_execution(
+        first.automation_id, run_id="retention-run", source_id=uploaded["source_id"]
+    )
+    plane.automation_store.attach_execution(
+        second.automation_id, run_id="campaign-run", source_id=uploaded["source_id"]
+    )
+    for run_id, heading in (("retention-run", "Retention"), ("campaign-run", "Campaign")):
+        report = FinalReport(evaluation_artifact_id="a" * 64, markdown=f"# {heading}")
+        plane.store.put(report, run_id=run_id, stage_exec_id="report", name="final_report")
+        (plane._run_state_root / f"{run_id}.json").write_text(  # noqa: SLF001
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "configuration": {},
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T01:00:00+00:00",
+                    "status": "completed",
+                    "current_stage": None,
+                    "events": [],
+                    "attempts": [],
+                    "error": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    response = TestClient(create_app(plane=plane)).get(
+        f"/api/projects/{first.automation_id}/contents"
+    )
+
+    assert response.status_code == 200
+    contents = response.json()
+    assert contents["data"]["source_id"] == uploaded["source_id"]
+    assert {item["name"] for item in contents["source_references"]} == {
+        "Retention",
+        "Campaign",
+    }
+    assert [item["run_id"] for item in contents["executions"]] == ["retention-run"]
+    assert [item["run_id"] for item in contents["reports"]] == ["retention-run"]
+    # Source reuse is deliberately legible: the sibling project is named under
+    # source_references (#78), so "Campaign" is expected in the response as a
+    # whole. The leak that must never happen is an *output* one -- if reports
+    # were filtered from the global store by source_id rather than by this
+    # project's own execution history, Campaign's report (built from the same
+    # input) would surface here, carried in its "# Campaign" preview heading.
+    # Scoping the sentinel to the output sections proves ownership by history.
+    outputs = json.dumps(
+        {section: contents[section] for section in ("executions", "models", "reports")}
+    )
+    assert "Campaign" not in outputs
+
+
+def test_executed_reusable_source_cannot_be_mutated(tmp_path: Path) -> None:
+    """#111: output history is immutable, so its reusable input must not be
+    edited underneath every project that references it."""
+    plane = _plane(tmp_path)
+    uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
+    project = plane.automation_store.create("Retention")
+    plane.automation_store.attach_execution(
+        project.automation_id, run_id="retention-run", source_id=uploaded["source_id"]
+    )
+
+    with pytest.raises(ValueError, match="used by an execution is immutable"):
+        plane.upload("orders.csv", b"order_id,total\n1,10\n", source_id=uploaded["source_id"])
+    with pytest.raises(ValueError, match="used by an execution is immutable"):
+        plane.remove_upload_file(uploaded["source_id"], "customers.csv")
+
+    assert plane.data_sources()[0]["files"] == ["customers.csv"]
 
 
 def test_delete_run_requires_exact_confirmation_and_preserves_shared_payload(

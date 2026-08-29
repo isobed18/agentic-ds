@@ -72,6 +72,33 @@ def test_execution_history_is_attached_without_becoming_editor_state(tmp_path) -
     assert second.pipeline_blueprint is None
 
 
+def test_project_source_cannot_change_after_outputs_exist(tmp_path) -> None:
+    """#111: switching a source after a run relabelled the old outputs as if
+    they came from the new data. Drafts may change, but history fixes the binding."""
+    store = AutomationStore(tmp_path / "automations")
+    created = store.create("Reusable analysis")
+    rebound = store.update(
+        created.automation_id,
+        expected_revision=created.revision,
+        changes={"source_id": "upload:first"},
+    )
+    executed = store.attach_execution(
+        created.automation_id,
+        run_id="run-a1b2c3d4",
+        source_id="upload:first",
+    )
+
+    with pytest.raises(ValueError, match="cannot change after its first execution"):
+        store.update(
+            created.automation_id,
+            expected_revision=executed.revision,
+            changes={"source_id": "upload:second"},
+        )
+
+    assert rebound.source_id == "upload:first"
+    assert store.get(created.automation_id).source_id == "upload:first"
+
+
 def test_failed_run_marks_a_never_saved_automation_as_error(tmp_path) -> None:
     """A failed run left its automation at `draft`, indistinguishable from one
     never started (#82). mark_error moves a never-saved draft to `error`."""
