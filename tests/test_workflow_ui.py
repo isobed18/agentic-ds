@@ -759,8 +759,8 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     # /datasets target) redirect to the project-first home rather than dead-end.
     assert '{ to: "/datasets"' not in shell
     assert 'path="/explore" element={<Navigate to="/" replace />}' in app
-    assert '{ to: "/automation", label: "Projects"' in shell
-    assert 'path="/automation"' in app
+    assert '{ to: "/projects", label: "Projects"' in shell
+    assert 'path="/projects"' in app
     assert "<AutomationWorkspace" in automation
     # Progressive disclosure keeps upload, understanding/proposal, and the accepted
     # workflow in one route without forcing the graph to render in the initial state.

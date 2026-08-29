@@ -152,7 +152,7 @@ export function Notifications() {
               {items.map((i) => (
                 <li key={i.id}>
                   <button
-                    onClick={() => { setOpen(false); navigate(`/automation?view=runs&run=${i.runId}`); }}
+                    onClick={() => { setOpen(false); navigate(`/projects?view=runs&run=${i.runId}`); }}
                     className="flex w-full items-start gap-3 border-b border-line-soft px-4 py-3 text-left last:border-b-0 hover:bg-surface-sunken"
                   >
                     <span

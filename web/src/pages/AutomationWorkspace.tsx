@@ -75,7 +75,7 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
     if (!sourceId || importedSource.current) return;
     importedSource.current = true;
     setBusy(true);
-    void api.createAutomation(t("Untitled automation"))
+    void api.createAutomation(t("Untitled project"))
       .then((created) => api.updateAutomation(created.automation_id, created.revision, { source_id: sourceId }))
       .then((saved) => onOpen(saved.automation_id))
       .catch((caught) => setError(messageOf(caught)))
@@ -86,7 +86,7 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createAutomation(t("Untitled automation"));
+      const created = await api.createAutomation(t("Untitled project"));
       onOpen(created.automation_id);
     } catch (caught) {
       setError(messageOf(caught));
@@ -111,7 +111,7 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
   }
 
   async function remove(item: AutomationDefinition) {
-    if (!window.confirm(t("Delete this data project? Its execution history will be kept."))) return;
+    if (!window.confirm(t("Delete this project? Its execution history will be kept."))) return;
     setError(null);
     try {
       await api.deleteAutomation(item.automation_id);
@@ -125,18 +125,18 @@ function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOp
     <div className="h-full overflow-y-auto bg-surface-sunken px-6 py-8 lg:px-10">
       <div className="mx-auto max-w-6xl">
         <header className="flex flex-wrap items-start justify-between gap-4">
-          <div><h1 className="text-2xl font-semibold text-ink">{t("Data projects")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Understand unfamiliar files, agree on an ML plan, then run it transparently.")}</p></div>
-          <div className="flex items-center gap-3"><LanguagePicker /><button type="button" className="btn-primary" onClick={() => void create()} disabled={busy}>{busy ? t("Creating…") : `+ ${t("New data project")}`}</button></div>
+          <div><h1 className="text-2xl font-semibold text-ink">{t("Projects")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Understand unfamiliar files, agree on an ML plan, then run it transparently.")}</p></div>
+          <div className="flex items-center gap-3"><LanguagePicker /><button type="button" className="btn-primary" onClick={() => void create()} disabled={busy}>{busy ? t("Creating…") : `+ ${t("New project")}`}</button></div>
         </header>
         {error && <p className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
-        {busy && !items.length ? <div className="mt-16"><Spinner label={t("Opening automation…")} /></div> : (
+        {busy && !items.length ? <div className="mt-16"><Spinner label={t("Opening project…")} /></div> : (
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {items.map((item) => {
               // #88: the run this project currently has in progress, if any.
               const active = item.automation_id ? activeRuns.get(item.automation_id) : undefined;
-              return <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className={cx("w-full p-5 text-left", item.source_id ? "pr-20" : "pr-12")}><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2>{active ? <Badge tone="brand"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />{statusLabel(active.status)}</Badge> : <Badge tone={item.status === "saved" ? "ok" : item.status === "error" ? "stop" : "neutral"}>{t(item.status === "saved" ? "Saved" : item.status === "error" ? "Error" : "Draft")}</Badge>}</div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>{active && <button type="button" title={t("Pause after current stage")} disabled={stopping === item.automation_id} onClick={() => void stopRun(active)} className="absolute bottom-3 right-3 rounded-lg border border-line px-2.5 py-1 text-[11px] font-medium text-stop-700 hover:bg-stop-50 disabled:opacity-40">{stopping === item.automation_id ? t("Pause requested…") : t("Stop run")}</button>}{item.source_id && <button type="button" aria-label={t("Re-run these files as a new data project")} title={t("Re-run these files as a new data project")} disabled={busy} onClick={() => void duplicate(item)} className="absolute right-12 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40">⧉</button>}<button type="button" aria-label={t("Delete data project")} title={t("Delete data project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>;
+              return <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className={cx("w-full p-5 text-left", item.source_id ? "pr-20" : "pr-12")}><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2>{active ? <Badge tone="brand"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />{statusLabel(active.status)}</Badge> : <Badge tone={item.status === "saved" ? "ok" : item.status === "error" ? "stop" : "neutral"}>{t(item.status === "saved" ? "Saved" : item.status === "error" ? "Error" : "Draft")}</Badge>}</div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>{active && <button type="button" title={t("Pause after current stage")} disabled={stopping === item.automation_id} onClick={() => void stopRun(active)} className="absolute bottom-3 right-3 rounded-lg border border-line px-2.5 py-1 text-[11px] font-medium text-stop-700 hover:bg-stop-50 disabled:opacity-40">{stopping === item.automation_id ? t("Pause requested…") : t("Stop run")}</button>}{item.source_id && <button type="button" aria-label={t("Re-run these files as a new project")} title={t("Re-run these files as a new project")} disabled={busy} onClick={() => void duplicate(item)} className="absolute right-12 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40">⧉</button>}<button type="button" aria-label={t("Delete project")} title={t("Delete project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>;
             })}
-            {!items.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No data projects yet")} hint={t("Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.")} /></div>}
+            {!items.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No projects yet")} hint={t("Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.")} /></div>}
           </div>
         )}
       </div>
@@ -284,7 +284,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       // button looked dead. The record is null while it is still loading and
       // stays null forever if its fetch failed, so the only honest options are
       // to say so or to disable the control, and the empty state does both.
-      setError(t("The data project is still loading. Try again in a moment."));
+      setError(t("This project is still loading. Try again in a moment."));
       return;
     }
     const controller = new AbortController();
@@ -425,7 +425,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken" onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files); }}>
       <input ref={fileInput} type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.parquet,.pdf" className="hidden" onChange={(event) => { void upload(event.target.files ?? []); event.target.value = ""; }} />
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
-        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[320px] max-w-[32vw] border-0 bg-transparent text-sm font-semibold text-ink outline-none" />
+        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} className="min-w-0 w-[320px] max-w-[32vw] border-0 bg-transparent text-sm font-semibold text-ink outline-none" />
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         <div className="ml-auto flex items-center gap-2">{activeView === "editor" && <select aria-label={t("Choose uploaded data")} title={t("Choose uploaded data")} value={sourceId} onChange={(event) => void selectExistingSource(event.target.value)} className="h-8 max-w-[220px] rounded-lg border border-line bg-surface px-2 text-[11px] text-ink"><option value="">{t("Choose uploaded data")}</option>{sources.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select>}{activeView === "editor" && <button type="button" disabled={!automation} className="btn-ghost !h-8 !w-8 !p-0 text-lg disabled:opacity-40" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}<LanguagePicker /></div>
       </header>
