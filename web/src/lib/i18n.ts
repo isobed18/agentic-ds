@@ -477,6 +477,12 @@ const TR: Record<string, string> = {
   "candidate key": "aday anahtar",
   "candidate keys": "aday anahtar",
   "Exploratory analysis": "Keşifsel analiz",
+  "Measured from content": "İçerikten ölçüldü",
+  "Extension and measurement disagree": "Uzantı ile ölçüm çelişiyor",
+  "Needs a decision": "Karar gerekiyor",
+  "Structured tree": "Ağaç yapı",
+  "Archive": "Arşiv",
+  "Unreadable": "İşlenemez",
   "Planner fully auto": "Planlayıcı tam otomatik",
   "Accept the saved planner configuration; only hard safety gates can stop it.":
     "Kaydedilmiş planlayıcı yapılandırmasını kabul eder; yalnızca zorunlu güvenlik kapıları durdurabilir.",

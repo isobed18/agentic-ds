@@ -9,6 +9,14 @@ export interface RoutedSourceFile {
   route: RouteKind;
   reason?: LocalizedText;
   tableNames: string[];
+  // What ads.kesif measured from the file's content. The route above still
+  // comes from the extension, so these two can disagree -- and when they do,
+  // that disagreement is the most useful thing on the screen.
+  measuredFlow?: string;
+  measuredDeterministic?: boolean;
+  measuredEvidence?: string;
+  needsDecisionBecause?: string;
+  contradictsExtension?: boolean;
 }
 
 export interface FilePage {
@@ -104,6 +112,11 @@ export function routedFiles(profile: SourceProfile): RoutedSourceFile[] {
       route: file.route,
       reason: file.reason,
       tableNames: file.table_names ?? [],
+      measuredFlow: file.kesif_akis,
+      measuredDeterministic: file.kesif_deterministik,
+      measuredEvidence: file.kesif_kanit,
+      needsDecisionBecause: file.kesif_sebep,
+      contradictsExtension: file.kesif_uyusmazlik,
     }));
   }
   const structured = profile.tables.map((table) => ({
