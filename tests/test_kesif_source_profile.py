@@ -72,12 +72,12 @@ def test_uzanti_dogruyken_kesif_ayni_seyi_soyluyor(tmp_path: Path) -> None:
 
     ozet, dosyalar = _profil_uret(kok)
 
-    assert ozet["kullanildi"] is True
+    assert ozet["used"] is True
     satir = dosyalar[0]
     assert satir["route"] == "structured"        # DEGISMEDI
-    assert satir["kesif_akis"] == "tablo"        # olcum ayni seyi soyluyor
-    assert satir["kesif_uyusmazlik"] is False
-    assert ozet["uyusmazlik"] == 0
+    assert satir["detected_flow"] == "tablo"        # olcum ayni seyi soyluyor
+    assert satir["detection_conflicts_with_extension"] is False
+    assert ozet["extension_conflict_count"] == 0
 
 
 def test_uzantisi_yalan_soyleyen_dosya_yakalaniyor(tmp_path: Path) -> None:
@@ -100,9 +100,9 @@ def test_uzantisi_yalan_soyleyen_dosya_yakalaniyor(tmp_path: Path) -> None:
 
     satir = dosyalar[0]
     assert satir["route"] == "structured"          # uzantiya gore: yanlis
-    assert satir["kesif_akis"] == "belge"          # olcume gore: dogru
-    assert satir["kesif_uyusmazlik"] is True       # celiski gorunur
-    assert ozet["uyusmazlik"] == 1
+    assert satir["detected_flow"] == "belge"          # olcume gore: dogru
+    assert satir["detection_conflicts_with_extension"] is True       # celiski gorunur
+    assert ozet["extension_conflict_count"] == 1
     assert satir["route"] == "structured", "kesif route'u DEGISTIRMEMELI"
 
 
@@ -124,9 +124,9 @@ def test_uzantisiz_gecerli_tablo_gorunur_oluyor(tmp_path: Path) -> None:
 
     satir = dosyalar[0]
     assert satir["route"] == "unsupported"     # pipeline bunu sessizce eler
-    assert satir["kesif_akis"] == "tablo"      # kesif tablo oldugunu OLCTU
-    assert satir["kesif_uyusmazlik"] is True
-    assert "kesif_kanit" in satir
+    assert satir["detected_flow"] == "tablo"      # kesif tablo oldugunu OLCTU
+    assert satir["detection_conflicts_with_extension"] is True
+    assert "detection_evidence" in satir
 
 
 def test_karar_verilemeyen_dosya_celiski_IDDIA_ETMIYOR(tmp_path: Path) -> None:
@@ -137,10 +137,12 @@ def test_karar_verilemeyen_dosya_celiski_IDDIA_ETMIYOR(tmp_path: Path) -> None:
     ozet, dosyalar = _profil_uret(kok)
 
     satir = dosyalar[0]
-    assert satir["kesif_deterministik"] is False
-    assert satir["kesif_uyusmazlik"] is False, "kararsizken celiski iddia edilmemeli"
-    assert satir.get("kesif_sebep"), "neden karar veremedigi yazili olmali"
-    assert ozet["yargi_gerektiren"] >= 1
+    assert satir["detection_deterministic"] is False
+    assert satir["detection_conflicts_with_extension"] is False, (
+        "kararsizken celiski iddia edilmemeli"
+    )
+    assert satir.get("detection_reason"), "neden karar veremedigi yazili olmali"
+    assert ozet["adjudication_required_count"] >= 1
 
 
 def test_olcum_cokerse_profil_yine_de_uretilir(tmp_path: Path, monkeypatch) -> None:
@@ -154,8 +156,8 @@ def test_olcum_cokerse_profil_yine_de_uretilir(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(svc, "_file_inventory", _patlayan)
     ozet, dosyalar = _profil_uret(kok)
 
-    assert ozet["kullanildi"] is False
-    assert "RuntimeError" in ozet["sebep"]
+    assert ozet["used"] is False
+    assert "RuntimeError" in ozet["reason"]
     assert dosyalar[0]["route"] == "structured"   # mevcut davranis korundu
 
 
@@ -167,9 +169,9 @@ def test_kesif_yokken_profil_yine_uretilir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(svc, "_file_inventory", None)
     ozet, dosyalar = _profil_uret(kok)
 
-    assert ozet == {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
+    assert ozet == {"used": False, "reason": "file detection extra is not installed"}
     assert dosyalar[0]["route"] == "structured"
-    assert "kesif_akis" not in dosyalar[0]
+    assert "detected_flow" not in dosyalar[0]
 
 
 def test_uzantisi_yalan_soyleyen_pdf_karantinaya_alinir(tmp_path: Path) -> None:
@@ -195,9 +197,14 @@ def test_uzantisi_yalan_soyleyen_pdf_karantinaya_alinir(tmp_path: Path) -> None:
     )
     profil = plane.source_profile("karisik")
 
+    assert profil["file_detection"]["used"] is True
+    assert "kesif" not in profil, "the renamed package must not leak a legacy API field"
     rotalar = {f["name"]: f["route"] for f in profil["source_files"]}
     assert rotalar["temiz.csv"] == "structured"
     assert rotalar["musteri_listesi.csv"] == "needs_review"
+    misnamed = next(f for f in profil["source_files"] if f["name"] == "musteri_listesi.csv")
+    assert misnamed["detected_flow"] == "belge"
+    assert not any(key.startswith("kesif_") for key in misnamed)
 
     tablo_adlari = {t["name"] for t in profil["tables"]}
     assert "temiz" in tablo_adlari, "gercek tablo etkilenmemeli"

@@ -160,6 +160,43 @@ def test_a_cache_entry_for_different_content_is_ignored(corpus: Path) -> None:
     assert _plane(corpus).source_profile("sample") == expected
 
 
+@pytest.mark.parametrize("stored_version", [None, 999])
+def test_a_legacy_or_unknown_cache_schema_is_re_profiled(
+    corpus: Path, monkeypatch: pytest.MonkeyPatch, stored_version: int | None
+) -> None:
+    """A matching file fingerprint cannot make an old payload shape current.
+
+    #145 renames fields in the cached profile itself. Count the expensive call
+    so this test fails if an entry without the current schema version is still
+    accepted merely because its source files have not changed.
+    """
+    first = _plane(corpus)
+    first.source_profile("sample")
+    cache_file = next((corpus / "cache" / "profiles").glob("*.json"))
+    payload = json.loads(cache_file.read_text(encoding="utf-8"))
+    if stored_version is None:
+        payload.pop("schema_version", None)
+    else:
+        payload["schema_version"] = stored_version
+    payload["profile"] = {"source_id": "sample", "poisoned": True}
+    cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    calls: list[int] = []
+    real = service.profile_tables
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "profile_tables", counted)
+    restored = _plane(corpus).source_profile("sample")
+
+    assert calls == [1], "a stale profile schema must be measured again exactly once"
+    assert "poisoned" not in restored
+    rewritten = json.loads(cache_file.read_text(encoding="utf-8"))
+    assert rewritten["schema_version"] == service._PROFILE_CACHE_SCHEMA_VERSION
+
+
 def test_the_cache_is_optional(corpus: Path) -> None:
     """With no directory configured nothing is written and nothing breaks --
     tests and embedded uses should not have to opt out of a filesystem."""

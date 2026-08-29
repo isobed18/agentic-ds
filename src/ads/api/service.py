@@ -143,16 +143,15 @@ from ads.staging import (
 )
 from ads.store import ArtifactNotFoundError, ArtifactStore
 
-# Kesif (dosya tanima) opsiyonel bir ekstra: `.[kesif]`. Kurulu degilse
-# profil ciktisi kesif alanlari olmadan uretilir, hicbir sey kirilmaz.
+# Content-based file detection is optional. When its dependency is unavailable,
+# the source profile is still produced without detection measurements.
 try:
     from ads.file_detection.router import inventory as _file_inventory
 except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
     _file_inventory = None
 
-# Kesif'in olctugu akisin, bu dosyadaki uzanti temelli `route` sozluguyle
-# karsiligi. Esleme yalnizca UYUSMAZLIK saptamak icin; route'u kesif
-# DEGISTIRMIYOR (bkz. source_profile).
+# Map the content detector's flow vocabulary to the extension-based `route`
+# vocabulary. This is used only to expose disagreements (see source_profile).
 _DETECTED_FLOW_TO_ROUTE = {"tablo": "structured", "belge": "documents"}
 
 def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
@@ -195,12 +194,12 @@ def _measure_file_detection(
     kesif alanlari olmadan doner; cagiran taraf icin bu bir hata degildir.
     """
     if _file_inventory is None:
-        return {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
+        return {"used": False, "reason": "file detection extra is not installed"}
 
     try:
         env = _file_inventory(source_root)
-    except Exception as hata:  # olcum hicbir kosulda profili dusurmemeli
-        return {"kullanildi": False, "sebep": f"olcum yapilamadi: {type(hata).__name__}"}
+    except Exception as error:  # Detection must never take down the profile.
+        return {"used": False, "reason": f"detection failed: {type(error).__name__}"}
 
     girdiler = {row["name"]: row for row in source_files}
     uyusmazlik = 0
@@ -215,13 +214,13 @@ def _measure_file_detection(
             continue
 
         akis = karar.akis.value
-        satir["kesif_akis"] = akis
-        satir["kesif_deterministik"] = karar.deterministik
+        satir["detected_flow"] = akis
+        satir["detection_deterministic"] = karar.deterministik
         if karar.kanitlar:
             baslik, detay = karar.kanitlar[0]
-            satir["kesif_kanit"] = f"{baslik}: {detay}"
+            satir["detection_evidence"] = f"{baslik}: {detay}"
         if not karar.deterministik and karar.yargi_sebebi:
-            satir["kesif_sebep"] = karar.yargi_sebebi
+            satir["detection_reason"] = karar.yargi_sebebi
 
         # Uyusmazlik yalnizca kesif KESIN konustugunda ve uzantiyla farkli
         # bir seride bulustugunda iddia edilir. Kararsizsa sessiz kalir.
@@ -231,21 +230,22 @@ def _measure_file_detection(
             and olculen_rota is not None
             and olculen_rota != satir["route"]
         )
-        satir["kesif_uyusmazlik"] = celisiyor
+        satir["detection_conflicts_with_extension"] = celisiyor
         if celisiyor:
             uyusmazlik += 1
 
     return {
-        "kullanildi": True,
-        "dosya_sayisi": env["dosya_sayisi"],
-        "deterministik": env["deterministik"],
-        "yargi_gerektiren": env["yargi_gerektiren"],
-        "uyusmazlik": uyusmazlik,
+        "used": True,
+        "file_count": env["dosya_sayisi"],
+        "deterministic_count": env["deterministik"],
+        "adjudication_required_count": env["yargi_gerektiren"],
+        "extension_conflict_count": uyusmazlik,
     }
 
 
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
+_PROFILE_CACHE_SCHEMA_VERSION = 1
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
 # Windows' classic MAX_PATH. A host can lift it with LongPathsEnabled, but that
 # is a per-machine opt-in outside this application's control, so the budget is
@@ -3049,7 +3049,10 @@ class ControlPlane:
             # A truncated cache file is a performance problem, never a
             # correctness one: fall through and re-profile.
             return None
-        if payload.get("fingerprint") != fingerprint:
+        if (
+            payload.get("schema_version") != _PROFILE_CACHE_SCHEMA_VERSION
+            or payload.get("fingerprint") != fingerprint
+        ):
             return None
         profile = payload.get("profile")
         return profile if isinstance(profile, dict) else None
@@ -3066,7 +3069,14 @@ class ControlPlane:
             # cannot leave a half-file that later reads as a valid cache hit.
             temporary = path.with_suffix(".tmp")
             temporary.write_text(
-                json.dumps({"fingerprint": fingerprint, "profile": profile}), encoding="utf-8"
+                json.dumps(
+                    {
+                        "schema_version": _PROFILE_CACHE_SCHEMA_VERSION,
+                        "fingerprint": fingerprint,
+                        "profile": profile,
+                    }
+                ),
+                encoding="utf-8",
             )
             temporary.replace(path)
         except OSError:
@@ -3264,19 +3274,19 @@ class ControlPlane:
         # ile iddia edilen ayrildiginda dosyayi insana cikariyor.
         karantina: set[str] = set()
         for satir in source_files:
-            if not satir.get("kesif_uyusmazlik"):
+            if not satir.get("detection_conflicts_with_extension"):
                 continue
             karantina.update(tables_by_file.get(satir["name"], []))
             satir["route"] = "needs_review"
             satir["reason"] = (
                 f"Extension claims {satir['format']!r} but the content measures as "
-                f"{satir.get('kesif_akis')!r}. "
-                + (satir.get("kesif_kanit") or "")
+                f"{satir.get('detected_flow')!r}. "
+                + (satir.get("detection_evidence") or "")
             ).strip()
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
-            "kesif": detection_summary,
+            "file_detection": detection_summary,
             "relationships": relationships,
             # So a caller can tell "none found" apart from "not measured".
             "relationships_measured": relationships_measured,

@@ -228,7 +228,7 @@ function RoutingInspector({ selection, profile, workspace, routing, onClose, onO
 }
 
 /**
- * What ads.kesif measured, in words a tester can act on.
+ * What ads.file_detection measured, in words a tester can act on.
  *
  * Written as literal t() calls rather than a lookup table so the i18n scanner
  * can see them; a label reaching t() through a variable is invisible to it and
@@ -246,7 +246,7 @@ function measuredFlowLabel(flow: string): string {
 /**
  * The measurement beside the route, because today they can disagree.
  *
- * The route above is decided by the file's extension. kesif measures the
+ * The route above is decided by the file's extension. File detection measures the
  * content. A PDF renamed to .csv is routed as structured and read as a table
  * while the measurement says "pdf", and until the two are wired together the
  * only place that shows up is here (#103).
