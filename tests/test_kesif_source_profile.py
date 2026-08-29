@@ -20,7 +20,10 @@ import pytest
 
 pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
 
+import pandas as pd  # noqa: E402
+
 from ads.api import service as svc  # noqa: E402
+from ads.kesif.yonlendirici import Akis, yonlendir  # noqa: E402
 
 
 def _kaynak(kok: Path) -> Path:
@@ -167,3 +170,91 @@ def test_kesif_yokken_profil_yine_uretilir(tmp_path: Path, monkeypatch) -> None:
     assert ozet == {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
     assert dosyalar[0]["route"] == "structured"
     assert "kesif_akis" not in dosyalar[0]
+
+
+def test_uzantisi_yalan_soyleyen_pdf_karantinaya_alinir(tmp_path: Path) -> None:
+    """`.csv` adi verilmis bir PDF yapisal veri diye yutuluyordu.
+
+    Olculdu: 37 satir x 1 kolon, kolon adi `pdf_1_4` -- yani %PDF-1.4 basligi
+    slug'lanmis hali -- ve info seviyesinin ustunde tek bir uyari yok. Agent
+    bundan sonra o kolon uzerinde akil yurutuyordu.
+    """
+    from ads.api.service import ControlPlane
+    from ads.kesif.ornek_parti import _pdf_bayt
+    from ads.store import ArtifactStore
+
+    kaynak = tmp_path / "data" / "karisik"
+    kaynak.mkdir(parents=True)
+    pd.DataFrame({"id": [1, 2], "deger": ["a", "b"]}).to_csv(kaynak / "temiz.csv", index=False)
+    (kaynak / "musteri_listesi.csv").write_bytes(
+        _pdf_bayt(["Aylik Faaliyet Raporu", "Ocak 2026 doneminde satis hacmi artti."])
+    )
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profil = plane.source_profile("karisik")
+
+    rotalar = {f["name"]: f["route"] for f in profil["source_files"]}
+    assert rotalar["temiz.csv"] == "structured"
+    assert rotalar["musteri_listesi.csv"] == "needs_review"
+
+    tablo_adlari = {t["name"] for t in profil["tables"]}
+    assert "temiz" in tablo_adlari, "gercek tablo etkilenmemeli"
+    assert not any("musteri" in ad for ad in tablo_adlari), (
+        "olcumle celisen dosyanin tablosu agent'a hic gitmemeli"
+    )
+
+
+def test_uzantisiz_gecerli_tablo_artik_kapidan_geciyor(tmp_path: Path) -> None:
+    """Uzantisi olmayan gecerli bir CSV, icerigine hic bakilmadan reddediliyordu."""
+    from ads.api.service import ControlPlane
+    from ads.store import ArtifactStore
+
+    (tmp_path / "data").mkdir()
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"),
+        source_roots=(tmp_path / "data",),
+        upload_root=tmp_path / "uploads",
+    )
+
+    sonuc = plane.upload(
+        "uzantisiz_dosya",
+        b"kalem;tutar;oran\nkira;12500;15\nsu;890;1\nelektrik;3240;4\ninternet;1100;2\n",
+    )
+
+    assert sonuc["source_id"].startswith("upload:")
+
+
+def test_olculemeyen_ikili_icerik_hala_reddediliyor(tmp_path: Path) -> None:
+    """Kapiyi olcume acmak, her seyi kabul etmek demek degil."""
+    from ads.api.service import ControlPlane
+    from ads.store import ArtifactStore
+
+    (tmp_path / "data").mkdir()
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"),
+        source_roots=(tmp_path / "data",),
+        upload_root=tmp_path / "uploads",
+    )
+
+    with pytest.raises(ValueError, match="supported uploads"):
+        plane.upload("gizemli.bin", bytes(range(256)) * 8)
+
+
+def test_calisma_kitabi_yanlis_uzantiyla_da_aciliyor(tmp_path: Path) -> None:
+    """Kesif icerikten 'xlsx' olctugu halde openpyxl uzantiya bakip reddediyordu.
+
+    Sebep: "does not support .txt file format". Yani olcum dogru yapiliyor,
+    sonra karar yine uzantiya birakiliyordu -- katmanin var olma sebebiyle ters.
+    """
+    from ads.kesif.ornek_parti import _xlsx_bayt
+
+    yol = tmp_path / "rapor.txt"
+    yol.write_bytes(_xlsx_bayt())
+
+    k = yonlendir(yol)
+
+    assert k.format == "xlsx"
+    assert k.akis is Akis.TABLO
+    assert k.deterministik is True

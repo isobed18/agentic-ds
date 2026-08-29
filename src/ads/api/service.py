@@ -155,6 +155,32 @@ except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
 # DEGISTIRMIYOR (bkz. source_profile).
 _KESIF_AKIS_ROTA = {"tablo": "structured", "belge": "documents"}
 
+def _kesif_icerikten_akis(filename: str, content: bytes) -> str | None:
+    """Bir dosyanin akisini ICERIGINDEN olc; uzantiya hic bakma.
+
+    Yukleme kapisi uzantiyla karar veriyordu, yani uzantisi olmayan gecerli bir
+    tablo icerigine hic bakilmadan reddediliyordu -- keşif'in var olma sebebi
+    tam olarak buydu. Kesif kurulu degilse None doner ve cagiran taraf eski
+    uzanti kuralina duser.
+    """
+    if _kesif_envanter is None:
+        return None
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as gecici:
+        yol = Path(gecici) / (Path(filename).name or "dosya")
+        yol.write_bytes(content)
+        try:
+            env = _kesif_envanter(Path(gecici))
+        except Exception:  # olcum basarisizsa karar eski kurala kalir
+            return None
+    kararlar = env.get("kararlar") or []
+    if not kararlar:
+        return None
+    karar = kararlar[0]
+    return karar.akis.value if karar.deterministik else None
+
+
 def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict[str, Any]:
     """Her kaynak dosyanin turunu ICERIKTEN olc ve `source_files`'i zenginlestir.
 
@@ -2889,12 +2915,19 @@ class ControlPlane:
         safe_name = Path(filename).name
         if not safe_name or safe_name in {".", ".."}:
             raise ValueError("filename must contain a file name")
-        if Path(safe_name).suffix.lower() not in _UPLOAD_SUFFIXES:
-            raise ValueError("supported uploads are CSV/TSV, Excel, Parquet, or PDF")
         if len(safe_name.encode("utf-8")) > _MAX_UPLOAD_NAME_BYTES:
             raise ValueError("file name is too long")
         if not content:
             raise ValueError("uploaded file is empty")
+        if Path(safe_name).suffix.lower() not in _UPLOAD_SUFFIXES:
+            # Uzanti bir IDDIA, olcum degil. Reddetmeden once icerige bak:
+            # uzantisiz ya da yanlis adlandirilmis gecerli bir tablo, hicbir
+            # hata verilmeden kaybediliyordu.
+            if _kesif_icerikten_akis(safe_name, content) not in {"tablo", "belge"}:
+                raise ValueError(
+                    "supported uploads are CSV/TSV, Excel, Parquet, or PDF; this file's "
+                    "content could not be measured as a table or a document either"
+                )
 
         if source_id is None:
             matching = self._matching_single_file_upload(content, owner=owner)
@@ -3221,9 +3254,23 @@ class ControlPlane:
                     "table_names": tables_by_file.get(name, []),
                 }
             )
-        # Uzantiya bakarak verilen yukaridaki `route` kararinin yaninda,
-        # icerikten OLCULMUS karsiligini da tasi. Route degismez.
         kesif_ozeti = _kesif_olcumu(source_root, source_files)
+        # Olcum uzantiyla CELISIYORSA artik sessiz kalmiyor. `.csv` adi verilmis
+        # bir PDF yapisal veri diye yutuluyordu: 37 satir x 1 kolon, kolon adi
+        # `pdf_1_4` -- yani %PDF-1.4 basligi -- ve info seviyesinin ustunde tek
+        # bir uyari yok. Karari kesif'in kendi basina VERMESI degil bu; olculen
+        # ile iddia edilen ayrildiginda dosyayi insana cikariyor.
+        karantina: set[str] = set()
+        for satir in source_files:
+            if not satir.get("kesif_uyusmazlik"):
+                continue
+            karantina.update(tables_by_file.get(satir["name"], []))
+            satir["route"] = "needs_review"
+            satir["reason"] = (
+                f"Extension claims {satir['format']!r} but the content measures as "
+                f"{satir.get('kesif_akis')!r}. "
+                + (satir.get("kesif_kanit") or "")
+            ).strip()
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
@@ -3233,6 +3280,9 @@ class ControlPlane:
             "relationships_measured": relationships_measured,
             "relationships_note": relationships_note,
             "documents": [document.public_summary() for document in documents],
+            # Karantinadaki tablolar profile HIC girmez. Route'u degistirip
+            # tabloyu birakmak, agent'a hala `pdf_1_4` adli bir kolon gostermek
+            # demekti; asil zarar oradaydi.
             "tables": [
                 {
                     "name": card.table_name,
@@ -3262,6 +3312,7 @@ class ControlPlane:
                     ],
                 }
                 for card in cards
+                if card.table_name not in karantina
             ],
             "privacy": (
                 "Schema and aggregate statistics only; document metadata may also be shown. "
