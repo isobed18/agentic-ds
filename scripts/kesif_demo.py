@@ -9,7 +9,7 @@ butun akisi kosar:
     3. yonlendir       tek dosya detayi, kanitlariyla
     4. artik           deterministik cozulemeyen dosyalar
 
-Ornek parti verilmezse `ads.kesif.ornek_parti` ile gecici bir dizine
+Ornek parti verilmezse `ads.file_detection.sample_batch` ile gecici bir dizine
 uretilir; harici bir klasore bagimli degildir.
 
 Calistir:
@@ -33,12 +33,12 @@ PROJE = Path(__file__).resolve().parent.parent
 
 _verilen = os.environ.get("KESIF_KOK")
 if _verilen:
-    KOK = Path(_verilen).resolve()
+    ROOT = Path(_verilen).resolve()
 else:
     sys.path.insert(0, str(PROJE / "src"))
-    from ads.kesif.ornek_parti import yaz
+    from ads.file_detection.sample_batch import write_sample_batch
 
-    KOK = yaz(Path(tempfile.mkdtemp(prefix="kesif_")) / "karma").resolve()
+    ROOT = write_sample_batch(Path(tempfile.mkdtemp(prefix="kesif_")) / "karma").resolve()
 
 
 def basli(n: str) -> None:
@@ -59,8 +59,8 @@ def icerik(sonuc):
 
 async def main() -> None:
     par = StdioServerParameters(
-        command=sys.executable, args=["-m", "ads.kesif.sunucu"],
-        env=dict(os.environ, KESIF_KOK=str(KOK)), cwd=str(PROJE))
+        command=sys.executable, args=["-m", "ads.file_detection.server"],
+        env=dict(os.environ, KESIF_KOK=str(ROOT)), cwd=str(PROJE))
 
     async with stdio_client(par) as (o, y):
         async with ClientSession(o, y) as oturum:
@@ -71,7 +71,7 @@ async def main() -> None:
             araclar = await oturum.list_tools()
             print(f"  {len(araclar.tools)} tool: "
                   + ", ".join(t.name for t in araclar.tools))
-            print(f"  kok dizin: {KOK}")
+            print(f"  kok dizin: {ROOT}")
 
             basli("1. ENVANTER  —  ucuz gecis, butun dosyalara")
             e = icerik(await oturum.call_tool("envanter", {"klasor": "."}))

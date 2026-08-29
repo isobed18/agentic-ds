@@ -26,11 +26,11 @@ from .router import (
     route as _yonlendir,
 )
 
-KOK = Path(os.environ.get("KESIF_KOK", ".")).resolve()
+ROOT = Path(os.environ.get("KESIF_KOK", ".")).resolve()
 
 # Hangi uzanti hangi cozumleyiciye (incele -> Rapor) gider.
 # dosya_incele() ve secenekler() burayi kullanir.
-COZUMLEYICILER = {
+INSPECTORS = {
     ".csv": text.inspect,
     ".tsv": text.inspect,
     ".txt": text.inspect,
@@ -51,7 +51,7 @@ COZUMLEYICILER = {
 # Hangi uzanti hangi okuyucuya (secim uygula -> onizleme) gider.
 # oku() burayi kullanir. CSV/TSV/TXT/DAT icin pandas okumasi, PDF icin
 # metin cikarimi farkli seyler oldugundan COZUMLEYICILER'den ayri tutulur.
-OKUYUCULAR = {
+READERS = {
     ".csv": read_table,
     ".tsv": read_table,
     ".txt": read_table,
@@ -68,9 +68,9 @@ OKUYUCULAR = {
 }
 
 # Henuz eklenmemis ama taninan formatlar (dogru davranis: yalan soyleme).
-PLANLI = {".json"}
+PLANNED_SUFFIXES = {".json"}
 
-sunucu = MCPServer(
+mcp_server = MCPServer(
     name="kesif",
     title="Kesif — dosya tanima ve secenek sunma",
     instructions=(
@@ -86,15 +86,15 @@ sunucu = MCPServer(
 
 def _safe_path(yol: str) -> Path:
     """Kok dizin disina cikmayi engelle."""
-    hedef = (KOK / yol).resolve() if not Path(yol).is_absolute() else Path(yol).resolve()
-    if KOK not in hedef.parents and hedef != KOK:
-        raise ValueError(f"Yol kok dizin disinda: {KOK}")
+    hedef = (ROOT / yol).resolve() if not Path(yol).is_absolute() else Path(yol).resolve()
+    if ROOT not in hedef.parents and hedef != ROOT:
+        raise ValueError(f"Yol kok dizin disinda: {ROOT}")
     if not hedef.exists():
         raise ValueError(f"Bulunamadi: {hedef}")
     return hedef
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Bu sunucunun hangi dosya formatlarini ne kadar derin "
                 "inceleyebildigini listeler. Ise baslarken cagir."
 )
@@ -103,7 +103,7 @@ def formatlari_listele() -> dict[str, list[str]]:
         "tam_destek": [".csv", ".tsv", ".txt", ".dat", ".pdf",
                         ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp",
                         ".xlsx", ".xlsm"],
-        "planli": sorted(PLANLI),
+        "planli": sorted(PLANNED_SUFFIXES),
         "olculen_konular": [
             "karakter kodlamasi (bayt kanitiyla, cp1252/cp1254 ayrimi dahil)",
             "sutun ayraci (satirlar arasi tutarlilikla)",
@@ -115,11 +115,11 @@ def formatlari_listele() -> dict[str, list[str]]:
             "OCR modelinin Turkce uretip uretemeyecegi (sozluk olcumu)",
             "XLSX sayfalari: hangileri gercekten tablo",
         ],
-        "kok_dizin": [str(KOK)],
+        "kok_dizin": [str(ROOT)],
     }
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Bir dosyayi inceler: formatini, yapisini ve butun "
                 "bulgularini kanitlariyla dondurur. Degistirmez, salt okunur."
 )
@@ -127,7 +127,7 @@ def dosya_incele(yol: str) -> Report:
     hedef = _safe_path(yol)
     uzanti = hedef.suffix.lower()
 
-    cozumleyici = COZUMLEYICILER.get(uzanti)
+    cozumleyici = INSPECTORS.get(uzanti)
     if cozumleyici is None:
         return Report(
             yol=str(hedef),
@@ -138,13 +138,13 @@ def dosya_incele(yol: str) -> Report:
             **{"not": (
                 f"'{uzanti}' icin cozumleyici yok. "
                 + ("Planli formatlardan biri; henuz eklenmedi."
-                   if uzanti in PLANLI else "Desteklenmeyen format.")
+                   if uzanti in PLANNED_SUFFIXES else "Desteklenmeyen format.")
             )},
         )
     return cozumleyici(hedef)
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Sadece KARAR BEKLEYEN konulari kompakt sekilde dondurur: "
                 "her biri icin kanit ve 2-3 secenek. Kullaniciya bunu goster."
 )
@@ -186,7 +186,7 @@ def secenekler(yol: str) -> dict:
     }
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Secilen secenekleri uygulayarak dosyayi okur ve kucuk bir "
                 "onizleme dondurur. secimler, secenek parametrelerinin "
                 "birlestirilmis halidir. Ornek: "
@@ -194,7 +194,7 @@ def secenekler(yol: str) -> dict:
 )
 def oku(yol: str, secimler: dict[str, str] | None = None) -> dict:
     hedef = _safe_path(yol)
-    okuyucu = OKUYUCULAR.get(hedef.suffix.lower())
+    okuyucu = READERS.get(hedef.suffix.lower())
     if okuyucu is None:
         return {"basarili": False,
                 "hata": f"'{hedef.suffix}' icin okuyucu yok."}
@@ -206,7 +206,7 @@ def oku(yol: str, secimler: dict[str, str] | None = None) -> dict:
 # YONLENDIRME TOOL'LARI
 # ---------------------------------------------------------------------------
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Tek bir dosyayi tanir ve hangi akisa gitmesi gerektigine "
                 "karar verir. Format, sekil ve kodlama olculur. Karar "
                 "verilemezse akis 'yargi' doner ve sebebi yazilir."
@@ -227,7 +227,7 @@ def yonlendir(yol: str) -> dict:
     }
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Bir klasordeki butun dosyalari ucuz gecisten gecirip "
                 "envanter cikarir. Pahali islem yapmaz. Once bunu cagir, "
                 "sonra kullaniciya secenek sun."
@@ -250,7 +250,7 @@ def envanter(klasor: str = ".", desen: str = "*") -> dict:
     }
 
 
-@sunucu.tool(
+@mcp_server.tool(
     description="Envanterden kullaniciya sunulacak 3 somut secenek uretir. "
                 "Bu bir TERCIH sorusudur, olcumle cevaplanamaz. Kullaniciya "
                 "goster ve secimini bekle."
@@ -260,7 +260,7 @@ def secenekler_toplu(klasor: str = ".", desen: str = "*") -> dict:
 
 
 def main() -> None:
-    sunucu.run(transport="stdio")
+    mcp_server.run(transport="stdio")
 
 
 # Keep MCP tool names stable while the Python package gains an English API.

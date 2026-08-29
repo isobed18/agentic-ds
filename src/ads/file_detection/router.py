@@ -66,15 +66,6 @@ class Flow(StrEnum):
     UNPROCESSABLE = "islenemez"
     ADJUDICATION = "yargi"
 
-    # Temporary aliases keep the first rename PR behavior-neutral.
-    TABLO = TABLE
-    BELGE = DOCUMENT
-    AGAC = TREE
-    KAPSAYICI = CONTAINER
-    ISLENEMEZ = UNPROCESSABLE
-    YARGI = ADJUDICATION
-
-
 @dataclass
 class Decision:
     yol: str
@@ -174,10 +165,10 @@ def route(yol: Path) -> Decision:
     guven = float(m.score)
 
     k = Decision(yol=str(yol), boyut=boyut, format=format_,
-              format_guveni=guven, sekil="-", akis=Flow.YARGI)
+              format_guveni=guven, sekil="-", akis=Flow.ADJUDICATION)
 
     if boyut == 0:
-        k.akis = Flow.ISLENEMEZ
+        k.akis = Flow.UNPROCESSABLE
         k.notlar.append("dosya bos")
         return k
 
@@ -191,18 +182,18 @@ def route(yol: Path) -> Decision:
         # olculur") burada da gecerli; acilan bir arsiv icin dusuk model
         # guvenine bakip human feedback istemek gereksiz eskalasyondur.
         if zipfile.is_zipfile(yol):
-            k.akis = Flow.KAPSAYICI
+            k.akis = Flow.CONTAINER
             k.format_guveni = guven = 1.0
             k.kanitlar.append(("yapisal dogrulama", "zip olarak acildi"))
             k.notlar.append("icerik acilip her bilesen yeniden yonlendirilmeli")
             return k
         if guven < MAGIKA_GUVEN_ESIGI:
             k.deterministik = False
-            k.akis = Flow.YARGI
+            k.akis = Flow.ADJUDICATION
             k.yargi_sebebi = (f"format guveni dusuk ({guven:.2f}) ve arsiv "
                               "olarak acilamadi; human feedback gerekir")
             return k
-        k.akis = Flow.KAPSAYICI
+        k.akis = Flow.CONTAINER
         k.notlar.append("icerik acilip her bilesen yeniden yonlendirilmeli")
         return k
 
@@ -221,7 +212,7 @@ def route(yol: Path) -> Decision:
     if format_ in BELGE_TURLERI:
         if guven < MAGIKA_GUVEN_ESIGI:
             k.deterministik = False
-            k.akis = Flow.YARGI
+            k.akis = Flow.ADJUDICATION
             k.yargi_sebebi = (f"format guveni dusuk ({guven:.2f}); "
                               "belge siniflandirmasi human feedback gerektirir")
             return k
@@ -230,7 +221,7 @@ def route(yol: Path) -> Decision:
         # cikaricinin bos donmesi, yani SESSIZ VERI KAYBI demektir.
         if format_ == "pdf":
             return _route_pdf(k)
-        k.akis = Flow.BELGE
+        k.akis = Flow.DOCUMENT
         k.notlar.append("belge cozumleyiciye gider")
         return k
 
@@ -239,7 +230,7 @@ def route(yol: Path) -> Decision:
     # kendi basina yapip dosyayi sessizce eleyemez.
     if format_ not in METIN_TURLERI:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = f"'{format_}' icin cozumleyici tanimli degil, human feedback gerekir"
         return k
 
@@ -251,7 +242,7 @@ def route(yol: Path) -> Decision:
     ornek = ham[:8192]
     if b"\x00" in ornek or sum(1 for b in ornek if b < 9 or 13 < b < 32) > len(ornek) * 0.10:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = ("yazdirilamayan bayt orani yuksek; gercekten ikili mi "
                           "yoksa yanlis kodlanmis metin mi (orn. UTF-16) "
                           "human feedback ayirt etsin")
@@ -267,7 +258,7 @@ def route(yol: Path) -> Decision:
 
     if kod.karar_verilemedi:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = "kodlama belirsiz, dil kaniti yetersiz"
         return k
 
@@ -307,7 +298,7 @@ def route(yol: Path) -> Decision:
             f"akis formattan belirlendi ({format_}, guven {guven:.3f}); "
             "sekil olcumu belirleyici degil"
         )
-        if k.akis is Flow.BELGE:
+        if k.akis is Flow.DOCUMENT:
             k.notlar.append("serbest metin ajan baglamina girecek, "
                             "veri olarak etiketlenmeli")
         return k
@@ -321,14 +312,14 @@ def route(yol: Path) -> Decision:
         )
         if s.yargi_gerekir:
             k.deterministik = False
-            k.akis = Flow.YARGI
+            k.akis = Flow.ADJUDICATION
             k.yargi_sebebi = "kisa dosya, sekil de belirsiz"
             return k
         k.notlar.append(f"sekil olcumu karari verdi: {s.sekil.value}")
 
     elif guven < MAGIKA_GUVEN_ESIGI and s.yargi_gerekir:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = (f"format guveni dusuk ({guven:.2f}) ve "
                           "sekil de belirsiz")
         return k
@@ -347,28 +338,28 @@ def route(yol: Path) -> Decision:
             )
             return k
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = "sekil belirsiz, sinyaller celisiyor veya zayif"
         return k
 
     # --- sekil -> akis ------------------------------------------------
     k.akis = {
-        TextShape.TABLO: Flow.TABLO,
-        TextShape.SABIT_GENISLIK: Flow.TABLO,
-        TextShape.LOG: Flow.BELGE,
-        TextShape.ANAHTAR_DEGER: Flow.AGAC,
-        TextShape.SERBEST_METIN: Flow.BELGE,
+        TextShape.TABLE: Flow.TABLE,
+        TextShape.FIXED_WIDTH: Flow.TABLE,
+        TextShape.LOG: Flow.DOCUMENT,
+        TextShape.KEY_VALUE: Flow.TREE,
+        TextShape.PROSE: Flow.DOCUMENT,
     }[s.sekil]
 
     if belirleyici:
         k.akis = Flow(belirleyici)
         k.notlar.append(f"format ({format_}) sekil olcumunun onune gecti")
 
-    if s.sekil is TextShape.SABIT_GENISLIK:
+    if s.sekil is TextShape.FIXED_WIDTH:
         k.notlar.append("sabit genislikli tablo, sutun sinirlari cikarilmali")
     if s.sekil is TextShape.LOG:
         k.notlar.append("log kaydi, satir bazli ayristirma uygun")
-    if k.akis is Flow.BELGE:
+    if k.akis is Flow.DOCUMENT:
         k.notlar.append("serbest metin ajan baglamina girecek, "
                         "veri olarak etiketlenmeli")
 
@@ -392,7 +383,7 @@ def _route_pdf(k: Decision) -> Decision:
         sayfa_sayisi = len(okuyucu.pages)
         if sayfa_sayisi == 0:
             k.deterministik = False
-            k.akis = Flow.YARGI
+            k.akis = Flow.ADJUDICATION
             k.yargi_sebebi = "PDF'te sayfa yok"
             return k
         parcalar = []
@@ -404,7 +395,7 @@ def _route_pdf(k: Decision) -> Decision:
         karakter = len("\n".join(parcalar))
     except Exception as e:  # noqa: BLE001 - sebebi cagirana gosterilecek
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = f"PDF okunamadi: {type(e).__name__}: {e}"
         return k
 
@@ -415,7 +406,7 @@ def _route_pdf(k: Decision) -> Decision:
     ))
 
     if ortalama >= _pdf.SAYFA_BASI_AZAMI_BOS:
-        k.akis = Flow.BELGE
+        k.akis = Flow.DOCUMENT
         k.sekil = "serbest_metin"
         k.notlar.append("metin katmani var, belge cozumleyiciye gider")
         return k
@@ -427,7 +418,7 @@ def _route_pdf(k: Decision) -> Decision:
     goruntuler = _pdf.embedded_images(okuyucu)
     if not goruntuler:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = ("PDF'te ne metin katmani ne cikarilabilir goruntu var; "
                           "bu haliyle okunamiyor, human feedback gerekir")
         return k
@@ -452,7 +443,7 @@ def _route_workbook(k: Decision) -> Decision:
     sonuc = tabular.inspect_structure(Path(k.yol))
     if sonuc.hata:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = f"calisma kitabi acilamadi: {sonuc.hata}"
         return k
 
@@ -464,13 +455,13 @@ def _route_workbook(k: Decision) -> Decision:
 
     if not tablolar:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = ("sayfalar acildi ama hicbirinde basliklanmis tablo "
                           "bulunamadi; hangi aralik okunacak human feedback ister")
         return k
 
     k.sekil = "tablo"
-    k.akis = Flow.TABLO
+    k.akis = Flow.TABLE
     if len(tablolar) > 1:
         k.notlar.append(
             f"{len(tablolar)} tablo sayfasi var; hangisiyle calisilacagi "
@@ -501,14 +492,14 @@ def _route_columnar_table(k: Decision) -> Decision:
 
     if bas != PARQUET_IMZA or son != PARQUET_IMZA:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = ("format 'parquet' etiketlendi ama PAR1 imzasi "
                           "dogrulanamadi; human feedback gerekir")
         return k
 
     k.format_guveni = 1.0
     k.sekil = "tablo"
-    k.akis = Flow.TABLO
+    k.akis = Flow.TABLE
     k.kanitlar.append(("parquet imzasi", "bas ve sonda PAR1 dogrulandi"))
     k.notlar.append("sutunlu ikili tablo; semayi cozumleyici okur")
     return k
@@ -534,13 +525,13 @@ def _route_image(k: Decision, guven: float,
         s = _image.read(ocr_yolu or Path(k.yol))
     except ImportError as e:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = f"OCR bileseni kurulu degil ({e}); human feedback gerekir"
         return k
 
     if s.hata:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = f"goruntuden metin cikarilamadi: {s.hata}"
         return k
 
@@ -551,7 +542,7 @@ def _route_image(k: Decision, guven: float,
 
     if not s.turkce_dogrulanmis:
         k.deterministik = False
-        k.akis = Flow.YARGI
+        k.akis = Flow.ADJUDICATION
         k.yargi_sebebi = (
             "OCR yapiyi ve sayilari okudu ancak tanima modelinin sozlugunde "
             "Turkce harfler yok; metin sessizce bozulmus olabilir, "
@@ -561,7 +552,7 @@ def _route_image(k: Decision, guven: float,
                            _image.model_supports_turkish()[1]))
         return k
 
-    k.akis = Flow.TABLO if tablo_mu else Flow.BELGE
+    k.akis = Flow.TABLE if tablo_mu else Flow.DOCUMENT
     k.notlar.append("OCR ile okundu, Turkce sozluk dogrulandi")
     return k
 
@@ -582,7 +573,7 @@ def _route_safely(yol: Path) -> Decision:
             boyut = -1
         return Decision(
             yol=str(yol), boyut=boyut, format="bilinmiyor", format_guveni=0.0,
-            sekil="-", akis=Flow.YARGI, deterministik=False,
+            sekil="-", akis=Flow.ADJUDICATION, deterministik=False,
             yargi_sebebi=f"dosya okunamadi: {type(hata).__name__}: {hata}",
         )
 
@@ -693,10 +684,3 @@ def build_options(env: dict) -> dict:
                      "Format ve şekil zaten ölçüldü; sorulan şey hangi "
                      "içerikle ilgilenildiği."),
     }
-
-
-Akis = Flow
-Karar = Decision
-yonlendir = route
-envanter = inventory
-secenek_uret = build_options

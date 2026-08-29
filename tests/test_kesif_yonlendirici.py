@@ -21,13 +21,13 @@ import pytest
 # testlerini degil.
 pytest.importorskip("magika", reason="kesif ekstrasi kurulu degil")
 
-from ads.kesif import yonlendirici as y  # noqa: E402
-from ads.kesif.yonlendirici import Akis, envanter, yonlendir  # noqa: E402
+from ads.file_detection import router  # noqa: E402
+from ads.file_detection.router import Flow, inventory, route  # noqa: E402
 
 
 def _sahte_magika(monkeypatch: pytest.MonkeyPatch, etiket: str, guven: float) -> None:
     sonuc = SimpleNamespace(output=SimpleNamespace(label=etiket), score=guven)
-    monkeypatch.setattr(y._magika, "identify_path", lambda yol: sonuc)
+    monkeypatch.setattr(router._magika, "identify_path", lambda yol: sonuc)
 
 
 def test_taninmayan_format_human_feedbacke_dusuyor(
@@ -37,10 +37,10 @@ def test_taninmayan_format_human_feedbacke_dusuyor(
     dosya.write_bytes(b"herhangi bir icerik")
     _sahte_magika(monkeypatch, "cozumleyicisi_olmayan_format", 0.99)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
     assert "cozumleyici tanimli degil" in k.yargi_sebebi
 
 
@@ -52,10 +52,10 @@ def test_ikili_supheli_icerik_human_feedbacke_dusuyor(
     dosya.write_bytes(bytes([1, 2, 3, 4, 5, 6, 7]) * 50)
     _sahte_magika(monkeypatch, "txt", 0.99)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
     assert "ikili" in k.yargi_sebebi.lower() or "UTF-16" in k.yargi_sebebi
 
 
@@ -67,10 +67,10 @@ def test_acilamayan_dusuk_guvenli_kapsayici_human_feedbacke_dusuyor(
     dosya.write_bytes(b"PK\x03\x04" + b"\x00" * 20)  # gecerli bir arsiv degil
     _sahte_magika(monkeypatch, "zip", 0.5)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
     assert "acilamadi" in k.yargi_sebebi
 
 
@@ -85,10 +85,10 @@ def test_acilabilen_arsiv_dusuk_guvende_bile_kapsayici_oluyor(
         z.writestr("a.txt", "icerik")
     _sahte_magika(monkeypatch, "zip", 0.3)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is True
-    assert k.akis is Akis.KAPSAYICI
+    assert k.akis is Flow.CONTAINER
     assert any("zip olarak acildi" in d for _, d in k.kanitlar)
 
 
@@ -99,10 +99,10 @@ def test_yuksek_guvenli_kapsayici_otomatik_kalir(
     dosya.write_bytes(b"PK\x03\x04" + b"\x00" * 20)
     _sahte_magika(monkeypatch, "zip", 0.97)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is True
-    assert k.akis is Akis.KAPSAYICI
+    assert k.akis is Flow.CONTAINER
 
 
 def test_dusuk_guvenli_belge_human_feedbacke_dusuyor(
@@ -112,10 +112,10 @@ def test_dusuk_guvenli_belge_human_feedbacke_dusuyor(
     dosya.write_bytes(b"%PDF-1.4 sahte icerik")
     _sahte_magika(monkeypatch, "pdf", 0.4)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
     assert "belge" in k.yargi_sebebi
 
 
@@ -135,10 +135,10 @@ def test_metin_katmanli_belge_otomatik_kalir(
     ]))
     _sahte_magika(monkeypatch, "pdf", 0.95)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is True
-    assert k.akis is Akis.BELGE
+    assert k.akis is Flow.DOCUMENT
     assert any("PDF metin katmani" in a for a, _ in k.kanitlar)
 
 
@@ -152,10 +152,10 @@ def test_acilamayan_pdf_belge_sayilmiyor(tmp_path: Path, monkeypatch: pytest.Mon
     dosya.write_bytes(b"%PDF-1.4 bu gecerli bir PDF degil")
     _sahte_magika(monkeypatch, "pdf", 0.99)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is False
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
 
 
 def test_bos_dosya_hala_otomatik_islenemez(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,10 +164,10 @@ def test_bos_dosya_hala_otomatik_islenemez(tmp_path: Path, monkeypatch: pytest.M
     dosya.write_bytes(b"")
     _sahte_magika(monkeypatch, "empty", 1.0)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is True
-    assert k.akis is Akis.ISLENEMEZ
+    assert k.akis is Flow.UNPROCESSABLE
 
 
 def test_envanter_tek_bozuk_dosyada_cokmez(
@@ -192,12 +192,12 @@ def test_envanter_tek_bozuk_dosyada_cokmez(
 
     monkeypatch.setattr(Path, "open", _kirik_okuma)
 
-    env = envanter(tmp_path)
+    env = inventory(tmp_path)
 
     assert env["dosya_sayisi"] == 3
     bozuk_karar = next(k for k in env["kararlar"] if k.yol.endswith("bozuk.csv"))
     assert bozuk_karar.deterministik is False
-    assert bozuk_karar.akis is Akis.YARGI
+    assert bozuk_karar.akis is Flow.ADJUDICATION
     assert "okunamadi" in bozuk_karar.yargi_sebebi
     assert "PermissionError" in bozuk_karar.yargi_sebebi
 
@@ -231,10 +231,10 @@ def test_sarmalanmis_nesir_belge_akisinda_kalir(
     )
     _sahte_magika(monkeypatch, "txt", 0.90)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
     assert k.deterministik is True
-    assert k.akis is Akis.BELGE
+    assert k.akis is Flow.DOCUMENT
     assert k.sekil == "serbest_metin"
 
 
@@ -254,9 +254,9 @@ def test_ondalik_sayilar_cumle_sayilmiyor(
     )
     _sahte_magika(monkeypatch, "csv", 0.95)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
-    assert k.akis is Akis.TABLO
+    assert k.akis is Flow.TABLE
     assert k.sekil == "tablo"
 
 
@@ -273,9 +273,9 @@ def test_parquet_tablo_akisina_gidiyor(
     dosya.write_bytes(b"PAR1" + bytes(64) + b"PAR1")
     _sahte_magika(monkeypatch, "parquet", 0.99)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
-    assert k.akis is Akis.TABLO
+    assert k.akis is Flow.TABLE
     assert k.deterministik is True
     assert k.sekil == "tablo"
 
@@ -293,8 +293,8 @@ def test_imzasiz_parquet_etiketi_human_feedbacke_dusuyor(
     dosya.write_bytes(b"bu bir parquet dosyasi degil")
     _sahte_magika(monkeypatch, "parquet", 0.99)
 
-    k = yonlendir(dosya)
+    k = route(dosya)
 
-    assert k.akis is Akis.YARGI
+    assert k.akis is Flow.ADJUDICATION
     assert k.deterministik is False
     assert "PAR1" in k.yargi_sebebi

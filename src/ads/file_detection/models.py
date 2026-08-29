@@ -19,11 +19,6 @@ class Severity(StrEnum):
     WARNING = "dikkat"
     CRITICAL = "kritik"
 
-    BILGI = INFO
-    DIKKAT = WARNING
-    KRITIK = CRITICAL
-
-
 class Evidence(BaseModel):
     """Bir olcum sonucu. Yorum degil, sayi veya gozlem."""
 
@@ -86,20 +81,10 @@ class Report(BaseModel):
 
 def summary_line(rapor: Report) -> str:
     """Insan icin tek satirlik ozet."""
-    kritik = sum(1 for b in rapor.bulgular if b.onem is Severity.KRITIK)
-    dikkat = sum(1 for b in rapor.bulgular if b.onem is Severity.DIKKAT)
+    kritik = sum(1 for b in rapor.bulgular if b.onem is Severity.CRITICAL)
+    dikkat = sum(1 for b in rapor.bulgular if b.onem is Severity.WARNING)
     if kritik:
         return f"{rapor.format}: {kritik} kritik, {dikkat} dikkat gerektiren bulgu"
     if dikkat:
         return f"{rapor.format}: {dikkat} karar bekleyen bulgu"
     return f"{rapor.format}: sorun tespit edilmedi"
-
-
-# Compatibility names are removed after repository importers move to the
-# English surface. Keeping them here makes this first rename behavior-neutral.
-Onem = Severity
-Kanit = Evidence
-Secenek = Option
-Bulgu = Finding
-Rapor = Report
-ozet_satiri = summary_line

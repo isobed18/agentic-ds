@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ads.kesif.formatlar import pdf as pdf_cozumleyici
-from ads.kesif.model import Onem
-from ads.kesif.okuyucu import oku_pdf
+from ads.file_detection.formats import pdf as pdf_parser
+from ads.file_detection.models import Severity
+from ads.file_detection.readers import read_pdf
 
 
 def _basit_pdf(satirlar: list[str]) -> bytes:
@@ -58,7 +58,7 @@ def test_metin_katmanli_pdf_sekil_tespit_eder(tmp_path: Path) -> None:
         "not: bu bir anahtar deger belgesi", "durum: tamam",
     ]))
 
-    rapor = pdf_cozumleyici.incele(dosya)
+    rapor = pdf_parser.inspect(dosya)
 
     assert rapor.format == "pdf"
     assert rapor.okunabilir is True
@@ -78,14 +78,14 @@ def test_ne_metin_ne_goruntu_iceren_pdf_human_feedbacke_dusuyor(tmp_path: Path) 
     dosya = tmp_path / "bos_sayfa.pdf"
     dosya.write_bytes(_basit_pdf([]))
 
-    rapor = pdf_cozumleyici.incele(dosya)
+    rapor = pdf_parser.inspect(dosya)
 
     assert rapor.okunabilir is False
     # Metin katmaninin olmadigi BILGI olarak, okunamazlik KRITIK olarak raporlanir.
     basliklar = " ".join(b.baslik.lower() for b in rapor.bulgular)
     assert "metin katmani yok" in basliklar
 
-    kritikler = [b for b in rapor.bulgular if b.onem is Onem.KRITIK]
+    kritikler = [b for b in rapor.bulgular if b.onem is Severity.CRITICAL]
     assert len(kritikler) == 1
     assert "gomulu goruntu" in kritikler[0].baslik.lower()
     secenek = kritikler[0].secenekler[0]
@@ -97,7 +97,7 @@ def test_bozuk_pdf_hata_ile_doner_cokmez(tmp_path: Path) -> None:
     dosya = tmp_path / "bozuk.pdf"
     dosya.write_bytes(b"bu bir PDF degil, duz metin")
 
-    rapor = pdf_cozumleyici.incele(dosya)
+    rapor = pdf_parser.inspect(dosya)
 
     assert rapor.okunabilir is False
     assert "acilamadi" in rapor.not_
@@ -107,7 +107,7 @@ def test_oku_pdf_onizleme_dondurur(tmp_path: Path) -> None:
     dosya = tmp_path / "onizle.pdf"
     dosya.write_bytes(_basit_pdf(["birinci satir", "ikinci satir"]))
 
-    sonuc = oku_pdf(dosya, {})
+    sonuc = read_pdf(dosya, {})
 
     assert sonuc["basarili"] is True
     assert sonuc["sayfa_sayisi"] == 1
@@ -118,7 +118,7 @@ def test_oku_pdf_bozuk_dosyada_hata_dondurur(tmp_path: Path) -> None:
     dosya = tmp_path / "bozuk.pdf"
     dosya.write_bytes(b"gecersiz")
 
-    sonuc = oku_pdf(dosya, {})
+    sonuc = read_pdf(dosya, {})
 
     assert sonuc["basarili"] is False
     assert "hata" in sonuc

@@ -9,7 +9,7 @@ human feedback istedigini canli gor.
     .venv/bin/python scripts/kesif_poc.py
     -> http://127.0.0.1:8600
 
-Ornek dosyalar acilista otomatik uretilir (ads.kesif.ornek_parti +
+Ornek dosyalar acilista otomatik uretilir (ads.file_detection.sample_batch +
 Turkce bir tablo ekran goruntusu), yani gosterim harici bir dosyaya
 bagimli degildir.
 
@@ -31,18 +31,18 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI, UploadFile  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 
-from ads.kesif.ornek_parti import yaz  # noqa: E402
-from ads.kesif.sunucu import COZUMLEYICILER  # noqa: E402
-from ads.kesif.yargi import (  # noqa: E402
-    SECENEKLER,
-    onizleme_hazirla,
-    otomatik_coz,
+from ads.file_detection.adjudication import (  # noqa: E402
+    FLOW_OPTIONS,
+    prepare_preview,
+    resolve_automatically,
 )
-from ads.kesif.yonlendirici import yonlendir  # noqa: E402
+from ads.file_detection.router import route  # noqa: E402
+from ads.file_detection.sample_batch import write_sample_batch  # noqa: E402
+from ads.file_detection.server import INSPECTORS  # noqa: E402
 
-KOK = Path(tempfile.mkdtemp(prefix="kesif_poc_"))
-ORNEK = KOK / "ornekler"
-YUKLEME = KOK / "yukleme"
+ROOT = Path(tempfile.mkdtemp(prefix="kesif_poc_"))
+ORNEK = ROOT / "ornekler"
+YUKLEME = ROOT / "yukleme"
 YUKLEME.mkdir(parents=True, exist_ok=True)
 
 # Insan kararlari burada tutulur: kaynak ayrimi gorunur kalsin diye
@@ -89,7 +89,7 @@ def _turkce_tablo_goruntusu(hedef: Path) -> Path | None:
     return hedef
 
 
-yaz(ORNEK)
+write_sample_batch(ORNEK)
 _turkce_tablo_goruntusu(ORNEK / "tablo_ekran_goruntusu.png")
 
 # Gosterimde one cikacak dosyalar: her biri ayri bir dersi anlatiyor.
@@ -113,7 +113,7 @@ def _karar_bekleyenler(yol: Path) -> list[dict]:
     Dosya deterministik cozulmus olsa bile OKUMA PARAMETRESI icin karar
     bekliyor olabilir; o yuzden akis kararindan bagimsiz bakilir.
     """
-    cozumleyici = COZUMLEYICILER.get(yol.suffix.lower())
+    cozumleyici = INSPECTORS.get(yol.suffix.lower())
     if cozumleyici is None:
         return []
     try:
@@ -154,10 +154,10 @@ def _karar_sozlugu(k) -> dict:
         "kararlar": _karar_bekleyenler(yol),
         # Akis kararsizsa jenerik akis listesi de sunulur.
         "secenekler": (
-            [asdict(s) for s in SECENEKLER] if not k.deterministik else []
+            [asdict(s) for s in FLOW_OPTIONS] if not k.deterministik else []
         ),
         # Insana GOSTERILEBILIR onizleme: ham bayt degil, okunan icerik.
-        "onizleme": ("" if k.deterministik else onizleme_hazirla(k)),
+        "onizleme": ("" if k.deterministik else prepare_preview(k)),
     }
 
 
@@ -178,20 +178,20 @@ def incele_ornek(ad: str) -> JSONResponse:
     hedef = (ORNEK / ad).resolve()
     if ORNEK.resolve() not in hedef.parents or not hedef.is_file():
         return JSONResponse({"hata": "bulunamadi"}, status_code=404)
-    return JSONResponse(_karar_sozlugu(yonlendir(hedef)))
+    return JSONResponse(_karar_sozlugu(route(hedef)))
 
 
 @app.post("/incele")
-async def incele(dosya: UploadFile) -> JSONResponse:
+async def inspect(dosya: UploadFile) -> JSONResponse:
     ad = Path(dosya.filename or "dosya").name
     hedef = YUKLEME / ad
     hedef.write_bytes(await dosya.read())
-    return JSONResponse(_karar_sozlugu(yonlendir(hedef)))
+    return JSONResponse(_karar_sozlugu(route(hedef)))
 
 
 @app.post("/karar/{ad}/{akis}")
 def karar(ad: str, akis: str) -> JSONResponse:
-    gecerli = {s.akis for s in SECENEKLER}
+    gecerli = {s.akis for s in FLOW_OPTIONS}
     if akis not in gecerli:
         return JSONResponse({"hata": f"gecersiz akis: {akis}"}, status_code=400)
     KARARLAR[ad] = {"akis": akis, "kaynak": "human_feedback"}
@@ -207,11 +207,11 @@ def otomatik(ad: str) -> JSONResponse:
         if not hedef.is_file() or YUKLEME.resolve() not in hedef.parents:
             return JSONResponse({"hata": "bulunamadi"}, status_code=404)
 
-    k = yonlendir(hedef)
+    k = route(hedef)
     if k.deterministik:
         return JSONResponse({"hata": "bu dosya zaten deterministik cozuldu"},
                             status_code=400)
-    s = otomatik_coz(k)
+    s = resolve_automatically(k)
     KARARLAR[ad] = {"akis": s.akis, "kaynak": s.kaynak}
     return JSONResponse({"ad": ad, "akis": s.akis,
                          "kaynak": s.kaynak, "gerekce": s.gerekce})

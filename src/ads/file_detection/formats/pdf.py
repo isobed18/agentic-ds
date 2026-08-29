@@ -56,11 +56,11 @@ def inspect(yol: Path) -> Report:
     s = detect_shape(metin)
     rapor.bulgular.append(Finding(
         baslik=f"Metin katmani bulundu — sekil: {s.sekil.value}",
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama=f"{sayfa_sayisi} sayfa, {len(metin)} karakter cikarildi.",
         kanitlar=[Evidence(olcum=ad, deger=deger) for ad, deger in s.kanitlar],
     ))
-    if s.sekil is TextShape.BELIRSIZ:
+    if s.sekil is TextShape.AMBIGUOUS:
         rapor.bulgular.append(_ambiguous_shape_finding())
     return rapor
 
@@ -76,7 +76,7 @@ def _scanned_report(rapor: Report, okuyucu, sayfa_sayisi: int,
     """
     rapor.bulgular.append(Finding(
         baslik="Metin katmani yok — taranmis/goruntu tabanli",
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama=(f"{sayfa_sayisi} sayfadan ortalama {ortalama:.0f} karakter "
                   "cikti; metin secilemiyor. OCR deneniyor."),
         kanitlar=[
@@ -90,7 +90,7 @@ def _scanned_report(rapor: Report, okuyucu, sayfa_sayisi: int,
         rapor.okunabilir = False
         rapor.bulgular.append(Finding(
             baslik="Sayfada gomulu goruntu de bulunamadi",
-            onem=Severity.KRITIK,
+            onem=Severity.CRITICAL,
             aciklama="Ne metin katmani ne cikarilabilir goruntu var; "
                      "bu dosya bu haliyle okunamiyor.",
             secenekler=[
@@ -126,7 +126,7 @@ def _scanned_report(rapor: Report, okuyucu, sayfa_sayisi: int,
     rapor.bulgular.append(Finding(
         baslik=("OCR ile tablo yapisi cikarildi" if tablo_mu
                 else "OCR ile metin cikarildi"),
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama=f"{len(sonuc.hucreler)} hucre, {len(sonuc.satirlar)} satir.",
         kanitlar=[Evidence(olcum="ilk satir",
                         deger=" | ".join(sonuc.satirlar[0][:6]))]
@@ -154,7 +154,7 @@ def embedded_images(okuyucu) -> list[bytes]:
 def _ambiguous_shape_finding() -> Finding:
     return Finding(
         baslik="Cikarilan metnin sekli belirsiz",
-        onem=Severity.DIKKAT,
+        onem=Severity.WARNING,
         aciklama="Sinyaller celisiyor veya zayif; otomatik karar verilmedi.",
         secenekler=[
             Option(kod="A", eylem="Human feedback iste",
@@ -163,7 +163,3 @@ def _ambiguous_shape_finding() -> Finding:
                     onerilen=True, parametre={"mod": "human_feedback"}),
         ],
     )
-
-
-incele = inspect
-gomulu_goruntuler = embedded_images

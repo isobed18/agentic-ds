@@ -146,16 +146,16 @@ from ads.store import ArtifactNotFoundError, ArtifactStore
 # Kesif (dosya tanima) opsiyonel bir ekstra: `.[kesif]`. Kurulu degilse
 # profil ciktisi kesif alanlari olmadan uretilir, hicbir sey kirilmaz.
 try:
-    from ads.kesif.yonlendirici import envanter as _kesif_envanter
+    from ads.file_detection.router import inventory as _file_inventory
 except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
-    _kesif_envanter = None
+    _file_inventory = None
 
 # Kesif'in olctugu akisin, bu dosyadaki uzanti temelli `route` sozluguyle
 # karsiligi. Esleme yalnizca UYUSMAZLIK saptamak icin; route'u kesif
 # DEGISTIRMIYOR (bkz. source_profile).
-_KESIF_AKIS_ROTA = {"tablo": "structured", "belge": "documents"}
+_DETECTED_FLOW_TO_ROUTE = {"tablo": "structured", "belge": "documents"}
 
-def _kesif_icerikten_akis(filename: str, content: bytes) -> str | None:
+def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
     """Bir dosyanin akisini ICERIGINDEN olc; uzantiya hic bakma.
 
     Yukleme kapisi uzantiyla karar veriyordu, yani uzantisi olmayan gecerli bir
@@ -163,7 +163,7 @@ def _kesif_icerikten_akis(filename: str, content: bytes) -> str | None:
     tam olarak buydu. Kesif kurulu degilse None doner ve cagiran taraf eski
     uzanti kuralina duser.
     """
-    if _kesif_envanter is None:
+    if _file_inventory is None:
         return None
     import tempfile
 
@@ -171,7 +171,7 @@ def _kesif_icerikten_akis(filename: str, content: bytes) -> str | None:
         yol = Path(gecici) / (Path(filename).name or "dosya")
         yol.write_bytes(content)
         try:
-            env = _kesif_envanter(Path(gecici))
+            env = _file_inventory(Path(gecici))
         except Exception:  # olcum basarisizsa karar eski kurala kalir
             return None
     kararlar = env.get("kararlar") or []
@@ -181,7 +181,9 @@ def _kesif_icerikten_akis(filename: str, content: bytes) -> str | None:
     return karar.akis.value if karar.deterministik else None
 
 
-def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict[str, Any]:
+def _measure_file_detection(
+    source_root: Path, source_files: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Her kaynak dosyanin turunu ICERIKTEN olc ve `source_files`'i zenginlestir.
 
     Bu ek bilgidir, karar degil: `route` alanina DOKUNULMAZ. Amac, uzantiya
@@ -192,11 +194,11 @@ def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict
     Kesif kurulu degilse ya da olcum sirasinda bir sey ters giderse profil
     kesif alanlari olmadan doner; cagiran taraf icin bu bir hata degildir.
     """
-    if _kesif_envanter is None:
+    if _file_inventory is None:
         return {"kullanildi": False, "sebep": "kesif ekstrasi kurulu degil"}
 
     try:
-        env = _kesif_envanter(source_root)
+        env = _file_inventory(source_root)
     except Exception as hata:  # olcum hicbir kosulda profili dusurmemeli
         return {"kullanildi": False, "sebep": f"olcum yapilamadi: {type(hata).__name__}"}
 
@@ -223,7 +225,7 @@ def _kesif_olcumu(source_root: Path, source_files: list[dict[str, Any]]) -> dict
 
         # Uyusmazlik yalnizca kesif KESIN konustugunda ve uzantiyla farkli
         # bir seride bulustugunda iddia edilir. Kararsizsa sessiz kalir.
-        olculen_rota = _KESIF_AKIS_ROTA.get(akis)
+        olculen_rota = _DETECTED_FLOW_TO_ROUTE.get(akis)
         celisiyor = (
             karar.deterministik
             and olculen_rota is not None
@@ -2923,7 +2925,7 @@ class ControlPlane:
             # Uzanti bir IDDIA, olcum degil. Reddetmeden once icerige bak:
             # uzantisiz ya da yanlis adlandirilmis gecerli bir tablo, hicbir
             # hata verilmeden kaybediliyordu.
-            if _kesif_icerikten_akis(safe_name, content) not in {"tablo", "belge"}:
+            if _detect_flow_from_content(safe_name, content) not in {"tablo", "belge"}:
                 raise ValueError(
                     "supported uploads are CSV/TSV, Excel, Parquet, or PDF; this file's "
                     "content could not be measured as a table or a document either"
@@ -3254,7 +3256,7 @@ class ControlPlane:
                     "table_names": tables_by_file.get(name, []),
                 }
             )
-        kesif_ozeti = _kesif_olcumu(source_root, source_files)
+        detection_summary = _measure_file_detection(source_root, source_files)
         # Olcum uzantiyla CELISIYORSA artik sessiz kalmiyor. `.csv` adi verilmis
         # bir PDF yapisal veri diye yutuluyordu: 37 satir x 1 kolon, kolon adi
         # `pdf_1_4` -- yani %PDF-1.4 basligi -- ve info seviyesinin ustunde tek
@@ -3274,7 +3276,7 @@ class ControlPlane:
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
-            "kesif": kesif_ozeti,
+            "kesif": detection_summary,
             "relationships": relationships,
             # So a caller can tell "none found" apart from "not measured".
             "relationships_measured": relationships_measured,

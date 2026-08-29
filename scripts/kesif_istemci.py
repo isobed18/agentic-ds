@@ -20,7 +20,7 @@ from pathlib import Path
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-KOK = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def basli(n: str) -> None:
@@ -42,12 +42,12 @@ def icerik(sonuc) -> object:
 
 
 async def main() -> None:
-    ortam = dict(os.environ, KESIF_KOK=str(KOK))
+    ortam = dict(os.environ, KESIF_KOK=str(ROOT))
     parametre = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "ads.kesif.sunucu"],
+        args=["-m", "ads.file_detection.server"],
         env=ortam,
-        cwd=str(KOK),
+        cwd=str(ROOT),
     )
 
     async with stdio_client(parametre) as (oku_akis, yaz_akis):

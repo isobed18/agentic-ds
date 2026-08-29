@@ -275,6 +275,3 @@ def write_sample_batch(kok: Path) -> Path:
     (kok / "ikili.bin").write_bytes(bytes(range(256)) * 8)
 
     return kok
-
-
-yaz = write_sample_batch

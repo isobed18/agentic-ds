@@ -161,7 +161,7 @@ def inspect(yol: Path) -> Report:
 
     rapor.bulgular.append(Finding(
         baslik=f"{len(sonuc.sayfalar)} sayfa acildi, {len(tablolar)} tanesi tablo",
-        onem=Severity.BILGI,
+        onem=Severity.INFO,
         aciklama="XLSX bir kapsayici degil, sayfalardan olusan bir tablo dosyasi; "
                  "sayfalar acilip yapilari olculdu.",
         kanitlar=[
@@ -182,7 +182,7 @@ def inspect(yol: Path) -> Report:
     if bos:
         rapor.bulgular.append(Finding(
             baslik=f"{len(bos)} bos sayfa",
-            onem=Severity.BILGI,
+            onem=Severity.INFO,
             aciklama="Bos sayfalar analize girmez.",
             kanitlar=[Evidence(olcum="bos sayfalar",
                             deger=", ".join(s.ad for s in bos[:6]))],
@@ -192,7 +192,7 @@ def inspect(yol: Path) -> Report:
         rapor.okunabilir = False
         rapor.bulgular.append(Finding(
             baslik="Hicbir sayfa tablo yapisinda degil",
-            onem=Severity.KRITIK,
+            onem=Severity.CRITICAL,
             aciklama="Sayfalar acildi ama hicbirinde basliklanmis bir tablo "
                      "bulunamadi; hangi sayfanin nasil okunacagi olcumle "
                      "cikmiyor.",
@@ -226,7 +226,7 @@ def _sheet_selection_finding(tablolar: list[Sheet]) -> Finding:
     ]
     return Finding(
         baslik=f"{len(tablolar)} tablo sayfasi var — hangisi kullanilacak",
-        onem=Severity.DIKKAT,
+        onem=Severity.WARNING,
         aciklama="Bu bir TERCIH sorusudur, olcumle cevaplanamaz: hangi "
                  "sayfayla ilgilenildigi hicbir olcumden cikmaz. En genis "
                  "sayfa onerilir ama secim cagiran tarafta kalir.",
@@ -234,9 +234,3 @@ def _sheet_selection_finding(tablolar: list[Sheet]) -> Finding:
                   for s in tablolar[:5]],
         secenekler=secenekler,
     )
-
-
-Sayfa = Sheet
-KitapSonuc = WorkbookResult
-incele_yapi = inspect_structure
-incele = inspect
