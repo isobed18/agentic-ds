@@ -35,6 +35,10 @@ from ads.intake.profiler import datacard_digest, infer_semantic_type
 # than restating its regex here, means the two cannot drift apart silently.
 from ads.integration.executor import IntegrationError, _quote
 
+# The materialize guard is the one #89 actually failed at; import its regex so
+# the intake test measures the same rule the run enforces, not a copy of it.
+from ads.sandbox.materialize import _SAFE_TABLE
+
 
 class TestLoaders:
     def test_all_tables_discovered(self, loaded_tables: list[LoadedTable]) -> None:
@@ -93,6 +97,40 @@ class TestLoaders:
 
         assert table.name.startswith("_2026_yili")
         _quote(table.name)  # raises IntegrationError if it starts with a digit
+
+    def test_numbered_shard_file_gets_a_safe_table_name_reported_at_intake(
+        self, tmp_path: Path
+    ) -> None:
+        """A sharded export (00000.csv) used to fail deep in a run (#89).
+
+        `_slugify` prefixes the leading digit, so `00000` becomes `_00000` and
+        the run no longer dies in `materialize_frame_copies` with "Table name
+        '00000' cannot be materialized safely for execution". This guards that
+        safety directly against the materialize regex, and asserts the rename is
+        now surfaced at intake -- like a renamed column -- instead of silently,
+        which was the second half of the report.
+        """
+        path = tmp_path / "00000.csv"
+        path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert table.name == "_00000"
+        _quote(table.name)  # raises IntegrationError if it starts with a digit
+        # The exact guard the run failed at, imported so the two cannot drift.
+        assert _SAFE_TABLE.fullmatch(table.name)
+        assert "table_name_normalized" in {i.code for i in table.issues}
+
+    def test_ordinary_file_name_is_not_flagged_as_renamed(self, tmp_path: Path) -> None:
+        """A stem that already reads as an identifier needs no notice -- the new
+        issue must not fire for every upload."""
+        path = tmp_path / "sales.csv"
+        path.write_text("a,b\n1,2\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert table.name == "sales"
+        assert "table_name_normalized" not in {i.code for i in table.issues}
 
     def test_column_named_after_a_year_survives_sql_quoting(self) -> None:
         """Same defect on the column side; a year in a header is just as common."""
