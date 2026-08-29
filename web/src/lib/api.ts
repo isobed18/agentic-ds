@@ -152,6 +152,21 @@ export interface ExperimentSummary {
   [k: string]: unknown;
 }
 
+/**
+ * One project's own inputs and outputs, assembled from its execution history
+ * rather than a global catalogue filtered by source (#111). `source_references`
+ * names every project bound to the same reusable input, so shared data is
+ * legible without any project owning another's outputs.
+ */
+export interface ProjectContents {
+  project: AutomationDefinition;
+  data: DatasetSummary | null;
+  source_references: { project_id: string; name: string }[];
+  executions: ExperimentSummary[];
+  models: ModelSummary[];
+  reports: ReportSummary[];
+}
+
 /** One project as the home page shows it: state, size, and where to resume. */
 export type ProjectState = "running" | "awaiting_human" | "failed" | "completed" | "idle";
 
@@ -880,6 +895,14 @@ export const api = {
     ),
   automationExecutions: (id: string) =>
     request<RunSummary[]>(`/api/automations/${encodeURIComponent(id)}/executions`),
+  /**
+   * A project's own data, runs, models and reports, owned through its execution
+   * history (#111). The project workspace shows these as tabs instead of the
+   * deleted global catalogues; Models/Reports tabs appear only when the arrays
+   * are non-empty, so a project that produced nothing has no such section.
+   */
+  projectContents: (id: string) =>
+    request<ProjectContents>(`/api/projects/${encodeURIComponent(id)}/contents`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),
   runProgress: (id: string) => request<RunProgressSnapshot>(`/api/runs/${id}/progress`),
   stage: (runId: string, stageId: string) => request<StageDetail>(`/api/runs/${runId}/stages/${stageId}`),

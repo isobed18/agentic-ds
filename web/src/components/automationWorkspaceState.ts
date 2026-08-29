@@ -1,6 +1,27 @@
-import type { AutomationDefinition, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
+import type { AutomationDefinition, ProjectContents, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
 import { isRunActive } from "../lib/status";
+
+/** The tabs a project workspace can show. Editor and Executions always exist. */
+export type WorkspaceView = "editor" | "data" | "executions" | "models" | "reports";
+
+/**
+ * Which tabs a project offers, given what it actually contains (#80, #111).
+ *
+ * Editor and Executions are always present -- the flow and its run history are
+ * the project. Data appears only once a source is bound; Models and Reports
+ * appear only when the project has produced them. The requirement is explicit
+ * that absence is the correct answer, not an empty section to apologise for, so
+ * a project that trained no model simply has no Models tab.
+ */
+export function availableProjectViews(contents: ProjectContents | null): WorkspaceView[] {
+  const views: WorkspaceView[] = ["editor"];
+  if (contents?.data) views.push("data");
+  views.push("executions");
+  if (contents && contents.models.length > 0) views.push("models");
+  if (contents && contents.reports.length > 0) views.push("reports");
+  return views;
+}
 
 /**
  * The live run, if any, each automation currently has in progress (#88).

@@ -983,6 +983,11 @@ const TR: Record<string, string> = {
 
   // Data projects workspace
   "Data projects": "Veri projeleri",
+  // Project-contained tabs (#80, #111): a project's own data, models and reports.
+  "Data": "Veri",
+  "Add files in the Editor to give this project data.":
+    "Bu projeye veri vermek için Düzenleyici'den dosya ekleyin.",
+  "Also used by {names}": "Ayrıca şunlar da kullanıyor: {names}",
   "The data project is still loading. Try again in a moment.":
     "Veri projesi hâlâ yükleniyor. Birazdan tekrar deneyin.",
   "New data project": "Yeni veri projesi",

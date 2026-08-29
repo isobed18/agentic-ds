@@ -9,7 +9,8 @@ import {
   UnderstandingAndProposal,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
-import { activeRunByAutomation, automationView, isAbandonedDraft, preferredExecution } from "../components/automationWorkspaceState";
+import { activeRunByAutomation, automationView, availableProjectViews, isAbandonedDraft, preferredExecution, type WorkspaceView } from "../components/automationWorkspaceState";
+import { ProjectContentsPanel } from "../components/ProjectContents";
 import { Badge, Empty, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -17,6 +18,7 @@ import {
   type DataSource,
   type GateDecision,
   type PipelineBlueprint,
+  type ProjectContents,
   type RunSummary,
   type SourceProfile,
   type StagingWorkspace,
@@ -149,9 +151,13 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   // Deep-links from /experiments, /workflows and notifications all write
   // `view=runs`, while the in-page tab switch writes `view=executions`. The
   // Executions panel only ever recognised "executions", so every external
-  // deep-link silently landed on the Editor tab instead (#68). Accept both.
-  const [activeView, setActiveView] = useState<"editor" | "executions">(["executions", "runs"].includes(params.get("view") ?? "") ? "executions" : "editor");
+  // deep-link silently landed on the Editor tab instead (#68). Accept both, and
+  // the project-contained tabs (#80) by their own names.
+  const [activeView, setActiveView] = useState<WorkspaceView>(() => initialView(params.get("view")));
   const [executions, setExecutions] = useState<RunSummary[]>([]);
+  // The project's own data/models/reports, owned through its execution history
+  // (#111). Drives both the project-contained tabs and which of them appear.
+  const [contents, setContents] = useState<ProjectContents | null>(null);
   const [sourceId, setSourceId] = useState("");
   const [sources, setSources] = useState<DataSource[]>([]);
   const [profile, setProfile] = useState<SourceProfile | null>(null);
@@ -199,6 +205,10 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     // `automation` null, and take uploading down with it -- a convenience
     // feature disabling the page's primary action.
     void api.dataSources().then(setSources).catch(() => setSources([]));
+    // Same reasoning for the project-contained tabs: a failed read must not take
+    // down the editor. Absence of contents simply hides the Data/Models/Reports
+    // tabs, which is the correct answer for a project that produced nothing.
+    void api.projectContents(automationId).then(setContents).catch(() => setContents(null));
     return record;
   }, [automationId]);
 
@@ -399,14 +409,24 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   }
 
   const lifecycle = automationView({ sourceId, runId, runStatus, workspace, advancedGraph });
-  const switchView = (view: "editor" | "executions") => { setActiveView(view); setParams({ automation: automationId, ...(runId ? { run: runId } : {}), ...(view === "executions" ? { view: "executions" } : {}) }, { replace: true }); };
+  const views = availableProjectViews(contents);
+  // A tab can disappear underneath the person -- deleting the last run drops
+  // Executions' contents, deleting a model drops the Models tab. If the current
+  // view is no longer offered, fall back to the Editor rather than showing a
+  // selected tab with no header. Only once contents has loaded, so a deep-link
+  // to a real Models/Reports view is not bounced away before its data arrives.
+  useEffect(() => {
+    if (contents && !views.includes(activeView)) setActiveView("editor");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contents]);
+  const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ automation: automationId, ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken" onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files); }}>
       <input ref={fileInput} type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.parquet,.pdf" className="hidden" onChange={(event) => { void upload(event.target.files ?? []); event.target.value = ""; }} />
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
         <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[320px] max-w-[32vw] border-0 bg-transparent text-sm font-semibold text-ink outline-none" />
-        <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{(["editor", "executions"] as const).map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{t(view === "editor" ? "Editor" : "Executions")}</button>)}</div>
+        <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         <div className="ml-auto flex items-center gap-2">{activeView === "editor" && <select aria-label={t("Choose uploaded data")} title={t("Choose uploaded data")} value={sourceId} onChange={(event) => void selectExistingSource(event.target.value)} className="h-8 max-w-[220px] rounded-lg border border-line bg-surface px-2 text-[11px] text-ink"><option value="">{t("Choose uploaded data")}</option>{sources.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select>}{activeView === "editor" && <button type="button" disabled={!automation} className="btn-ghost !h-8 !w-8 !p-0 text-lg disabled:opacity-40" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}<LanguagePicker /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
@@ -429,7 +449,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
         </div>
       )}
       {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} onRemoveFile={(name) => void removeSourceFile(name)} onAddFiles={() => fileInput.current?.click()} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} onRemoveFile={(name) => void removeSourceFile(name)} onAddFiles={() => fileInput.current?.click()} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>
   );
 }
@@ -453,3 +473,27 @@ function ExecutionHistory({ executions, busy, selectedRunId, onPause, onRetry, o
 
 function ExecutionFact({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-[10px] text-ink-faint">{label}</p><p className="mt-1 text-sm font-semibold text-ink">{value}</p></div>; }
 function messageOf(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught); }
+
+/** The tab a deep-link opens on. `runs` is the legacy alias for executions (#68). */
+function initialView(view: string | null): WorkspaceView {
+  if (view === "runs") return "executions";
+  if (view === "data" || view === "executions" || view === "models" || view === "reports") return view;
+  return "editor";
+}
+
+// Each label is a literal inside t() so the catalogue scanner can see it -- a
+// label reaching t() through a variable would sit untranslated unnoticed (#38).
+function viewLabel(view: WorkspaceView): string {
+  switch (view) {
+    case "data":
+      return t("Data");
+    case "executions":
+      return t("Executions");
+    case "models":
+      return t("Models");
+    case "reports":
+      return t("Reports");
+    default:
+      return t("Editor");
+  }
+}
