@@ -25,7 +25,9 @@ class AutomationDefinition(FrozenModel):
     schema_version: Literal["1"] = "1"
     automation_id: str = Field(pattern=r"^automation-[0-9a-f]{12}$")
     name: str = Field(min_length=1, max_length=120)
-    status: Literal["draft", "saved"] = "draft"
+    # `error` distinguishes an automation whose run failed before it ever saved
+    # a workspace from one that was never started (#82) -- both were `draft`.
+    status: Literal["draft", "saved", "error"] = "draft"
     revision: int = Field(default=1, ge=1)
     source_id: str | None = None
     pipeline_blueprint: PipelineBlueprint | None = None
