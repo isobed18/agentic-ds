@@ -13,6 +13,7 @@ import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel } from "../lib/status";
 import { Badge, Empty, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
+import { PlannerPanel } from "./PlannerPanel";
 import { ResizableNode } from "./ResizableNode";
 
 interface GuidedPipelineProps {
@@ -57,6 +58,11 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   const [selected, setSelected] = useState<string | null>("summary");
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
+  // #97: the "Chat with Planner" panel existed only in the staging/proposal
+  // view and vanished the moment a plan was accepted -- including when a stage
+  // gate escalates and asks for a human decision, exactly when consulting the
+  // planner matters most. It lives here now too, reachable from the run toolbar.
+  const [plannerOpen, setPlannerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -135,8 +141,14 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       {complete && <button type="button" className="btn-primary text-xs" onClick={onOpenExecutions}>{t("Review results")}</button>}
       {!canStart && !failed && !complete && <Badge tone="brand">{statusLabel(activeStatus)}</Badge>}
       <button type="button" className="btn-ghost text-xs" onClick={() => setSelected("summary")}>{t("Review plan")}</button>
+      <button type="button" className="btn-ghost text-xs" onClick={() => setPlannerOpen(true)}>{t("Chat with Planner")}</button>
       <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
     </div>
+
+    {/* #97: the planner is consultable while the pipeline runs and while a gate
+        waits on a human, not only during staging. Docked over the right edge,
+        above the plan/stage details panel, with its own close control. */}
+    {plannerOpen && <div className="fixed inset-y-[58px] right-0 z-30 flex"><PlannerPanel runId={runId} open onToggle={() => setPlannerOpen(false)} starterPrompts={[t("What is this gate asking?"), t("What do you recommend here?"), t("Explain the current stage.")]} /></div>}
 
     {selected && <aside className="fixed inset-y-[58px] right-0 z-20 flex w-[min(440px,94vw)] flex-col border-l border-line bg-surface shadow-2xl">
       <header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(selected === "summary" ? "Accepted ML plan" : "Base ML pipeline")}</p><h2 className="mt-1 text-base font-semibold text-ink">{t(selected === "summary" ? "What will run" : groups.find((group) => group.id === selected)?.title ?? "Stage details")}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" onClick={() => setSelected(null)}>×</button></header>
