@@ -81,6 +81,30 @@ def test_sources_and_uploads_are_selectable_without_path_traversal(tmp_path: Pat
         raise AssertionError("source selection escaped the configured root")
 
 
+def test_an_identical_single_file_upload_reuses_its_owned_source(tmp_path: Path) -> None:
+    """The same bytes used to create a fresh directory and source every time."""
+    plane = _plane(tmp_path)
+    content = b"id,target\n2,4\n"
+
+    first = plane.upload("bank.csv", content, owner="ishak-ads")
+    repeated = plane.upload("bank-copy.csv", content, owner="ishak-ads")
+
+    assert repeated["source_id"] == first["source_id"]
+    assert repeated["files"] == ["bank.csv"]
+    assert repeated["reused"] is True
+    assert len([path for path in plane.upload_root.iterdir() if path.is_dir()]) == 1
+
+
+def test_identical_content_owned_by_someone_else_is_not_disclosed(tmp_path: Path) -> None:
+    plane = _plane(tmp_path)
+    content = b"id,target\n2,4\n"
+
+    first = plane.upload("bank.csv", content, owner="ishak-ads")
+    other = plane.upload("bank.csv", content, owner="emre-ads")
+
+    assert other["source_id"] != first["source_id"]
+
+
 def test_a_long_file_name_is_refused_with_a_readable_message(tmp_path: Path) -> None:
     """It used to reach `write_bytes` and surface as a bare OSError.
 

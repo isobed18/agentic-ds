@@ -2709,6 +2709,33 @@ class ControlPlane:
             return True
         return self.upload_root is not None and resolved == self.upload_root.resolve()
 
+    def _matching_single_file_upload(
+        self, content: bytes, *, owner: str | None
+    ) -> tuple[str, list[str]] | None:
+        """Find an owned singleton whose bytes are already stored."""
+        if self.upload_root is None:
+            return None
+        expected = hashlib.sha256(content).digest()
+        ownership = self._ownership()
+        for directory in sorted(self.upload_root.iterdir()):
+            if not directory.is_dir() or directory.name.startswith("."):
+                continue
+            source_id = f"upload:{directory.name}"
+            # A cross-owner hit would disclose that another person's private
+            # upload exists, and reusing its source id would bypass visibility.
+            if ownership.owner_of(source_id) != owner:
+                continue
+            files = sorted(path for path in directory.iterdir() if path.is_file())
+            if len(files) != 1 or files[0].stat().st_size != len(content):
+                continue
+            digest = hashlib.sha256()
+            with files[0].open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.digest() == expected:
+                return source_id, [files[0].name]
+        return None
+
     def upload(
         self,
         filename: str,
@@ -2729,6 +2756,15 @@ class ControlPlane:
             raise ValueError("uploaded file is empty")
 
         if source_id is None:
+            matching = self._matching_single_file_upload(content, owner=owner)
+            if matching is not None:
+                matched_source_id, files = matching
+                return {
+                    "source_id": matched_source_id,
+                    "label": "upload (1 file)",
+                    "files": files,
+                    "reused": True,
+                }
             token = uuid.uuid4().hex[:12]
             target_dir = self.upload_root / token  # type: ignore[operator]
             new_group = True
