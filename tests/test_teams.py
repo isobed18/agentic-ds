@@ -177,6 +177,27 @@ def test_the_registry_itself_is_not_listed_as_a_source(plane: ControlPlane) -> N
     )
 
 
+def test_single_file_upload_is_labelled_with_its_file_name(plane: ControlPlane) -> None:
+    """A one-file source used to read "upload (1 file)" everywhere, so several
+    singletons side by side were indistinguishable without opening each (#71).
+    Its own file name is the one fact that tells them apart."""
+    frame = pd.DataFrame({"id": [1, 2]}).to_csv(index=False).encode("utf-8")
+    result = plane.upload("customers.csv", frame, owner="ishak-ads")
+    assert result["label"] == "customers.csv"
+
+    listed = plane.data_sources(viewer="ishak-ads")
+    labels = [s["label"] for s in listed if s["source_id"].startswith("upload:")]
+    assert "customers.csv" in labels
+
+
+def test_multi_file_upload_keeps_the_generic_count_label(plane: ControlPlane) -> None:
+    """Two or more files have no single name to show, so they keep the count."""
+    frame = pd.DataFrame({"id": [1, 2]}).to_csv(index=False).encode("utf-8")
+    first = plane.upload("a.csv", frame, owner="ishak-ads")
+    result = plane.upload("b.csv", frame, owner="ishak-ads", source_id=first["source_id"])
+    assert result["label"] == "upload (2 files)"
+
+
 def test_teammates_see_each_others_uploads(
     plane: ControlPlane, monkeypatch: pytest.MonkeyPatch
 ) -> None:
