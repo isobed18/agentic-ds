@@ -958,6 +958,7 @@ const TR: Record<string, string> = {
     "Tanımadığınız dosyaları ekleyin. Agentic DS bunları yönlendirir, nelerin kullanılabilir olduğunu açıklar ve temel ML boru hattını önerir.",
   "Upload files": "Dosya yükle",
   "Add files": "Dosya ekle",
+  "Remove file": "Dosyayı kaldır",
 
   // Intake and understanding
   "Intake and source routing": "Veri alma ve kaynak yönlendirme",

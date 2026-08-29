@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import uuid
@@ -2938,6 +2939,46 @@ class ControlPlane:
             "files": files,
         }
 
+    def remove_upload_file(
+        self, source_id: str, filename: str, *, owner: str | None = None
+    ) -> dict[str, Any]:
+        """Remove one file from an upload group and report what remains.
+
+        There was no way to take a file back out of a source (#85). Only the
+        owner may edit their upload. A group emptied of its last file is deleted
+        along with its ownership record, since a source with no files is not a
+        dataset and would otherwise linger as a phantom the picker hides anyway.
+        """
+        if self.upload_root is None:
+            raise ValueError("uploads are not configured")
+        match = _UPLOAD_ID.fullmatch(source_id)
+        if match is None:
+            raise ValueError("source_id is not a valid upload group")
+        recorded_owner = self._ownership().owner_of(source_id)
+        if recorded_owner is not None and owner is not None and recorded_owner != owner:
+            raise PermissionError(f"Only {recorded_owner} can change this source.")
+        target_dir = self.upload_root / match.group(1)
+        if not target_dir.is_dir():
+            raise KeyError(source_id)
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in {".", ".."}:
+            raise ValueError("filename must contain a file name")
+        target = (target_dir / safe_name).resolve()
+        if target.parent != target_dir.resolve() or not target.is_file():
+            raise KeyError(filename)
+        target.unlink()
+        remaining = sorted(path.name for path in target_dir.iterdir() if path.is_file())
+        if not remaining:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            self._ownership().forget(source_id)
+            return {"source_id": source_id, "files": [], "deleted": True}
+        return {
+            "source_id": source_id,
+            "label": self._upload_label(remaining),
+            "files": remaining,
+            "deleted": False,
+        }
+
     def _source_fingerprint(self, source_id: str) -> str:
         """Identify a source by what its files are, not by when we last looked.
 
@@ -5840,6 +5881,21 @@ def create_app(
                 source_id=source_id,
                 owner=_viewer(request),
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/data-sources/{source_id}/files/{filename}")
+    def remove_source_file(
+        source_id: str, filename: str, request: Request
+    ) -> dict[str, Any]:
+        try:
+            return plane.remove_upload_file(
+                source_id, filename, owner=_viewer(request)
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown source file") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 

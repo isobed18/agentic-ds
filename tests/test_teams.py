@@ -198,6 +198,45 @@ def test_multi_file_upload_keeps_the_generic_count_label(plane: ControlPlane) ->
     assert result["label"] == "upload (2 files)"
 
 
+def test_removing_a_file_keeps_the_rest_of_the_source(plane: ControlPlane) -> None:
+    """There was no way to take a file back out of a source (#85)."""
+    frame = pd.DataFrame({"id": [1, 2]}).to_csv(index=False).encode("utf-8")
+    first = plane.upload("a.csv", frame, owner="ishak-ads")
+    plane.upload("b.csv", frame, owner="ishak-ads", source_id=first["source_id"])
+
+    result = plane.remove_upload_file(first["source_id"], "a.csv", owner="ishak-ads")
+
+    assert result["deleted"] is False
+    assert result["files"] == ["b.csv"]
+    listed = plane.data_sources(viewer="ishak-ads")
+    files = next(s["files"] for s in listed if s["source_id"] == first["source_id"])
+    assert files == ["b.csv"]
+
+
+def test_removing_the_last_file_deletes_the_group_and_its_ownership(
+    plane: ControlPlane,
+) -> None:
+    source_id = _upload(plane, "ishak-ads", name="only.csv")
+
+    result = plane.remove_upload_file(source_id, "only.csv", owner="ishak-ads")
+
+    assert result["deleted"] is True
+    assert not any(
+        s["source_id"] == source_id for s in plane.data_sources(viewer="ishak-ads")
+    )
+    assert plane._ownership().owner_of(source_id) is None
+
+
+def test_only_the_owner_may_remove_a_file(plane: ControlPlane) -> None:
+    source_id = _upload(plane, "ishak-ads")
+
+    with pytest.raises(PermissionError):
+        plane.remove_upload_file(source_id, "a.csv", owner="someone-else")
+
+    # The file is still there for its owner.
+    assert plane.remove_upload_file(source_id, "a.csv", owner="ishak-ads")["deleted"] is True
+
+
 def test_teammates_see_each_others_uploads(
     plane: ControlPlane, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -235,7 +235,11 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     uploadAbort.current = controller;
     setUploading(true); setError(null);
     try {
-      let group: string | undefined;
+      // Seed the group from the project's current source so "Add files" appends
+      // rather than starting a fresh group and silently dropping the files
+      // already attached (#85). Empty means a brand-new project, a new group.
+      let group: string | undefined = sourceId || undefined;
+      const appending = Boolean(group);
       for (let i = 0; i < selected.length; i++) {
         const file = selected[i];
         setUploadProgress({ index: i, total: selected.length, name: file.name, fraction: 0 });
@@ -245,11 +249,40 @@ function AutomationEditor({ automationId }: { automationId: string }) {
         });
         group = result.source_id;
       }
-      if (group) { const saved = await api.updateAutomation(automationId, automation.revision, { source_id: group }); setAutomation(saved); setSourceId(group); }
+      if (group) {
+        const saved = await api.updateAutomation(automationId, automation.revision, { source_id: group });
+        setAutomation(saved); setSourceId(group);
+        // Appending leaves sourceId unchanged, so the profile effect does not
+        // re-run; refresh it so the new files show in the review list.
+        if (appending) await refreshProfile();
+      }
     }
     // A cancelled upload is a deliberate action, not an error to report.
     catch (caught) { if ((caught as { name?: string })?.name !== "AbortError") setError(messageOf(caught)); }
     finally { setUploading(false); setUploadProgress(null); uploadAbort.current = null; }
+  }
+
+  const refreshProfile = useCallback(async () => {
+    if (!sourceId) return;
+    const next = await api.sourceProfile(sourceId).catch(() => null);
+    if (next) setProfile(next);
+  }, [sourceId]);
+
+  async function removeSourceFile(name: string) {
+    if (!sourceId || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await api.removeSourceFile(sourceId, name);
+      if (result.deleted) {
+        // The group's last file is gone, so the source no longer exists: detach
+        // it from the project and fall back to the empty upload screen.
+        if (automation) { const saved = await api.updateAutomation(automationId, automation.revision, { source_id: null }); setAutomation(saved); }
+        setSourceId(""); setProfile(null);
+      } else {
+        await refreshProfile();
+      }
+    } catch (caught) { setError(messageOf(caught)); }
+    finally { setBusy(false); }
   }
 
   function cancelUpload() { uploadAbort.current?.abort(); }
@@ -350,7 +383,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
         </div>
       )}
       {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} onRemoveFile={(name) => void removeSourceFile(name)} onAddFiles={() => fileInput.current?.click()} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>
   );
 }

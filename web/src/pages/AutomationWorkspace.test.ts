@@ -16,6 +16,15 @@ describe("the automation data controls", () => {
     expect(language).toBeGreaterThan(addFiles);
   });
 
+  it("appends new files to the project's existing source instead of replacing it (#85)", () => {
+    // `group` used to always begin undefined, so "Add files" started a fresh
+    // upload group and silently dropped the files already attached. It now
+    // seeds from the current sourceId, and files can be removed individually.
+    expect(SOURCE).toContain("let group: string | undefined = sourceId || undefined;");
+    expect(SOURCE).toContain("api.removeSourceFile(sourceId, name)");
+    expect(SOURCE).toContain("onRemoveFile={(name) => void removeSourceFile(name)}");
+  });
+
   it("shows upload progress and a working cancel button (#84)", () => {
     // A large file used to show a static "Uploading…" with no percentage and no
     // way out but a tab refresh. The flow now drives an AbortController and a

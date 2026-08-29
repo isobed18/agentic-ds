@@ -156,6 +156,13 @@ class OwnershipStore:
             data[source_id] = record
             self._write(data)
 
+    def forget(self, source_id: str) -> None:
+        """Drop a source's ownership record when its upload group is deleted."""
+        with self._lock:
+            data = self._read()
+            if data.pop(source_id, None) is not None:
+                self._write(data)
+
     def owner_of(self, source_id: str) -> str | None:
         record = self._read().get(source_id)
         return record.get("owner") if isinstance(record, dict) else None

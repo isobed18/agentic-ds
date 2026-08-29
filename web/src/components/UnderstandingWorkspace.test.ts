@@ -2,7 +2,8 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector } from "./UnderstandingWorkspace";
+import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, SourceOverview } from "./UnderstandingWorkspace";
+import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 
 Object.defineProperty(globalThis, "localStorage", {
@@ -141,6 +142,32 @@ describe("understanding node status placement", () => {
 
     expect(markup).not.toContain("Artifact kaydedildi");
     expect(markup).toContain("İki aday anahtar");
+  });
+
+  it("lets a person review, remove and add files before running (#85)", () => {
+    const profile = {
+      source_id: "upload:abc",
+      tables: [], documents: [], privacy: "safe",
+      source_files: [
+        { name: "a.csv", format: "csv", route: "structured", reason: { en: "", tr: "" }, table_names: [] },
+        { name: "b.pdf", format: "pdf", route: "documents", reason: { en: "", tr: "" }, table_names: [] },
+      ],
+    } as unknown as SourceProfile;
+
+    const editable = renderToStaticMarkup(createElement(SourceOverview, {
+      profile, onRemoveFile: () => undefined, onAddFiles: () => undefined,
+    }));
+    expect(editable).toContain("a.csv");
+    expect(editable).toContain("b.pdf");
+    expect(editable).toContain("Dosyayı kaldır"); // per-file remove control
+    expect(editable).toContain("Dosya ekle"); // add-files control
+    // One remove button per file.
+    expect((editable.match(/aria-label="Dosyayı kaldır"/g) ?? []).length).toBe(2);
+
+    const readOnly = renderToStaticMarkup(createElement(SourceOverview, { profile }));
+    expect(readOnly).toContain("a.csv");
+    expect(readOnly).not.toContain("Dosyayı kaldır");
+    expect(readOnly).not.toContain("Dosya ekle");
   });
 
   it("lets a node be resized from its edges (#67)", () => {
