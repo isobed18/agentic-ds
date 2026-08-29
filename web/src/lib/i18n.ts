@@ -1015,6 +1015,8 @@ const TR: Record<string, string> = {
   "Pause after current stage": "Mevcut aşamadan sonra duraklat",
   "Pause requested…": "Duraklatma istendi…",
   "Stop run": "Çalıştırmayı durdur",
+  "Re-run these files as a new data project": "Bu dosyaları yeni bir veri projesi olarak yeniden çalıştır",
+  "{name} (copy)": "{name} (kopya)",
   "Retry from Intake": "Veri almadan yeniden dene",
   "Review plan": "Planı incele",
   "Review results": "Sonuçları incele",
