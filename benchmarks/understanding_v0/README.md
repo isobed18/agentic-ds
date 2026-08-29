@@ -47,20 +47,37 @@ python benchmarks/understanding_v0/fetch.py --out data/benchmark-understanding
 ```
 
 Point a Data project at that directory, let intake and schema discovery finish,
-then save the run's measured relationships and score them:
+then save its structured understanding payload and score it:
 
 ```bash
 python benchmarks/understanding_v0/score.py \
   --truth data/benchmark-understanding/ground_truth.json \
-  --run relationships.json
+  --run understanding.json
 ```
 
-`--run` accepts a bare list or a staging-workspace payload.
+`--run` accepts a source profile, a stage response with a nested `profile`, or a
+benchmark-shaped object with `files`, `primary_keys`, `implicit_entities`,
+`quality_issues`, and `relationships`. A bare relationship list remains valid
+for compatibility; the other categories then report as unreported rather than
+being inferred from prose. Source-profile `source_files` and table
+`candidate_keys` are read directly for routing and key scores.
 
 ## Reading the score
 
-Three numbers, reported separately because they fail for different reasons and
+Every category has its own number because they fail for different reasons and
 an average hides which one broke.
+
+- **Routing accuracy**, over every expected file. Missing and unexpected files
+  remain visible, and the known `README.txt` gap is labelled in `wrong` rather
+  than removed from the denominator.
+- **Primary-key accuracy**, per table, plus key recall/precision and a separate
+  absence accuracy. That makes both the composite key on `ratings` and the lack
+  of a key on `tags` measurable.
+- **Implicit-entity recall/precision**, with parent-table accuracy over matched
+  entities. This distinguishes noticing the shared `userId` space from wrongly
+  inventing a parent table for it.
+- **Quality recall/precision**, plus detail accuracy for measured quantities
+  such as the missing-row count.
 
 - **Edge recall / precision.** Recall alone rewards proposing every column pair;
   precision is what stops it. A join listed under `false_relationships` is
