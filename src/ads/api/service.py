@@ -2645,6 +2645,19 @@ class ControlPlane:
         root = self.upload_root if self.upload_root is not None else Path("data/uploads")
         return OwnershipStore(root / OWNERSHIP_FILE)
 
+    @staticmethod
+    def _upload_label(files: list[str]) -> str:
+        """A single-file upload is named after its file, not "upload (1 file)".
+
+        With several unnamed uploads side by side in the picker or /datasets,
+        the one distinguishing fact -- the file's own name -- was already in
+        hand and thrown away, so every singleton read identically. Groups of
+        two or more keep the generic count, which no single name can convey.
+        """
+        if len(files) == 1:
+            return files[0]
+        return f"upload ({len(files)} files)"
+
     def data_sources(self, *, viewer: str | None = None) -> list[dict[str, Any]]:
         """Sources this person may see: their own, plus their team's.
 
@@ -2691,7 +2704,7 @@ class ControlPlane:
                 sources.append(
                     {
                         "source_id": source_id,
-                        "label": f"upload ({len(files)} file{'s' if len(files) != 1 else ''})",
+                        "label": self._upload_label(files),
                         "files": files,
                         "owner": owner,
                         "visibility": visibility,
@@ -2844,7 +2857,7 @@ class ControlPlane:
                 matched_source_id, files = matching
                 return {
                     "source_id": matched_source_id,
-                    "label": "upload (1 file)",
+                    "label": self._upload_label(files),
                     "files": files,
                     "reused": True,
                 }
@@ -2877,7 +2890,7 @@ class ControlPlane:
         files = sorted(path.name for path in target_dir.iterdir() if path.is_file())
         return {
             "source_id": f"upload:{token}",
-            "label": f"upload ({len(files)} file{'s' if len(files) != 1 else ''})",
+            "label": self._upload_label(files),
             "files": files,
         }
 
