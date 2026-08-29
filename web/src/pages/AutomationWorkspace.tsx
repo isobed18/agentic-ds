@@ -215,7 +215,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
 
   async function persistName() {
     if (!automation || name.trim() === automation.name) { setName(automation?.name ?? name); return; }
-    try { const saved = await api.updateAutomation(automationId, automation.revision, { name: name.trim() }); setAutomation(saved); setName(saved.name); }
+    try { const saved = await api.updateAutomationSafely(automationId, automation.revision, { name: name.trim() }); setAutomation(saved); setName(saved.name); }
     catch (caught) { setError(messageOf(caught)); }
   }
 
@@ -250,7 +250,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
         group = result.source_id;
       }
       if (group) {
-        const saved = await api.updateAutomation(automationId, automation.revision, { source_id: group });
+        const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: group });
         setAutomation(saved); setSourceId(group);
         // Appending leaves sourceId unchanged, so the profile effect does not
         // re-run; refresh it so the new files show in the review list.
@@ -276,7 +276,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       if (result.deleted) {
         // The group's last file is gone, so the source no longer exists: detach
         // it from the project and fall back to the empty upload screen.
-        if (automation) { const saved = await api.updateAutomation(automationId, automation.revision, { source_id: null }); setAutomation(saved); }
+        if (automation) { const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: null }); setAutomation(saved); }
         setSourceId(""); setProfile(null);
       } else {
         await refreshProfile();
@@ -291,7 +291,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     if (!automation || !nextSourceId || busy) return;
     setBusy(true); setError(null);
     try {
-      const saved = await api.updateAutomation(automationId, automation.revision, { source_id: nextSourceId });
+      const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: nextSourceId });
       setAutomation(saved); setSourceId(nextSourceId); setRunId(null); setRunStatus(null); setWorkspace(null); setAdvancedGraph(false);
       setParams({ automation: automationId }, { replace: true });
     } catch (caught) { setError(messageOf(caught)); }
