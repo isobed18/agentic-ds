@@ -5140,9 +5140,14 @@ class ControlPlane:
         collections = {
             key: len(value) for key, value in payload.items() if isinstance(value, list | dict)
         }
+        # Report the real indexed type rather than a generic "artifact", so an
+        # unrecognised artifact opens under its actual name instead of a
+        # meaningless "ARTIFACT" eyebrow (#74). Falls back only when the index
+        # has no entry for it.
+        indexed = self.store.type_of(artifact_id)
         return {
             "artifact_id": artifact_id,
-            "artifact_type": "artifact",
+            "artifact_type": indexed.value if indexed is not None else "artifact",
             "fields": scalar,
             "collection_sizes": collections,
         }
