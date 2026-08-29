@@ -1,5 +1,30 @@
 import type { AutomationDefinition, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
+import { isRunActive } from "../lib/status";
+
+/**
+ * The live run, if any, each automation currently has in progress (#88).
+ *
+ * The library card showed only a static Saved/Draft badge and an execution
+ * *count*; whether a project had a run actually in progress was invisible until
+ * you opened it. /api/runs already reports every run's live status and its
+ * `automation_id`, so join the two here. `isRunActive` is the same
+ * queued/staging/running/resuming set the rest of the app polls on;
+ * `awaiting_human`, `completed` and `failed` are not "in progress" and are left
+ * out. When one automation has several live runs the most recent wins, so the
+ * card's Stop action targets the run the person would actually mean.
+ */
+export function activeRunByAutomation(runs: RunSummary[]): Map<string, RunSummary> {
+  const active = new Map<string, RunSummary>();
+  for (const run of runs) {
+    if (!run.automation_id || !isRunActive(run.status)) continue;
+    const current = active.get(run.automation_id);
+    if (!current || (run.last_activity ?? "") > (current.last_activity ?? "")) {
+      active.set(run.automation_id, run);
+    }
+  }
+  return active;
+}
 
 /**
  * Whether a data project was created but never actually used, so leaving the

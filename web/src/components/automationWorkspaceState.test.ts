@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AutomationDefinition, RunSummary, StagingWorkspace } from "../lib/api";
-import { automationView, isAbandonedDraft, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
+import { activeRunByAutomation, automationView, isAbandonedDraft, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 
 describe("discarding an abandoned data project (#83)", () => {
   const automation = (over: Partial<AutomationDefinition> = {}) => ({
@@ -208,6 +208,41 @@ describe("which execution a deep-link selects", () => {
 
   it("returns null when there are no executions", () => {
     expect(preferredExecution([], "run-oldest")).toBeNull();
+  });
+});
+
+describe("which automations have a live run (#88)", () => {
+  const run = (over: Partial<RunSummary>): RunSummary =>
+    ({ run_id: "run", status: "completed", ...over }) as RunSummary;
+
+  it("indexes an in-progress run under its automation", () => {
+    const active = activeRunByAutomation([
+      run({ run_id: "r1", status: "running", automation_id: "a1", last_activity: "2026-01-01T00:00:00Z" }),
+    ]);
+    expect(active.get("a1")?.run_id).toBe("r1");
+  });
+
+  it("ignores runs that are not in progress", () => {
+    // completed, failed and awaiting_human are not "running" -- a card should
+    // not offer to stop a run that has already finished or is parked on a gate.
+    const active = activeRunByAutomation([
+      run({ status: "completed", automation_id: "a1" }),
+      run({ status: "failed", automation_id: "a2" }),
+      run({ status: "awaiting_human", automation_id: "a3" }),
+    ]);
+    expect(active.size).toBe(0);
+  });
+
+  it("ignores runs with no automation behind them", () => {
+    expect(activeRunByAutomation([run({ status: "running", automation_id: null })]).size).toBe(0);
+  });
+
+  it("keeps the most recent live run when an automation has several", () => {
+    const active = activeRunByAutomation([
+      run({ run_id: "old", status: "running", automation_id: "a1", last_activity: "2026-01-01T00:00:00Z" }),
+      run({ run_id: "new", status: "staging", automation_id: "a1", last_activity: "2026-06-01T00:00:00Z" }),
+    ]);
+    expect(active.get("a1")?.run_id).toBe("new");
   });
 });
 

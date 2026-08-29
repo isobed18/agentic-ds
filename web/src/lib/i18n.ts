@@ -1009,6 +1009,7 @@ const TR: Record<string, string> = {
     "Yerleşik temel boru hattını birleştirme, analiz, eğitim, değerlendirme ve raporlama boyunca çalıştırın.",
   "Pause after current stage": "Mevcut aşamadan sonra duraklat",
   "Pause requested…": "Duraklatma istendi…",
+  "Stop run": "Çalıştırmayı durdur",
   "Retry from Intake": "Veri almadan yeniden dene",
   "Review plan": "Planı incele",
   "Review results": "Sonuçları incele",
