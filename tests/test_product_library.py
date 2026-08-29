@@ -46,6 +46,29 @@ def test_dataset_catalog_is_useful_and_never_serves_source_values(tmp_path: Path
     assert "second-person" not in response.text
 
 
+def test_dataset_catalog_summarises_pdf_only_sources(tmp_path: Path) -> None:
+    """A PDF-only source used to render as an empty "0 tables" row because the
+    catalog was built solely from `profile["tables"]` and never looked at
+    `profile["documents"]` (#69). Assert the document summary is now carried."""
+    from test_kesif_pdf import _basit_pdf
+
+    plane = _plane(tmp_path)
+    source = plane.source_roots[0] / "contracts"
+    source.mkdir()
+    (source / "agreement.pdf").write_bytes(
+        _basit_pdf(["Supplier agreement", "Payment terms are thirty days."])
+    )
+
+    response = TestClient(create_app(plane=plane)).get("/api/catalog/datasets")
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["tables"] == 0
+    assert payload["documents"] == 1
+    assert payload["document_pages"] == 1
+    assert payload["document_summaries"][0]["name"] == "agreement.pdf"
+
+
 def test_experiments_models_reports_and_hardening_have_real_endpoints(
     tmp_path: Path,
 ) -> None:

@@ -81,7 +81,8 @@ export function Datasets() {
               <div className="flex items-center gap-1.5">
                 {(d.sensitive_columns ?? 0) > 0 && <Badge tone="warn">{d.sensitive_columns} {t("sensitive")}</Badge>}
                 {(d.quality_issues ?? 0) > 0 && <Badge tone="stop">{d.quality_issues} {t("issues")}</Badge>}
-                {d.tables !== undefined && <Badge>{d.tables} {t("tables")}</Badge>}
+                {(d.tables ?? 0) > 0 && <Badge>{d.tables} {t("tables")}</Badge>}
+                {(d.documents ?? 0) > 0 && <Badge>{d.documents} {t("documents")}</Badge>}
               </div>
             }
           >
@@ -92,16 +93,35 @@ export function Datasets() {
               <p className="rounded-lg bg-warn-50 px-3 py-2 text-xs text-warn-700">{d.profile_error}</p>
             ) : (
               <>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  <Metric label={t("Rows")} value={fmt(d.rows ?? 0)} />
-                  <Metric label={t("Columns")} value={String(d.columns ?? 0)} />
-                  <Metric label={t("Candidate keys")} value={String(d.candidate_keys ?? 0)} />
-                  <Metric label={t("Sensitive")} value={String(d.sensitive_columns ?? 0)} />
-                </div>
-                <DataTable
-                  columns={[t("Table"), t("Format"), t("Rows"), t("Columns"), t("Keys"), t("Issues")]}
-                  rows={(d.table_summaries ?? []).map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
-                />
+                {(d.tables ?? 0) > 0 && (
+                  <>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <Metric label={t("Rows")} value={fmt(d.rows ?? 0)} />
+                      <Metric label={t("Columns")} value={String(d.columns ?? 0)} />
+                      <Metric label={t("Candidate keys")} value={String(d.candidate_keys ?? 0)} />
+                      <Metric label={t("Sensitive")} value={String(d.sensitive_columns ?? 0)} />
+                    </div>
+                    <DataTable
+                      columns={[t("Table"), t("Format"), t("Rows"), t("Columns"), t("Keys"), t("Issues")]}
+                      rows={(d.table_summaries ?? []).map((t) => [t.name, t.format, fmt(t.rows), t.columns, t.candidate_keys, t.issues.length])}
+                    />
+                  </>
+                )}
+                {/* A PDF-only source has no tables; the table metrics above would
+                    all be zero and the DataTable empty, which read as a broken
+                    dataset (#69). Render what it actually holds instead. */}
+                {(d.documents ?? 0) > 0 && (
+                  <div className={(d.tables ?? 0) > 0 ? "mt-4" : ""}>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <Metric label={t("Documents")} value={String(d.documents ?? 0)} />
+                      <Metric label={t("Pages")} value={String(d.document_pages ?? 0)} />
+                    </div>
+                    <DataTable
+                      columns={[t("Document"), t("Format"), t("Pages")]}
+                      rows={(d.document_summaries ?? []).map((s) => [s.name, s.format, s.pages])}
+                    />
+                  </div>
+                )}
                 <p className="mt-3 text-xs text-ink-faint">{d.privacy}</p>
               </>
             )}

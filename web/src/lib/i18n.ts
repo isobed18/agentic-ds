@@ -767,6 +767,7 @@ const TR: Record<string, string> = {
   "Structured": "Yapısal",
   "Document": "Belge",
   "Documents": "Belgeler",
+  "Pages": "Sayfa",
   "Inventory sources": "Kaynak envanterini çıkar",
   "Profile structured data": "Yapısal veriyi profille",
   "Understand documents": "Belgeleri anla",
