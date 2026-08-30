@@ -1786,6 +1786,13 @@ class ControlPlane:
         compiled = self.compile_automation(run_id)
         return {
             "artifact_id": accepted_ref.artifact_id,
+            # #166: StagingWorkspace has no run_id field, and staging_workspace()
+            # injects one into its response while this path did not. The editor
+            # reads next.run_id after accepting to keep the run selected; without
+            # it the URL became run=undefined and the screen fell back to the
+            # empty upload state -- the "accepting the plan lands somewhere
+            # unrelated" defect. Return the same run_id the workspace read did.
+            "run_id": run_id,
             **saved.model_dump(mode="json"),
             "execution_plan_artifact_id": compiled["artifact_id"],
         }
@@ -5517,6 +5524,27 @@ class ControlPlane:
             raise KeyError(artifact_id)
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def model_download(self, artifact_id: str) -> tuple[bytes, str]:
+        """Return the saved fitted-pipeline bytes for one trained-model artifact.
+
+        #166 ends at "the model can be downloaded", but only reports had a
+        download route -- a completed run left a saved model with no way to take
+        it off the machine. The trained-model artifact records its fitted
+        pipeline as a separate blob (ModelBlobReference.artifact_id ->
+        blobs/model.joblib); serve that. A model whose training deferred saving
+        the blob has nothing to hand back and is reported as such rather than a
+        confusing empty file.
+        """
+        payload = self.artifact_payload(artifact_id)
+        blob = payload.get("model_blob")
+        if not isinstance(blob, dict) or not blob.get("artifact_id"):
+            raise KeyError("no_saved_model")
+        filename = str(blob.get("filename") or "model.joblib")
+        blob_path = self.store.blob_dir(str(blob["artifact_id"])) / filename
+        if not blob_path.exists():
+            raise KeyError("model_blob_missing")
+        return blob_path.read_bytes(), filename
+
     def artifact_preview(self, artifact_id: str) -> dict[str, Any]:
         """Return a graph-inspector preview without exposing rows or document passages."""
         payload = self.artifact_payload(artifact_id)
@@ -6692,6 +6720,27 @@ def create_app(
             return plane.artifact_preview(artifact_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown artifact") from None
+
+    @app.get("/api/models/{artifact_id}/download")
+    def download_model(artifact_id: str) -> Response:
+        try:
+            data, filename = plane.model_download(artifact_id)
+        except KeyError as exc:
+            reason = str(exc)
+            if reason in {"no_saved_model", "model_blob_missing"}:
+                raise HTTPException(
+                    status_code=404, detail="this model has no downloadable blob"
+                ) from None
+            raise HTTPException(status_code=404, detail="unknown model") from None
+        return Response(
+            data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="ads-model-{artifact_id[:12]}-{filename}"'
+                )
+            },
+        )
 
     @app.get("/api/reports/{artifact_id}/download")
     def download_report(artifact_id: str) -> Response:

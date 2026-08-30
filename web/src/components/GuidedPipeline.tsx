@@ -23,7 +23,7 @@ interface GuidedPipelineProps {
   componentOutputs: PipelineOutputReference[];
   runStatus: string | null;
   busy: boolean;
-  onRun: () => void;
+  onRun: (runMode: "fully_auto" | "manual") => void;
   onPause: () => void;
   onRetry: () => void;
   onAdvanced: () => void;
@@ -56,6 +56,10 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<Record<string, unknown> | null>(null);
   const [selected, setSelected] = useState<string | null>("summary");
+  // #166 second path: before starting, a person may override the agent's gate
+  // authority and demand approval at every stage. `manual` declares every stage
+  // a checkpoint on the backend, so the run stops after each one for a human.
+  const [approveEachStage, setApproveEachStage] = useState(false);
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
   // #97: the "Chat with Planner" panel existed only in the staging/proposal
@@ -135,7 +139,13 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
     </div>
 
     <div className="fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
-      {canStart && <button type="button" className="btn-primary text-xs" onClick={onRun} disabled={busy || !profile.tables.length}>{busy ? t("Working…") : t(String((progress as Record<string, unknown> | null)?.current_stage ?? "") ? "Continue base pipeline" : "Run base ML pipeline")}</button>}
+      {canStart && !String((progress as Record<string, unknown> | null)?.current_stage ?? "") && (
+        <label className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink-soft" title={t("The agent decides each gate on its own signals unless you take that over.")}>
+          <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
+          {t("Approve at every stage")}
+        </label>
+      )}
+      {canStart && <button type="button" className="btn-primary text-xs" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}>{busy ? t("Working…") : t(String((progress as Record<string, unknown> | null)?.current_stage ?? "") ? "Continue base pipeline" : "Run base ML pipeline")}</button>}
       {["running", "resuming"].includes(activeStatus) && <button type="button" className="btn-ghost text-xs" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}>{progress?.pause_requested ? t("Pause requested…") : t("Pause after current stage")}</button>}
       {failed && <button type="button" className="btn-primary text-xs" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
       {complete && <button type="button" className="btn-primary text-xs" onClick={onOpenExecutions}>{t("Review results")}</button>}
