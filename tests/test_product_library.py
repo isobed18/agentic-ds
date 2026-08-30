@@ -10,9 +10,57 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ads.api import ControlPlane, create_app
+from ads.contracts import Metric, TaskType
 from ads.contracts.datacard import DataCard
+from ads.contracts.training import (
+    CandidateResult,
+    MetricEvaluation,
+    ModelBlobReference,
+    TrainingReport,
+)
 from ads.pipeline import FinalReport
 from ads.store import ArtifactStore
+
+
+def _trained_model(*, blob_id: str | None) -> TrainingReport:
+    """A minimal winner-only training report, optionally carrying a saved blob."""
+    return TrainingReport(
+        task_type=TaskType.REGRESSION,
+        primary_metric=Metric.RMSE,
+        winner_id="cand-1",
+        results=[
+            CandidateResult(
+                candidate_id="cand-0",
+                display_name="Baseline",
+                estimator_class="sklearn.dummy.DummyRegressor",
+                is_baseline=True,
+                metrics=[
+                    MetricEvaluation(
+                        metric=Metric.RMSE,
+                        fold_scores=[1.9, 2.1],
+                        cv_mean=2.0,
+                        cv_std=0.1,
+                        holdout_score=2.05,
+                    )
+                ],
+            ),
+            CandidateResult(
+                candidate_id="cand-1",
+                display_name="Ridge",
+                estimator_class="sklearn.linear_model.Ridge",
+                metrics=[
+                    MetricEvaluation(
+                        metric=Metric.RMSE,
+                        fold_scores=[0.9, 1.1],
+                        cv_mean=1.0,
+                        cv_std=0.1,
+                        holdout_score=1.05,
+                    )
+                ],
+            ),
+        ],
+        model_blob=ModelBlobReference(artifact_id=blob_id) if blob_id else None,
+    )
 
 
 def _plane(tmp_path: Path) -> ControlPlane:
@@ -364,6 +412,43 @@ def test_delete_run_requires_exact_confirmation_and_preserves_shared_payload(
 
 
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def test_saved_model_is_downloadable_and_an_unsaved_one_reports_no_blob(
+    tmp_path: Path,
+) -> None:
+    """#166 ends at "the model can be downloaded", but only reports had a route.
+
+    A completed run leaves a trained-model artifact whose fitted pipeline lives
+    in a separate joblib blob; without a download route the model could not be
+    taken off the machine. A model whose blob was never saved has nothing to
+    hand back and must say so rather than stream an empty or wrong file.
+    """
+    plane = _plane(tmp_path)
+    blob_id = "a" * 64
+    (plane.store.blob_dir(blob_id) / "model.joblib").write_bytes(b"FITTED-PIPELINE-BYTES")
+    saved = plane.store.put(
+        _trained_model(blob_id=blob_id),
+        run_id="model-run",
+        stage_exec_id="training",
+        name="trained_model",
+    )
+    unsaved = plane.store.put(
+        _trained_model(blob_id=None),
+        run_id="deferred-run",
+        stage_exec_id="training",
+        name="trained_model",
+    )
+    client = TestClient(create_app(plane=plane))
+
+    ok = client.get(f"/api/models/{saved.artifact_id}/download")
+    assert ok.status_code == 200
+    assert ok.content == b"FITTED-PIPELINE-BYTES"
+    disposition = ok.headers["content-disposition"]
+    assert "attachment" in disposition and disposition.endswith('model.joblib"')
+
+    assert client.get(f"/api/models/{unsaved.artifact_id}/download").status_code == 404
+    assert client.get("/api/models/" + "f" * 64 + "/download").status_code == 404
 
 
 def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) -> None:

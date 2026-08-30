@@ -410,6 +410,13 @@ class TestContinuingKeepsTheWork:
             json={"base_artifact_id": proposal["artifact_id"]},
         )
         assert accepted.status_code == 200, accepted.text
+        # #166: the editor keeps the run selected by reading run_id off the accept
+        # response. StagingWorkspace has no run_id field, so without an explicit
+        # one here the response omitted it, the URL became run=undefined, and the
+        # screen fell back to the empty upload state -- "accepting the plan lands
+        # somewhere unrelated". The GET /staging response has always carried it;
+        # accept must return the same run_id, not None.
+        assert accepted.json()["run_id"] == run_id
 
         started = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "fully_auto"})
         assert started.status_code == 200, started.text

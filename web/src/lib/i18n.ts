@@ -939,6 +939,10 @@ const TR: Record<string, string> = {
   "Training rows": "Eğitim satırları",
   "Sensitive": "Kişisel veri",
   "Download": "İndir",
+  "Download model": "Modeli indir",
+  "Approve at every stage": "Her aşamada onayla",
+  "The agent decides each gate on its own signals unless you take that over.":
+    "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",
   "Loading…": "Yükleniyor…",
   "Loading experiments…": "Deneyler yükleniyor…",
   "Loading models…": "Modeller yükleniyor…",

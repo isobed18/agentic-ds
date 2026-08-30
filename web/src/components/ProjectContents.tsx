@@ -112,9 +112,22 @@ function ModelsView({ contents }: { contents: ProjectContents | null }) {
             <Pair label={t("CV std")} value={num(model.cv_std)} />
             <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
           </dl>
-          <p className="mt-2.5 border-t border-line-soft pt-2 font-mono text-[10.5px] text-ink-faint">
-            run {model.run_id} · {model.candidate_count} candidates
-          </p>
+          <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
+            <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
+              run {model.run_id} · {model.candidate_count} candidates
+            </p>
+            {/* #166: a completed run leaves a saved model that must be
+                downloadable. Only a saved model has a joblib blob behind it. */}
+            {model.saved && (
+              <a
+                href={`/api/models/${model.artifact_id}/download`}
+                className="btn-ghost !py-1 text-xs"
+                download
+              >
+                {t("Download model")}
+              </a>
+            )}
+          </div>
         </article>
       ))}
     </div>

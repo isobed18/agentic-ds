@@ -408,8 +408,21 @@ def build_spec() -> AgentSpec[ValidationStrategyProposal]:
         ),
         max_attempts=3,
         rubric="validation_strategy.v1",
+        # #166: same shared-context handoff as problem_discovery. The validation
+        # scout (validation_investigator.investigate_validation_context) runs on
+        # this context first and admits its evidence, including
+        # `trial_validation_strategy`. Without declaring it, the panel would
+        # reject the shared context as an undeclared tool the moment the scout
+        # measured a trial split -- the identical latent defect one stage later.
         allowed_tools=frozenset(
-            {"cardinality", "column_profile", "null_rate", "validation_signals", "value_counts"}
+            {
+                "cardinality",
+                "column_profile",
+                "null_rate",
+                "trial_validation_strategy",
+                "validation_signals",
+                "value_counts",
+            }
         ),
         max_tool_tier=PermissionTier.READ_DATA,
         column_fields=frozenset({"group_column", "time_column"}),
