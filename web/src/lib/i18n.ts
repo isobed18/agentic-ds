@@ -997,6 +997,73 @@ const TR: Record<string, string> = {
   "Opening project…": "Proje açılıyor…",
   "Untitled project": "Adsız proje",
   "Project name": "Proje adı",
+  "Project": "Proje",
+  "Project overview": "Proje genel bakışı",
+  "Project sections": "Proje bölümleri",
+  "Project data": "Proje verisi",
+  "Project models": "Proje modelleri",
+  "Project reports": "Proje raporları",
+  "Rename project": "Projeyi yeniden adlandır",
+  "A project keeps data, automations, models, and reports together.":
+    "Bir proje veriyi, otomasyonları, modelleri ve raporları bir arada tutar.",
+  "Create a project, add data, then create as many automations as you need.":
+    "Bir proje oluşturun, veri ekleyin, ardından ihtiyacınız kadar otomasyon oluşturun.",
+  "{count} data sources": "{count} veri kaynağı",
+  "{count} automations": "{count} otomasyon",
+  "Everything in this project, at a glance": "Bu projedeki her şey, tek bakışta",
+  "Data comes first. Each automation chooses from it and keeps its own graph and outputs.":
+    "Önce veri gelir. Her otomasyon buradan seçim yapar ve kendi grafiğini ve çıktılarını tutar.",
+  "This project needs data": "Bu projenin veriye ihtiyacı var",
+  "Upload files or choose data you uploaded before. You do not need an automation first.":
+    "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin. Önce bir otomasyon gerekmez.",
+  "files in the project": "projedeki dosya",
+  "independent graphs": "bağımsız grafik",
+  "from every automation": "tüm otomasyonlardan",
+  "Your data is ready": "Veriniz hazır",
+  "Create an automation and choose which project files it should use.":
+    "Bir otomasyon oluşturun ve hangi proje dosyalarını kullanacağını seçin.",
+  "Add data before or after automations. Existing automation snapshots do not change.":
+    "Otomasyonlardan önce veya sonra veri ekleyin. Mevcut otomasyon anlık görüntüleri değişmez.",
+  "Upload new files": "Yeni dosyalar yükle",
+  "Choose previously uploaded data": "Daha önce yüklenen veriyi seç",
+  "Add to project": "Projeye ekle",
+  "No data in this project": "Bu projede veri yok",
+  "Upload files or choose data you uploaded before.":
+    "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin.",
+  "Files": "Dosyalar",
+  "or": "veya",
+  "Each automation has its own data selection, graph, runs, models, and reports.":
+    "Her otomasyonun kendi veri seçimi, grafiği, çalıştırmaları, modelleri ve raporları vardır.",
+  "{count} selected files": "{count} seçili dosya",
+  "No data selected": "Veri seçilmedi",
+  "Create an automation. Its graph will open only when you open that automation.":
+    "Bir otomasyon oluşturun. Grafiği yalnızca o otomasyonu açtığınızda görünür.",
+  "Models from every automation in this project will appear here.":
+    "Bu projedeki tüm otomasyonların modelleri burada görünür.",
+  "Reports from every automation in this project will appear here.":
+    "Bu projedeki tüm otomasyonların raporları burada görünür.",
+  "Every model is labelled with the automation that produced it.":
+    "Her model, onu üreten otomasyonla etiketlenir.",
+  "Every report is labelled with the automation that produced it.":
+    "Her rapor, onu üreten otomasyonla etiketlenir.",
+  "From {automation}": "{automation} otomasyonundan",
+  "Evaluation report": "Değerlendirme raporu",
+  "Automation data": "Otomasyon verisi",
+  "Loading project data…": "Proje verisi yükleniyor…",
+  "Add project data first": "Önce proje verisi ekleyin",
+  "Automations choose files from the project. Uploading never starts inside an automation.":
+    "Otomasyonlar projedeki dosyaları seçer. Yükleme hiçbir zaman otomasyonun içinde başlamaz.",
+  "Go to project data": "Proje verisine git",
+  "Select project files for this automation": "Bu otomasyon için proje dosyalarını seçin",
+  "This automation receives a private snapshot. Adding project data later will not change it.":
+    "Bu otomasyon özel bir anlık görüntü alır. Daha sonra proje verisi eklemek onu değiştirmez.",
+  "Use selected data": "Seçili veriyi kullan",
+  "Inspecting and routing selected files…": "Seçili dosyalar inceleniyor ve yönlendiriliyor…",
+  "Selected automation data": "Seçili otomasyon verisi",
+  "Only these project files belong to this automation.":
+    "Bu otomasyona yalnızca bu proje dosyaları aittir.",
+  "Choose project files from the automation graph to create its private snapshot.":
+    "Özel anlık görüntüsünü oluşturmak için otomasyon grafiğinden proje dosyalarını seçin.",
   // Data projects workspace
   "Data projects": "Veri projeleri",
   // Project-contained tabs (#80, #111): a project's own data, models and reports.

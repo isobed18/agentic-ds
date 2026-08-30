@@ -811,8 +811,12 @@ class ControlPlane:
                 source_file = (source_root / item.path).resolve()
                 if source_root not in source_file.parents or not source_file.is_file():
                     raise ValueError(f"unknown project file {item.path!r}")
-                destination = snapshot_root / f"{index:04d}" / Path(item.path).name
-                destination.parent.mkdir(parents=True, exist_ok=True)
+                # #157: the source loader reads files at the source root. The
+                # first implementation nested each selection under ``0000/``,
+                # so the UI successfully selected data and then profiling said
+                # the snapshot contained no supported files. Prefixing at the
+                # root preserves collision safety without hiding the files.
+                destination = snapshot_root / f"{index:04d}-{Path(item.path).name}"
                 shutil.copy2(source_file, destination)
             saved = self.automation_store.update(
                 automation_id,
@@ -858,47 +862,76 @@ class ControlPlane:
             changes=changes,
         ).model_dump(mode="json")
 
-    def project_contents(self, project_id: str) -> dict[str, Any]:
-        """Return one project's inputs and outputs without a global catalogue join."""
+    def _project_automation_records(self, project_id: str) -> tuple[Any, list[Any]]:
+        """Load a project and only the automation records it still owns.
+
+        #157 made the durable project store authoritative. Missing child files
+        are skipped because deleting a draft must not make its parent unreadable.
+        """
+        assert self.project_store is not None
         assert self.automation_store is not None
-        project = self.automation_store.get(project_id)
-        execution_ids = set(project.execution_ids)
+        project = self.project_store.get(project_id)
+        automations = []
+        for automation_id in project.automation_ids:
+            try:
+                automations.append(self.automation_store.get(automation_id))
+            except KeyError:
+                continue
+        return project, automations
+
+    def automation_contents(self, automation_id: str) -> dict[str, Any]:
+        """Return one child automation's private inputs and outputs."""
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        automation = self.automation_store.get(automation_id)
+        parents = [
+            project
+            for project in self.project_store.list()
+            if automation_id in project.automation_ids
+        ]
+        if len(parents) != 1:
+            raise ValueError("automation must belong to exactly one project")
+        execution_ids = set(automation.execution_ids)
         executions = [run for run in self.list_runs() if run.run_id in execution_ids]
-        source = next(
-            (
-                item
-                for item in self.data_sources()
-                if item["source_id"] == project.source_id
-            ),
-            None,
-        )
-        references = (
-            [
-                {
-                    "project_id": item.automation_id,
-                    "name": item.name,
-                }
-                for item in self.automation_store.list()
-                if item.source_id == project.source_id
-            ]
-            if project.source_id
-            else []
-        )
+        return {
+            "automation": automation.model_dump(mode="json"),
+            "project": parents[0].model_dump(mode="json"),
+            "data": [item.model_dump(mode="json") for item in automation.selected_files],
+            "executions": [self._experiment_summary(run) for run in executions],
+            "models": [model for run in executions for model in self._model_summaries(run)],
+            "reports": [report for run in executions for report in self._report_summaries(run)],
+        }
+
+    def project_contents(self, project_id: str) -> dict[str, Any]:
+        """Aggregate every child output and retain its automation provenance."""
+        project, automations = self._project_automation_records(project_id)
+        runs = {run.run_id: run for run in self.list_runs()}
+        executions: list[dict[str, Any]] = []
+        models: list[dict[str, Any]] = []
+        reports: list[dict[str, Any]] = []
+        for automation in automations:
+            provenance = {
+                "automation_id": automation.automation_id,
+                "automation_name": automation.name,
+            }
+            for run_id in automation.execution_ids:
+                run = runs.get(run_id)
+                if run is None:
+                    continue
+                executions.append({**self._experiment_summary(run), **provenance})
+                models.extend(
+                    {**model, **provenance} for model in self._model_summaries(run)
+                )
+                reports.extend(
+                    {**report, **provenance} for report in self._report_summaries(run)
+                )
         return {
             "project": project.model_dump(mode="json"),
-            "data": self._dataset_summary(source) if source else None,
-            "source_references": references,
-            "executions": [self._experiment_summary(run) for run in executions],
-            "models": [
-                model
-                for run in executions
-                for model in self._model_summaries(run)
-            ],
-            "reports": [
-                report
-                for run in executions
-                for report in self._report_summaries(run)
-            ],
+            "data": self.project_data(project_id),
+            "automations": [item.model_dump(mode="json") for item in automations],
+            "executions": executions,
+            "models": models,
+            "reports": reports,
         }
 
     @staticmethod
@@ -934,31 +967,47 @@ class ControlPlane:
         the labels of recent project-owned models and reports, which is the case
         the catalogues served -- finding a thing whose project is forgotten.
         """
+        assert self.project_store is not None
         assert self.automation_store is not None
         query = (search or "").strip().lower()
         runs = {run.run_id: run for run in self.list_runs()}
-        owner_of: dict[str, tuple[str, str]] = {}
+        owner_of: dict[str, tuple[str, str, str, str]] = {}
         projects: list[dict[str, Any]] = []
-        for project in self.automation_store.list():
+        for project in self.project_store.list():
+            _, automations = self._project_automation_records(project.project_id)
             statuses: list[str] = []
-            for run_id in project.execution_ids:
-                owner_of[run_id] = (project.automation_id, project.name)
-                run = runs.get(run_id)
-                if run is not None:
-                    statuses.append(run.status)
-            state = self._project_state(statuses, project.status)
+            execution_ids: list[str] = []
+            for automation in automations:
+                for run_id in automation.execution_ids:
+                    execution_ids.append(run_id)
+                    owner_of[run_id] = (
+                        project.project_id,
+                        project.name,
+                        automation.automation_id,
+                        automation.name,
+                    )
+                    run = runs.get(run_id)
+                    if run is not None:
+                        statuses.append(run.status)
+            project_status = (
+                "error" if any(item.status == "error" for item in automations) else "saved"
+            )
+            state = self._project_state(statuses, project_status)
             latest_run = next(
-                (rid for rid in reversed(project.execution_ids) if rid in runs),
+                (rid for rid in reversed(execution_ids) if rid in runs),
                 None,
+            )
+            updated_at = max(
+                [project.updated_at, *(automation.updated_at for automation in automations)]
             )
             projects.append(
                 {
-                    "project_id": project.automation_id,
+                    "project_id": project.project_id,
                     "name": project.name,
-                    "status": project.status,
-                    "source_id": project.source_id,
-                    "execution_count": len(project.execution_ids),
-                    "updated_at": project.updated_at.isoformat(),
+                    "status": project_status,
+                    "source_id": project.source_ids[0] if project.source_ids else None,
+                    "execution_count": len(execution_ids),
+                    "updated_at": updated_at.isoformat(),
                     "state": state,
                     "needs_attention": state in {"awaiting_human", "failed"},
                     "latest_run_id": latest_run,
@@ -977,12 +1026,16 @@ class ControlPlane:
             owner = owner_of.get(run.run_id)
             project_id = owner[0] if owner else None
             project_name = owner[1] if owner else None
+            automation_id = owner[2] if owner else None
+            automation_name = owner[3] if owner else None
             for model in self._model_summaries(run):
                 recent.append(
                     {
                         "kind": "model",
                         "project_id": project_id,
                         "project_name": project_name,
+                        "automation_id": automation_id,
+                        "automation_name": automation_name,
                         "run_id": run.run_id,
                         "artifact_id": model["artifact_id"],
                         "label": model["display_name"] or "Trained model",
@@ -995,6 +1048,8 @@ class ControlPlane:
                         "kind": "report",
                         "project_id": project_id,
                         "project_name": project_name,
+                        "automation_id": automation_id,
+                        "automation_name": automation_name,
                         "run_id": run.run_id,
                         "artifact_id": report["artifact_id"],
                         "label": report["preview"] or "Evaluation report",
@@ -6303,6 +6358,15 @@ def create_app(
         return [
             summary.to_dict() for summary in plane.list_runs() if summary.run_id in execution_ids
         ]
+
+    @app.get("/api/automations/{automation_id}/contents")
+    def automation_contents(automation_id: str) -> dict[str, Any]:
+        try:
+            return plane.automation_contents(automation_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown automation") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/home")
     def home(search: str | None = None) -> dict[str, Any]:

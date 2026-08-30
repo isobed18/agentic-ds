@@ -242,13 +242,17 @@ def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
     must never acquire the other project's report from the global store."""
     plane = _plane(tmp_path)
     uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
-    first = plane.automation_store.create("Retention")
-    second = plane.automation_store.create("Campaign")
+    first_project = plane.create_project("Retention")
+    second_project = plane.create_project("Campaign")
+    plane.add_project_source(first_project["project_id"], uploaded["source_id"])
+    plane.add_project_source(second_project["project_id"], uploaded["source_id"])
+    first = plane.create_project_automation(first_project["project_id"], "Churn model")
+    second = plane.create_project_automation(second_project["project_id"], "Campaign report")
     plane.automation_store.attach_execution(
-        first.automation_id, run_id="retention-run", source_id=uploaded["source_id"]
+        first["automation_id"], run_id="retention-run", source_id=uploaded["source_id"]
     )
     plane.automation_store.attach_execution(
-        second.automation_id, run_id="campaign-run", source_id=uploaded["source_id"]
+        second["automation_id"], run_id="campaign-run", source_id=uploaded["source_id"]
     )
     for run_id, heading in (("retention-run", "Retention"), ("campaign-run", "Campaign")):
         report = FinalReport(evaluation_artifact_id="a" * 64, markdown=f"# {heading}")
@@ -271,25 +275,24 @@ def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
         )
 
     response = TestClient(create_app(plane=plane)).get(
-        f"/api/projects/{first.automation_id}/contents"
+        f"/api/projects/{first_project['project_id']}/contents"
     )
 
     assert response.status_code == 200
     contents = response.json()
-    assert contents["data"]["source_id"] == uploaded["source_id"]
-    assert {item["name"] for item in contents["source_references"]} == {
-        "Retention",
-        "Campaign",
-    }
+    assert contents["data"][0]["source_id"] == uploaded["source_id"]
+    assert [item["name"] for item in contents["automations"]] == ["Churn model"]
     assert [item["run_id"] for item in contents["executions"]] == ["retention-run"]
     assert [item["run_id"] for item in contents["reports"]] == ["retention-run"]
-    # Source reuse is deliberately legible: the sibling project is named under
-    # source_references (#78), so "Campaign" is expected in the response as a
-    # whole. The leak that must never happen is an *output* one -- if reports
-    # were filtered from the global store by source_id rather than by this
-    # project's own execution history, Campaign's report (built from the same
-    # input) would surface here, carried in its "# Campaign" preview heading.
-    # Scoping the sentinel to the output sections proves ownership by history.
+    assert contents["reports"][0]["automation_name"] == "Churn model"
+    automation_contents = TestClient(create_app(plane=plane)).get(
+        f"/api/automations/{first['automation_id']}/contents"
+    ).json()
+    assert automation_contents["project"]["project_id"] == first_project["project_id"]
+    assert [item["run_id"] for item in automation_contents["reports"]] == ["retention-run"]
+    # The two top-level projects reuse one source, but aggregate outputs remain
+    # owned by parent -> child automation history. Campaign's report must not
+    # surface in Retention merely because both pools contain the same source.
     outputs = json.dumps(
         {section: contents[section] for section in ("executions", "models", "reports")}
     )
@@ -304,13 +307,15 @@ def test_home_leads_with_projects_that_need_attention_and_finds_output_by_label(
     output be rediscovered by label when its project has been forgotten."""
     plane = _plane(tmp_path)
     uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
-    waiting = plane.automation_store.create("Churn campaign")
-    finished = plane.automation_store.create("Retention model")
+    waiting_project = plane.create_project("Churn campaign")
+    finished_project = plane.create_project("Retention model")
+    waiting = plane.create_project_automation(waiting_project["project_id"], "Campaign report")
+    finished = plane.create_project_automation(finished_project["project_id"], "Retention flow")
     plane.automation_store.attach_execution(
-        finished.automation_id, run_id="finished-run", source_id=uploaded["source_id"]
+        finished["automation_id"], run_id="finished-run", source_id=uploaded["source_id"]
     )
     plane.automation_store.attach_execution(
-        waiting.automation_id, run_id="waiting-run", source_id=uploaded["source_id"]
+        waiting["automation_id"], run_id="waiting-run", source_id=uploaded["source_id"]
     )
     _snapshot(plane, "finished-run", "completed")
     _snapshot(plane, "waiting-run", "awaiting_human")

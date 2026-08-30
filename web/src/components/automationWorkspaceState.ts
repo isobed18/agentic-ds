@@ -1,8 +1,8 @@
-import type { AutomationDefinition, ProjectContents, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
+import type { AutomationContents, AutomationDefinition, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
 import { isRunActive } from "../lib/status";
 
-/** The tabs a project workspace can show. Editor and Executions always exist. */
+/** The tabs one automation can show. */
 export type WorkspaceView = "editor" | "data" | "executions" | "models" | "reports";
 
 /**
@@ -14,13 +14,10 @@ export type WorkspaceView = "editor" | "data" | "executions" | "models" | "repor
  * that absence is the correct answer, not an empty section to apologise for, so
  * a project that trained no model simply has no Models tab.
  */
-export function availableProjectViews(contents: ProjectContents | null): WorkspaceView[] {
-  const views: WorkspaceView[] = ["editor"];
-  if (contents?.data) views.push("data");
-  views.push("executions");
-  if (contents && contents.models.length > 0) views.push("models");
-  if (contents && contents.reports.length > 0) views.push("reports");
-  return views;
+export function availableProjectViews(_contents: AutomationContents | null): WorkspaceView[] {
+  // #157/#165: selected data, runs, models, and reports remain real pages even
+  // when empty. Hiding a page made automation scope impossible to understand.
+  return ["editor", "data", "executions", "models", "reports"];
 }
 
 /**

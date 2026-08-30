@@ -64,10 +64,28 @@ export interface AutomationDefinition {
   status: "draft" | "saved" | "error";
   revision: number;
   source_id?: string | null;
+  selected_files?: AutomationInputFile[];
   pipeline_blueprint?: PipelineBlueprint | null;
   pipeline_layout: PipelineLayout;
   workspace_artifact_id?: string | null;
   execution_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AutomationInputFile {
+  source_id: string;
+  path: string;
+}
+
+/** A durable project is the container; automations are its children. */
+export interface ProjectDefinition {
+  schema_version: "1";
+  project_id: string;
+  name: string;
+  revision: number;
+  source_ids: string[];
+  automation_ids: string[];
   created_at: string;
   updated_at: string;
 }
@@ -158,10 +176,29 @@ export interface ExperimentSummary {
  * names every project bound to the same reusable input, so shared data is
  * legible without any project owning another's outputs.
  */
+export interface ProjectDataSource extends DatasetSummary {
+  files: string[];
+}
+
+export interface ProjectOwnedOutput {
+  automation_id: string;
+  automation_name: string;
+}
+
 export interface ProjectContents {
-  project: AutomationDefinition;
-  data: DatasetSummary | null;
-  source_references: { project_id: string; name: string }[];
+  project: ProjectDefinition;
+  data: ProjectDataSource[];
+  automations: AutomationDefinition[];
+  executions: (ExperimentSummary & ProjectOwnedOutput)[];
+  models: (ModelSummary & ProjectOwnedOutput)[];
+  reports: (ReportSummary & ProjectOwnedOutput)[];
+}
+
+/** One automation's private input snapshot and only the outputs it produced. */
+export interface AutomationContents {
+  automation: AutomationDefinition;
+  project: ProjectDefinition;
+  data: AutomationInputFile[];
   executions: ExperimentSummary[];
   models: ModelSummary[];
   reports: ReportSummary[];
@@ -187,6 +224,8 @@ export interface HomeOutput {
   kind: "model" | "report";
   project_id: string | null;
   project_name: string | null;
+  automation_id?: string | null;
+  automation_name?: string | null;
   run_id: string;
   artifact_id: string;
   label: string;
@@ -837,6 +876,32 @@ export const api = {
    */
   home: (search?: string) =>
     request<HomeOverview>(`/api/home${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  projects: () => request<ProjectDefinition[]>("/api/projects"),
+  project: (id: string) => request<ProjectDefinition>(`/api/projects/${encodeURIComponent(id)}`),
+  createProject: (name: string) =>
+    request<ProjectDefinition>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateProject: (id: string, expectedRevision: number, changes: Record<string, unknown>) =>
+    request<ProjectDefinition>(`/api/projects/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ expected_revision: expectedRevision, changes }),
+    }),
+  projectData: (id: string) =>
+    request<ProjectDataSource[]>(`/api/projects/${encodeURIComponent(id)}/data`),
+  addProjectSource: (id: string, sourceId: string) =>
+    request<ProjectDefinition>(`/api/projects/${encodeURIComponent(id)}/sources`, {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId }),
+    }),
+  projectAutomations: (id: string) =>
+    request<AutomationDefinition[]>(`/api/projects/${encodeURIComponent(id)}/automations`),
+  createProjectAutomation: (id: string, name: string) =>
+    request<AutomationDefinition>(`/api/projects/${encodeURIComponent(id)}/automations`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
   automations: () => request<AutomationDefinition[]>("/api/automations"),
   automation: (id: string) => request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}`),
   createAutomation: (name: string) =>
@@ -895,6 +960,11 @@ export const api = {
     ),
   automationExecutions: (id: string) =>
     request<RunSummary[]>(`/api/automations/${encodeURIComponent(id)}/executions`),
+  selectAutomationInputs: (id: string, expectedRevision: number, selections: AutomationInputFile[]) =>
+    request<AutomationDefinition>(`/api/automations/${encodeURIComponent(id)}/inputs`, {
+      method: "PUT",
+      body: JSON.stringify({ expected_revision: expectedRevision, selections }),
+    }),
   /**
    * A project's own data, runs, models and reports, owned through its execution
    * history (#111). The project workspace shows these as tabs instead of the
@@ -903,6 +973,8 @@ export const api = {
    */
   projectContents: (id: string) =>
     request<ProjectContents>(`/api/projects/${encodeURIComponent(id)}/contents`),
+  automationContents: (id: string) =>
+    request<AutomationContents>(`/api/automations/${encodeURIComponent(id)}/contents`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),
   runProgress: (id: string) => request<RunProgressSnapshot>(`/api/runs/${id}/progress`),
   stage: (runId: string, stageId: string) => request<StageDetail>(`/api/runs/${runId}/stages/${stageId}`),
