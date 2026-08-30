@@ -64,7 +64,8 @@ def test_automation_snapshot_freezes_while_project_pool_stays_open(tmp_path: Pat
         selections=[{"source_id": customers["source_id"], "path": "customers.csv"}],
     )
     snapshot = plane.source_path(selected["source_id"])
-    assert next(snapshot.rglob("customers.csv")).read_bytes() == b"customer_id,churned\n1,0\n"
+    assert (snapshot / "0000-customers.csv").read_bytes() == b"customer_id,churned\n1,0\n"
+    assert plane.source_profile(selected["source_id"])["tables"][0]["rows"] == 1
 
     plane.attach_automation_execution(
         automation["automation_id"], run_id="run-a1b2c3d4", source_id=selected["source_id"]
@@ -78,7 +79,7 @@ def test_automation_snapshot_freezes_while_project_pool_stays_open(tmp_path: Pat
             expected_revision=plane.automation(automation["automation_id"])["revision"],
             selections=[{"source_id": campaigns["source_id"], "path": "campaigns.csv"}],
         )
-    assert next(snapshot.rglob("customers.csv")).read_bytes() == b"customer_id,churned\n1,0\n"
+    assert (snapshot / "0000-customers.csv").read_bytes() == b"customer_id,churned\n1,0\n"
 
 
 def test_automation_rejects_files_outside_its_project_pool(tmp_path: Path) -> None:

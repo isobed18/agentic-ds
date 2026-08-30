@@ -749,6 +749,7 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     app = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
     automation = (WEB_SRC / "pages" / "Automation.tsx").read_text(encoding="utf-8")
     one_page = (WEB_SRC / "pages" / "AutomationWorkspace.tsx").read_text(encoding="utf-8")
+    project_page = (WEB_SRC / "pages" / "ProjectWorkspace.tsx").read_text(encoding="utf-8")
     builder = (WEB_SRC / "components" / "PipelineBuilder.tsx").read_text(encoding="utf-8")
     understanding = (WEB_SRC / "components" / "UnderstandingWorkspace.tsx").read_text(
         encoding="utf-8"
@@ -762,16 +763,17 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert '{ to: "/projects", label: "Projects"' in shell
     assert 'path="/projects"' in app
     assert "<AutomationWorkspace" in automation
-    # Progressive disclosure keeps upload, understanding/proposal, and the accepted
-    # workflow in one route without forcing the graph to render in the initial state.
+    # #157 splits project-owned upload from the child automation. Understanding,
+    # proposal, and the accepted workflow remain progressive inside that child.
     for feature in (
         "<GuidedPipeline",
         "<PipelineBuilder",
         "<UnderstandingAndProposal",
-        "api.upload",
         "acceptPlan",
     ):
         assert feature in one_page
+    assert "api.upload" in project_page
+    assert "<AutomationInputSelector" in one_page
     assert "<PlannerPanel" in understanding
     assert "<PlannerPanel" in builder
     for control in ("pause_after", "gate_handler", "max_retries", "ArtifactPreview"):
