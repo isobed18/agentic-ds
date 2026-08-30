@@ -82,6 +82,7 @@ class AutomationStore:
             "name",
             "status",
             "source_id",
+            "selected_files",
             "pipeline_blueprint",
             "pipeline_layout",
             "workspace_artifact_id",
@@ -100,7 +101,11 @@ class AutomationStore:
             # #111: execution ids are the project's output ownership boundary.
             # Letting a project point at different data afterwards relabelled
             # every historical output as if the new source had produced it.
-            if current.execution_ids and next_source_id != current.source_id:
+            next_selected_files = changes.get("selected_files", current.selected_files)
+            if current.execution_ids and (
+                next_source_id != current.source_id
+                or next_selected_files != current.selected_files
+            ):
                 raise ValueError(
                     "a project source cannot change after its first execution; "
                     "create a new project for different data"

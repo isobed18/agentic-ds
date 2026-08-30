@@ -54,6 +54,7 @@ from ads.automation import (
     compile_automation_plan,
     instantiate_component,
 )
+from ads.contracts.automation_definition import AutomationInputFile
 from ads.contracts.base import ArtifactType
 from ads.contracts.documents import (
     DocumentExtraction,
@@ -133,6 +134,7 @@ from ads.pipeline import (
     configure_pipeline_state,
 )
 from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
+from ads.projects import ProjectRevisionConflict, ProjectStore
 from ads.sandbox import SandboxConfig, SandboxManager
 from ads.skills import render_skills, select_skills
 from ads.staging import (
@@ -244,6 +246,7 @@ def _measure_file_detection(
 
 
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
+_AUTOMATION_INPUT_ID = re.compile(r"^automation-input:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PROFILE_CACHE_SCHEMA_VERSION = 1
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
@@ -517,6 +520,7 @@ class ControlPlane:
     llm_factory: Callable[[], StructuredLLM] | None = None
     workflow_runner: Callable[..., Any] | None = None
     automation_store: AutomationStore | None = None
+    project_store: ProjectStore | None = None
     _runtime_runs: dict[str, _RuntimeRun] = field(default_factory=dict)
     #: source_id -> (file fingerprint, profile). Invalidated by the fingerprint
     #: rather than by a timer, so a changed file is re-profiled immediately and
@@ -548,10 +552,17 @@ class ControlPlane:
         self._run_state_root.mkdir(parents=True, exist_ok=True)
         if self.automation_store is None:
             self.automation_store = AutomationStore(self.store.root.parent / "automations")
+        if self.project_store is None:
+            self.project_store = ProjectStore(self.store.root.parent / "projects")
+        self._automation_input_root.mkdir(parents=True, exist_ok=True)
 
     @property
     def _run_state_root(self) -> Path:
         return self.store.root.parent / "run-state"
+
+    @property
+    def _automation_input_root(self) -> Path:
+        return self.store.root.parent / "automation-inputs"
 
     # ---------------------------------------------------------------- workflow
 
@@ -686,6 +697,135 @@ class ControlPlane:
         }
 
     # ----------------------------------------------------------- automations
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        return [item.model_dump(mode="json") for item in self.project_store.list()]
+
+    def project(self, project_id: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.get(project_id).model_dump(mode="json")
+
+    def create_project(self, name: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.create(name).model_dump(mode="json")
+
+    def update_project(
+        self, project_id: str, *, expected_revision: int, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.update(
+            project_id, expected_revision=expected_revision, changes=changes
+        ).model_dump(mode="json")
+
+    def add_project_source(self, project_id: str, source_id: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        self.project_store.get(project_id)
+        self.source_path(source_id)
+        return self.project_store.add_source(
+            project_id, source_id=source_id
+        ).model_dump(mode="json")
+
+    def project_data(self, project_id: str) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        project = self.project_store.get(project_id)
+        listed = {item["source_id"]: item for item in self.data_sources()}
+        data: list[dict[str, Any]] = []
+        for source_id in project.source_ids:
+            source = listed.get(source_id)
+            if source is None:
+                continue
+            item = self._dataset_summary(source)
+            item["files"] = [
+                path.relative_to(self.source_path(source_id)).as_posix()
+                for path in sorted(self.source_path(source_id).rglob("*"))
+                if path.is_file()
+            ]
+            data.append(item)
+        return data
+
+    def project_automations(self, project_id: str) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        project = self.project_store.get(project_id)
+        records = []
+        for automation_id in project.automation_ids:
+            try:
+                records.append(self.automation_store.get(automation_id).model_dump(mode="json"))
+            except KeyError:
+                continue
+        return records
+
+    def create_project_automation(self, project_id: str, name: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        self.project_store.get(project_id)
+        created = self.automation_store.create(name)
+        try:
+            self.project_store.add_automation(
+                project_id, automation_id=created.automation_id
+            )
+        except Exception:
+            self.automation_store.delete(created.automation_id)
+            raise
+        return created.model_dump(mode="json")
+
+    def select_automation_inputs(
+        self,
+        automation_id: str,
+        *,
+        expected_revision: int,
+        selections: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Snapshot exact project files so later pool growth cannot alter a run."""
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        automation = self.automation_store.get(automation_id)
+        if automation.revision != expected_revision:
+            raise AutomationRevisionConflict(
+                f"automation revision changed from {expected_revision} to {automation.revision}"
+            )
+        parents = [
+            project
+            for project in self.project_store.list()
+            if automation_id in project.automation_ids
+        ]
+        if len(parents) != 1:
+            raise ValueError("automation must belong to exactly one project")
+        project = parents[0]
+        chosen = tuple(AutomationInputFile.model_validate(item) for item in selections)
+        if not chosen:
+            raise ValueError("select at least one project file")
+        if len({(item.source_id, item.path) for item in chosen}) != len(chosen):
+            raise ValueError("selected project files must be unique")
+
+        token = uuid.uuid4().hex[:12]
+        snapshot_id = f"automation-input:{token}"
+        snapshot_root = self._automation_input_root / token
+        snapshot_root.mkdir(parents=True, exist_ok=False)
+        try:
+            for index, item in enumerate(chosen):
+                if item.source_id not in project.source_ids:
+                    raise ValueError("automation inputs must come from its project data pool")
+                source_root = self.source_path(item.source_id)
+                source_file = (source_root / item.path).resolve()
+                if source_root not in source_file.parents or not source_file.is_file():
+                    raise ValueError(f"unknown project file {item.path!r}")
+                destination = snapshot_root / f"{index:04d}" / Path(item.path).name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, destination)
+            saved = self.automation_store.update(
+                automation_id,
+                expected_revision=expected_revision,
+                changes={"source_id": snapshot_id, "selected_files": chosen},
+            )
+        except Exception:
+            shutil.rmtree(snapshot_root, ignore_errors=True)
+            raise
+        old_match = _AUTOMATION_INPUT_ID.fullmatch(automation.source_id or "")
+        if old_match:
+            shutil.rmtree(self._automation_input_root / old_match.group(1), ignore_errors=True)
+        return saved.model_dump(mode="json")
 
     def list_automations(self) -> list[dict[str, Any]]:
         assert self.automation_store is not None
@@ -3010,13 +3150,21 @@ class ControlPlane:
         match = _UPLOAD_ID.fullmatch(source_id)
         if match and self.upload_root is not None:
             candidates.insert(0, self.upload_root / match.group(1))
+        input_match = _AUTOMATION_INPUT_ID.fullmatch(source_id)
+        if input_match:
+            candidates.insert(0, self._automation_input_root / input_match.group(1))
         for candidate in candidates:
             resolved = candidate.resolve()
             if self._reserved_path(resolved):
                 continue
             in_source = any(root in resolved.parents for root in self.source_roots)
             in_upload = self.upload_root is not None and self.upload_root in resolved.parents
-            if (in_source or in_upload) and resolved.is_dir() and any(resolved.iterdir()):
+            in_automation_input = self._automation_input_root in resolved.parents
+            if (
+                (in_source or in_upload or in_automation_input)
+                and resolved.is_dir()
+                and any(resolved.iterdir())
+            ):
                 return resolved
         raise KeyError(source_id)
 
@@ -6001,6 +6149,73 @@ def create_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @app.get("/api/projects")
+    def projects() -> list[dict[str, Any]]:
+        return plane.list_projects()
+
+    @app.post("/api/projects")
+    def create_project(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.create_project(str(body["name"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/projects/{project_id}")
+    def project(project_id: str) -> dict[str, Any]:
+        try:
+            return plane.project(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/projects/{project_id}")
+    def update_project(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.update_project(
+                project_id,
+                expected_revision=int(body["expected_revision"]),
+                changes=dict(body.get("changes") or {}),
+            )
+        except ProjectRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/sources")
+    def add_project_source(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.add_project_source(project_id, str(body["source_id"]))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project or source") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/projects/{project_id}/data")
+    def project_data(project_id: str) -> list[dict[str, Any]]:
+        try:
+            return plane.project_data(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+
+    @app.get("/api/projects/{project_id}/automations")
+    def project_automations(project_id: str) -> list[dict[str, Any]]:
+        try:
+            return plane.project_automations(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+
+    @app.post("/api/projects/{project_id}/automations")
+    def create_project_automation(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.create_project_automation(project_id, str(body["name"]))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.get("/api/automations/{automation_id}")
     def automation(automation_id: str) -> dict[str, Any]:
         try:
@@ -6018,6 +6233,21 @@ def create_app(
                 automation_id,
                 expected_revision=int(body["expected_revision"]),
                 changes=changes,
+            )
+        except AutomationRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown automation") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/automations/{automation_id}/inputs")
+    def select_automation_inputs(automation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.select_automation_inputs(
+                automation_id,
+                expected_revision=int(body["expected_revision"]),
+                selections=list(body.get("selections") or []),
             )
         except AutomationRevisionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
