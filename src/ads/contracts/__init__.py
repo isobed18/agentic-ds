@@ -136,6 +136,7 @@ from ads.contracts.problem import (
     ProblemSupport,
     TaskType,
 )
+from ads.contracts.project import ProjectDefinition
 from ads.contracts.staging import (
     GraphPatch,
     LocalizedText,
@@ -247,6 +248,7 @@ __all__ = [
     "ProblemInvestigationAction",
     "ProblemInvestigationActionKind",
     "ProblemSupport",
+    "ProjectDefinition",
     "QualitySignals",
     "RelationshipCandidate",
     "RelationshipExplanation",
