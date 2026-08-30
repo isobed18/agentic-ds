@@ -22,6 +22,7 @@ class ProjectDefinition(FrozenModel):
     name: str = Field(min_length=1, max_length=120)
     revision: int = Field(default=1, ge=1)
     source_ids: tuple[str, ...] = ()
+    automation_ids: tuple[str, ...] = ()
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 

@@ -19,6 +19,7 @@ def test_project_survives_restart_and_keeps_revision_history(tmp_path) -> None:
 
     assert ProjectStore(root).get(created.project_id) == saved
     assert saved.source_ids == ("upload:customers",)
+    assert saved.automation_ids == ()
     revision_files = sorted((root / "revisions" / created.project_id).glob("*.json"))
     assert [path.name for path in revision_files] == ["000001.json", "000002.json"]
     assert json.loads(revision_files[0].read_text(encoding="utf-8"))["source_ids"] == []

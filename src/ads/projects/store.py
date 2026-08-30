@@ -59,7 +59,7 @@ class ProjectStore:
         expected_revision: int,
         changes: dict[str, Any],
     ) -> ProjectDefinition:
-        allowed = {"name", "source_ids"}
+        allowed = {"name", "source_ids", "automation_ids"}
         unknown = sorted(set(changes) - allowed)
         if unknown:
             raise ValueError(f"unsupported project fields: {', '.join(unknown)}")
@@ -89,6 +89,20 @@ class ProjectStore:
                 project_id,
                 expected_revision=current.revision,
                 changes={"source_ids": (*current.source_ids, normalized)},
+            )
+
+    def add_automation(self, project_id: str, *, automation_id: str) -> ProjectDefinition:
+        normalized = automation_id.strip()
+        if not normalized:
+            raise ValueError("automation id cannot be empty")
+        with self._lock:
+            current = self.get(project_id)
+            if normalized in current.automation_ids:
+                return current
+            return self.update(
+                project_id,
+                expected_revision=current.revision,
+                changes={"automation_ids": (*current.automation_ids, normalized)},
             )
 
     def delete(self, project_id: str) -> dict[str, int]:

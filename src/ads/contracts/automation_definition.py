@@ -15,6 +15,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+class AutomationInputFile(FrozenModel):
+    """One project-pool file selected for an automation's private snapshot."""
+
+    source_id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+
+
 class AutomationDefinition(FrozenModel):
     """The current saved editor state for one reusable automation.
 
@@ -30,6 +37,7 @@ class AutomationDefinition(FrozenModel):
     status: Literal["draft", "saved", "error"] = "draft"
     revision: int = Field(default=1, ge=1)
     source_id: str | None = None
+    selected_files: tuple[AutomationInputFile, ...] = ()
     pipeline_blueprint: PipelineBlueprint | None = None
     pipeline_layout: PipelineLayout = Field(default_factory=PipelineLayout)
     workspace_artifact_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -38,4 +46,4 @@ class AutomationDefinition(FrozenModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
-__all__ = ["AutomationDefinition"]
+__all__ = ["AutomationDefinition", "AutomationInputFile"]
