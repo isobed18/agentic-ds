@@ -568,6 +568,17 @@ def add_problem_branches(
     return expanded
 
 
+class PlannerGraphEditRejected(ValueError):
+    """Raised when a planner graph edit would leave the pipeline unable to run.
+
+    Named so the call sites can let the turn continue without its graph edit,
+    while an unregistered component id or a stale patch revision keeps failing
+    the way it always has. Those are the planner contradicting the catalog or
+    the client racing itself; this one is a proposal that was simply wrong, and
+    the answer that came with it is still worth showing (#193).
+    """
+
+
 def apply_planner_graph_operations(
     blueprint: PipelineBlueprint,
     *,
@@ -645,11 +656,63 @@ def apply_planner_graph_operations(
         }
     )
     result.validate_connections()
+    _reject_an_edit_that_breaks_the_graph(blueprint, result, additions or [])
     return result
+
+
+def _reject_an_edit_that_breaks_the_graph(
+    before: PipelineBlueprint,
+    after: PipelineBlueprint,
+    additions: list[dict[str, Any]],
+) -> None:
+    """Refuse a planner edit that leaves the graph unable to run (#193).
+
+    The write path validated less than the run path. `validate_connections`
+    only checks that the edges it was given are well-formed; whether every
+    enabled component's *required* inputs are actually connected is checked by
+    `validate_executable_blueprint`, and only on the way out -- accepting,
+    starting branches, running, compiling.
+
+    So the planner could instantiate a node with a required input, save no edge
+    feeding it, and have the write succeed. One turn asking for a target column
+    authored a `plan-validation` node that way, and every attempt to continue
+    then failed with "pipeline component 'plan-validation' is missing inputs:
+    integrated_table". Nothing told the person which node to fix, and there was
+    no undo.
+
+    The rule is that an edit may not make a runnable graph unrunnable -- not
+    that the result must be runnable outright. If the graph is already broken,
+    refusing edits would take away the only tool for repairing it: the planner
+    is the way back, so it has to stay usable on exactly the graphs that need
+    it most.
+    """
+    from ads.staging.blueprint import validate_executable_blueprint
+
+    try:
+        validate_executable_blueprint(before)
+    except ValueError:
+        return
+
+    try:
+        validate_executable_blueprint(after)
+    except ValueError as exc:
+        added = [str(raw.get("component_id") or "") for raw in additions]
+        blamed = (
+            f" This edit added {', '.join(repr(item) for item in added if item)}."
+            if added
+            else ""
+        )
+        raise PlannerGraphEditRejected(
+            f"this graph edit would leave the pipeline unable to run: {exc}.{blamed}"
+            " A component with a required input has to be added together with the"
+            " connection that feeds it; add a pipeline_connections entry for every"
+            " required port, or leave the component out."
+        ) from None
 
 
 __all__ = [
     "AutomationComponentDefinition",
+    "PlannerGraphEditRejected",
     "add_problem_branches",
     "apply_planner_graph_operations",
     "automation_component_catalog",

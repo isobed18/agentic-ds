@@ -450,3 +450,164 @@ def test_graph_rejects_cycles_and_multiple_connections_to_single_input() -> None
         cyclic.validate_connections()
 
     validate_executable_blueprint(blueprint)
+
+
+def test_planner_cannot_save_a_component_whose_required_input_is_unfed() -> None:
+    """#193: the write path validated less than the run path.
+
+    Asking the planner for a target column authored a `plan-validation` node
+    with no incoming `integrated_table` edge. The write succeeded -- only the
+    edges it was given were checked -- and every attempt to continue then
+    failed with a 400 the person could do nothing about.
+    """
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+
+    with pytest.raises(ValueError, match="would leave the pipeline unable to run"):
+        apply_planner_graph_operations(
+            baseline,
+            additions=[
+                {
+                    "catalog_id": "agent.plan_validation",
+                    "component_id": "plan-validation",
+                }
+            ],
+        )
+
+
+def test_the_refusal_names_the_node_and_says_what_it_needs() -> None:
+    """There has to be a way back, and it starts with saying what is wrong.
+
+    The old message named a component id and a port and nothing else. This one
+    is also what the corrective retry prompt gets to read, so it has to say
+    which node this turn added and what would make it valid.
+    """
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+
+    with pytest.raises(ValueError) as caught:
+        apply_planner_graph_operations(
+            baseline,
+            additions=[
+                {
+                    "catalog_id": "agent.plan_validation",
+                    "component_id": "plan-validation",
+                }
+            ],
+        )
+
+    message = str(caught.value)
+    assert "plan-validation" in message
+    assert "integrated_table" in message
+    assert "This edit added 'plan-validation'" in message
+    assert "pipeline_connections" in message
+
+
+def test_a_component_added_with_its_connections_is_still_allowed() -> None:
+    """The rule is about unfed required inputs, not about adding nodes.
+
+    This is what the turn in #193 should have authored: `plan-validation` needs
+    both an integrated table and a problem definition, and nothing in the
+    default graph produces the latter -- so a bare `plan-validation` was never
+    a valid thing to save, with or without a target column in mind.
+    """
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+    integration = next(
+        component
+        for component in baseline.components
+        if any(port.id == "integrated_table" for port in component.outputs)
+    )
+
+    revised = apply_planner_graph_operations(
+        baseline,
+        additions=[
+            {"catalog_id": "agent.define_problem", "component_id": "define-problem"},
+            {"catalog_id": "agent.plan_validation", "component_id": "plan-validation"},
+        ],
+        connections=[
+            {
+                "id": "planner:add:integration-to-define-problem",
+                "source_component": integration.id,
+                "source_port": "integrated_table",
+                "target_component": "define-problem",
+                "target_port": "integrated_table",
+            },
+            {
+                "id": "planner:add:integration-to-plan-validation",
+                "source_component": integration.id,
+                "source_port": "integrated_table",
+                "target_component": "plan-validation",
+                "target_port": "integrated_table",
+            },
+            {
+                "id": "planner:add:problem-to-plan-validation",
+                "source_component": "define-problem",
+                "source_port": "problem_definition",
+                "target_component": "plan-validation",
+                "target_port": "problem_definition",
+            },
+        ],
+    )
+
+    assert any(component.id == "plan-validation" for component in revised.components)
+    validate_executable_blueprint(revised)
+
+
+def test_disabling_an_upstream_node_that_others_require_is_refused() -> None:
+    """The second route to the same error, named in #193.
+
+    `incoming` only counts connections whose source is enabled, so switching
+    off an integration node while its dependents stay on produces the identical
+    "missing inputs" failure without adding anything.
+    """
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+    integration = next(
+        component
+        for component in baseline.components
+        if any(port.id == "integrated_table" for port in component.outputs)
+    )
+    dependents = [
+        connection.target_component
+        for connection in baseline.connections
+        if connection.source_component == integration.id
+    ]
+    if not dependents:
+        pytest.skip("the default graph has nothing downstream of integration")
+
+    with pytest.raises(ValueError, match="would leave the pipeline unable to run"):
+        apply_planner_graph_operations(baseline, disable_components=[integration.id])
+
+
+def test_an_already_broken_graph_can_still_be_edited_back_into_shape() -> None:
+    """The planner is the way back, so it must work on a graph that is broken.
+
+    Refusing every edit to an unrunnable graph would be the same trap the issue
+    reports, only from the other side: the automation reported in #193 was
+    already saved broken, and a rule requiring the *result* to be runnable
+    would have left it permanently uneditable.
+    """
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+    integration = next(
+        component
+        for component in baseline.components
+        if any(port.id == "integrated_table" for port in component.outputs)
+    )
+    broken = baseline.model_copy(
+        update={
+            "components": [
+                component.model_copy(update={"enabled": False})
+                if component.id == integration.id
+                else component
+                for component in baseline.components
+            ]
+        }
+    )
+    with pytest.raises(ValueError):
+        validate_executable_blueprint(broken)
+
+    # An edit that does not repair it is allowed through rather than refused --
+    # the graph was not runnable before this edit either, so the edit is not
+    # what broke it, and blocking here would remove the only route to a fix.
+    repaired = apply_planner_graph_operations(
+        broken, updates={integration.id: {"enabled": True}}
+    )
+
+    validate_executable_blueprint(repaired)

@@ -48,6 +48,7 @@ from ads.api.teams import (
 from ads.automation import (
     AutomationRevisionConflict,
     AutomationStore,
+    PlannerGraphEditRejected,
     add_problem_branches,
     apply_planner_graph_operations,
     automation_component_catalog,
@@ -1560,43 +1561,55 @@ class ControlPlane:
         if run_id:
             workspace = self._latest_staging_workspace(run_id)
             if workspace and workspace.pipeline_blueprint:
-                updated_blueprint = apply_planner_graph_operations(
-                    workspace.pipeline_blueprint,
-                    additions=[item.model_dump() for item in reply.pipeline_component_additions],
-                    connections=[item.model_dump() for item in reply.pipeline_connections],
-                    updates=result["pipeline_component_updates"],
-                    disable_components=result["pipeline_component_disables"],
-                    base_revision=workspace.pipeline_blueprint.revision,
-                )
-                valid_branches = [
-                    item.model_dump()
-                    for item in reply.problem_branches
-                    if item.target_column in known_columns
-                    and Metric(item.primary_metric) in METRICS_BY_TASK[TaskType(item.task_type)]
-                ]
-                updated_blueprint = add_problem_branches(
-                    updated_blueprint, valid_branches, configured_by="planner"
-                )
-                if updated_blueprint.revision > workspace.pipeline_blueprint.revision:
-                    patch_ref = self.store.put(
-                        GraphPatch(
-                            base_revision=workspace.pipeline_blueprint.revision,
-                            resulting_revision=updated_blueprint.revision,
-                            actor="planner",
-                            additions=[
-                                item.model_dump() for item in reply.pipeline_component_additions
-                            ],
-                            connections=[item.model_dump() for item in reply.pipeline_connections],
-                            updates=result["pipeline_component_updates"],
-                            disabled_components=result["pipeline_component_disables"],
-                            problem_branches=valid_branches,
-                        ),
-                        run_id=run_id,
-                        stage_exec_id="planner-graph-patch",
-                        name="graph_patch",
+                # #193: a refused edit costs its graph change, not the whole
+                # turn. The planner still answered, and the answer is often the
+                # part that was wanted; the graph simply stays as it was, which
+                # is the state that still runs.
+                try:
+                    updated_blueprint = apply_planner_graph_operations(
+                        workspace.pipeline_blueprint,
+                        additions=[
+                            item.model_dump() for item in reply.pipeline_component_additions
+                        ],
+                        connections=[item.model_dump() for item in reply.pipeline_connections],
+                        updates=result["pipeline_component_updates"],
+                        disable_components=result["pipeline_component_disables"],
+                        base_revision=workspace.pipeline_blueprint.revision,
                     )
-                    result["graph_patch_artifact_id"] = patch_ref.artifact_id
-                result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                    valid_branches = [
+                        item.model_dump()
+                        for item in reply.problem_branches
+                        if item.target_column in known_columns
+                        and Metric(item.primary_metric) in METRICS_BY_TASK[TaskType(item.task_type)]
+                    ]
+                    updated_blueprint = add_problem_branches(
+                        updated_blueprint, valid_branches, configured_by="planner"
+                    )
+                    if updated_blueprint.revision > workspace.pipeline_blueprint.revision:
+                        patch_ref = self.store.put(
+                            GraphPatch(
+                                base_revision=workspace.pipeline_blueprint.revision,
+                                resulting_revision=updated_blueprint.revision,
+                                actor="planner",
+                                additions=[
+                                    item.model_dump() for item in reply.pipeline_component_additions
+                                ],
+                                connections=[
+                                    item.model_dump()
+                                    for item in reply.pipeline_connections
+                                ],
+                                updates=result["pipeline_component_updates"],
+                                disabled_components=result["pipeline_component_disables"],
+                                problem_branches=valid_branches,
+                            ),
+                            run_id=run_id,
+                            stage_exec_id="planner-graph-patch",
+                            name="graph_patch",
+                        )
+                        result["graph_patch_artifact_id"] = patch_ref.artifact_id
+                    result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                except PlannerGraphEditRejected as exc:
+                    result["graph_edit_rejected"] = str(exc)
         # Applied here rather than returned for the UI to apply, so the planner
         # route and the direct route end in the same place. A directive the user
         # never sees applied is the failure mode worth avoiding: they asked the
@@ -3105,15 +3118,21 @@ class ControlPlane:
             graph_updates = raw_result.get("pipeline_component_updates") or {}
             graph_disables = raw_result.get("pipeline_component_disables") or []
             if workspace and workspace.pipeline_blueprint and (graph_updates or graph_disables):
-                updated_blueprint = apply_planner_graph_operations(
-                    workspace.pipeline_blueprint,
-                    additions=[],
-                    connections=[],
-                    updates=graph_updates,
-                    disable_components=graph_disables,
-                    base_revision=workspace.pipeline_blueprint.revision,
-                )
-                result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                # #193: the same refusal here would fail the whole staging plan
+                # over a disable the planner should not have asked for. Keep the
+                # plan and drop the edit; the default graph it started from runs.
+                try:
+                    updated_blueprint = apply_planner_graph_operations(
+                        workspace.pipeline_blueprint,
+                        additions=[],
+                        connections=[],
+                        updates=graph_updates,
+                        disable_components=graph_disables,
+                        base_revision=workspace.pipeline_blueprint.revision,
+                    )
+                    result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                except PlannerGraphEditRejected as exc:
+                    result["graph_edit_rejected"] = str(exc)
             result["model"] = response.model
             result["latency_s"] = response.latency_s
             self._persist_staging_workspace(runtime, planner_result=result)
