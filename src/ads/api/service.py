@@ -3078,6 +3078,12 @@ class ControlPlane:
                 if (
                     child.is_dir()
                     and not self._reserved_path(child)
+                    # Automation selections are copied to an immutable private
+                    # snapshot so later project uploads cannot alter old runs.
+                    # When ``data/`` is a source root, that implementation
+                    # directory is also its direct child; never offer it as a
+                    # second user-visible dataset.
+                    and not self._is_automation_input_path(child)
                     and self._holds_loadable_files(child)
                 ):
                     sources.append({"source_id": child.name, "label": child.name})
@@ -3221,7 +3227,7 @@ class ControlPlane:
                 continue
             in_source = any(root in resolved.parents for root in self.source_roots)
             in_upload = self.upload_root is not None and self.upload_root in resolved.parents
-            in_automation_input = self._automation_input_root in resolved.parents
+            in_automation_input = self._is_automation_input_path(resolved)
             if (
                 (in_source or in_upload or in_automation_input)
                 and resolved.is_dir()
@@ -3229,6 +3235,11 @@ class ControlPlane:
             ):
                 return resolved
         raise KeyError(source_id)
+
+    def _is_automation_input_path(self, path: Path) -> bool:
+        resolved = path.resolve()
+        root = self._automation_input_root.resolve()
+        return resolved == root or root in resolved.parents
 
     @staticmethod
     def _holds_loadable_files(directory: Path) -> bool:
