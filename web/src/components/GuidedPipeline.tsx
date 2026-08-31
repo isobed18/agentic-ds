@@ -191,7 +191,7 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
     {/* #97: the planner is consultable while the pipeline runs and while a gate
         waits on a human, not only during staging. Docked over the right edge,
         above the plan/stage details panel, with its own close control. */}
-    {plannerOpen && <div className="fixed inset-y-[58px] right-0 z-30 flex"><PlannerPanel runId={runId} open onToggle={() => setPlannerOpen(false)} starterPrompts={[t("What is this gate asking?"), t("What do you recommend here?"), t("Explain the current stage.")]} /></div>}
+    {plannerOpen && <div className="fixed inset-y-[58px] right-0 z-30 flex"><PlannerPanel runId={runId} sourceId={profile.source_id} open onToggle={() => setPlannerOpen(false)} starterPrompts={[t("What columns are in this data?"), t("Rank the best target columns and ML problems."), t("Which relationships matter for prediction?")]} /></div>}
 
     {selected && <aside data-no-pan className="fixed inset-y-[58px] right-0 z-20 flex w-[min(440px,94vw)] flex-col border-l border-line bg-surface shadow-2xl">
       <header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(selected === "summary" ? "Accepted ML plan" : "Base ML pipeline")}</p><h2 className="mt-1 text-base font-semibold text-ink">{t(selected === "summary" ? "What will run" : groups.find((group) => group.id === selected)?.title ?? "Stage details")}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" onClick={() => setSelected(null)}>×</button></header>

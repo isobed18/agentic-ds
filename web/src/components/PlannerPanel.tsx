@@ -11,6 +11,15 @@ import { t } from "../lib/i18n";
 import { Badge, Spinner, cx } from "./ui";
 
 interface Message { role: "assistant" | "user"; text: string; at: string }
+interface ProblemRecommendation {
+  rank: number;
+  problem_title: string;
+  target_column: string;
+  task_type: string;
+  primary_metric: string;
+  evidence: string[];
+  caveats: string[];
+}
 
 const RULES = [
   "Never expose raw rows",
@@ -38,11 +47,12 @@ export function PlannerPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [problemRecommendations, setProblemRecommendations] = useState<ProblemRecommendation[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
-    if (!runId) { setMessages([]); setRecommendations([]); return; }
+    if (!runId) { setMessages([]); setRecommendations([]); setProblemRecommendations([]); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loadWorkspace = async () => {
@@ -103,6 +113,21 @@ export function PlannerPanel({
       if (retries && typeof retries === "object" && !Array.isArray(retries)) {
         for (const [stage, value] of Object.entries(retries)) proposed.push(`${stage} retries → ${String(value)}`);
       }
+      const ranked = Array.isArray(res.problem_recommendations)
+        ? res.problem_recommendations
+            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+            .map((item) => ({
+              rank: Number(item.rank),
+              problem_title: String(item.problem_title ?? ""),
+              target_column: String(item.target_column ?? ""),
+              task_type: String(item.task_type ?? ""),
+              primary_metric: String(item.primary_metric ?? ""),
+              evidence: Array.isArray(item.evidence) ? item.evidence.map(String) : [],
+              caveats: Array.isArray(item.caveats) ? item.caveats.map(String) : [],
+            }))
+            .filter((item) => item.target_column && item.problem_title)
+        : [];
+      setProblemRecommendations(ranked);
       setRecommendations(proposed);
       setMessages((m) => [...m, { role: "assistant", text: String(reply), at: now }]);
       if (runId) {
@@ -183,12 +208,27 @@ export function PlannerPanel({
           </section>
         )}
 
+        {problemRecommendations.length > 0 && (
+          <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
+            <p className="mb-2 text-[11px] font-semibold text-ink">{t("Ranked ML opportunities")}</p>
+            <ol className="space-y-2">
+              {problemRecommendations.map((item) => (
+                <li key={`${item.rank}:${item.target_column}`} className="rounded-lg bg-surface px-2.5 py-2 text-[10px] text-ink-soft">
+                  <div className="flex items-start gap-2"><Badge tone="brand">#{item.rank}</Badge><div className="min-w-0"><p className="font-semibold text-ink">{item.problem_title}</p><p className="font-mono text-[9px] text-ink-mute">{item.target_column} · {item.task_type} · {item.primary_metric}</p></div></div>
+                  <ul className="mt-2 space-y-1">{item.evidence.map((line) => <li key={line}>· {line}</li>)}</ul>
+                  {item.caveats.map((line) => <p key={line} className="mt-1 text-warn-700">! {line}</p>)}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
         {messages.length === 0 && (
           <div className="space-y-2.5">
             <p className="rounded-lg bg-brand-50 px-3 py-2.5 text-xs leading-relaxed text-ink-soft">
-              {sourceId && !runId
+              {sourceId
                 ? t("Ask what these files describe, how documents and tables connect, what may be unreliable, or what the source could answer. The local planner sees measured summaries and bounded PDF excerpts — never raw table rows.")
-                : t("Ask about the current stage, request a different approach, or change pipeline preferences. The planner sees measured summaries — never raw rows.")}
+                : t("Ask about columns, missingness, relationships, target candidates, ML problems, or the current stage. The planner sees measured summaries — never raw rows.")}
             </p>
             {starterPrompts.length > 0 && (
               <div className="flex flex-wrap gap-1.5">

@@ -329,6 +329,34 @@ class _PlannerReport(BaseModel):
     verification_questions: list[_PlannerLocalizedText] = Field(default_factory=list)
 
 
+class _PlannerProblemRecommendation(BaseModel):
+    """A measured, non-mutating shortlist item for ordinary planner advice."""
+
+    rank: int = Field(ge=1, le=5)
+    problem_title: str = Field(min_length=1, max_length=200)
+    target_column: str = Field(min_length=1, max_length=500)
+    task_type: Literal[
+        "binary_classification",
+        "multiclass_classification",
+        "regression",
+        "anomaly_detection",
+    ]
+    primary_metric: Literal[
+        "roc_auc",
+        "average_precision",
+        "f1",
+        "balanced_accuracy",
+        "accuracy",
+        "rmse",
+        "mae",
+        "r2",
+        "mape",
+        "silhouette",
+    ]
+    evidence: list[str] = Field(min_length=1, max_length=4)
+    caveats: list[str] = Field(default_factory=list, max_length=3)
+
+
 class _PlannerProblemBranch(BaseModel):
     branch_id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$", max_length=40)
     title: str = Field(min_length=1, max_length=200)
@@ -384,8 +412,6 @@ class _PlannerChatReply(BaseModel):
     auto_proceed_stages: list[str] = Field(default_factory=list)
     max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
     focus_stage: str | None = None
-    proposed_decision: Literal["approve", "retry", "abort"] | None = None
-    decision_instructions: list[str] = Field(default_factory=list)
     #: stage_id -> instructions the planner is passing on to that stage's agent.
     #: This is the indirect route: a person describes what they want to the
     #: planner, and the planner decides which stage it belongs to. The direct
@@ -399,6 +425,9 @@ class _PlannerChatReply(BaseModel):
     )
     pipeline_connections: list[_PlannerConnection] = Field(default_factory=list, max_length=24)
     pipeline_component_disables: list[str] = Field(default_factory=list, max_length=12)
+    problem_recommendations: list[_PlannerProblemRecommendation] = Field(
+        default_factory=list, max_length=5
+    )
     problem_branches: list[_PlannerProblemBranch] = Field(default_factory=list, max_length=3)
 
 
@@ -1172,6 +1201,18 @@ class ControlPlane:
             llm.close()
             raise ValueError("Planner chat needs the local Ollama service to be running")
 
+        run_progress: dict[str, Any] | None = None
+        if run_id:
+            try:
+                run_progress = self.progress(run_id)
+            except KeyError:
+                run_progress = {"run_id": run_id, "status": "unknown"}
+        if not source_id and run_progress:
+            inferred = run_progress.get("source_id") or run_progress.get("dataset")
+            if not inferred and isinstance(run_progress.get("configuration"), dict):
+                inferred = run_progress["configuration"].get("source_id")
+            source_id = str(inferred) if inferred else None
+
         safe_source: dict[str, Any] | None = None
         document_context: list[dict[str, Any]] | None = None
         if source_id:
@@ -1188,13 +1229,12 @@ class ControlPlane:
                     document_context = pdf_prompt_context(documents, message)
         run_context: dict[str, Any] | None = None
         if run_id:
-            try:
-                progress = self.progress(run_id)
+            if run_progress and run_progress.get("status") != "unknown":
                 run_context = {
                     "run_id": run_id,
-                    "status": progress.get("status"),
-                    "current_stage": progress.get("current_stage"),
-                    "events": progress.get("events", []),
+                    "status": run_progress.get("status"),
+                    "current_stage": run_progress.get("current_stage"),
+                    "events": run_progress.get("events", []),
                     "gate_decisions": self.gate_decisions(run_id),
                     "attempts": [
                         {
@@ -1203,10 +1243,10 @@ class ControlPlane:
                             "verdict": item.get("verdict"),
                             "error": item.get("error"),
                         }
-                        for item in progress.get("attempts", [])
+                        for item in run_progress.get("attempts", [])
                     ],
                 }
-            except KeyError:
+            else:
                 run_context = {"run_id": run_id, "status": "unknown"}
         stage_context: dict[str, Any] | None = None
         if run_id and stage_id:
@@ -1228,6 +1268,11 @@ class ControlPlane:
                 }
             except KeyError:
                 stage_context = {"stage_id": stage_id, "status": "unknown"}
+
+        gate_action_available = bool(
+            (run_context or {}).get("status") == "awaiting_human"
+            or ((stage_context or {}).get("human_view") or {}).get("needs_human")
+        )
 
         # The pre-pipeline planner needs one coherent understanding surface,
         # not whichever half of intake/schema discovery happens to be selected
@@ -1289,9 +1334,17 @@ class ControlPlane:
             "You are the Planner/Orchestrator control layer for a graph-based data and ML "
             "automation workspace. Help a human understand unfamiliar files, build a valid "
             "automation graph, and configure its execution. "
+            "Answer direct schema questions first from safe_source_profile: name exact tables "
+            "and columns and report measured types, missingness, uniqueness, sensitivity, and "
+            "candidate-target flags without inventing values or exposing raw rows. When asked "
+            "what to predict or which ML problems are worthwhile, return a ranked, evidence-led "
+            "shortlist in problem_recommendations and summarize it in reply. Recommendations "
+            "do not modify the graph. Use problem_branches only when the human explicitly asks "
+            "to create parallel executable branches. The prompt states gate_action_available; "
+            "when it is false, do not steer the human toward approve, retry, continue, stop, or "
+            "abort. Discuss a gate action only when it is true and the human asks about that gate. "
             "Be concise, explain trade-offs, and never claim a change was applied unless it is "
-            "present in configuration_patch. Only propose a gate decision when the run is "
-            "actually awaiting human input. Configuration keys you may set are: base_table, "
+            "present in configuration_patch. Configuration keys you may set are: base_table, "
             "base_grain, target_column, task_type, primary_metric, problem_title, "
             "problem_description, excluded_columns, validation_strategy, n_folds, test_size, "
             "group_column, time_column, holdout_cutoff, candidate_limit, instructions. "
@@ -1331,8 +1384,8 @@ class ControlPlane:
             "execution to auto or pause_after, gate_handler to human or planner, and "
             "max_retries from 0 to 9. Never invent catalog ids, component ids, ports, setting "
             "keys, executable code, or data types. Hard safety gates cannot be weakened. "
-            "When the human explicitly asks to compare multiple valid ML "
-            "problems, return up to three problem_branches. Each branch must use an existing "
+            "When the human explicitly asks to create multiple executable ML "
+            "branches, return up to three problem_branches. Each branch must use an existing "
             "target column, a compatible task_type and primary_metric. The host expands each "
             "branch into fresh problem, validation, EDA, leakage, feature, split, training, "
             "evaluation and report nodes so agents do not share branch-specific state. Do not "
@@ -1350,6 +1403,7 @@ class ControlPlane:
                 "run_context": run_context,
                 "selected_stage_evidence": stage_context,
                 "automation_graph": automation_context,
+                "gate_action_available": gate_action_available,
             },
             default=str,
         )
@@ -1404,6 +1458,20 @@ class ControlPlane:
             for stage, retries in reply.max_retries_by_stage.items()
             if stage in _PIPELINE_STAGES
         }
+        known_columns = {
+            column["name"]
+            for table in (safe_source or {}).get("tables", [])
+            for column in table.get("columns", [])
+        }
+        seen_targets: set[str] = set()
+        result["problem_recommendations"] = []
+        for item in sorted(reply.problem_recommendations, key=lambda candidate: candidate.rank):
+            if item.target_column in seen_targets or item.target_column not in known_columns:
+                continue
+            if Metric(item.primary_metric) not in METRICS_BY_TASK[TaskType(item.task_type)]:
+                continue
+            result["problem_recommendations"].append(item.model_dump())
+            seen_targets.add(item.target_column)
         if run_id:
             workspace = self._latest_staging_workspace(run_id)
             if workspace and workspace.pipeline_blueprint:
@@ -1415,11 +1483,6 @@ class ControlPlane:
                     disable_components=result["pipeline_component_disables"],
                     base_revision=workspace.pipeline_blueprint.revision,
                 )
-                known_columns = {
-                    column["name"]
-                    for table in (safe_source or {}).get("tables", [])
-                    for column in table.get("columns", [])
-                }
                 valid_branches = [
                     item.model_dump()
                     for item in reply.problem_branches
