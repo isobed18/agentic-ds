@@ -354,6 +354,14 @@ const TR: Record<string, string> = {
   "Keep answer leakage blocked": "Cevap sızıntısını engelli tut",
   "Ask about the current stage, request a different approach, or change pipeline preferences. The planner sees measured summaries — never raw rows.":
     "Mevcut aşamayı sorun, farklı bir yaklaşım isteyin veya boru hattı tercihlerini değiştirin. Planlayıcı ölçülen özetleri görür; ham satırları görmez.",
+  "Ask about columns, missingness, relationships, target candidates, ML problems, or the current stage. The planner sees measured summaries — never raw rows.":
+    "Sütunları, eksikliği, ilişkileri, hedef adaylarını, ML problemlerini veya mevcut aşamayı sorun. Planlayıcı ölçülen özetleri görür; ham satırları görmez.",
+  "What columns are in this data?": "Bu veride hangi sütunlar var?",
+  "Rank the best target columns and ML problems.":
+    "En iyi hedef sütunları ve ML problemlerini sırala.",
+  "Which relationships matter for prediction?":
+    "Tahmin için hangi ilişkiler önemli?",
+  "Ranked ML opportunities": "Sıralanmış ML fırsatları",
   "Staging failed.": "Hazırlık başarısız oldu.",
   "saved": "kaydedildi",
   "Understanding snapshot": "Anlama özeti",

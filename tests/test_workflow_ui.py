@@ -429,6 +429,77 @@ def test_planner_chat_can_configure_and_remember_rules_without_raw_rows(
     assert "Reference guidance only" in fake.calls[0]["system"]
 
 
+def test_ml_planner_recovers_source_context_and_ranks_problems_without_gate_actions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#190: an ML-workspace chat must know the schema even when its mount
+    supplies only a run id, and ordinary recommendations must not be shaped as
+    approve/retry/abort decisions or silently mutate the graph."""
+    fake = _PlannerFakeLLM(
+        {
+            "reply": "1. Predict churned; it is a measured binary candidate.",
+            "problem_recommendations": [
+                {
+                    "rank": 1,
+                    "problem_title": "Predict churn",
+                    "target_column": "churned",
+                    "task_type": "binary_classification",
+                    "primary_metric": "roc_auc",
+                    "evidence": ["The profile marks churned as a candidate target."],
+                    "caveats": ["Confirm that churn is known after prediction time."],
+                },
+                {
+                    "rank": 2,
+                    "problem_title": "Invented target",
+                    "target_column": "not_a_real_column",
+                    "task_type": "regression",
+                    "primary_metric": "rmse",
+                    "evidence": ["No measured evidence."],
+                    "caveats": [],
+                },
+            ],
+        }
+    )
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: fake
+    monkeypatch.setattr(
+        plane,
+        "progress",
+        lambda run_id: {
+            "run_id": run_id,
+            "source_id": "safe-demo",
+            "status": "staged",
+            "current_stage": None,
+            "events": [],
+            "attempts": [],
+        },
+    )
+    monkeypatch.setattr(plane, "gate_decisions", lambda run_id: [])
+
+    result = plane.planner_chat(
+        message="Rank the best target columns and ML problems for this data.",
+        run_id="staged-run",
+    )
+
+    prompt = json.loads(fake.calls[0]["prompt"])
+    column_names = {
+        column["name"]
+        for table in prompt["safe_source_profile"]["tables"]
+        for column in table["columns"]
+    }
+    schema_properties = fake.calls[0]["schema"]["properties"]
+    assert column_names == {"customer_id", "email", "age", "churned"}
+    assert "secret-one@example.test" not in fake.calls[0]["prompt"]
+    assert prompt["gate_action_available"] is False
+    assert "problem_recommendations" in schema_properties
+    assert "proposed_decision" not in schema_properties
+    assert "decision_instructions" not in schema_properties
+    assert [item["target_column"] for item in result["problem_recommendations"]] == [
+        "churned"
+    ]
+    assert "Answer direct schema questions first" in fake.calls[0]["system"]
+
+
 def test_pre_pipeline_planner_receives_intake_and_schema_discovery_together(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -166,8 +166,9 @@ async function autoLayout(nodes: FlowNode[], edges: Edge[]): Promise<FlowNode[]>
   return nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position }));
 }
 
-export function PipelineBuilder({ runId = null, baseArtifactId = null, blueprint, layout, componentOutputs = [], onSaved, onChange, onExitAdvanced }: {
+export function PipelineBuilder({ runId = null, sourceId = null, baseArtifactId = null, blueprint, layout, componentOutputs = [], onSaved, onChange, onExitAdvanced }: {
   runId?: string | null;
+  sourceId?: string | null;
   baseArtifactId?: string | null;
   blueprint: PipelineBlueprint;
   layout?: PipelineLayout;
@@ -343,7 +344,7 @@ export function PipelineBuilder({ runId = null, baseArtifactId = null, blueprint
 
       {catalogOpen && <Drawer side="left" title={t("Add component")} onClose={() => setCatalogOpen(false)}><ComponentLibrary catalog={catalog} onAdd={addComponent} /></Drawer>}
       {selectedComponent && <Drawer side="right" title={t("Component inspector")} onClose={() => setSelected(null)}><ComponentInspector component={selectedComponent} blueprint={draft} engines={engines} outputs={componentOutputs.filter((output) => output.component_id === selectedComponent.id)} onRemove={() => removeComponent(selectedComponent.id)} onChange={(update) => updateComponent(selectedComponent.id, update)} /></Drawer>}
-      {plannerOpen && <div className="absolute inset-y-0 right-0 z-40 flex w-[min(380px,92vw)] pt-[53px] shadow-2xl"><PlannerPanel runId={runId} open onToggle={() => setPlannerOpen(false)} /></div>}
+      {plannerOpen && <div className="absolute inset-y-0 right-0 z-40 flex w-[min(380px,92vw)] pt-[53px] shadow-2xl"><PlannerPanel runId={runId} sourceId={sourceId} open onToggle={() => setPlannerOpen(false)} starterPrompts={[t("What columns are in this data?"), t("Rank the best target columns and ML problems."), t("Which relationships matter for prediction?")]} /></div>}
     </section>
   );
 }

@@ -51,4 +51,8 @@ describe("the project-first journey (#157, #165)", () => {
     expect(AUTOMATION_SOURCE).toContain("<ApprovalCard");
     expect(AUTOMATION_SOURCE).toContain("pendingQuestion?.human_prompt");
   });
+
+  it("passes the selected source into the advanced planner (#190)", () => {
+    expect(AUTOMATION_SOURCE).toContain("<PipelineBuilder runId={runId} sourceId={sourceId}");
+  });
 });

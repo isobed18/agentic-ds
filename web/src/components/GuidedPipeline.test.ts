@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import SOURCE from "./GuidedPipeline.tsx?raw";
+import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
+import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
 
 describe("planner access in the guided pipeline (#97)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {
@@ -20,6 +22,17 @@ describe("planner access in the guided pipeline (#97)", () => {
     expect(SOURCE).toContain('onClick={() => setPlannerOpen(true)}');
     expect(SOURCE).toContain('t("Chat with Planner")');
     expect(SOURCE).toContain("plannerOpen &&");
+  });
+
+  it("gives every ML planner mount the source and data-first prompts (#190)", () => {
+    expect(SOURCE).toContain("sourceId={profile.source_id}");
+    expect(SOURCE).toContain('t("What columns are in this data?")');
+    expect(SOURCE).toContain('t("Rank the best target columns and ML problems.")');
+    expect(SOURCE).not.toContain('t("What is this gate asking?")');
+    expect(BUILDER_SOURCE).toContain("sourceId?: string | null");
+    expect(BUILDER_SOURCE).toContain("<PlannerPanel runId={runId} sourceId={sourceId}");
+    expect(PANEL_SOURCE).toContain("problem_recommendations");
+    expect(PANEL_SOURCE).toContain('t("Ranked ML opportunities")');
   });
 });
 
