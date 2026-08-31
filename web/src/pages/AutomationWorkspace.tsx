@@ -155,7 +155,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
 
   async function acceptPlan() {
     if (!runId || !workspace || busy) return; setBusy(true); setError(null);
-    try { applyWorkspace(await api.acceptStagingPlan(runId, workspace.artifact_id)); setAdvancedGraph(false); }
+    try { applyWorkspace(await api.acceptStagingPlanSafely(runId, workspace.artifact_id)); setAdvancedGraph(false); }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 

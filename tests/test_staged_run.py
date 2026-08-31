@@ -529,6 +529,66 @@ class TestContinuingKeepsTheWork:
 
 
 class TestConfiguringAndDiscarding:
+    def test_a_moved_workspace_is_a_conflict_not_a_bad_request(
+        self, client: TestClient
+    ) -> None:
+        """#167: accepting against a stale snapshot is recoverable; say so.
+
+        The client polls the workspace every 2200ms, so its base artifact id is
+        a moving value and any snapshot written between the last tick and the
+        POST invalidates it. That is nobody's mistake and the same request
+        against the current snapshot succeeds, but it used to arrive as 400 --
+        indistinguishable from a genuinely malformed request without matching
+        on the message text, which is why the client could not retry it.
+        """
+        # A proposed plan, so the final accept has something to freeze and the
+        # recovery is proved all the way through rather than only to the 409.
+        client.plane.llm_factory = lambda: _PlannerLLM()  # type: ignore[attr-defined]
+        run_id = _stage(client)
+        stale = client.get(f"/api/runs/{run_id}/staging").json()
+
+        # Move the workspace, exactly as a runner writing a newer snapshot does.
+        moved = client.put(
+            f"/api/runs/{run_id}/staging/pipeline",
+            json={
+                "base_artifact_id": stale["artifact_id"],
+                "blueprint": stale["pipeline_blueprint"],
+            },
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["artifact_id"] != stale["artifact_id"]
+
+        conflict = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": stale["artifact_id"]},
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert "the staging workspace changed" in conflict.json()["detail"]
+
+        # The other two guards moved together, or a client would have to know
+        # which routes it may retry and which it may not.
+        for path, body in (
+            ("pipeline", {"blueprint": stale["pipeline_blueprint"]}),
+            ("layout", {"layout": {"nodes": []}}),
+        ):
+            stale_write = client.put(
+                f"/api/runs/{run_id}/staging/{path}",
+                json={"base_artifact_id": stale["artifact_id"], **body},
+            )
+            assert stale_write.status_code == 409, stale_write.text
+
+        # The distinction is the point: a malformed request is still a 400, so
+        # 409 means "re-read and try again" and nothing else.
+        malformed = client.post(f"/api/runs/{run_id}/staging/plan/accept", json={})
+        assert malformed.status_code == 400, malformed.text
+
+        # And the accept goes through against the snapshot that is current.
+        accepted = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": moved.json()["artifact_id"]},
+        )
+        assert accepted.status_code == 200, accepted.text
+
     def test_manual_layout_is_durable_and_does_not_change_execution_fingerprint(
         self, client: TestClient
     ) -> None:
@@ -576,7 +636,10 @@ class TestConfiguringAndDiscarding:
 
         stale = client.put(f"/api/runs/{run_id}/staging/layout", json=body)
 
-        assert stale.status_code == 400
+        # #167: a moved workspace is a conflict, not a malformed request. It
+        # was a 400 here, which a client could only tell apart from a genuine
+        # 400 by matching on the message text.
+        assert stale.status_code == 409
         assert "changed" in stale.json()["detail"]
 
     def test_pipeline_preferences_are_persisted_as_a_new_staging_snapshot(
@@ -653,7 +716,10 @@ class TestConfiguringAndDiscarding:
 
         stale = client.put(f"/api/runs/{run_id}/staging/pipeline", json=body)
 
-        assert stale.status_code == 400
+        # #167: a moved workspace is a conflict, not a malformed request. It
+        # was a 400 here, which a client could only tell apart from a genuine
+        # 400 by matching on the message text.
+        assert stale.status_code == 409
         assert "changed" in stale.json()["detail"]
 
     def test_the_configuration_can_be_amended_before_it_starts(self, client: TestClient) -> None:
