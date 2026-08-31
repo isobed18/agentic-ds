@@ -13,6 +13,68 @@ import { api, type GateDecision } from "../lib/api";
 import { reasonLabel } from "../lib/status";
 import { Badge, cx } from "./ui";
 
+/**
+ * The gate card was the one screen that stayed English while the rest of the
+ * product was Turkish (#192).
+ *
+ * Its wording is built as English literals on the server
+ * (`ads/gates/evaluator.py`) and the card printed those strings raw. The server
+ * cannot translate them either: the prompt is built inside the run's worker,
+ * with no request and therefore no active language.
+ *
+ * So the card translates from what is machine-readable rather than from prose
+ * -- `option_id` and `question_kind`, both stable -- and falls back to the
+ * server's own text for anything it does not recognise. An option added on the
+ * server still renders; it just renders in English until a key is added here.
+ */
+function optionText(option: { option_id: string; label: string; consequence: string }, stageId: string) {
+  switch (option.option_id) {
+    case "approve":
+      return {
+        label: t("Approve and continue"),
+        consequence: t("Accept this stage's output as-is and proceed to the next stage."),
+        downstream: undefined as string | undefined,
+      };
+    case "retry":
+      return {
+        label: t("Send back for rework"),
+        consequence: t("Re-run this stage with your instructions attached."),
+        downstream: t("Re-runs {stage} and everything after it.", { stage: stageId }),
+      };
+    case "abort":
+      return {
+        label: t("Stop the run"),
+        consequence: t("Halt here. Completed artifacts are kept and the run can be resumed."),
+        downstream: undefined as string | undefined,
+      };
+    case "review_first":
+      return {
+        label: t("Inspect artifacts before deciding"),
+        consequence: t(
+          "Pause without committing. This stage discards work that cannot be rebuilt automatically.",
+        ),
+        downstream: undefined as string | undefined,
+      };
+    default:
+      return { label: option.label, consequence: option.consequence, downstream: undefined };
+  }
+}
+
+function questionText(prompt: { question: string; question_kind?: string; stage_id: string }): string {
+  if (prompt.question_kind === "checkpoint") {
+    return t(
+      "Stage {stage} is a required checkpoint. Review the output and choose how to proceed.",
+      { stage: prompt.stage_id },
+    );
+  }
+  if (prompt.question_kind === "problem") {
+    return t("Stage {stage} stopped because a problem was detected. Your decision is needed.", {
+      stage: prompt.stage_id,
+    });
+  }
+  return prompt.question;
+}
+
 export function ApprovalCard({
   runId, decision, onAnswered,
 }: { runId: string; decision: GateDecision; onAnswered: () => void }) {
@@ -61,11 +123,13 @@ export function ApprovalCard({
           {t("Recorded. The run is resuming — this card clears on the next refresh.")}
         </p>
       )}
-      <h3 className="text-sm font-semibold text-ink">{prompt.question}</h3>
+      <h3 className="text-sm font-semibold text-ink">{questionText(prompt)}</h3>
       <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-ink-mute">{prompt.context_summary}</p>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        {prompt.options.map((o) => (
+        {prompt.options.map((o) => {
+          const metin = optionText(o, prompt.stage_id);
+          return (
           <button
             key={o.option_id}
             onClick={() => void answer(o.option_id)}
@@ -76,17 +140,22 @@ export function ApprovalCard({
             )}
           >
             <span className="flex items-baseline gap-1.5">
-              <span className="text-sm font-medium text-ink">{o.label}</span>
+              <span className="text-sm font-medium text-ink">{metin.label}</span>
               {o.recommended && (
                 <span className="rounded bg-brand-500/15 px-1 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-brand-700">
                   {t("suggested")}
                 </span>
               )}
             </span>
-            <span className="mt-0.5 block text-[11px] leading-snug text-ink-mute">{o.consequence}</span>
-            {o.downstream_effect && <span className="mt-1 block text-[11px] text-warn-700">{o.downstream_effect}</span>}
+            <span className="mt-0.5 block text-[11px] leading-snug text-ink-mute">{metin.consequence}</span>
+            {o.downstream_effect && (
+              <span className="mt-1 block text-[11px] text-warn-700">
+                {metin.downstream ?? o.downstream_effect}
+              </span>
+            )}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {prompt.allows_free_text !== false && (

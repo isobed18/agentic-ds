@@ -418,6 +418,16 @@ class TestHumanPrompt:
         options = {o.option_id for o in decision.human_prompt.options}
         assert {"approve", "retry", "abort"} <= options
 
+    def test_prompt_names_its_question_kind(self) -> None:
+        """The card cannot translate the question by matching English prose.
+
+        The wording is built here, inside the run's worker, where no request
+        language exists -- so the server cannot translate it either. It reports
+        WHICH question this is and the card renders the Turkish (#192).
+        """
+        checkpoint = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
+        assert checkpoint.human_prompt.question_kind == "checkpoint"
+
     def test_escalation_never_auto_decides(self) -> None:
         decision = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
         assert decision.human_prompt.default_option is None

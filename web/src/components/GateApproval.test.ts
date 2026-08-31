@@ -39,10 +39,76 @@ describe("the human gate escalation card (#81)", () => {
 
     expect(markup).toContain("SCHEMA_KEEPS_FAILING_QUESTION");
     expect(markup).toContain("THREE_IDENTICAL_FAILURES_CONTEXT");
-    expect(markup).toContain("APPROVE_ANYWAY");
+    // "approve" is an option_id the card knows, so it now renders the Turkish
+    // label rather than whatever the server called it (#192). The other two
+    // ids here are not ones the server actually sends -- it sends "retry" and
+    // "abort" -- so they exercise the fallback and still show their own text.
+    expect(markup).toContain("Onayla ve devam et");
     expect(markup).toContain("SEND_BACK_FOR_REWORK");
     expect(markup).toContain("STOP_THE_RUN");
     // Every option is a real, enabled button wired to answer the gate.
     expect((markup.match(/<button/g) ?? []).length).toBe(3);
+  });
+});
+
+
+describe("the gate decision card in Turkish (#192)", () => {
+  function render(prompt: Partial<GateDecision["human_prompt"]> & object) {
+    const decision = {
+      stage_id: "evaluation",
+      attempt: 1,
+      verdict: "escalate",
+      reason_code: "stage_risk_requires_review",
+      triggered_rules: [],
+      human_prompt: { stage_id: "evaluation", question: "RAW", context_summary: "", options: [], ...prompt },
+    } as unknown as GateDecision;
+    return renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+  }
+
+  it("translates the options the server actually sends", () => {
+    // These four ids are the ones ads/gates/evaluator.py emits. Their English
+    // wording is built inside the run worker, where no request language
+    // exists, so the card has to translate from the id.
+    const markup = render({
+      options: [
+        { option_id: "approve", label: "EN_APPROVE", consequence: "EN_C1" },
+        { option_id: "retry", label: "EN_RETRY", consequence: "EN_C2", downstream_effect: "EN_D" },
+        { option_id: "abort", label: "EN_ABORT", consequence: "EN_C3" },
+        { option_id: "review_first", label: "EN_REVIEW", consequence: "EN_C4" },
+      ],
+    });
+    expect(markup).toContain("Onayla ve devam et");
+    expect(markup).toContain("Yeniden çalışması için geri gönder");
+    expect(markup).toContain("Koşumu durdur");
+    expect(markup).toContain("Karar vermeden önce artifact"); // kesme isareti markup'ta kaciriliyor
+    for (const english of ["EN_APPROVE", "EN_RETRY", "EN_ABORT", "EN_REVIEW", "EN_C1"]) {
+      expect(markup).not.toContain(english);
+    }
+  });
+
+  it("puts the stage name into the reworded downstream warning", () => {
+    const markup = render({
+      stage_id: "schema_discovery",
+      options: [{ option_id: "retry", label: "x", consequence: "y", downstream_effect: "EN_DOWNSTREAM" }],
+    });
+    expect(markup).toContain("schema_discovery aşamasını ve sonrasındaki her şeyi");
+    expect(markup).not.toContain("EN_DOWNSTREAM");
+  });
+
+  it("keeps the server's text for an option it does not know", () => {
+    // An option added on the server must still render. Without the fallback
+    // this card would go blank the moment the two sides drift.
+    const markup = render({ options: [{ option_id: "brand_new", label: "SERVER_SAYS", consequence: "SERVER_WHY" }] });
+    expect(markup).toContain("SERVER_SAYS");
+    expect(markup).toContain("SERVER_WHY");
+  });
+
+  it("renders the question from question_kind, and falls back to the raw text", () => {
+    expect(render({ question_kind: "checkpoint" })).toContain("zorunlu bir kontrol noktası");
+    expect(render({ question_kind: "problem" })).toContain("bir sorun saptandığı için durdu");
+    // An older server that does not send the field at all still shows its question.
+    expect(render({ question: "ESKI_SUNUCU_SORUSU" })).toContain("ESKI_SUNUCU_SORUSU");
   });
 });
