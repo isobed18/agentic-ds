@@ -1099,6 +1099,8 @@ const TR: Record<string, string> = {
   "Select project files for this automation": "Bu otomasyon için proje dosyalarını seçin",
   "This automation receives a private snapshot. Adding project data later will not change it.":
     "Bu otomasyon özel bir anlık görüntü alır. Daha sonra proje verisi eklemek onu değiştirmez.",
+  "Select all": "Tümünü seç",
+  "Unselect all": "Tümünün seçimini kaldır",
   "Use selected data": "Seçili veriyi kullan",
   "Inspecting and routing selected files…": "Seçili dosyalar inceleniyor ve yönlendiriliyor…",
   "Selected automation data": "Seçili otomasyon verisi",
