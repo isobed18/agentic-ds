@@ -105,6 +105,27 @@ class ProjectStore:
                 changes={"automation_ids": (*current.automation_ids, normalized)},
             )
 
+    def remove_automation(self, project_id: str, *, automation_id: str) -> ProjectDefinition:
+        """Detach a deleted child so the parent stops counting it (#185).
+
+        Deleting the automation file alone leaves the id here, and the project
+        card reads this list for its automation count -- the deleted draft went
+        on being counted forever.
+        """
+        with self._lock:
+            current = self.get(project_id)
+            if automation_id not in current.automation_ids:
+                return current
+            return self.update(
+                project_id,
+                expected_revision=current.revision,
+                changes={
+                    "automation_ids": tuple(
+                        item for item in current.automation_ids if item != automation_id
+                    )
+                },
+            )
+
     def delete(self, project_id: str) -> dict[str, int]:
         target = self._target(project_id)
         revision_dir = (self.revision_root / project_id).resolve()

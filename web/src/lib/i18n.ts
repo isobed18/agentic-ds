@@ -700,6 +700,17 @@ const TR: Record<string, string> = {
   "{count} executions": "{count} çalışma",
   "Never executed": "Hiç çalıştırılmadı",
   "No automations yet": "Henüz otomasyon yok",
+
+  // #185: the project-first rework left automations undeletable; the card
+  // action and its warning restore the entry point the old list had.
+  "Delete automation": "Otomasyonu sil",
+  "Delete {name}?": "{name} silinsin mi?",
+  "This removes the automation, its graph, and its data selection.":
+    "Bu işlem otomasyonu, akış grafiğini ve veri seçimini siler.",
+  "Its execution history and the project data are kept.":
+    "Çalıştırma geçmişi ve proje verileri korunur.",
+  "Deleting…": "Siliniyor…",
+
   "Create an automation, add data, and let the workflow grow from what the system learns.": "Bir otomasyon oluşturun, veri ekleyin ve iş akışının sistemin öğrendikleriyle büyümesine izin verin.",
   "Automation name": "Otomasyon adı",
   "Editor": "Düzenleyici",

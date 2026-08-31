@@ -223,6 +223,8 @@ function ProjectData({ projectId, data, onChanged }: { projectId: string; data: 
 
 function ProjectAutomations({ projectId, automations, onChanged, onOpen }: { projectId: string; automations: AutomationDefinition[]; onChanged: () => void; onOpen: (automationId: string) => void }) {
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState<AutomationDefinition | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function create() {
     setBusy(true); setError(null);
@@ -230,7 +232,75 @@ function ProjectAutomations({ projectId, automations, onChanged, onOpen }: { pro
     catch (caught) { setError(messageOf(caught)); }
     finally { setBusy(false); }
   }
-  return <section><div className="flex items-start justify-between gap-3"><div><h1 className="text-xl font-semibold text-ink">{t("Automations")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Each automation has its own data selection, graph, runs, models, and reports.")}</p></div><button type="button" className="btn-primary" disabled={busy} onClick={() => void create()}>+ {busy ? t("Creating…") : t("New automation")}</button></div>{error && <p className="mt-3 text-xs text-stop-700">{error}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{automations.map((automation) => <button key={automation.automation_id} type="button" className="card p-5 text-left hover:border-brand-300" onClick={() => onOpen(automation.automation_id)}><div className="flex items-start justify-between gap-2"><h2 className="truncate text-sm font-semibold text-ink">{automation.name}</h2><Badge tone={automation.status === "saved" ? "ok" : automation.status === "error" ? "stop" : "neutral"}>{t(automation.status === "saved" ? "Saved" : automation.status === "error" ? "Error" : "Draft")}</Badge></div><p className="mt-5 text-xs text-ink-mute">{automation.selected_files?.length ? t("{count} selected files", { count: automation.selected_files.length }) : t("No data selected")}</p><p className="mt-1 text-xs text-ink-faint">{automation.execution_ids.length ? t("{count} runs", { count: automation.execution_ids.length }) : t("No runs yet")}</p></button>)}{!automations.length && <div className="col-span-full"><Empty title={t("No automations yet")} hint={t("Create an automation. Its graph will open only when you open that automation.")} /></div>}</div></section>;
+  /**
+   * #185: the project-first rework dropped the only delete entry point, so an
+   * automation created by a stray click stayed forever. The refresh is the
+   * project's, not a local filter: the backend also detaches the automation
+   * from its parent, and the card counts elsewhere read that parent.
+   */
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteAutomation(deleting.automation_id); setDeleting(null); onChanged(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
+  return (
+    <section>
+      <div className="flex items-start justify-between gap-3"><div><h1 className="text-xl font-semibold text-ink">{t("Automations")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Each automation has its own data selection, graph, runs, models, and reports.")}</p></div><button type="button" className="btn-primary" disabled={busy} onClick={() => void create()}>+ {busy ? t("Creating…") : t("New automation")}</button></div>
+      {error && <p className="mt-3 text-xs text-stop-700">{error}</p>}
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {automations.map((automation) => (
+          <article key={automation.automation_id} className="card relative transition hover:border-brand-300">
+            <button type="button" className="block w-full p-5 pr-12 text-left" onClick={() => onOpen(automation.automation_id)}>
+              <div className="flex items-start justify-between gap-2"><h2 className="truncate text-sm font-semibold text-ink">{automation.name}</h2><Badge tone={automation.status === "saved" ? "ok" : automation.status === "error" ? "stop" : "neutral"}>{t(automation.status === "saved" ? "Saved" : automation.status === "error" ? "Error" : "Draft")}</Badge></div>
+              <p className="mt-5 text-xs text-ink-mute">{automation.selected_files?.length ? t("{count} selected files", { count: automation.selected_files.length }) : t("No data selected")}</p>
+              <p className="mt-1 text-xs text-ink-faint">{automation.execution_ids.length ? t("{count} runs", { count: automation.execution_ids.length }) : t("No runs yet")}</p>
+            </button>
+            <button type="button" aria-label={t("Delete automation")} title={t("Delete automation")} onClick={() => setDeleting(automation)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
+              <TrashIcon />
+            </button>
+          </article>
+        ))}
+        {!automations.length && <div className="col-span-full"><Empty title={t("No automations yet")} hint={t("Create an automation. Its graph will open only when you open that automation.")} /></div>}
+      </div>
+      {deleting && <AutomationDeleteDialog automation={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </section>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M3.75 5.5h12.5M8 5.5V4.25c0-.41.34-.75.75-.75h2.5c.41 0 .75.34.75.75V5.5" strokeLinecap="round" />
+      <path d="M5.75 5.5l.62 9.9c.04.61.55 1.1 1.16 1.1h4.94c.61 0 1.12-.49 1.16-1.1l.62-9.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 8.5v5M11.5 8.5v5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/**
+ * A destructive step gets a named target and the list of what survives it,
+ * because the automation is the only copy of a graph while its runs are
+ * audited separately and stay readable after the deletion.
+ */
+export function AutomationDeleteDialog({ automation, busy, onCancel, onConfirm }: { automation: AutomationDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" aria-describedby="delete-automation-description">
+      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
+        <h2 id="delete-automation-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: automation.name })}</h2>
+        <div id="delete-automation-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
+          <p>{t("This removes the automation, its graph, and its data selection.")}</p>
+          <p>{t("Its execution history and the project data are kept.")}</p>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{t("Cancel")}</button>
+          <button type="button" className="rounded-lg bg-stop-600 px-4 py-2 text-sm font-semibold text-white hover:bg-stop-700 disabled:opacity-50" disabled={busy} onClick={onConfirm}>{busy ? t("Deleting…") : t("Delete automation")}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ProjectModels({ contents }: { contents: ProjectContents | null }) {
