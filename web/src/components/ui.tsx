@@ -120,6 +120,59 @@ export function Chevron({ open, size = "sm" }: { open: boolean; size?: "sm" | "m
   );
 }
 
+/**
+ * Who can see a thing (#207). There is no icon library here, so these follow
+ * `Chevron` above: a 20x20 viewBox, no fill, `currentColor` stroke, sized with
+ * Tailwind so each one inherits the colour of the text it sits beside.
+ *
+ * Pass `label` where the icon stands alone on a card and is the only thing
+ * saying "private"; leave it off next to a visible word, where a screen reader
+ * would otherwise read the state twice.
+ */
+function VisibilityGlyph({
+  label,
+  className,
+  children,
+}: {
+  label?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className={cx("h-4 w-4 shrink-0", className)}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function Lock({ label, className }: { label?: string; className?: string }) {
+  return (
+    <VisibilityGlyph label={label} className={className}>
+      <rect x="4.75" y="8.75" width="10.5" height="6.75" rx="1.6" />
+      <path d="M7.4 8.75V6.9a2.6 2.6 0 0 1 5.2 0v1.85" />
+    </VisibilityGlyph>
+  );
+}
+
+export function Globe({ label, className }: { label?: string; className?: string }) {
+  return (
+    <VisibilityGlyph label={label} className={className}>
+      <circle cx="10" cy="10" r="6.25" />
+      <path d="M3.9 10h12.2" />
+      <path d="M10 3.75c1.75 1.7 2.62 3.78 2.62 6.25S11.75 14.55 10 16.25c-1.75-1.7-2.62-3.78-2.62-6.25S8.25 5.45 10 3.75Z" />
+    </VisibilityGlyph>
+  );
+}
+
 export function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="card flex min-w-[128px] flex-col gap-0.5 px-3.5 py-2.5">

@@ -1055,6 +1055,20 @@ const TR: Record<string, string> = {
   "Project name": "Proje adı",
   "Project": "Proje",
   "Project overview": "Proje genel bakışı",
+  // who can see a project (#207)
+  "Who can see this project": "Bu projeyi kimler görebilir",
+  "Public": "Herkese açık",
+  "Private": "Özel",
+  "Public project": "Herkese açık proje",
+  "Private project": "Özel proje",
+  "Visible to everyone signed in": "Oturum açan herkes görebilir",
+  "Only you can see this project": "Bu projeyi yalnızca siz görebilirsiniz",
+  "Only the owner can change who sees this project.":
+    "Bu projeyi kimlerin göreceğini yalnızca proje sahibi değiştirebilir.",
+  "This project has no recorded owner, so its visibility cannot be changed.":
+    "Bu projenin kayıtlı bir sahibi yok, bu yüzden görünürlüğü değiştirilemez.",
+  "Publishing a project does not publish its data: a file its owner kept private stays private.":
+    "Bir projeyi herkese açmak verisini açmaz: sahibinin özel tuttuğu bir dosya özel kalır.",
   "Project sections": "Proje bölümleri",
   "Project data": "Proje verisi",
   "Project models": "Proje modelleri",

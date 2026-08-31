@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge, Disclosure, Empty, Metric, Spinner } from "../components/ui";
 import { api, type Hardening, type HomeOutput, type HomeOverview, type HomeProject, type ProjectState } from "../lib/api";
+import { VisibilityMark } from "./ProjectWorkspace";
 
 function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -184,7 +185,10 @@ export function Home() {
                     className="card flex items-center gap-3 px-4 py-3 hover:border-brand-500"
                   >
                     <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-semibold text-ink">{project.name}</h4>
+                      <h4 className="flex items-center gap-2 text-sm font-semibold text-ink">
+                        <span className="truncate">{project.name}</span>
+                        <VisibilityMark visibility={project.visibility} />
+                      </h4>
                       <p className="mt-0.5 text-xs text-ink-mute">
                         {project.execution_count > 0
                           ? t("{count} runs", { count: project.execution_count })

@@ -12,6 +12,8 @@ import type { HomeOutput, HomeProject } from "../lib/api";
 const project = (over: Partial<HomeProject>): HomeProject => ({
   project_id: "project-abc123def456",
   name: "Retention",
+  visibility: "private",
+  mine: true,
   status: "saved",
   source_id: "upload:xyz",
   execution_count: 0,
