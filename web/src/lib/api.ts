@@ -84,11 +84,18 @@ export interface ProjectDefinition {
   project_id: string;
   name: string;
   revision: number;
+  /** The account that created it (#206). `null` means it predates ownership,
+   *  and those stay visible to everyone rather than being orphaned. */
+  owner: string | null;
+  /** Private is the default: only the owner may see the project at all. */
+  visibility: ProjectVisibility;
   source_ids: string[];
   automation_ids: string[];
   created_at: string;
   updated_at: string;
 }
+
+export type ProjectVisibility = "private" | "public";
 
 export interface GateDecision {
   artifact_id?: string;

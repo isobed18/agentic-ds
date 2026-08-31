@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ads.contracts.project import ProjectDefinition
+from ads.contracts.project import ProjectDefinition, may_view_project
 
 
 class ProjectRevisionConflict(ValueError):
@@ -28,21 +28,35 @@ class ProjectStore:
         self.revision_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
 
-    def create(self, name: str) -> ProjectDefinition:
+    def create(self, name: str, *, owner: str | None = None) -> ProjectDefinition:
         normalized = name.strip()
         if not normalized:
             raise ValueError("project name cannot be empty")
         definition = ProjectDefinition(
             project_id=f"project-{uuid.uuid4().hex[:12]}",
             name=normalized,
+            owner=owner,
         )
         with self._lock:
             self._write(definition)
         return definition
 
-    def list(self) -> list[ProjectDefinition]:
+    def list(
+        self, *, viewer: str | None = None, unfiltered: bool = False
+    ) -> list[ProjectDefinition]:
+        """Projects this person may see (#206).
+
+        `unfiltered=True` is for the internal callers that have no request
+        behind them and must still see everything -- reconciling a child
+        automation against its parent, for instance. It is deliberately a
+        separate argument rather than `viewer=None`, because "nobody is signed
+        in" and "do not filter" are different questions and conflating them is
+        how a filter quietly stops filtering.
+        """
         with self._lock:
             records = [self._read(path) for path in self.current_root.glob("project-*.json")]
+        if not unfiltered:
+            records = [item for item in records if may_view_project(item, viewer)]
         return sorted(records, key=lambda item: item.updated_at, reverse=True)
 
     def get(self, project_id: str) -> ProjectDefinition:
