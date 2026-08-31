@@ -184,8 +184,8 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       {failed && <button type="button" className="btn-primary text-xs" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
       {complete && <button type="button" className="btn-primary text-xs" onClick={onOpenExecutions}>{t("Review results")}</button>}
       {!canStart && !failed && !complete && <StatusBadge status={activeStatus} />}
-      <button type="button" className="btn-ghost text-xs" onClick={() => setSelected("summary")}>{t("Review plan")}</button>
-      <button type="button" className="btn-ghost text-xs" onClick={() => setPlannerOpen(true)}>{t("Chat with Planner")}</button>
+      <button type="button" className="btn-ghost text-xs" aria-expanded={selected === "summary"} onClick={() => setSelected((current) => (current === "summary" ? null : "summary"))}>{t("Review plan")}</button>
+      <button type="button" className="btn-ghost text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
       <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
     </div>
 

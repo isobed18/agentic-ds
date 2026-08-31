@@ -114,7 +114,7 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
 
   return (
     <CanvasSurface docked={selection !== null} plannerDocked={plannerOpen} overlay={<>
-      <button type="button" onClick={() => setPlannerOpen(true)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
+      <button type="button" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} busy={busy} runId={runId} />}
       {previewError && <p className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{previewError}</p>}
       {plannerOpen && <DockedPanel><PlannerPanel runId={runId} sourceId={sourceId} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={onWorkspaceUpdated} starterPrompts={[t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")]} /></DockedPanel>}
