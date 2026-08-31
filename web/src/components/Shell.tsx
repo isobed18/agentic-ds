@@ -29,7 +29,11 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
     () => localStorage.getItem(COLLAPSE_KEY) === "1",
   );
   const location = useLocation();
-  const isAutomationEditor = location.pathname.startsWith("/projects");
+  // #159/#157: the project library is a normal top-level destination and keeps
+  // the shared top bar. Only a specific project/automation supplies its own
+  // contextual header.
+  const isAutomationEditor = location.pathname.startsWith("/projects")
+    && new URLSearchParams(location.search).has("project");
 
   useEffect(() => {
     localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0");

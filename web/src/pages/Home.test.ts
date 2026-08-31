@@ -10,7 +10,7 @@ import { outputHref, projectHref } from "./Catalog";
 import type { HomeOutput, HomeProject } from "../lib/api";
 
 const project = (over: Partial<HomeProject>): HomeProject => ({
-  project_id: "automation-abc123def456",
+  project_id: "project-abc123def456",
   name: "Retention",
   status: "saved",
   source_id: "upload:xyz",
@@ -24,27 +24,29 @@ const project = (over: Partial<HomeProject>): HomeProject => ({
 
 describe("home links", () => {
   it("opens a project with no runs on its workspace", () => {
-    expect(projectHref(project({}))).toBe("/projects?automation=automation-abc123def456");
+    expect(projectHref(project({}))).toBe("/projects?project=project-abc123def456");
   });
 
-  it("opens a project with runs on its latest run", () => {
+  it("opens a project with runs on its overview, not inside an automation", () => {
     expect(projectHref(project({ latest_run_id: "run-9" }))).toBe(
-      "/projects?automation=automation-abc123def456&view=runs&run=run-9",
+      "/projects?project=project-abc123def456",
     );
   });
 
   it("links a produced output to its owning project's run", () => {
     const output: HomeOutput = {
       kind: "report",
-      project_id: "automation-abc123def456",
+      project_id: "project-abc123def456",
       project_name: "Retention",
+      automation_id: "automation-fed654cba321",
+      automation_name: "Churn model",
       run_id: "run-9",
       artifact_id: "a".repeat(64),
       label: "Holdout summary",
       created_at: "2026-01-01T00:00:00+00:00",
     };
     expect(outputHref(output)).toBe(
-      "/projects?automation=automation-abc123def456&view=runs&run=run-9",
+      "/projects?project=project-abc123def456&automation=automation-fed654cba321&view=executions&run=run-9",
     );
   });
 

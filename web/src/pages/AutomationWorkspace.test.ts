@@ -1,73 +1,54 @@
 import { describe, expect, it } from "vitest";
 
-import SOURCE from "./AutomationWorkspace.tsx?raw";
+import AUTOMATION_SOURCE from "./AutomationWorkspace.tsx?raw";
+import PROJECT_SOURCE from "./ProjectWorkspace.tsx?raw";
 
-describe("the automation data controls", () => {
-  it("keeps Add files beside the uploaded-data picker", () => {
-    // The regression this exists for (#50). Language and save-state controls
-    // used to separate the plus button from the select it adds files to.
-    const toolbar = SOURCE.match(/<div className="ml-auto flex items-center gap-2">([\s\S]*?)<\/div>/)?.[1] ?? "";
-    const picker = toolbar.indexOf("</select>");
-    const addFiles = toolbar.indexOf('title={t("Add files")}');
-    const language = toolbar.indexOf("<LanguagePicker");
-
-    expect(picker).toBeGreaterThan(-1);
-    expect(addFiles).toBeGreaterThan(picker);
-    expect(language).toBeGreaterThan(addFiles);
+describe("the project-first journey (#157, #165)", () => {
+  it("routes project, then automation, as two distinct levels", () => {
+    expect(AUTOMATION_SOURCE).toContain('params.get("project")');
+    expect(AUTOMATION_SOURCE).toContain("<ProjectWorkspace");
+    expect(AUTOMATION_SOURCE).toContain("<AutomationEditor projectId={projectId}");
   });
 
-  it("appends new files to the project's existing source instead of replacing it (#85)", () => {
-    // `group` used to always begin undefined, so "Add files" started a fresh
-    // upload group and silently dropped the files already attached. It now
-    // seeds from the current sourceId, and files can be removed individually.
-    expect(SOURCE).toContain("let group: string | undefined = sourceId || undefined;");
-    expect(SOURCE).toContain("api.removeSourceFile(sourceId, name)");
-    expect(SOURCE).toContain("onRemoveFile={(name) => void removeSourceFile(name)}");
+  it("opens a project on its overview instead of a graph", () => {
+    expect(PROJECT_SOURCE).toContain('type ProjectView = "overview"');
+    expect(PROJECT_SOURCE).toContain('view === "overview" && <ProjectOverview');
+    expect(PROJECT_SOURCE).toContain('t("Project overview")');
   });
 
-  it("shows upload progress and a working cancel button (#84)", () => {
-    // A large file used to show a static "Uploading…" with no percentage and no
-    // way out but a tab refresh. The flow now drives an AbortController and a
-    // per-file progress bar.
-    expect(SOURCE).toContain("new AbortController()");
-    expect(SOURCE).toContain("signal: controller.signal");
-    expect(SOURCE).toContain("onProgress:");
-    expect(SOURCE).toContain("setUploadProgress");
-    expect(SOURCE).toContain("onClick={cancelUpload}");
-    expect(SOURCE).toContain('t("Uploading {name}"');
+  it("uploads at project scope and shows project files", () => {
+    expect(PROJECT_SOURCE).toContain("api.addProjectSource(projectId, group)");
+    expect(PROJECT_SOURCE).toContain("source.files.map");
+    expect(PROJECT_SOURCE).toContain('t("Choose previously uploaded data")');
+    expect(PROJECT_SOURCE).toContain("disabled={uploading}");
+    // #172: progress is rendered before the add-file action panel.
+    expect(PROJECT_SOURCE.indexOf("{progress &&")).toBeLessThan(PROJECT_SOURCE.indexOf('t("Upload new files")'));
   });
 
-  it("discards an abandoned empty data project when the editor unmounts (#83)", () => {
-    // "+ New data project" persists a backend record before any file is chosen.
-    // Leaving without a source used to strand it in the library forever; the
-    // editor now discards it on unmount.
-    expect(SOURCE).toContain("isAbandonedDraft(automation, sourceId)");
-    expect(SOURCE).toContain("api.deleteAutomation(automation!.automation_id)");
+  it("lists many automations and creates them through their parent", () => {
+    expect(PROJECT_SOURCE).toContain("api.createProjectAutomation(projectId");
+    expect(PROJECT_SOURCE).toContain("automations.map");
+    expect(PROJECT_SOURCE).toContain("onOpen(created.automation_id)");
   });
 
-  it("surfaces the human gate escalation so a stuck run can be answered (#81)", () => {
-    // The gate-answering UI (ApprovalCard) was only ever rendered from the
-    // unrouted Workflows page, so an `awaiting_human` run sat stuck with no
-    // reachable screen. AutomationWorkspace now mounts it, gated on the run's
-    // pending gate question.
-    expect(SOURCE).toContain("<ApprovalCard");
-    expect(SOURCE).toContain("pendingQuestion");
-    expect(SOURCE).toContain("pending_question");
-    // It is gated on the run actually having a human prompt to answer.
-    expect(SOURCE).toContain("pendingQuestion?.human_prompt");
+  it("keeps project Models and Reports pages labelled by automation", () => {
+    expect(PROJECT_SOURCE).toContain('t("Project models")');
+    expect(PROJECT_SOURCE).toContain('t("Project reports")');
+    expect(PROJECT_SOURCE).toContain('t("From {automation}", { automation: model.automation_name })');
+    expect(PROJECT_SOURCE).toContain('t("From {automation}", { automation: report.automation_name })');
   });
 
-  it("no longer shows a header save indicator that only tracked two fields (#79)", () => {
-    // The "Saved/Saving…/Unsaved changes" indicator read as a project-wide
-    // save status but only tracked the name field and the advanced pipeline
-    // graph -- and the advanced graph already has its own "Save workflow"
-    // button (PipelineBuilder). It was removed; nothing here should reference
-    // save state any more.
-    expect(SOURCE).not.toContain("saveState");
-    expect(SOURCE).not.toContain('t("Unsaved changes")');
-    const toolbar = SOURCE.match(/<div className="ml-auto flex items-center gap-2">([\s\S]*?)<\/div>/)?.[1] ?? "";
-    // LanguagePicker is now the last control in the toolbar.
-    expect(toolbar).toContain("<LanguagePicker");
-    expect(toolbar.indexOf("<span")).toBe(-1);
+  it("removes the automation toolbar's uploaded-data picker and uploader", () => {
+    const header = AUTOMATION_SOURCE.match(/<header className="relative flex h-\[58px\][\s\S]*?<\/header>/)?.[0] ?? "";
+    expect(header).toContain("<LanguagePicker");
+    expect(header).not.toContain("<select");
+    expect(header).not.toContain('title={t("Add files")}');
+    expect(AUTOMATION_SOURCE).toContain("<AutomationInputSelector");
+  });
+
+  it("uses automation-scoped output data and keeps the human gate reachable", () => {
+    expect(AUTOMATION_SOURCE).toContain("api.automationContents(automationId)");
+    expect(AUTOMATION_SOURCE).toContain("<ApprovalCard");
+    expect(AUTOMATION_SOURCE).toContain("pendingQuestion?.human_prompt");
   });
 });

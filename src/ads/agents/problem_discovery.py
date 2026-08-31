@@ -239,7 +239,18 @@ def build_spec() -> AgentSpec[ProblemDiscoveryProposal]:
         ),
         max_attempts=3,
         rubric="problem_discovery.v1",
-        allowed_tools=frozenset({"cardinality", "column_profile", "null_rate", "value_counts"}),
+        # #166: the problem_investigator scout runs first on this same context and
+        # admits its tool evidence into it (problem_investigator.investigate_
+        # problem_context -> context.admit_tool_result). Its declared tools are a
+        # superset of these, so whenever the scout measured `correlation` the
+        # panel here rejected the shared context with "received evidence from
+        # undeclared tools: ['correlation']" and the pipeline stopped dead at
+        # problem_discovery -- exactly the "stops after data understanding, never
+        # reaches ML data prep" defect. The panel legitimately consumes what its
+        # own stage's scout gathered, so it must declare the scout's tools too.
+        allowed_tools=frozenset(
+            {"cardinality", "column_profile", "correlation", "null_rate", "value_counts"}
+        ),
         max_tool_tier=PermissionTier.READ_DATA,
         column_fields=frozenset({"target_column", "evidence_columns"}),
         # How a candidate is explained to a human. Everything else --

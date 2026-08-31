@@ -9,142 +9,36 @@ import {
   UnderstandingAndProposal,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
-import { activeRunByAutomation, automationView, availableProjectViews, isAbandonedDraft, preferredExecution, type WorkspaceView } from "../components/automationWorkspaceState";
+import { automationView, availableProjectViews, preferredExecution, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
 import { Badge, Empty, Spinner, cx } from "../components/ui";
 import {
   api,
+  type AutomationContents,
   type AutomationDefinition,
-  type DataSource,
   type GateDecision,
   type PipelineBlueprint,
-  type ProjectContents,
   type RunSummary,
   type SourceProfile,
   type StagingWorkspace,
 } from "../lib/api";
 import { t } from "../lib/i18n";
-import { statusLabel } from "../lib/status";
+import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace, type ProjectView } from "./ProjectWorkspace";
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
+  const projectId = params.get("project");
   const automationId = params.get("automation");
+  if (!projectId) {
+    return <ProjectLibrary onOpen={(id) => setParams({ project: id })} />;
+  }
   if (!automationId) {
-    return <AutomationLibrary sourceId={params.get("source")} onOpen={(id) => setParams({ automation: id })} />;
+    return <ProjectWorkspace projectId={projectId} view={projectView(params.get("view"))} onView={(view) => setParams({ project: projectId, ...(view === "overview" ? {} : { view }) })} onBack={() => setParams({})} onOpenAutomation={(id) => setParams({ project: projectId, automation: id })} />;
   }
-  return <AutomationEditor automationId={automationId} />;
+  return <AutomationEditor projectId={projectId} automationId={automationId} />;
 }
 
-function AutomationLibrary({ sourceId, onOpen }: { sourceId: string | null; onOpen: (id: string) => void }) {
-  const [items, setItems] = useState<AutomationDefinition[]>([]);
-  // #88: which automation currently has a run in progress. Joined from
-  // /api/runs, which already reports each run's live status and automation_id,
-  // so the card can show it without opening the project. Polled because a run's
-  // status changes on the server while this index sits open.
-  const [activeRuns, setActiveRuns] = useState<Map<string, RunSummary>>(new Map());
-  const [stopping, setStopping] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const importedSource = useRef(false);
-
-  useEffect(() => {
-    void api.automations().then(setItems).catch((caught) => setError(messageOf(caught)));
-  }, []);
-
-  const refreshRuns = useCallback(async () => {
-    // A failed poll is not worth a visible error; the next one usually works,
-    // and the automation list itself has already loaded without it.
-    const runs = await api.runs().catch(() => null);
-    if (runs) setActiveRuns(activeRunByAutomation(runs));
-  }, []);
-
-  useEffect(() => {
-    void refreshRuns();
-    const timer = window.setInterval(() => void refreshRuns(), 8000);
-    return () => window.clearInterval(timer);
-  }, [refreshRuns]);
-
-  async function stopRun(run: RunSummary) {
-    setStopping(run.automation_id ?? run.run_id); setError(null);
-    try { await api.pauseRun(run.run_id); await refreshRuns(); }
-    catch (caught) { setError(messageOf(caught)); }
-    finally { setStopping(null); }
-  }
-
-  useEffect(() => {
-    if (!sourceId || importedSource.current) return;
-    importedSource.current = true;
-    setBusy(true);
-    void api.createAutomation(t("Untitled project"))
-      .then((created) => api.updateAutomation(created.automation_id, created.revision, { source_id: sourceId }))
-      .then((saved) => onOpen(saved.automation_id))
-      .catch((caught) => setError(messageOf(caught)))
-      .finally(() => setBusy(false));
-  }, [sourceId, onOpen]);
-
-  async function create() {
-    setBusy(true);
-    setError(null);
-    try {
-      const created = await api.createAutomation(t("Untitled project"));
-      onOpen(created.automation_id);
-    } catch (caught) {
-      setError(messageOf(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // #101: re-run an existing project's files as a new, independent project.
-  // Creates a fresh automation on the same source and opens it, so the flow
-  // starts clean without re-uploading anything.
-  async function duplicate(item: AutomationDefinition) {
-    setBusy(true); setError(null);
-    try {
-      const copy = await api.duplicateAutomation(item, t("{name} (copy)", { name: item.name }));
-      onOpen(copy.automation_id);
-    } catch (caught) {
-      setError(messageOf(caught));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(item: AutomationDefinition) {
-    if (!window.confirm(t("Delete this project? Its execution history will be kept."))) return;
-    setError(null);
-    try {
-      await api.deleteAutomation(item.automation_id);
-      setItems((current) => current.filter((candidate) => candidate.automation_id !== item.automation_id));
-    } catch (caught) {
-      setError(messageOf(caught));
-    }
-  }
-
-  return (
-    <div className="h-full overflow-y-auto bg-surface-sunken px-6 py-8 lg:px-10">
-      <div className="mx-auto max-w-6xl">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div><h1 className="text-2xl font-semibold text-ink">{t("Projects")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Understand unfamiliar files, agree on an ML plan, then run it transparently.")}</p></div>
-          <div className="flex items-center gap-3"><LanguagePicker /><button type="button" className="btn-primary" onClick={() => void create()} disabled={busy}>{busy ? t("Creating…") : `+ ${t("New project")}`}</button></div>
-        </header>
-        {error && <p className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
-        {busy && !items.length ? <div className="mt-16"><Spinner label={t("Opening project…")} /></div> : (
-          <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((item) => {
-              // #88: the run this project currently has in progress, if any.
-              const active = item.automation_id ? activeRuns.get(item.automation_id) : undefined;
-              return <article key={item.automation_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop"><button type="button" onClick={() => onOpen(item.automation_id)} className={cx("w-full p-5 text-left", item.source_id ? "pr-20" : "pr-12")}><div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{item.name}</h2>{active ? <Badge tone="brand"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current align-middle" />{statusLabel(active.status)}</Badge> : <Badge tone={item.status === "saved" ? "ok" : item.status === "error" ? "stop" : "neutral"}>{t(item.status === "saved" ? "Saved" : item.status === "error" ? "Error" : "Draft")}</Badge>}</div><p className="mt-5 text-xs text-ink-mute">{item.execution_ids.length ? t("{count} executions", { count: item.execution_ids.length }) : t("Never executed")}</p><p className="mt-1 text-[10px] text-ink-faint">{new Date(item.updated_at).toLocaleString()}</p></button>{active && <button type="button" title={t("Pause after current stage")} disabled={stopping === item.automation_id} onClick={() => void stopRun(active)} className="absolute bottom-3 right-3 rounded-lg border border-line px-2.5 py-1 text-[11px] font-medium text-stop-700 hover:bg-stop-50 disabled:opacity-40">{stopping === item.automation_id ? t("Pause requested…") : t("Stop run")}</button>}{item.source_id && <button type="button" aria-label={t("Re-run these files as a new project")} title={t("Re-run these files as a new project")} disabled={busy} onClick={() => void duplicate(item)} className="absolute right-12 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40">⧉</button>}<button type="button" aria-label={t("Delete project")} title={t("Delete project")} onClick={() => void remove(item)} className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg text-ink-faint hover:bg-stop-50 hover:text-stop-700">×</button></article>;
-            })}
-            {!items.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No projects yet")} hint={t("Add unfamiliar files. Agentic DS will route them, explain what is usable, and propose the base ML pipeline.")} /></div>}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function AutomationEditor({ automationId }: { automationId: string }) {
+function AutomationEditor({ projectId, automationId }: { projectId: string; automationId: string }) {
   const [params, setParams] = useSearchParams();
   const [automation, setAutomation] = useState<AutomationDefinition | null>(null);
   const [name, setName] = useState("");
@@ -157,9 +51,8 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [executions, setExecutions] = useState<RunSummary[]>([]);
   // The project's own data/models/reports, owned through its execution history
   // (#111). Drives both the project-contained tabs and which of them appear.
-  const [contents, setContents] = useState<ProjectContents | null>(null);
+  const [contents, setContents] = useState<AutomationContents | null>(null);
   const [sourceId, setSourceId] = useState("");
-  const [sources, setSources] = useState<DataSource[]>([]);
   const [profile, setProfile] = useState<SourceProfile | null>(null);
   const [runId, setRunId] = useState<string | null>(params.get("run"));
   const [runStatus, setRunStatus] = useState<string | null>(null);
@@ -171,28 +64,8 @@ function AutomationEditor({ automationId }: { automationId: string }) {
   const [blueprint, setBlueprint] = useState<PipelineBlueprint | null>(null);
   const [reuseCache, setReuseCache] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  // Per-file upload progress and a handle to abort it, so a large file no
-  // longer shows a static "Uploading…" with no percentage and no way out (#84).
-  const [uploadProgress, setUploadProgress] = useState<{ index: number; total: number; name: string; fraction: number } | null>(null);
-  const uploadAbort = useRef<AbortController | null>(null);
-  const [dragging, setDragging] = useState(false);
   const [advancedGraph, setAdvancedGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  // Discard a "+ New data project" that was created but never given a file, so
-  // leaving the editor does not strand an empty "Untitled automation" card in
-  // the library forever (#83). The cleanup reads the latest state through a ref
-  // because an unmount-only effect would otherwise close over stale values.
-  const abandonRef = useRef({ automation, sourceId });
-  abandonRef.current = { automation, sourceId };
-  useEffect(() => () => {
-    const { automation, sourceId } = abandonRef.current;
-    if (isAbandonedDraft(automation, sourceId)) {
-      void api.deleteAutomation(automation!.automation_id).catch(() => { /* best-effort cleanup */ });
-    }
-  }, []);
 
   const refreshAutomation = useCallback(async () => {
     const [record, history] = await Promise.all([
@@ -200,15 +73,9 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       api.automationExecutions(automationId),
     ]);
     setAutomation(record); setName(record.name); setSourceId(record.source_id ?? ""); setExecutions(history);
-    // Deliberately not part of the Promise.all above. This list only fills the
-    // reuse picker, but a rejection there used to reject the whole batch, leave
-    // `automation` null, and take uploading down with it -- a convenience
-    // feature disabling the page's primary action.
-    void api.dataSources().then(setSources).catch(() => setSources([]));
-    // Same reasoning for the project-contained tabs: a failed read must not take
-    // down the editor. Absence of contents simply hides the Data/Models/Reports
-    // tabs, which is the correct answer for a project that produced nothing.
-    void api.projectContents(automationId).then(setContents).catch(() => setContents(null));
+    // #157: this endpoint is automation-scoped. Project aggregation lives on
+    // the parent screen and must never leak a sibling automation's output here.
+    void api.automationContents(automationId).then(setContents).catch(() => setContents(null));
     return record;
   }, [automationId]);
 
@@ -265,7 +132,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
 
   function applyWorkspace(next: StagingWorkspace) {
     setWorkspace(next); setRunId(next.run_id); if (next.pipeline_blueprint) setBlueprint(next.pipeline_blueprint);
-    setParams({ automation: automationId, run: next.run_id }, { replace: true });
+    setParams({ project: projectId, automation: automationId, run: next.run_id }, { replace: true });
     void refreshAutomation().catch((caught) => setError(messageOf(caught)));
   }
 
@@ -275,88 +142,9 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     catch (caught) { setError(messageOf(caught)); }
   }
 
-  async function upload(files: FileList | File[]) {
-    const selected = Array.from(files);
-    if (!selected.length) return;
-    if (!automation) {
-      // This used to `return` silently. Picking files then did nothing at all:
-      // no spinner, no error, no upload -- the page looked functional and the
-      // button looked dead. The record is null while it is still loading and
-      // stays null forever if its fetch failed, so the only honest options are
-      // to say so or to disable the control, and the empty state does both.
-      setError(t("This project is still loading. Try again in a moment."));
-      return;
-    }
-    const controller = new AbortController();
-    uploadAbort.current = controller;
-    setUploading(true); setError(null);
-    try {
-      // Seed the group from the project's current source so "Add files" appends
-      // rather than starting a fresh group and silently dropping the files
-      // already attached (#85). Empty means a brand-new project, a new group.
-      let group: string | undefined = sourceId || undefined;
-      const appending = Boolean(group);
-      for (let i = 0; i < selected.length; i++) {
-        const file = selected[i];
-        setUploadProgress({ index: i, total: selected.length, name: file.name, fraction: 0 });
-        const result = await api.upload(file, group, {
-          signal: controller.signal,
-          onProgress: (fraction) => setUploadProgress({ index: i, total: selected.length, name: file.name, fraction }),
-        });
-        group = result.source_id;
-      }
-      if (group) {
-        const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: group });
-        setAutomation(saved); setSourceId(group);
-        // Appending leaves sourceId unchanged, so the profile effect does not
-        // re-run; refresh it so the new files show in the review list.
-        if (appending) await refreshProfile();
-      }
-    }
-    // A cancelled upload is a deliberate action, not an error to report.
-    catch (caught) { if ((caught as { name?: string })?.name !== "AbortError") setError(messageOf(caught)); }
-    finally { setUploading(false); setUploadProgress(null); uploadAbort.current = null; }
-  }
-
-  const refreshProfile = useCallback(async () => {
-    if (!sourceId) return;
-    const next = await api.sourceProfile(sourceId).catch(() => null);
-    if (next) setProfile(next);
-  }, [sourceId]);
-
-  async function removeSourceFile(name: string) {
-    if (!sourceId || busy) return;
-    setBusy(true); setError(null);
-    try {
-      const result = await api.removeSourceFile(sourceId, name);
-      if (result.deleted) {
-        // The group's last file is gone, so the source no longer exists: detach
-        // it from the project and fall back to the empty upload screen.
-        if (automation) { const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: null }); setAutomation(saved); }
-        setSourceId(""); setProfile(null);
-      } else {
-        await refreshProfile();
-      }
-    } catch (caught) { setError(messageOf(caught)); }
-    finally { setBusy(false); }
-  }
-
-  function cancelUpload() { uploadAbort.current?.abort(); }
-
-  async function selectExistingSource(nextSourceId: string) {
-    if (!automation || !nextSourceId || busy) return;
-    setBusy(true); setError(null);
-    try {
-      const saved = await api.updateAutomationSafely(automationId, automation.revision, { source_id: nextSourceId });
-      setAutomation(saved); setSourceId(nextSourceId); setRunId(null); setRunStatus(null); setWorkspace(null); setAdvancedGraph(false);
-      setParams({ automation: automationId }, { replace: true });
-    } catch (caught) { setError(messageOf(caught)); }
-    finally { setBusy(false); }
-  }
-
   async function startUnderstanding() {
     if (!sourceId || busy) return; setBusy(true); setError(null);
-    try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ automation: automationId, run: staged.run_id }, { replace: true }); await refreshAutomation(); }
+    try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ project: projectId, automation: automationId, run: staged.run_id }, { replace: true }); await refreshAutomation(); }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
@@ -366,9 +154,12 @@ function AutomationEditor({ automationId }: { automationId: string }) {
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
-  async function runAcceptedWorkflow() {
+  // #166 second path: `runMode` carries the person's choice to approve every
+  // stage. `manual` declares every stage a checkpoint, so the run stops after
+  // each one for a human decision instead of the agent deciding the gate.
+  async function runAcceptedWorkflow(runMode: "fully_auto" | "manual" = "fully_auto") {
     if (!runId || !workspace || !blueprint || busy) return; setBusy(true); setError(null);
-    try { if (!profile?.tables.length) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; } if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: "fully_auto" }); setRunStatus("running"); } }
+    try { if (!profile?.tables.length) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; } if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: runMode }); setRunStatus("running"); } }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
@@ -391,7 +182,7 @@ function AutomationEditor({ automationId }: { automationId: string }) {
       } else {
         const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId);
         setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null);
-        setParams({ automation: automationId, run: staged.run_id }, { replace: true });
+        setParams({ project: projectId, automation: automationId, run: staged.run_id }, { replace: true });
         await refreshAutomation();
       }
     } catch (caught) { setError(messageOf(caught)); }
@@ -410,46 +201,30 @@ function AutomationEditor({ automationId }: { automationId: string }) {
 
   const lifecycle = automationView({ sourceId, runId, runStatus, workspace, advancedGraph });
   const views = availableProjectViews(contents);
-  // A tab can disappear underneath the person -- deleting the last run drops
-  // Executions' contents, deleting a model drops the Models tab. If the current
-  // view is no longer offered, fall back to the Editor rather than showing a
-  // selected tab with no header. Only once contents has loaded, so a deep-link
-  // to a real Models/Reports view is not bounced away before its data arrives.
+  // The automation level always exposes its graph, selected data, runs, models,
+  // and reports. Empty output pages are useful truth, not tabs that disappear.
   useEffect(() => {
     if (contents && !views.includes(activeView)) setActiveView("editor");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contents]);
-  const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ automation: automationId, ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
+  const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ project: projectId, automation: automationId, ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken" onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files); }}>
-      <input ref={fileInput} type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.parquet,.pdf" className="hidden" onChange={(event) => { void upload(event.target.files ?? []); event.target.value = ""; }} />
+    <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken">
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
-        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} className="min-w-0 w-[320px] max-w-[32vw] border-0 bg-transparent text-sm font-semibold text-ink outline-none" />
+        <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams({ project: projectId })}>← {t("Project overview")}</button>
+        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[260px] max-w-[26vw] rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none" />
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
-        <div className="ml-auto flex items-center gap-2">{activeView === "editor" && <select aria-label={t("Choose uploaded data")} title={t("Choose uploaded data")} value={sourceId} onChange={(event) => void selectExistingSource(event.target.value)} className="h-8 max-w-[220px] rounded-lg border border-line bg-surface px-2 text-[11px] text-ink"><option value="">{t("Choose uploaded data")}</option>{sources.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select>}{activeView === "editor" && <button type="button" disabled={!automation} className="btn-ghost !h-8 !w-8 !p-0 text-lg disabled:opacity-40" title={t("Add files")} onClick={() => fileInput.current?.click()}>+</button>}<LanguagePicker /></div>
+        {/* #157/#165: uploaded data is managed by the project. The contradictory
+            top-right global source picker and upload button are intentionally gone. */}
+        <div className="ml-auto"><LanguagePicker /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
       {/* A stage gate that escalated to a human: shown here, above the run, so
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
       {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
-      {/* Live upload progress with a working cancel: an accidental large file
-          can be aborted instead of forcing a tab refresh (#84). */}
-      {uploading && uploadProgress && (
-        <div className="mx-4 mt-3 flex shrink-0 items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2 text-xs text-ink">
-              <span className="truncate">{t("Uploading {name}", { name: uploadProgress.name })}{uploadProgress.total > 1 ? ` (${uploadProgress.index + 1}/${uploadProgress.total})` : ""}</span>
-              <span className="shrink-0 text-ink-mute">{Math.round(uploadProgress.fraction * 100)}%</span>
-            </div>
-            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-sunken"><div className="h-full rounded-full bg-brand-500 transition-[width]" style={{ width: `${Math.round(uploadProgress.fraction * 100)}%` }} /></div>
-          </div>
-          <button type="button" className="btn-ghost !py-1 text-xs text-stop-700" onClick={cancelUpload}>{t("Cancel")}</button>
-        </div>
-      )}
-      {dragging && <div className="pointer-events-none absolute inset-4 z-50 grid place-items-center rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-sm font-semibold text-brand-700">{t("Drop files to add them as one source")}</div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} /> : <>{lifecycle === "empty" && <button type="button" disabled={!automation} onClick={() => fileInput.current?.click()} className="grid h-full w-full place-items-center bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px] p-8 text-left"><div className="w-full max-w-xl rounded-2xl border-2 border-dashed border-line bg-surface px-8 py-12 text-center shadow-card"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Guided data science")}</p><Empty title={t("Start with unfamiliar files")} hint={t("Upload new files here or choose a reusable source from the data selector above.")} /><span className="btn-primary mt-6">{uploading ? t("Uploading…") : `+ ${t("Upload files")}`}</span><ol className="mt-8 grid grid-cols-5 gap-2 text-[9px] text-ink-mute">{[t("Intake"), t("Understand"), t("Choose ML inputs"), t("Accept plan"), t("Run and review")].map((step, index) => <li key={step}><span className="mx-auto mb-1 grid h-5 w-5 place-items-center rounded-full bg-brand-50 font-semibold text-brand-700">{index + 1}</span>{step}</li>)}</ol></div></button>}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing uploaded files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} onRemoveFile={(name) => void removeSourceFile(name)} onAddFiles={() => fileInput.current?.click()} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={() => void runAcceptedWorkflow()} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{lifecycle === "proposal" && profile && workspace && runId && <UnderstandingAndProposal profile={profile} workspace={workspace} sourceId={sourceId} runId={runId} onWorkspaceUpdated={applyWorkspace} onAccept={() => void acceptPlan()} onAdvanced={() => setAdvancedGraph(true)} busy={busy} />}{lifecycle === "guided_pipeline" && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} componentOutputs={workspace.component_outputs ?? []} runStatus={runStatus} busy={busy} onRun={(runMode) => void runAcceptedWorkflow(runMode)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>
   );
 }
@@ -479,6 +254,11 @@ function initialView(view: string | null): WorkspaceView {
   if (view === "runs") return "executions";
   if (view === "data" || view === "executions" || view === "models" || view === "reports") return view;
   return "editor";
+}
+
+function projectView(view: string | null): ProjectView {
+  if (view === "data" || view === "automations" || view === "models" || view === "reports") return view;
+  return "overview";
 }
 
 // Each label is a literal inside t() so the catalogue scanner can see it -- a

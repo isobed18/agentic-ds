@@ -73,8 +73,9 @@ describe("labels the scanner cannot see", () => {
    */
   it("translates every stage title on the pipeline graph", () => {
     const known = new Set(catalogueKeys());
-    const missing = GROUPS.map((group) => group.title).filter((title) => !known.has(title));
-    expect(missing, "stage titles reaching t() through a variable").toEqual([]);
+    const visibleText = GROUPS.flatMap((group) => [group.title, group.description]);
+    const missing = visibleText.filter((text) => !known.has(text));
+    expect(missing, "stage titles and descriptions reaching t() through variables").toEqual([]);
   });
 
   it("pins the top-level navigation labels the scanner cannot see", () => {
@@ -112,15 +113,12 @@ describe("catalogue screens request translations at the render boundary", () => 
     );
   });
 
-  it("translates every project data table heading", () => {
-    // #70/#111: the dataset table used to live on the removed global Datasets
-    // page; the same measured data is now the project's own Data tab. Several
-    // headings are reused elsewhere, so only this render site proves they still
-    // reach t() rather than shipping in English.
-    const table = PROJECT_CONTENTS_SOURCE.match(/<DataTable[\s\S]*?\/>/)?.[0] ?? "";
-    for (const heading of ["Table", "Format", "Rows", "Columns", "Keys", "Issues"]) {
-      expect(table, `${heading} heading on the project data table`).toContain(`t("${heading}")`);
-    }
+  it("translates the automation's selected-data page", () => {
+    // #157 replaced the project-as-automation summary table with the exact file
+    // snapshot selected for one child automation. Pin the new scope-defining
+    // copy at its render site so it cannot silently fall back to English.
+    expect(PROJECT_CONTENTS_SOURCE).toContain('t("Selected automation data")');
+    expect(PROJECT_CONTENTS_SOURCE).toContain('t("Only these project files belong to this automation.")');
   });
 });
 

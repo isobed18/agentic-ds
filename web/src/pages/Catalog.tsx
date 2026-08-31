@@ -112,15 +112,15 @@ function stateLabel(project: HomeProject): string {
 
 /** A project opens in its workspace; a project with runs opens on its latest. */
 export function projectHref(project: HomeProject): string {
-  const base = `/projects?automation=${encodeURIComponent(project.project_id)}`;
-  return project.latest_run_id
-    ? `${base}&view=runs&run=${encodeURIComponent(project.latest_run_id)}`
-    : base;
+  return `/projects?project=${encodeURIComponent(project.project_id)}`;
 }
 
 export function outputHref(output: HomeOutput): string | null {
   if (!output.project_id) return null;
-  return `/projects?automation=${encodeURIComponent(output.project_id)}&view=runs&run=${encodeURIComponent(output.run_id)}`;
+  const base = `/projects?project=${encodeURIComponent(output.project_id)}`;
+  return output.automation_id
+    ? `${base}&automation=${encodeURIComponent(output.automation_id)}&view=executions&run=${encodeURIComponent(output.run_id)}`
+    : base;
 }
 
 /**

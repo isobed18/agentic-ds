@@ -54,6 +54,7 @@ from ads.automation import (
     compile_automation_plan,
     instantiate_component,
 )
+from ads.contracts.automation_definition import AutomationInputFile
 from ads.contracts.base import ArtifactType
 from ads.contracts.documents import (
     DocumentExtraction,
@@ -133,6 +134,7 @@ from ads.pipeline import (
     configure_pipeline_state,
 )
 from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
+from ads.projects import ProjectRevisionConflict, ProjectStore
 from ads.sandbox import SandboxConfig, SandboxManager
 from ads.skills import render_skills, select_skills
 from ads.staging import (
@@ -244,6 +246,7 @@ def _measure_file_detection(
 
 
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
+_AUTOMATION_INPUT_ID = re.compile(r"^automation-input:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PROFILE_CACHE_SCHEMA_VERSION = 1
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
@@ -517,6 +520,7 @@ class ControlPlane:
     llm_factory: Callable[[], StructuredLLM] | None = None
     workflow_runner: Callable[..., Any] | None = None
     automation_store: AutomationStore | None = None
+    project_store: ProjectStore | None = None
     _runtime_runs: dict[str, _RuntimeRun] = field(default_factory=dict)
     #: source_id -> (file fingerprint, profile). Invalidated by the fingerprint
     #: rather than by a timer, so a changed file is re-profiled immediately and
@@ -548,10 +552,17 @@ class ControlPlane:
         self._run_state_root.mkdir(parents=True, exist_ok=True)
         if self.automation_store is None:
             self.automation_store = AutomationStore(self.store.root.parent / "automations")
+        if self.project_store is None:
+            self.project_store = ProjectStore(self.store.root.parent / "projects")
+        self._automation_input_root.mkdir(parents=True, exist_ok=True)
 
     @property
     def _run_state_root(self) -> Path:
         return self.store.root.parent / "run-state"
+
+    @property
+    def _automation_input_root(self) -> Path:
+        return self.store.root.parent / "automation-inputs"
 
     # ---------------------------------------------------------------- workflow
 
@@ -687,6 +698,139 @@ class ControlPlane:
 
     # ----------------------------------------------------------- automations
 
+    def list_projects(self) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        return [item.model_dump(mode="json") for item in self.project_store.list()]
+
+    def project(self, project_id: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.get(project_id).model_dump(mode="json")
+
+    def create_project(self, name: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.create(name).model_dump(mode="json")
+
+    def update_project(
+        self, project_id: str, *, expected_revision: int, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.update(
+            project_id, expected_revision=expected_revision, changes=changes
+        ).model_dump(mode="json")
+
+    def add_project_source(self, project_id: str, source_id: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        self.project_store.get(project_id)
+        self.source_path(source_id)
+        return self.project_store.add_source(
+            project_id, source_id=source_id
+        ).model_dump(mode="json")
+
+    def project_data(self, project_id: str) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        project = self.project_store.get(project_id)
+        listed = {item["source_id"]: item for item in self.data_sources()}
+        data: list[dict[str, Any]] = []
+        for source_id in project.source_ids:
+            source = listed.get(source_id)
+            if source is None:
+                continue
+            item = self._dataset_summary(source)
+            item["files"] = [
+                path.relative_to(self.source_path(source_id)).as_posix()
+                for path in sorted(self.source_path(source_id).rglob("*"))
+                if path.is_file()
+            ]
+            data.append(item)
+        return data
+
+    def project_automations(self, project_id: str) -> list[dict[str, Any]]:
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        project = self.project_store.get(project_id)
+        records = []
+        for automation_id in project.automation_ids:
+            try:
+                records.append(self.automation_store.get(automation_id).model_dump(mode="json"))
+            except KeyError:
+                continue
+        return records
+
+    def create_project_automation(self, project_id: str, name: str) -> dict[str, Any]:
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        self.project_store.get(project_id)
+        created = self.automation_store.create(name)
+        try:
+            self.project_store.add_automation(
+                project_id, automation_id=created.automation_id
+            )
+        except Exception:
+            self.automation_store.delete(created.automation_id)
+            raise
+        return created.model_dump(mode="json")
+
+    def select_automation_inputs(
+        self,
+        automation_id: str,
+        *,
+        expected_revision: int,
+        selections: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Snapshot exact project files so later pool growth cannot alter a run."""
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        automation = self.automation_store.get(automation_id)
+        if automation.revision != expected_revision:
+            raise AutomationRevisionConflict(
+                f"automation revision changed from {expected_revision} to {automation.revision}"
+            )
+        parents = [
+            project
+            for project in self.project_store.list()
+            if automation_id in project.automation_ids
+        ]
+        if len(parents) != 1:
+            raise ValueError("automation must belong to exactly one project")
+        project = parents[0]
+        chosen = tuple(AutomationInputFile.model_validate(item) for item in selections)
+        if not chosen:
+            raise ValueError("select at least one project file")
+        if len({(item.source_id, item.path) for item in chosen}) != len(chosen):
+            raise ValueError("selected project files must be unique")
+
+        token = uuid.uuid4().hex[:12]
+        snapshot_id = f"automation-input:{token}"
+        snapshot_root = self._automation_input_root / token
+        snapshot_root.mkdir(parents=True, exist_ok=False)
+        try:
+            for index, item in enumerate(chosen):
+                if item.source_id not in project.source_ids:
+                    raise ValueError("automation inputs must come from its project data pool")
+                source_root = self.source_path(item.source_id)
+                source_file = (source_root / item.path).resolve()
+                if source_root not in source_file.parents or not source_file.is_file():
+                    raise ValueError(f"unknown project file {item.path!r}")
+                # #157: the source loader reads files at the source root. The
+                # first implementation nested each selection under ``0000/``,
+                # so the UI successfully selected data and then profiling said
+                # the snapshot contained no supported files. Prefixing at the
+                # root preserves collision safety without hiding the files.
+                destination = snapshot_root / f"{index:04d}-{Path(item.path).name}"
+                shutil.copy2(source_file, destination)
+            saved = self.automation_store.update(
+                automation_id,
+                expected_revision=expected_revision,
+                changes={"source_id": snapshot_id, "selected_files": chosen},
+            )
+        except Exception:
+            shutil.rmtree(snapshot_root, ignore_errors=True)
+            raise
+        old_match = _AUTOMATION_INPUT_ID.fullmatch(automation.source_id or "")
+        if old_match:
+            shutil.rmtree(self._automation_input_root / old_match.group(1), ignore_errors=True)
+        return saved.model_dump(mode="json")
+
     def list_automations(self) -> list[dict[str, Any]]:
         assert self.automation_store is not None
         return [item.model_dump(mode="json") for item in self.automation_store.list()]
@@ -700,9 +844,32 @@ class ControlPlane:
         return self.automation_store.create(name).model_dump(mode="json")
 
     def delete_automation(self, automation_id: str) -> dict[str, Any]:
-        """Delete a saved graph without deleting its independently audited runs."""
+        """Delete a saved graph without deleting its independently audited runs.
+
+        The parent project is detached first (#185). Both names are only
+        reachable through the definition being deleted, and the project card
+        counts this id list, so a stale entry counts a deleted draft forever.
+
+        A never-executed automation also takes its private input snapshot with
+        it: nothing else can name that directory afterwards. One that did run
+        keeps the snapshot, because its runs still resolve their source bytes
+        through that path and the deletion promises the history stays readable.
+        """
         assert self.automation_store is not None
-        return {"automation_id": automation_id, **self.automation_store.delete(automation_id)}
+        assert self.project_store is not None
+        automation = self.automation_store.get(automation_id)
+        for project in self.project_store.list():
+            if automation_id in project.automation_ids:
+                self.project_store.remove_automation(
+                    project.project_id, automation_id=automation_id
+                )
+        removed = self.automation_store.delete(automation_id)
+        snapshot = _AUTOMATION_INPUT_ID.fullmatch(automation.source_id or "")
+        if snapshot and not automation.execution_ids:
+            shutil.rmtree(
+                self._automation_input_root / snapshot.group(1), ignore_errors=True
+            )
+        return {"automation_id": automation_id, **removed}
 
     def update_automation(
         self,
@@ -718,47 +885,76 @@ class ControlPlane:
             changes=changes,
         ).model_dump(mode="json")
 
-    def project_contents(self, project_id: str) -> dict[str, Any]:
-        """Return one project's inputs and outputs without a global catalogue join."""
+    def _project_automation_records(self, project_id: str) -> tuple[Any, list[Any]]:
+        """Load a project and only the automation records it still owns.
+
+        #157 made the durable project store authoritative. Missing child files
+        are skipped because deleting a draft must not make its parent unreadable.
+        """
+        assert self.project_store is not None
         assert self.automation_store is not None
-        project = self.automation_store.get(project_id)
-        execution_ids = set(project.execution_ids)
+        project = self.project_store.get(project_id)
+        automations = []
+        for automation_id in project.automation_ids:
+            try:
+                automations.append(self.automation_store.get(automation_id))
+            except KeyError:
+                continue
+        return project, automations
+
+    def automation_contents(self, automation_id: str) -> dict[str, Any]:
+        """Return one child automation's private inputs and outputs."""
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        automation = self.automation_store.get(automation_id)
+        parents = [
+            project
+            for project in self.project_store.list()
+            if automation_id in project.automation_ids
+        ]
+        if len(parents) != 1:
+            raise ValueError("automation must belong to exactly one project")
+        execution_ids = set(automation.execution_ids)
         executions = [run for run in self.list_runs() if run.run_id in execution_ids]
-        source = next(
-            (
-                item
-                for item in self.data_sources()
-                if item["source_id"] == project.source_id
-            ),
-            None,
-        )
-        references = (
-            [
-                {
-                    "project_id": item.automation_id,
-                    "name": item.name,
-                }
-                for item in self.automation_store.list()
-                if item.source_id == project.source_id
-            ]
-            if project.source_id
-            else []
-        )
+        return {
+            "automation": automation.model_dump(mode="json"),
+            "project": parents[0].model_dump(mode="json"),
+            "data": [item.model_dump(mode="json") for item in automation.selected_files],
+            "executions": [self._experiment_summary(run) for run in executions],
+            "models": [model for run in executions for model in self._model_summaries(run)],
+            "reports": [report for run in executions for report in self._report_summaries(run)],
+        }
+
+    def project_contents(self, project_id: str) -> dict[str, Any]:
+        """Aggregate every child output and retain its automation provenance."""
+        project, automations = self._project_automation_records(project_id)
+        runs = {run.run_id: run for run in self.list_runs()}
+        executions: list[dict[str, Any]] = []
+        models: list[dict[str, Any]] = []
+        reports: list[dict[str, Any]] = []
+        for automation in automations:
+            provenance = {
+                "automation_id": automation.automation_id,
+                "automation_name": automation.name,
+            }
+            for run_id in automation.execution_ids:
+                run = runs.get(run_id)
+                if run is None:
+                    continue
+                executions.append({**self._experiment_summary(run), **provenance})
+                models.extend(
+                    {**model, **provenance} for model in self._model_summaries(run)
+                )
+                reports.extend(
+                    {**report, **provenance} for report in self._report_summaries(run)
+                )
         return {
             "project": project.model_dump(mode="json"),
-            "data": self._dataset_summary(source) if source else None,
-            "source_references": references,
-            "executions": [self._experiment_summary(run) for run in executions],
-            "models": [
-                model
-                for run in executions
-                for model in self._model_summaries(run)
-            ],
-            "reports": [
-                report
-                for run in executions
-                for report in self._report_summaries(run)
-            ],
+            "data": self.project_data(project_id),
+            "automations": [item.model_dump(mode="json") for item in automations],
+            "executions": executions,
+            "models": models,
+            "reports": reports,
         }
 
     @staticmethod
@@ -794,31 +990,47 @@ class ControlPlane:
         the labels of recent project-owned models and reports, which is the case
         the catalogues served -- finding a thing whose project is forgotten.
         """
+        assert self.project_store is not None
         assert self.automation_store is not None
         query = (search or "").strip().lower()
         runs = {run.run_id: run for run in self.list_runs()}
-        owner_of: dict[str, tuple[str, str]] = {}
+        owner_of: dict[str, tuple[str, str, str, str]] = {}
         projects: list[dict[str, Any]] = []
-        for project in self.automation_store.list():
+        for project in self.project_store.list():
+            _, automations = self._project_automation_records(project.project_id)
             statuses: list[str] = []
-            for run_id in project.execution_ids:
-                owner_of[run_id] = (project.automation_id, project.name)
-                run = runs.get(run_id)
-                if run is not None:
-                    statuses.append(run.status)
-            state = self._project_state(statuses, project.status)
+            execution_ids: list[str] = []
+            for automation in automations:
+                for run_id in automation.execution_ids:
+                    execution_ids.append(run_id)
+                    owner_of[run_id] = (
+                        project.project_id,
+                        project.name,
+                        automation.automation_id,
+                        automation.name,
+                    )
+                    run = runs.get(run_id)
+                    if run is not None:
+                        statuses.append(run.status)
+            project_status = (
+                "error" if any(item.status == "error" for item in automations) else "saved"
+            )
+            state = self._project_state(statuses, project_status)
             latest_run = next(
-                (rid for rid in reversed(project.execution_ids) if rid in runs),
+                (rid for rid in reversed(execution_ids) if rid in runs),
                 None,
+            )
+            updated_at = max(
+                [project.updated_at, *(automation.updated_at for automation in automations)]
             )
             projects.append(
                 {
-                    "project_id": project.automation_id,
+                    "project_id": project.project_id,
                     "name": project.name,
-                    "status": project.status,
-                    "source_id": project.source_id,
-                    "execution_count": len(project.execution_ids),
-                    "updated_at": project.updated_at.isoformat(),
+                    "status": project_status,
+                    "source_id": project.source_ids[0] if project.source_ids else None,
+                    "execution_count": len(execution_ids),
+                    "updated_at": updated_at.isoformat(),
                     "state": state,
                     "needs_attention": state in {"awaiting_human", "failed"},
                     "latest_run_id": latest_run,
@@ -837,12 +1049,16 @@ class ControlPlane:
             owner = owner_of.get(run.run_id)
             project_id = owner[0] if owner else None
             project_name = owner[1] if owner else None
+            automation_id = owner[2] if owner else None
+            automation_name = owner[3] if owner else None
             for model in self._model_summaries(run):
                 recent.append(
                     {
                         "kind": "model",
                         "project_id": project_id,
                         "project_name": project_name,
+                        "automation_id": automation_id,
+                        "automation_name": automation_name,
                         "run_id": run.run_id,
                         "artifact_id": model["artifact_id"],
                         "label": model["display_name"] or "Trained model",
@@ -855,6 +1071,8 @@ class ControlPlane:
                         "kind": "report",
                         "project_id": project_id,
                         "project_name": project_name,
+                        "automation_id": automation_id,
+                        "automation_name": automation_name,
                         "run_id": run.run_id,
                         "artifact_id": report["artifact_id"],
                         "label": report["preview"] or "Evaluation report",
@@ -1646,6 +1864,13 @@ class ControlPlane:
         compiled = self.compile_automation(run_id)
         return {
             "artifact_id": accepted_ref.artifact_id,
+            # #166: StagingWorkspace has no run_id field, and staging_workspace()
+            # injects one into its response while this path did not. The editor
+            # reads next.run_id after accepting to keep the run selected; without
+            # it the URL became run=undefined and the screen fell back to the
+            # empty upload state -- the "accepting the plan lands somewhere
+            # unrelated" defect. Return the same run_id the workspace read did.
+            "run_id": run_id,
             **saved.model_dump(mode="json"),
             "execution_plan_artifact_id": compiled["artifact_id"],
         }
@@ -2876,6 +3101,12 @@ class ControlPlane:
                 if (
                     child.is_dir()
                     and not self._reserved_path(child)
+                    # Automation selections are copied to an immutable private
+                    # snapshot so later project uploads cannot alter old runs.
+                    # When ``data/`` is a source root, that implementation
+                    # directory is also its direct child; never offer it as a
+                    # second user-visible dataset.
+                    and not self._is_automation_input_path(child)
                     and self._holds_loadable_files(child)
                 ):
                     sources.append({"source_id": child.name, "label": child.name})
@@ -3010,15 +3241,28 @@ class ControlPlane:
         match = _UPLOAD_ID.fullmatch(source_id)
         if match and self.upload_root is not None:
             candidates.insert(0, self.upload_root / match.group(1))
+        input_match = _AUTOMATION_INPUT_ID.fullmatch(source_id)
+        if input_match:
+            candidates.insert(0, self._automation_input_root / input_match.group(1))
         for candidate in candidates:
             resolved = candidate.resolve()
             if self._reserved_path(resolved):
                 continue
             in_source = any(root in resolved.parents for root in self.source_roots)
             in_upload = self.upload_root is not None and self.upload_root in resolved.parents
-            if (in_source or in_upload) and resolved.is_dir() and any(resolved.iterdir()):
+            in_automation_input = self._is_automation_input_path(resolved)
+            if (
+                (in_source or in_upload or in_automation_input)
+                and resolved.is_dir()
+                and any(resolved.iterdir())
+            ):
                 return resolved
         raise KeyError(source_id)
+
+    def _is_automation_input_path(self, path: Path) -> bool:
+        resolved = path.resolve()
+        root = self._automation_input_root.resolve()
+        return resolved == root or root in resolved.parents
 
     @staticmethod
     def _holds_loadable_files(directory: Path) -> bool:
@@ -5369,6 +5613,27 @@ class ControlPlane:
             raise KeyError(artifact_id)
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def model_download(self, artifact_id: str) -> tuple[bytes, str]:
+        """Return the saved fitted-pipeline bytes for one trained-model artifact.
+
+        #166 ends at "the model can be downloaded", but only reports had a
+        download route -- a completed run left a saved model with no way to take
+        it off the machine. The trained-model artifact records its fitted
+        pipeline as a separate blob (ModelBlobReference.artifact_id ->
+        blobs/model.joblib); serve that. A model whose training deferred saving
+        the blob has nothing to hand back and is reported as such rather than a
+        confusing empty file.
+        """
+        payload = self.artifact_payload(artifact_id)
+        blob = payload.get("model_blob")
+        if not isinstance(blob, dict) or not blob.get("artifact_id"):
+            raise KeyError("no_saved_model")
+        filename = str(blob.get("filename") or "model.joblib")
+        blob_path = self.store.blob_dir(str(blob["artifact_id"])) / filename
+        if not blob_path.exists():
+            raise KeyError("model_blob_missing")
+        return blob_path.read_bytes(), filename
+
     def artifact_preview(self, artifact_id: str) -> dict[str, Any]:
         """Return a graph-inspector preview without exposing rows or document passages."""
         payload = self.artifact_payload(artifact_id)
@@ -5613,10 +5878,6 @@ class ControlPlane:
             pass
         return detail
 
-    def experiment_catalog(self) -> list[dict[str, Any]]:
-        """Runs enriched with safe configuration, progress, and gate summaries."""
-        return [self._experiment_summary(summary) for summary in self.list_runs()]
-
     def _experiment_summary(self, summary: RunSummary) -> dict[str, Any]:
         try:
             progress = self.progress(summary.run_id)
@@ -5636,10 +5897,6 @@ class ControlPlane:
             "latest_gate": decisions[-1] if decisions else None,
             "deletable": summary.status not in {"queued", "running", "staging"},
         }
-
-    def model_catalog(self) -> list[dict[str, Any]]:
-        """Saved trained-model artifacts across runs, with no training rows."""
-        return [model for run in self.list_runs() for model in self._model_summaries(run)]
 
     def _model_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         models: list[dict[str, Any]] = []
@@ -5682,10 +5939,6 @@ class ControlPlane:
                 }
             )
         return models
-
-    def report_catalog(self) -> list[dict[str, Any]]:
-        """Final report artifacts with safe previews and export ids."""
-        return [report for run in self.list_runs() for report in self._report_summaries(run)]
 
     def _report_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         reports: list[dict[str, Any]] = []
@@ -6001,6 +6254,73 @@ def create_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @app.get("/api/projects")
+    def projects() -> list[dict[str, Any]]:
+        return plane.list_projects()
+
+    @app.post("/api/projects")
+    def create_project(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.create_project(str(body["name"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/projects/{project_id}")
+    def project(project_id: str) -> dict[str, Any]:
+        try:
+            return plane.project(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/projects/{project_id}")
+    def update_project(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.update_project(
+                project_id,
+                expected_revision=int(body["expected_revision"]),
+                changes=dict(body.get("changes") or {}),
+            )
+        except ProjectRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/sources")
+    def add_project_source(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.add_project_source(project_id, str(body["source_id"]))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project or source") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/projects/{project_id}/data")
+    def project_data(project_id: str) -> list[dict[str, Any]]:
+        try:
+            return plane.project_data(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+
+    @app.get("/api/projects/{project_id}/automations")
+    def project_automations(project_id: str) -> list[dict[str, Any]]:
+        try:
+            return plane.project_automations(project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+
+    @app.post("/api/projects/{project_id}/automations")
+    def create_project_automation(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.create_project_automation(project_id, str(body["name"]))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.get("/api/automations/{automation_id}")
     def automation(automation_id: str) -> dict[str, Any]:
         try:
@@ -6018,6 +6338,21 @@ def create_app(
                 automation_id,
                 expected_revision=int(body["expected_revision"]),
                 changes=changes,
+            )
+        except AutomationRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown automation") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.put("/api/automations/{automation_id}/inputs")
+    def select_automation_inputs(automation_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return plane.select_automation_inputs(
+                automation_id,
+                expected_revision=int(body["expected_revision"]),
+                selections=list(body.get("selections") or []),
             )
         except AutomationRevisionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
@@ -6045,6 +6380,15 @@ def create_app(
         return [
             summary.to_dict() for summary in plane.list_runs() if summary.run_id in execution_ids
         ]
+
+    @app.get("/api/automations/{automation_id}/contents")
+    def automation_contents(automation_id: str) -> dict[str, Any]:
+        try:
+            return plane.automation_contents(automation_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown automation") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/home")
     def home(search: str | None = None) -> dict[str, Any]:
@@ -6107,18 +6451,6 @@ def create_app(
         search: str | None = None, page: int = 1, page_size: int = 25
     ) -> dict[str, Any]:
         return plane.dataset_catalog(search=search, page=page, page_size=page_size)
-
-    @app.get("/api/catalog/experiments")
-    def experiment_catalog() -> list[dict[str, Any]]:
-        return plane.experiment_catalog()
-
-    @app.get("/api/catalog/models")
-    def model_catalog() -> list[dict[str, Any]]:
-        return plane.model_catalog()
-
-    @app.get("/api/catalog/reports")
-    def report_catalog() -> list[dict[str, Any]]:
-        return plane.report_catalog()
 
     @app.get("/api/hardening")
     def hardening_status() -> dict[str, Any]:
@@ -6462,6 +6794,27 @@ def create_app(
             return plane.artifact_preview(artifact_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown artifact") from None
+
+    @app.get("/api/models/{artifact_id}/download")
+    def download_model(artifact_id: str) -> Response:
+        try:
+            data, filename = plane.model_download(artifact_id)
+        except KeyError as exc:
+            reason = str(exc)
+            if reason in {"no_saved_model", "model_blob_missing"}:
+                raise HTTPException(
+                    status_code=404, detail="this model has no downloadable blob"
+                ) from None
+            raise HTTPException(status_code=404, detail="unknown model") from None
+        return Response(
+            data,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="ads-model-{artifact_id[:12]}-{filename}"'
+                )
+            },
+        )
 
     @app.get("/api/reports/{artifact_id}/download")
     def download_report(artifact_id: str) -> Response:

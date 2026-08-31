@@ -10,9 +10,57 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ads.api import ControlPlane, create_app
+from ads.contracts import Metric, TaskType
 from ads.contracts.datacard import DataCard
+from ads.contracts.training import (
+    CandidateResult,
+    MetricEvaluation,
+    ModelBlobReference,
+    TrainingReport,
+)
 from ads.pipeline import FinalReport
 from ads.store import ArtifactStore
+
+
+def _trained_model(*, blob_id: str | None) -> TrainingReport:
+    """A minimal winner-only training report, optionally carrying a saved blob."""
+    return TrainingReport(
+        task_type=TaskType.REGRESSION,
+        primary_metric=Metric.RMSE,
+        winner_id="cand-1",
+        results=[
+            CandidateResult(
+                candidate_id="cand-0",
+                display_name="Baseline",
+                estimator_class="sklearn.dummy.DummyRegressor",
+                is_baseline=True,
+                metrics=[
+                    MetricEvaluation(
+                        metric=Metric.RMSE,
+                        fold_scores=[1.9, 2.1],
+                        cv_mean=2.0,
+                        cv_std=0.1,
+                        holdout_score=2.05,
+                    )
+                ],
+            ),
+            CandidateResult(
+                candidate_id="cand-1",
+                display_name="Ridge",
+                estimator_class="sklearn.linear_model.Ridge",
+                metrics=[
+                    MetricEvaluation(
+                        metric=Metric.RMSE,
+                        fold_scores=[0.9, 1.1],
+                        cv_mean=1.0,
+                        cv_std=0.1,
+                        holdout_score=1.05,
+                    )
+                ],
+            ),
+        ],
+        model_blob=ModelBlobReference(artifact_id=blob_id) if blob_id else None,
+    )
 
 
 def _plane(tmp_path: Path) -> ControlPlane:
@@ -68,6 +116,13 @@ def test_artifact_preview_reports_the_real_type_for_unrecognised_artifacts(
     preview = plane.artifact_preview(ref.artifact_id)
 
     assert preview["artifact_type"] == "data_card"
+    # Generic previews are deliberately privacy-safe, but they still have to
+    # carry enough structure for the UI to show something useful instead of an
+    # empty modal (#164). Scalars and collection sizes meet that contract
+    # without exposing any table rows.
+    assert preview["fields"]["table_name"] == "customers"
+    assert preview["fields"]["n_rows"] == 2
+    assert preview["collection_sizes"]["columns"] == 0
 
 
 def test_dataset_catalog_paginates_and_only_profiles_the_page(tmp_path: Path) -> None:
@@ -145,7 +200,7 @@ def test_dataset_catalog_summarises_pdf_only_sources(tmp_path: Path) -> None:
     assert payload["document_summaries"][0]["name"] == "agreement.pdf"
 
 
-def test_experiments_models_reports_and_hardening_have_real_endpoints(
+def test_report_download_and_hardening_keep_their_real_endpoints(
     tmp_path: Path,
 ) -> None:
     plane = _plane(tmp_path)
@@ -153,7 +208,9 @@ def test_experiments_models_reports_and_hardening_have_real_endpoints(
         evaluation_artifact_id="a" * 64,
         markdown="# Result\n\nThe measured model passed its holdout checks.",
     )
-    plane.store.put(report, run_id="finished-run", stage_exec_id="report", name="final_report")
+    report_ref = plane.store.put(
+        report, run_id="finished-run", stage_exec_id="report", name="final_report"
+    )
     snapshot = plane._run_state_root / "finished-run.json"  # noqa: SLF001
     snapshot.write_text(
         json.dumps(
@@ -173,18 +230,28 @@ def test_experiments_models_reports_and_hardening_have_real_endpoints(
     )
     client = TestClient(create_app(plane=plane))
 
-    experiments = client.get("/api/catalog/experiments").json()
-    reports = client.get("/api/catalog/reports").json()
     hardening = client.get("/api/hardening").json()
 
-    assert experiments[0]["deletable"] is True
-    assert reports[0]["run_id"] == "finished-run"
-    assert client.get(f"/api/reports/{reports[0]['artifact_id']}/download").text.startswith(
+    assert client.get(f"/api/reports/{report_ref.artifact_id}/download").text.startswith(
         "# Result"
     )
     assert hardening["agents"]["tool_allowlists"] is True
     assert hardening["sandbox"]["network"] == "none"
     assert hardening["sandbox"]["root_filesystem"] == "read-only"
+
+
+def test_ui_orphaned_global_catalogue_routes_are_not_registered(tmp_path: Path) -> None:
+    """#155: project and automation views own these outputs now. Leaving the
+    old global reads registered preserves an undocumented second product model
+    that no UI can reach and lets new callers accidentally bypass containment."""
+    client = TestClient(create_app(plane=_plane(tmp_path)))
+
+    for path in (
+        "/api/catalog/experiments",
+        "/api/catalog/models",
+        "/api/catalog/reports",
+    ):
+        assert client.get(path).status_code == 404
 
 
 def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
@@ -194,13 +261,17 @@ def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
     must never acquire the other project's report from the global store."""
     plane = _plane(tmp_path)
     uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
-    first = plane.automation_store.create("Retention")
-    second = plane.automation_store.create("Campaign")
+    first_project = plane.create_project("Retention")
+    second_project = plane.create_project("Campaign")
+    plane.add_project_source(first_project["project_id"], uploaded["source_id"])
+    plane.add_project_source(second_project["project_id"], uploaded["source_id"])
+    first = plane.create_project_automation(first_project["project_id"], "Churn model")
+    second = plane.create_project_automation(second_project["project_id"], "Campaign report")
     plane.automation_store.attach_execution(
-        first.automation_id, run_id="retention-run", source_id=uploaded["source_id"]
+        first["automation_id"], run_id="retention-run", source_id=uploaded["source_id"]
     )
     plane.automation_store.attach_execution(
-        second.automation_id, run_id="campaign-run", source_id=uploaded["source_id"]
+        second["automation_id"], run_id="campaign-run", source_id=uploaded["source_id"]
     )
     for run_id, heading in (("retention-run", "Retention"), ("campaign-run", "Campaign")):
         report = FinalReport(evaluation_artifact_id="a" * 64, markdown=f"# {heading}")
@@ -223,25 +294,24 @@ def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
         )
 
     response = TestClient(create_app(plane=plane)).get(
-        f"/api/projects/{first.automation_id}/contents"
+        f"/api/projects/{first_project['project_id']}/contents"
     )
 
     assert response.status_code == 200
     contents = response.json()
-    assert contents["data"]["source_id"] == uploaded["source_id"]
-    assert {item["name"] for item in contents["source_references"]} == {
-        "Retention",
-        "Campaign",
-    }
+    assert contents["data"][0]["source_id"] == uploaded["source_id"]
+    assert [item["name"] for item in contents["automations"]] == ["Churn model"]
     assert [item["run_id"] for item in contents["executions"]] == ["retention-run"]
     assert [item["run_id"] for item in contents["reports"]] == ["retention-run"]
-    # Source reuse is deliberately legible: the sibling project is named under
-    # source_references (#78), so "Campaign" is expected in the response as a
-    # whole. The leak that must never happen is an *output* one -- if reports
-    # were filtered from the global store by source_id rather than by this
-    # project's own execution history, Campaign's report (built from the same
-    # input) would surface here, carried in its "# Campaign" preview heading.
-    # Scoping the sentinel to the output sections proves ownership by history.
+    assert contents["reports"][0]["automation_name"] == "Churn model"
+    automation_contents = TestClient(create_app(plane=plane)).get(
+        f"/api/automations/{first['automation_id']}/contents"
+    ).json()
+    assert automation_contents["project"]["project_id"] == first_project["project_id"]
+    assert [item["run_id"] for item in automation_contents["reports"]] == ["retention-run"]
+    # The two top-level projects reuse one source, but aggregate outputs remain
+    # owned by parent -> child automation history. Campaign's report must not
+    # surface in Retention merely because both pools contain the same source.
     outputs = json.dumps(
         {section: contents[section] for section in ("executions", "models", "reports")}
     )
@@ -256,13 +326,15 @@ def test_home_leads_with_projects_that_need_attention_and_finds_output_by_label(
     output be rediscovered by label when its project has been forgotten."""
     plane = _plane(tmp_path)
     uploaded = plane.upload("customers.csv", b"customer_id,churned\n1,0\n2,1\n")
-    waiting = plane.automation_store.create("Churn campaign")
-    finished = plane.automation_store.create("Retention model")
+    waiting_project = plane.create_project("Churn campaign")
+    finished_project = plane.create_project("Retention model")
+    waiting = plane.create_project_automation(waiting_project["project_id"], "Campaign report")
+    finished = plane.create_project_automation(finished_project["project_id"], "Retention flow")
     plane.automation_store.attach_execution(
-        finished.automation_id, run_id="finished-run", source_id=uploaded["source_id"]
+        finished["automation_id"], run_id="finished-run", source_id=uploaded["source_id"]
     )
     plane.automation_store.attach_execution(
-        waiting.automation_id, run_id="waiting-run", source_id=uploaded["source_id"]
+        waiting["automation_id"], run_id="waiting-run", source_id=uploaded["source_id"]
     )
     _snapshot(plane, "finished-run", "completed")
     _snapshot(plane, "waiting-run", "awaiting_human")
@@ -364,6 +436,43 @@ def test_delete_run_requires_exact_confirmation_and_preserves_shared_payload(
 
 
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def test_saved_model_is_downloadable_and_an_unsaved_one_reports_no_blob(
+    tmp_path: Path,
+) -> None:
+    """#166 ends at "the model can be downloaded", but only reports had a route.
+
+    A completed run leaves a trained-model artifact whose fitted pipeline lives
+    in a separate joblib blob; without a download route the model could not be
+    taken off the machine. A model whose blob was never saved has nothing to
+    hand back and must say so rather than stream an empty or wrong file.
+    """
+    plane = _plane(tmp_path)
+    blob_id = "a" * 64
+    (plane.store.blob_dir(blob_id) / "model.joblib").write_bytes(b"FITTED-PIPELINE-BYTES")
+    saved = plane.store.put(
+        _trained_model(blob_id=blob_id),
+        run_id="model-run",
+        stage_exec_id="training",
+        name="trained_model",
+    )
+    unsaved = plane.store.put(
+        _trained_model(blob_id=None),
+        run_id="deferred-run",
+        stage_exec_id="training",
+        name="trained_model",
+    )
+    client = TestClient(create_app(plane=plane))
+
+    ok = client.get(f"/api/models/{saved.artifact_id}/download")
+    assert ok.status_code == 200
+    assert ok.content == b"FITTED-PIPELINE-BYTES"
+    disposition = ok.headers["content-disposition"]
+    assert "attachment" in disposition and disposition.endswith('model.joblib"')
+
+    assert client.get(f"/api/models/{unsaved.artifact_id}/download").status_code == 404
+    assert client.get("/api/models/" + "f" * 64 + "/download").status_code == 404
 
 
 def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) -> None:
@@ -569,12 +678,22 @@ class TestAParkedRunCanBeCleared:
         assert refused.status_code == 409
         assert snapshot.exists(), "an unconfirmed delete must not remove anything"
 
-    def test_the_experiment_list_offers_it(self, tmp_path: Path) -> None:
-        """`deletable` drives the UI control, so it has to agree with the API."""
+    def test_the_project_execution_list_offers_it(self, tmp_path: Path) -> None:
+        """The project execution read model drives the delete control, so it
+        must retain the summary behaviour after the global catalogue is gone."""
         plane = _plane(tmp_path)
+        uploaded = plane.upload("customers.csv", b"customer_id\n1\n")
+        project = plane.create_project("Retention")
+        automation = plane.create_project_automation(project["project_id"], "Churn flow")
+        plane.automation_store.attach_execution(
+            automation["automation_id"],
+            run_id="parked-run",
+            source_id=uploaded["source_id"],
+        )
         _snapshot(plane, "parked-run", "awaiting_human")
 
-        entry = next(e for e in plane.experiment_catalog() if e["run_id"] == "parked-run")
+        contents = plane.project_contents(project["project_id"])
+        entry = next(e for e in contents["executions"] if e["run_id"] == "parked-run")
 
         assert entry["deletable"] is True
 

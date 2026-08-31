@@ -126,6 +126,18 @@ const TR: Record<string, string> = {
   "Analyze and validate": "Analiz et ve doğrula",
   "Build and split": "Öznitelik üret ve böl",
   "Train and evaluate": "Eğit ve değerlendir",
+  "Combine approved tables into one verified modeling dataset.":
+    "Onaylanan tabloları doğrulanmış tek bir modelleme veri kümesinde birleştirir.",
+  "Choose the prediction goal and confirm that the available data can support it.":
+    "Tahmin hedefini seçer ve mevcut verilerin bunu destekleyebildiğini doğrular.",
+  "Measure patterns, choose validation, and check for leakage before training.":
+    "Örüntüleri ölçer, doğrulama yöntemini seçer ve eğitimden önce sızıntıyı denetler.",
+  "Create model-ready features and divide the data without contaminating evaluation.":
+    "Modele hazır öznitelikler oluşturur ve değerlendirmeyi kirletmeden veriyi böler.",
+  "Train candidate models and compare them on held-out data.":
+    "Aday modelleri eğitir ve ayrılmış veriler üzerinde karşılaştırır.",
+  "Summarize the selected model, evidence, limitations, and next steps.":
+    "Seçilen modeli, kanıtları, sınırlamaları ve sonraki adımları özetler.",
   "Understand": "Anla",
   "Choose ML inputs": "ML girdilerini seç",
   "Run and review": "Çalıştır ve incele",
@@ -688,6 +700,17 @@ const TR: Record<string, string> = {
   "{count} executions": "{count} çalışma",
   "Never executed": "Hiç çalıştırılmadı",
   "No automations yet": "Henüz otomasyon yok",
+
+  // #185: the project-first rework left automations undeletable; the card
+  // action and its warning restore the entry point the old list had.
+  "Delete automation": "Otomasyonu sil",
+  "Delete {name}?": "{name} silinsin mi?",
+  "This removes the automation, its graph, and its data selection.":
+    "Bu işlem otomasyonu, akış grafiğini ve veri seçimini siler.",
+  "Its execution history and the project data are kept.":
+    "Çalıştırma geçmişi ve proje verileri korunur.",
+  "Deleting…": "Siliniyor…",
+
   "Create an automation, add data, and let the workflow grow from what the system learns.": "Bir otomasyon oluşturun, veri ekleyin ve iş akışının sistemin öğrendikleriyle büyümesine izin verin.",
   "Automation name": "Otomasyon adı",
   "Editor": "Düzenleyici",
@@ -939,6 +962,10 @@ const TR: Record<string, string> = {
   "Training rows": "Eğitim satırları",
   "Sensitive": "Kişisel veri",
   "Download": "İndir",
+  "Download model": "Modeli indir",
+  "Approve at every stage": "Her aşamada onayla",
+  "The agent decides each gate on its own signals unless you take that over.":
+    "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",
   "Loading…": "Yükleniyor…",
   "Loading experiments…": "Deneyler yükleniyor…",
   "Loading models…": "Modeller yükleniyor…",
@@ -993,6 +1020,73 @@ const TR: Record<string, string> = {
   "Opening project…": "Proje açılıyor…",
   "Untitled project": "Adsız proje",
   "Project name": "Proje adı",
+  "Project": "Proje",
+  "Project overview": "Proje genel bakışı",
+  "Project sections": "Proje bölümleri",
+  "Project data": "Proje verisi",
+  "Project models": "Proje modelleri",
+  "Project reports": "Proje raporları",
+  "Rename project": "Projeyi yeniden adlandır",
+  "A project keeps data, automations, models, and reports together.":
+    "Bir proje veriyi, otomasyonları, modelleri ve raporları bir arada tutar.",
+  "Create a project, add data, then create as many automations as you need.":
+    "Bir proje oluşturun, veri ekleyin, ardından ihtiyacınız kadar otomasyon oluşturun.",
+  "{count} data sources": "{count} veri kaynağı",
+  "{count} automations": "{count} otomasyon",
+  "Everything in this project, at a glance": "Bu projedeki her şey, tek bakışta",
+  "Data comes first. Each automation chooses from it and keeps its own graph and outputs.":
+    "Önce veri gelir. Her otomasyon buradan seçim yapar ve kendi grafiğini ve çıktılarını tutar.",
+  "This project needs data": "Bu projenin veriye ihtiyacı var",
+  "Upload files or choose data you uploaded before. You do not need an automation first.":
+    "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin. Önce bir otomasyon gerekmez.",
+  "files in the project": "projedeki dosya",
+  "independent graphs": "bağımsız grafik",
+  "from every automation": "tüm otomasyonlardan",
+  "Your data is ready": "Veriniz hazır",
+  "Create an automation and choose which project files it should use.":
+    "Bir otomasyon oluşturun ve hangi proje dosyalarını kullanacağını seçin.",
+  "Add data before or after automations. Existing automation snapshots do not change.":
+    "Otomasyonlardan önce veya sonra veri ekleyin. Mevcut otomasyon anlık görüntüleri değişmez.",
+  "Upload new files": "Yeni dosyalar yükle",
+  "Choose previously uploaded data": "Daha önce yüklenen veriyi seç",
+  "Add to project": "Projeye ekle",
+  "No data in this project": "Bu projede veri yok",
+  "Upload files or choose data you uploaded before.":
+    "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin.",
+  "Files": "Dosyalar",
+  "or": "veya",
+  "Each automation has its own data selection, graph, runs, models, and reports.":
+    "Her otomasyonun kendi veri seçimi, grafiği, çalıştırmaları, modelleri ve raporları vardır.",
+  "{count} selected files": "{count} seçili dosya",
+  "No data selected": "Veri seçilmedi",
+  "Create an automation. Its graph will open only when you open that automation.":
+    "Bir otomasyon oluşturun. Grafiği yalnızca o otomasyonu açtığınızda görünür.",
+  "Models from every automation in this project will appear here.":
+    "Bu projedeki tüm otomasyonların modelleri burada görünür.",
+  "Reports from every automation in this project will appear here.":
+    "Bu projedeki tüm otomasyonların raporları burada görünür.",
+  "Every model is labelled with the automation that produced it.":
+    "Her model, onu üreten otomasyonla etiketlenir.",
+  "Every report is labelled with the automation that produced it.":
+    "Her rapor, onu üreten otomasyonla etiketlenir.",
+  "From {automation}": "{automation} otomasyonundan",
+  "Evaluation report": "Değerlendirme raporu",
+  "Automation data": "Otomasyon verisi",
+  "Loading project data…": "Proje verisi yükleniyor…",
+  "Add project data first": "Önce proje verisi ekleyin",
+  "Automations choose files from the project. Uploading never starts inside an automation.":
+    "Otomasyonlar projedeki dosyaları seçer. Yükleme hiçbir zaman otomasyonun içinde başlamaz.",
+  "Go to project data": "Proje verisine git",
+  "Select project files for this automation": "Bu otomasyon için proje dosyalarını seçin",
+  "This automation receives a private snapshot. Adding project data later will not change it.":
+    "Bu otomasyon özel bir anlık görüntü alır. Daha sonra proje verisi eklemek onu değiştirmez.",
+  "Use selected data": "Seçili veriyi kullan",
+  "Inspecting and routing selected files…": "Seçili dosyalar inceleniyor ve yönlendiriliyor…",
+  "Selected automation data": "Seçili otomasyon verisi",
+  "Only these project files belong to this automation.":
+    "Bu otomasyona yalnızca bu proje dosyaları aittir.",
+  "Choose project files from the automation graph to create its private snapshot.":
+    "Özel anlık görüntüsünü oluşturmak için otomasyon grafiğinden proje dosyalarını seçin.",
   // Data projects workspace
   "Data projects": "Veri projeleri",
   // Project-contained tabs (#80, #111): a project's own data, models and reports.
@@ -1073,6 +1167,10 @@ const TR: Record<string, string> = {
   "Open its stage inspection for measurements and provenance.":
     "Ölçümler ve köken bilgisi için aşama incelemesini açın.",
   "Artifact recorded": "Artifact kaydedildi",
+  "Fields": "Alanlar",
+  "Collection counts": "Koleksiyon sayıları",
+  "{count} items": "{count} öğe",
+  "Data card": "Veri kartı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
 

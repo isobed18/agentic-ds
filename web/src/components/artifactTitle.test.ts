@@ -32,7 +32,7 @@ describe("resolving an artifact's one-line title", () => {
     expect(artifactTitle(preview, "en", t)).toBe("t:Extracted document artifacts");
   });
 
-  it("falls back to the generic label for any other untitled artifact", () => {
-    expect(artifactTitle({ artifact_type: "data_card" }, "en", t)).toBe("t:Artifact details");
+  it("uses the real type for any other untitled artifact", () => {
+    expect(artifactTitle({ artifact_type: "data_card" }, "en", t)).toBe("t:Data card");
   });
 });

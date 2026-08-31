@@ -1,49 +1,29 @@
 import { describe, expect, it } from "vitest";
 
-import type { AutomationDefinition, ProjectContents, RunSummary, StagingWorkspace } from "../lib/api";
+import type { AutomationContents, AutomationDefinition, RunSummary, StagingWorkspace } from "../lib/api";
 import { activeRunByAutomation, automationView, availableProjectViews, isAbandonedDraft, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 
-describe("which project tabs to show (#80, #111)", () => {
-  const contents = (over: Partial<ProjectContents> = {}): ProjectContents => ({
-    project: {} as AutomationDefinition,
-    data: null,
-    source_references: [],
+describe("which automation tabs to show (#157, #165)", () => {
+  const contents = (over: Partial<AutomationContents> = {}): AutomationContents => ({
+    project: {} as AutomationContents["project"],
+    automation: {} as AutomationDefinition,
+    data: [],
     executions: [],
     models: [],
     reports: [],
     ...over,
   });
 
-  it("shows only Editor and Executions before a project contains anything", () => {
-    expect(availableProjectViews(null)).toEqual(["editor", "executions"]);
-    expect(availableProjectViews(contents())).toEqual(["editor", "executions"]);
-  });
-
-  it("adds Data once a source is bound", () => {
-    expect(availableProjectViews(contents({ data: { source_id: "upload:x", label: "x" } }))).toEqual([
-      "editor",
-      "data",
-      "executions",
-    ]);
-  });
-
-  it("adds Models and Reports only when the project has produced them", () => {
-    const produced = contents({
-      data: { source_id: "upload:x", label: "x" },
-      models: [{ artifact_id: "m" }] as unknown as ProjectContents["models"],
-      reports: [{ artifact_id: "r" }] as unknown as ProjectContents["reports"],
-    });
-    expect(availableProjectViews(produced)).toEqual([
+  it("keeps every automation-owned page visible even before outputs exist", () => {
+    const expected = [
       "editor",
       "data",
       "executions",
       "models",
       "reports",
-    ]);
-    // A project that trained a model but wrote no report has no Reports tab.
-    expect(
-      availableProjectViews(contents({ models: [{ artifact_id: "m" }] as unknown as ProjectContents["models"] })),
-    ).toEqual(["editor", "executions", "models"]);
+    ];
+    expect(availableProjectViews(null)).toEqual(expected);
+    expect(availableProjectViews(contents())).toEqual(expected);
   });
 });
 

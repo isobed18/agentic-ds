@@ -14,7 +14,7 @@ from ads.contracts.automation import (
     NodeInputBinding,
     NodeOutputBinding,
 )
-from ads.contracts.automation_definition import AutomationDefinition
+from ads.contracts.automation_definition import AutomationDefinition, AutomationInputFile
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.comprehension import (
     ComprehensionBrief,
@@ -136,6 +136,7 @@ from ads.contracts.problem import (
     ProblemSupport,
     TaskType,
 )
+from ads.contracts.project import ProjectDefinition
 from ads.contracts.staging import (
     GraphPatch,
     LocalizedText,
@@ -165,6 +166,7 @@ from ads.contracts.validation import (
 __all__ = [
     "GraphPatch",
     "AutomationDefinition",
+    "AutomationInputFile",
     "AggregationStep",
     "AutomationExecutionPlan",
     "AutomationPlanNode",
@@ -247,6 +249,7 @@ __all__ = [
     "ProblemInvestigationAction",
     "ProblemInvestigationActionKind",
     "ProblemSupport",
+    "ProjectDefinition",
     "QualitySignals",
     "RelationshipCandidate",
     "RelationshipExplanation",
