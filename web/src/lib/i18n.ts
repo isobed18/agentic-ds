@@ -509,6 +509,8 @@ const TR: Record<string, string> = {
   "candidate key": "aday anahtar",
   "candidate keys": "aday anahtar",
   "Exploratory analysis": "Keşifsel analiz",
+  "Ask the Planner to reconsider": "Planner'a yeniden değerlendirmesini söyle",
+  "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir pipeline çalışmaz. Geçersiz kılma yeri Planner'dır: eksik olanı söylersen bir pipeline önerebilir.",
   "Approve and continue": "Onayla ve devam et",
   "Accept this stage's output as-is and proceed to the next stage.": "Bu aşamanın çıktısını olduğu gibi kabul et ve sonraki aşamaya geç.",
   "Send back for rework": "Yeniden çalışması için geri gönder",
