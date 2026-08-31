@@ -6310,7 +6310,24 @@ class ControlPlane:
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
-    """The escalation a run stopped on, ready for the wire."""
+    """The escalation a run is stopped on RIGHT NOW, ready for the wire.
+
+    The status check is the whole point. The outcome keeps its question after
+    the run resumes, so a running run kept reporting the gate it had already
+    answered: the 2.2s poll put the stale question straight back, the card
+    re-rendered from it, and answering it returned 400 -- "this run is not
+    awaiting a human decision" -- because the run had moved on (#191).
+
+    One button appearing to work while another failed was a race, not a
+    difference between the options: whether a click landed inside a window
+    where the run happened to be waiting again.
+
+    Reported here rather than guarded in the card, because a card cannot know
+    the question is stale, and every other reader of this payload would have
+    had to learn the same rule.
+    """
+    if getattr(runtime, "status", None) != "awaiting_human":
+        return None
     question = getattr(getattr(runtime, "outcome", None), "pending_question", None)
     return question.model_dump(mode="json") if question is not None else None
 
