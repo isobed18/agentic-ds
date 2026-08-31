@@ -66,7 +66,11 @@ from ads.contracts.documents import (
 from ads.contracts.gates import BUILTIN_PROFILES
 from ads.contracts.integration import IntegrationPlan
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
-from ads.contracts.project import may_view_project, may_write_project
+from ads.contracts.project import (
+    PROJECT_VISIBILITIES,
+    may_view_project,
+    may_write_project,
+)
 from ads.contracts.staging import (
     GraphPatch,
     LocalizedText,
@@ -833,14 +837,56 @@ class ControlPlane:
             raise PermissionError("only the owner can change this project")
         return project
 
+    @staticmethod
+    def _project_payload(project: Any, viewer: str | None) -> dict[str, Any]:
+        """One project on the wire, plus whether the reader owns it.
+
+        `mine` is computed per request rather than stored: it answers "may I
+        change who sees this?", which is a fact about the reader, not about the
+        project. The UI needs it to render the visibility control as a real
+        toggle or as a read-only mark -- a control that silently 403s is worse
+        than one that says why it is disabled (#207).
+        """
+        payload = project.model_dump(mode="json")
+        payload["mine"] = project.owner is not None and project.owner == viewer
+        return payload
+
     def list_projects(self, *, viewer: str | None = None) -> list[dict[str, Any]]:
         assert self.project_store is not None
         return [
-            item.model_dump(mode="json") for item in self.project_store.list(viewer=viewer)
+            self._project_payload(item, viewer)
+            for item in self.project_store.list(viewer=viewer)
         ]
 
     def project(self, project_id: str, *, viewer: str | None = None) -> dict[str, Any]:
-        return self._visible_project(project_id, viewer).model_dump(mode="json")
+        return self._project_payload(self._visible_project(project_id, viewer), viewer)
+
+    def set_project_visibility(
+        self, project_id: str, *, visibility: str, viewer: str | None = None
+    ) -> dict[str, Any]:
+        """Publish a project to every signed-in account, or take it back (#207).
+
+        Only the owner may do this, and the refusal is 403 rather than 404: a
+        non-owner asking this question can already see the project, so
+        pretending it does not exist would be a lie they can disprove. Same
+        reasoning, same shape, as the data-source route this copies.
+
+        Taking a project back to private takes effect immediately. There is no
+        grandfathering: the next request from anyone still holding it open 404s,
+        and it leaves their project list on the next load.
+        """
+        assert self.project_store is not None
+        if visibility not in PROJECT_VISIBILITIES:
+            raise ValueError(f"visibility must be one of {PROJECT_VISIBILITIES}")
+        project = self._visible_project(project_id, viewer)
+        if project.owner is None:
+            raise ValueError("this project has no recorded owner")
+        if project.owner != viewer:
+            raise PermissionError(
+                f"only {project.owner} can change who sees this project"
+            )
+        saved = self.project_store.set_visibility(project_id, visibility)
+        return self._project_payload(saved, viewer)
 
     def create_project(self, name: str, *, owner: str | None = None) -> dict[str, Any]:
         assert self.project_store is not None
@@ -1113,7 +1159,7 @@ class ControlPlane:
                     {**report, **provenance} for report in self._report_summaries(run)
                 )
         return {
-            "project": project.model_dump(mode="json"),
+            "project": self._project_payload(project, viewer),
             "data": self.project_data(project_id, viewer=viewer),
             "automations": [item.model_dump(mode="json") for item in automations],
             "executions": executions,
@@ -1195,6 +1241,8 @@ class ControlPlane:
                 {
                     "project_id": project.project_id,
                     "name": project.name,
+                    "visibility": project.visibility,
+                    "mine": project.owner is not None and project.owner == viewer,
                     "status": project_status,
                     "source_id": project.source_ids[0] if project.source_ids else None,
                     "execution_count": len(execution_ids),
@@ -6639,6 +6687,29 @@ def create_app(
             )
         except ProjectRevisionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/projects/{project_id}/visibility")
+    def set_project_visibility(
+        project_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
+        """Make a project visible to every signed-in account, or take it back.
+
+        The one thing a non-owner may not do on an otherwise shared project, so
+        it is the one project write that answers 403 rather than 404 -- they can
+        already see it, and the id is no longer a secret from them.
+        """
+        try:
+            return plane.set_project_visibility(
+                project_id,
+                visibility=str(body.get("visibility", "")),
+                viewer=_viewer(request),
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from None
         except KeyError:

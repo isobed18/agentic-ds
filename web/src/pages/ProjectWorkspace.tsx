@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
-import { Badge, Empty, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationDefinition,
@@ -9,6 +9,7 @@ import {
   type ProjectContents,
   type ProjectDataSource,
   type ProjectDefinition,
+  type ProjectVisibility,
 } from "../lib/api";
 import { t } from "../lib/i18n";
 
@@ -47,7 +48,7 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <button key={project.project_id} type="button" onClick={() => onOpen(project.project_id)} className="rounded-xl border border-line bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop">
-                <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><Badge tone="neutral">{t("Project")}</Badge></div>
+                <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><span className="flex shrink-0 items-center gap-2"><VisibilityMark visibility={project.visibility} /><Badge tone="neutral">{t("Project")}</Badge></span></div>
                 <div className="mt-5 flex gap-4 text-xs text-ink-mute"><span>{t("{count} data sources", { count: project.source_ids.length })}</span><span>{t("{count} automations", { count: project.automation_ids.length })}</span></div>
                 <p className="mt-2 text-[10px] text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
               </button>
@@ -95,7 +96,7 @@ export function ProjectWorkspace({
     const trimmed = name.trim();
     if (!project || !trimmed || trimmed === project.name) { setName(project?.name ?? name); return; }
     try {
-      const saved = await api.updateProject(projectId, project.revision, { name: trimmed });
+      const saved = await api.updateProjectSafely(projectId, project.revision, { name: trimmed });
       setProject(saved); setName(saved.name);
     } catch (caught) {
       setError(messageOf(caught)); setName(project.name);
@@ -122,7 +123,7 @@ export function ProjectWorkspace({
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-6xl">
-          {view === "overview" && <ProjectOverview data={data} automations={automations} contents={contents} onView={onView} />}
+          {view === "overview" && <ProjectOverview data={data} automations={automations} contents={contents} project={project} onView={onView} onVisibility={setProject} />}
           {view === "data" && <ProjectData projectId={projectId} data={data} onChanged={() => void refresh()} />}
           {view === "automations" && <ProjectAutomations projectId={projectId} automations={automations} onChanged={() => void refresh()} onOpen={onOpenAutomation} />}
           {view === "models" && <ProjectModels contents={contents} />}
@@ -133,12 +134,13 @@ export function ProjectWorkspace({
   );
 }
 
-function ProjectOverview({ data, automations, contents, onView }: { data: ProjectDataSource[]; automations: AutomationDefinition[]; contents: ProjectContents | null; onView: (view: ProjectView) => void }) {
+function ProjectOverview({ data, automations, contents, project, onView, onVisibility }: { data: ProjectDataSource[]; automations: AutomationDefinition[]; contents: ProjectContents | null; project: ProjectDefinition | null; onView: (view: ProjectView) => void; onVisibility: (project: ProjectDefinition) => void }) {
   const models = contents?.models.length ?? 0;
   const reports = contents?.reports.length ?? 0;
   return (
     <div className="space-y-5">
       <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Project overview")}</p><h1 className="mt-1 text-2xl font-semibold text-ink">{t("Everything in this project, at a glance")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Data comes first. Each automation chooses from it and keeps its own graph and outputs.")}</p></div>
+      {project && <VisibilityCard project={project} onChanged={onVisibility} />}
       {!data.length && <section className="rounded-2xl border border-brand-200 bg-brand-50 p-6"><h2 className="text-lg font-semibold text-ink">{t("This project needs data")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Upload files or choose data you uploaded before. You do not need an automation first.")}</p><button type="button" className="btn-primary mt-4" onClick={() => onView("data")}>+ {t("Add data")}</button></section>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <OverviewCard label={t("Data")} value={data.reduce((sum, source) => sum + source.files.length, 0)} hint={t("files in the project")} onClick={() => onView("data")} />
@@ -148,6 +150,86 @@ function ProjectOverview({ data, automations, contents, onView }: { data: Projec
       </div>
       {data.length > 0 && !automations.length && <section className="card p-6"><h2 className="text-base font-semibold text-ink">{t("Your data is ready")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Create an automation and choose which project files it should use.")}</p><button type="button" className="btn-primary mt-4" onClick={() => onView("automations")}>+ {t("New automation")}</button></section>}
     </div>
+  );
+}
+
+/**
+ * The visibility mark, wherever a project is named (#207). Standalone next to
+ * a name, so it carries its own accessible name rather than relying on a label
+ * beside it.
+ */
+export function VisibilityMark({ visibility, className }: { visibility: ProjectVisibility; className?: string }) {
+  return visibility === "public"
+    ? <Globe label={t("Public project")} className={cx("text-ink-mute", className)} />
+    : <Lock label={t("Private project")} className={cx("text-ink-mute", className)} />;
+}
+
+/**
+ * Who can see this project, on the Overview tab.
+ *
+ * The owner gets a real toggle; everybody else gets the same two options
+ * disabled, with the reason written out. Visibility is the one thing a
+ * non-owner may not change in an otherwise shared project, so it should look
+ * deliberate rather than broken -- a control that says why, not one that
+ * silently 403s.
+ */
+function VisibilityCard({ project, onChanged }: { project: ProjectDefinition; onChanged: (project: ProjectDefinition) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const owned = project.mine;
+
+  async function choose(visibility: ProjectVisibility) {
+    if (busy || visibility === project.visibility) return;
+    setBusy(true); setError(null);
+    try {
+      onChanged(await api.setProjectVisibility(project.project_id, visibility));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const reason = owned
+    ? project.visibility === "public"
+      ? t("Visible to everyone signed in")
+      : t("Only you can see this project")
+    : project.owner
+      ? t("Only the owner can change who sees this project.")
+      : t("This project has no recorded owner, so its visibility cannot be changed.");
+
+  return (
+    <section className="card flex flex-wrap items-center gap-x-5 gap-y-3 p-5">
+      <div className="min-w-0 flex-1">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-ink">
+          <VisibilityMark visibility={project.visibility} className="text-ink" />
+          {t("Who can see this project")}
+        </h2>
+        <p className="mt-1 text-sm text-ink-mute">{reason}</p>
+        <p className="mt-1 text-xs text-ink-faint">{t("Publishing a project does not publish its data: a file its owner kept private stays private.")}</p>
+      </div>
+      <div className="flex shrink-0 rounded-lg bg-surface-sunken p-1" role="group" aria-label={t("Who can see this project")}>
+        {(["private", "public"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => void choose(option)}
+            disabled={!owned || busy}
+            aria-pressed={project.visibility === option}
+            title={owned ? undefined : reason}
+            className={cx(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium",
+              project.visibility === option ? "bg-surface text-ink shadow-sm" : "text-ink-mute",
+              owned && !busy ? "hover:text-ink" : "cursor-not-allowed opacity-60",
+            )}
+          >
+            {option === "public" ? <Globe /> : <Lock />}
+            {option === "public" ? t("Public") : t("Private")}
+          </button>
+        ))}
+      </div>
+      {error && <p className="w-full rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+    </section>
   );
 }
 

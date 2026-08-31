@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ads.contracts.project import ProjectDefinition, may_view_project
+from ads.contracts.project import (
+    PROJECT_VISIBILITIES,
+    ProjectDefinition,
+    may_view_project,
+)
 
 
 class ProjectRevisionConflict(ValueError):
@@ -77,6 +81,38 @@ class ProjectStore:
         unknown = sorted(set(changes) - allowed)
         if unknown:
             raise ValueError(f"unsupported project fields: {', '.join(unknown)}")
+        return self._apply(project_id, expected_revision=expected_revision, changes=changes)
+
+    def set_visibility(self, project_id: str, visibility: str) -> ProjectDefinition:
+        """Publish a project, or take it back (#207).
+
+        Separate from `update` on purpose. `update` is the general-purpose write
+        any collaborator on a public project may make; visibility is the one
+        field only the owner may touch, so keeping it out of `update`'s allowed
+        set means a `PUT /api/projects/{id}` cannot smuggle a publish past that
+        check. Reading the current revision here rather than taking one from the
+        caller is deliberate too: a toggle is not an edit anyone can conflict
+        with, so making the owner resolve a 409 to flip a switch would be noise.
+        """
+        if visibility not in PROJECT_VISIBILITIES:
+            raise ValueError(f"visibility must be one of {PROJECT_VISIBILITIES}")
+        with self._lock:
+            current = self.get(project_id)
+            if current.visibility == visibility:
+                return current
+            return self._apply(
+                project_id,
+                expected_revision=current.revision,
+                changes={"visibility": visibility},
+            )
+
+    def _apply(
+        self,
+        project_id: str,
+        *,
+        expected_revision: int,
+        changes: dict[str, Any],
+    ) -> ProjectDefinition:
         with self._lock:
             current = self.get(project_id)
             if current.revision != expected_revision:

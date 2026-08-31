@@ -89,6 +89,11 @@ export interface ProjectDefinition {
   owner: string | null;
   /** Private is the default: only the owner may see the project at all. */
   visibility: ProjectVisibility;
+  /** Whether the account reading this owns the project, computed per request.
+   *  It answers "may I change who sees this?", which is a fact about the
+   *  reader, so the toggle renders interactive for one account and as a
+   *  read-only mark for every other (#207). */
+  mine: boolean;
   source_ids: string[];
   automation_ids: string[];
   created_at: string;
@@ -220,6 +225,8 @@ export type ProjectState = "running" | "awaiting_human" | "failed" | "completed"
 export interface HomeProject {
   project_id: string;
   name: string;
+  visibility: ProjectVisibility;
+  mine: boolean;
   status: "draft" | "saved" | "error";
   source_id: string | null;
   execution_count: number;
@@ -899,6 +906,40 @@ export const api = {
     request<ProjectDefinition>(`/api/projects/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify({ expected_revision: expectedRevision, changes }),
+    }),
+  /**
+   * #207: while a project had one writer, losing a `expected_revision` race was
+   * nearly unreachable. A public project has several, and the workspace header
+   * holds the revision it loaded for as long as the tab stays open — so a
+   * rename after somebody else's edit hit a 409 and surfaced it as a raw error
+   * string. Same reasoning and same shape as `updateAutomationSafely`: the
+   * fields these callers touch are disjoint, so re-applying the change onto the
+   * latest revision cannot clobber the other writer.
+   */
+  async updateProjectSafely(
+    id: string,
+    expectedRevision: number,
+    changes: Record<string, unknown>,
+  ): Promise<ProjectDefinition> {
+    let revision = expectedRevision;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await api.updateProject(id, revision, changes);
+      } catch (caught) {
+        if (attempt >= 3 || !(caught instanceof ApiError) || caught.status !== 409) throw caught;
+        revision = (await api.project(id)).revision;
+      }
+    }
+  },
+  /**
+   * Publish a project to every signed-in account, or take it back. Owner-only:
+   * the server answers 403 to anyone else, which is the one asymmetry in an
+   * otherwise shared project.
+   */
+  setProjectVisibility: (id: string, visibility: ProjectVisibility) =>
+    request<ProjectDefinition>(`/api/projects/${encodeURIComponent(id)}/visibility`, {
+      method: "POST",
+      body: JSON.stringify({ visibility }),
     }),
   projectData: (id: string) =>
     request<ProjectDataSource[]>(`/api/projects/${encodeURIComponent(id)}/data`),
