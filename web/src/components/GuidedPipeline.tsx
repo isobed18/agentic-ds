@@ -172,7 +172,7 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       })}
     </div>
 
-    <div className="fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
+    <div data-no-pan className="fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
       {canStart && !String((progress as Record<string, unknown> | null)?.current_stage ?? "") && (
         <label className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink-soft" title={t("The agent decides each gate on its own signals unless you take that over.")}>
           <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
