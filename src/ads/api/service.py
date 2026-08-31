@@ -116,6 +116,7 @@ from ads.llm.budget import (
     multipliers_from_env,
     start_worker,
 )
+from ads.llm.client import run_seed_scope
 from ads.orchestration import (
     EdgeCondition,
     RunOutcome,
@@ -599,6 +600,46 @@ class _RuntimeRun:
     #: finish so its artifacts remain valid; the event boundary then returns
     #: the run to STAGED and continuation resumes from the next stage.
     pause_requested: bool = False
+
+
+def _run_seed_for(runtime: _RuntimeRun) -> int:
+    """Bu kosumun seed'i: run_id'den TURETILIR, rastgele secilmez.
+
+    Kaydedilmis bir sayiya guvenmek yerine turetmek, kaydin kaybi halinde bile
+    kosumun tekrar uretilebilmesi demek. Yine de `configuration` icine yaziliyor
+    cunku denetleyen kisinin gorebilmesi gerekiyor, ve boylece bir kosumu ayni
+    seed'le yeniden baslatmak icin degeri kopyalamak yetiyor.
+    """
+    kayitli = runtime.configuration.get("run_seed")
+    if isinstance(kayitli, int):
+        return kayitli
+    seed = int.from_bytes(hashlib.sha256(runtime.run_id.encode()).digest()[:4], "big")
+    runtime.configuration["run_seed"] = seed
+    return seed
+
+
+def _seeded(fn: Callable[[], None], runtime: _RuntimeRun) -> Callable[[], None]:
+    """Kosum is parcacigini kendi seed'i bagli halde calistir.
+
+    Ajan asamalari LLM cagrilaridir ve URUNDE TEK BIR cagri seed sabitliyordu;
+    geri kalani sansa birakilmisti. Olculen sonuc: ayni dosyayla iki kosum, biri
+    "hedef bulunamadi" deyip durdu, digeri butun akisi tamamladi (#201).
+    `temperature=0` bunu kapatmiyor -- client.py'nin kendi yorumu da bunu
+    soyluyor.
+
+    Baglama BURADA, is parcacigi baslarken yapiliyor: yeni bir is parcacigi bos
+    bir baglamla basladigi icin ContextVar'in kosumun disina sizmasi mumkun
+    degil, ve on uc cagri noktasina elle seed gecirmek yerine tek yerde
+    baglanmasi, on dorduncu ajan eklendiginde ayni hatanin tekrarlanmasini
+    onluyor.
+    """
+    seed = _run_seed_for(runtime)
+
+    def sarmalanmis() -> None:
+        with run_seed_scope(seed):
+            fn()
+
+    return sarmalanmis
 
 
 class _RunPauseRequested(Exception):
@@ -4287,7 +4328,7 @@ class ControlPlane:
 
         # Held so the second half runs on this state rather than a fresh one.
         runtime.resume = (spec, registry, state, llm)
-        start_worker(execute, name=f"ads-stage-{run_id}")
+        start_worker(_seeded(execute, runtime), name=f"ads-stage-{run_id}")
         return {
             "run_id": run_id,
             "status": "staging",
@@ -4481,7 +4522,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        start_worker(execute, name=f"ads-run-{run_id}")
+        start_worker(_seeded(execute, runtime), name=f"ads-run-{run_id}")
         return run_id
 
     @staticmethod
@@ -4742,7 +4783,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        start_worker(execute, name=f"ads-ui-{run_id}")
+        start_worker(_seeded(execute, runtime), name=f"ads-ui-{run_id}")
         return run_id
 
     @staticmethod
@@ -4964,7 +5005,7 @@ class ControlPlane:
                     llm.close()
             self._persist_runtime(runtime)
 
-        start_worker(execute, name=f"ads-ui-resume-{run_id}")
+        start_worker(_seeded(execute, runtime), name=f"ads-ui-resume-{run_id}")
 
     def _validate_configuration(
         self,

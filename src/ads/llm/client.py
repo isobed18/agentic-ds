@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -66,6 +69,51 @@ class ModelProfile:
 
 # Defaults tuned for a 24GB dev GPU. Production (8xH100) can point LARGE at a
 # 70B-class model without any change above this line.
+# Kosum seviyesindeki seed. Bir agent cagrisinin profili acikca seed
+# tasimiyorsa buradan alinir.
+#
+# Neden cagri noktalarina tek tek eklenmedi: mekanizma zaten vardi
+# (`with_seed`) ve URUNDE TEK BIR yerde kullaniliyordu. On uc agent cagrisina
+# elle seed gecirmek, on dorduncu agent eklendiginde ayni hatanin tekrar
+# etmesi demekti. Kosum worker'i basinda BIR KEZ baglaniyor; bundan sonrasi
+# unutulamaz.
+#
+# ContextVar bilerek: koşum kendi is parcaciginda calisiyor ve yeni bir is
+# parcacigi bos bir baglamla basliyor, yani bu deger yalnizca acikca
+# baglandigi yerde gecerli. Testler ve tek seferlik cagrilar etkilenmez.
+_run_seed: ContextVar[int | None] = ContextVar("ads_run_seed", default=None)
+_run_call_index: ContextVar[int] = ContextVar("ads_run_call_index", default=0)
+
+
+@contextmanager
+def run_seed_scope(seed: int | None) -> Iterator[None]:
+    """Bir kosum boyunca ortam seed'ini bagla."""
+    seed_token = _run_seed.set(seed)
+    index_token = _run_call_index.set(0)
+    try:
+        yield
+    finally:
+        _run_seed.reset(seed_token)
+        _run_call_index.reset(index_token)
+
+
+def next_ambient_seed() -> int | None:
+    """Sonraki cagri icin seed; ortam seed'i yoksa None.
+
+    Her cagri FARKLI ama kosum icin TEKRARLANABILIR bir seed alir: ayni
+    kosumu ayni girdiyle tekrar baslattiginda cagrilar ayni sirada gelir ve
+    ayni seed'leri alir. Butun cagrilara tek bir seed vermek de calisirdi ama
+    ayni promptun iki kez soruldugu yerlerde (panel, corrective retry) ayni
+    ornegi cizmek cesitliligi oldurur.
+    """
+    base = _run_seed.get()
+    if base is None:
+        return None
+    index = _run_call_index.get()
+    _run_call_index.set(index + 1)
+    return base + index
+
+
 LARGE = ModelProfile(name="qwen3.6:27b")
 SMALL = ModelProfile(name="qwen2.5vl:3b", num_ctx=8192)
 
@@ -171,8 +219,10 @@ class OllamaClient:
                 "num_ctx": profile.num_ctx,
             },
         }
-        if profile.seed is not None:
-            payload["options"]["seed"] = profile.seed
+        # Acik seed her zaman kazanir; yoksa kosumun ortam seed'i kullanilir.
+        seed = profile.seed if profile.seed is not None else next_ambient_seed()
+        if seed is not None:
+            payload["options"]["seed"] = seed
 
         started = time.perf_counter()
         response = self._client.post(f"{self.base_url}/api/chat", json=payload)
