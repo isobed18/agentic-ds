@@ -69,7 +69,7 @@ def test_turkce_siniri_sozlukten_olculuyor() -> None:
 
 def test_tablo_yapisi_konumlardan_kuruluyor(tmp_path: Path) -> None:
     p = _tablo_goruntusu(tmp_path / "tablo.png")
-    s = image.oku(p)
+    s = image.read(p)
 
     assert not s.hata
     assert len(s.satirlar) == len(TABLE), f"satirlar: {s.satirlar}"
@@ -79,7 +79,7 @@ def test_tablo_yapisi_konumlardan_kuruluyor(tmp_path: Path) -> None:
 def test_sayilar_bozulmadan_okunuyor(tmp_path: Path) -> None:
     """Turkce harfler bozulsa da SAYILAR bu sinirdan etkilenmez."""
     p = _tablo_goruntusu(tmp_path / "tablo.png")
-    s = image.oku(p)
+    s = image.read(p)
 
     duz = " ".join(h.metin for h in s.hucreler)
     for sayi in ("15.840.900", "527.000", "1.048.185"):
@@ -124,7 +124,7 @@ def test_okunamayan_goruntu_cokmez(tmp_path: Path) -> None:
     p = tmp_path / "bozuk.png"
     p.write_bytes(b"bu bir PNG degil")
 
-    s = image.oku(p)
+    s = image.read(p)
     assert s.hata
 
 

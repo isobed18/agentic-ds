@@ -298,3 +298,67 @@ def test_imzasiz_parquet_etiketi_human_feedbacke_dusuyor(
     assert k.akis is Flow.ADJUDICATION
     assert k.deterministik is False
     assert "PAR1" in k.yargi_sebebi
+
+
+# 1x1 saydam PNG — gecerli bir goruntu, OCR ekstrasina ihtiyac duymadan
+# Magika'nin "png" demesi icin yeterli.
+_MINI_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000a49444154789c6300010000050001"
+    "0d0a2db40000000049454e44ae426082"
+)
+
+
+def test_toplu_taramada_ocr_CALISTIRILMAZ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """inventory() pahali islem yapmaz -- OCR dahil.
+
+    Olculdu: bir goruntuyu OCR ile okumak ~1069 ms, sirasan bir dosya
+    ~7 ms. `source_profile()` bu taramayi kosum oncesi, HER ISTEKTE
+    cagirdigi icin acik OCR ekrani saniyelerce bekletiyordu (5 goruntu:
+    5343 ms -> 36 ms).
+
+    Bu test OCR'in "hizli" olmasini degil HIC CAGRILMADIGINI dogruluyor:
+    cagrilirsa patlayan bir sahte konur.
+    """
+    (tmp_path / "tarama.png").write_bytes(_MINI_PNG)
+    (tmp_path / "veri.csv").write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+
+    def _patlayan(*a, **kw):
+        raise AssertionError("toplu taramada OCR calistirildi")
+
+    monkeypatch.setattr(router, "_route_image", _patlayan)
+
+    env = inventory(tmp_path)          # varsayilan: ocr=False
+
+    assert env["dosya_sayisi"] == 2
+    goruntu = next(k for k in env["kararlar"] if k.yol.endswith(".png"))
+    assert goruntu.deterministik is False
+    assert goruntu.akis is Flow.ADJUDICATION
+    # Tahmin degil, bildirilen bir sinirlama: ne oldugu SOYLENIYOR.
+    assert "OCR" in goruntu.yargi_sebebi
+    assert "goruntu" in goruntu.yargi_sebebi
+
+
+def test_ocr_acikca_istenirse_calisir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kapi OCR'i yasaklamiyor, varsayilan olmaktan cikariyor."""
+    dosya = tmp_path / "tarama.png"
+    dosya.write_bytes(_MINI_PNG)
+
+    cagrildi: list[bool] = []
+
+    def _isaretle(k, guven, ocr_yolu=None):
+        cagrildi.append(True)
+        k.akis = Flow.TABLE
+        k.sekil = "tablo"
+        return k
+
+    monkeypatch.setattr(router, "_route_image", _isaretle)
+
+    k = route(dosya, ocr=True)
+
+    assert cagrildi == [True]
+    assert k.akis is Flow.TABLE

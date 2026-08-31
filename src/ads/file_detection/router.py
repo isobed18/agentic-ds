@@ -158,7 +158,30 @@ def _validate_structure(metin: str) -> tuple[str, str] | None:
     return None
 
 
-def route(yol: Path) -> Decision:
+def _ocr_deferred(k: Decision, ne: str) -> Decision:
+    """Say what the image is without running OCR, and defer the decision.
+
+    Batch scanning (`inventory`) does not run OCR. Measured: ~2049 ms for one
+    image against ~10 ms for an ordinary file. `source_profile()` calls this
+    scan before every run, on every request, so a folder of scanned documents
+    held the screen for seconds.
+
+    Nothing is guessed here: it says "this is an image, reading its content
+    needs OCR, and OCR was not run". Whoever wants it read asks for it with
+    `ocr=True`. Reporting a known limitation is not the same as inventing an
+    answer to an unknown -- which was already this layer's rule.
+    """
+    k.deterministik = False
+    k.akis = Flow.ADJUDICATION
+    k.yargi_sebebi = (
+        f"{ne}: icerigi okumak OCR gerektiriyor, toplu taramada "
+        "calistirilmadi. Okumak icin route(yol, ocr=True)"
+    )
+    k.kanitlar.append(("OCR", "ertelendi — toplu tarama pahali islem yapmaz"))
+    return k
+
+
+def route(yol: Path, *, ocr: bool = True) -> Decision:
     ham, boyut = _read_prefix(yol)
     m = _magika.identify_path(yol)
     format_ = m.output.label
@@ -207,6 +230,8 @@ def route(yol: Path) -> Decision:
 
     # --- goruntu: OCR ile oku, ama Turkce sinirini gizleme --------------
     if format_ in GORUNTU_TURLERI:
+        if not ocr:
+            return _ocr_deferred(k, f"goruntu ({format_})")
         return _route_image(k, guven)
 
     if format_ in BELGE_TURLERI:
@@ -220,7 +245,7 @@ def route(yol: Path) -> Decision:
         # Taranmis bir PDF'te metin yoktur; belge akisina yollamak metin
         # cikaricinin bos donmesi, yani SESSIZ VERI KAYBI demektir.
         if format_ == "pdf":
-            return _route_pdf(k)
+            return _route_pdf(k, ocr=ocr)
         k.akis = Flow.DOCUMENT
         k.notlar.append("belge cozumleyiciye gider")
         return k
@@ -366,7 +391,7 @@ def route(yol: Path) -> Decision:
     return k
 
 
-def _route_pdf(k: Decision) -> Decision:
+def _route_pdf(k: Decision, *, ocr: bool = True) -> Decision:
     """PDF'te metin katmani var mi OLC, yoksa taranmis gibi davran.
 
     Onceki surum butun PDF'leri "belge" sayiyordu. Taranmis bir fatura
@@ -414,6 +439,11 @@ def _route_pdf(k: Decision) -> Decision:
     # Metin yok: bu pratikte bir goruntudur. Sayfaya gomulu goruntuyu
     # cikarip OCR yolundan gecir ki Turkce siniri ayni sekilde isaretlensin.
     k.notlar.append("metin katmani yok (taranmis); OCR yoluna alindi")
+
+    if not ocr:
+        # Extracting the embedded image is expensive too, so the gate comes
+        # before it, not after.
+        return _ocr_deferred(k, "taranmis PDF (metin katmani yok)")
 
     goruntuler = _pdf.embedded_images(okuyucu)
     if not goruntuler:
@@ -557,7 +587,7 @@ def _route_image(k: Decision, guven: float,
     return k
 
 
-def _route_safely(yol: Path) -> Decision:
+def _route_safely(yol: Path, *, ocr: bool = True) -> Decision:
     """yonlendir() sarmalayicisi: okuma hatasi butun taramayi cokertmez.
 
     Bir izin hatasi, kopuk sembolik baglanti ya da tarama sirasinda
@@ -565,7 +595,7 @@ def _route_safely(yol: Path) -> Decision:
     hata da bir "karar verilemedi" durumudur; human feedback istenir.
     """
     try:
-        return route(yol)
+        return route(yol, ocr=ocr)
     except OSError as hata:
         try:
             boyut = yol.stat().st_size
@@ -578,13 +608,13 @@ def _route_safely(yol: Path) -> Decision:
         )
 
 
-def inventory(kok: Path, desen: str = "*") -> dict:
+def inventory(kok: Path, desen: str = "*", *, ocr: bool = False) -> dict:
     """Bir klasordeki butun dosyalari ucuz gecisten gecirip ozet cikar.
 
     Pahali islem yapilmaz. Amac, kullaniciya SECENEK sunabilmek icin
     once neyin geldigini bilmek.
     """
-    kararlar = [_route_safely(p) for p in sorted(kok.rglob(desen)) if p.is_file()]
+    kararlar = [_route_safely(p, ocr=ocr) for p in sorted(kok.rglob(desen)) if p.is_file()]
     if not kararlar:
         return {"dosya_sayisi": 0, "kararlar": []}
 

@@ -172,7 +172,7 @@ def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
         yol = Path(gecici) / (Path(filename).name or "dosya")
         yol.write_bytes(content)
         try:
-            env = _file_inventory(Path(gecici))
+            env = _file_inventory(Path(gecici), ocr=False)
         except Exception:  # olcum basarisizsa karar eski kurala kalir
             return None
     kararlar = env.get("kararlar") or []
@@ -199,7 +199,7 @@ def _measure_file_detection(
         return {"used": False, "reason": "file detection extra is not installed"}
 
     try:
-        env = _file_inventory(source_root)
+        env = _file_inventory(source_root, ocr=False)
     except Exception as error:  # Detection must never take down the profile.
         return {"used": False, "reason": f"detection failed: {type(error).__name__}"}
 
