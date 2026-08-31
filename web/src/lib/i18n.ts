@@ -1144,6 +1144,10 @@ const TR: Record<string, string> = {
   "Open its stage inspection for measurements and provenance.":
     "Ölçümler ve köken bilgisi için aşama incelemesini açın.",
   "Artifact recorded": "Artifact kaydedildi",
+  "Fields": "Alanlar",
+  "Collection counts": "Koleksiyon sayıları",
+  "{count} items": "{count} öğe",
+  "Data card": "Veri kartı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
 

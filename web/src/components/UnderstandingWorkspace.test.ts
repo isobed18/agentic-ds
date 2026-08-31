@@ -144,6 +144,24 @@ describe("understanding node status placement", () => {
     expect(markup).toContain("İki aday anahtar");
   });
 
+  it("shows safe generic artifact fields instead of the empty fallback (#164)", () => {
+    const markup = renderToStaticMarkup(createElement(ArtifactDialog, {
+      preview: {
+        artifact_id: "c".repeat(64),
+        artifact_type: "data_card",
+        fields: { table_name: "customers", n_rows: 24 },
+        collection_sizes: { columns: 6 },
+      },
+      onClose: () => undefined,
+    }));
+
+    expect(markup).toContain("Veri kartı");
+    expect(markup).toContain("customers");
+    expect(markup).toContain("24");
+    expect(markup).toContain("6 öğe");
+    expect(markup).not.toContain("Artifact kaydedildi");
+  });
+
   it("lets a person review, remove and add files before running (#85)", () => {
     const profile = {
       source_id: "upload:abc",
@@ -185,5 +203,20 @@ describe("understanding node status placement", () => {
     expect(markup).toContain("cursor-ew-resize");
     expect(markup).toContain("cursor-ns-resize");
     expect(markup).toContain("cursor-nwse-resize");
+  });
+
+  it("clips long content inside a resized node card (#160)", () => {
+    // Resizing narrower used to let the title and secondary text paint outside
+    // the rounded card and over adjacent edges.
+    const markup = renderToStaticMarkup(createElement(BranchNode, {
+      title: "A very long structured-data title that must stay inside its card",
+      files: [],
+      steps: [],
+      artifactIds: [],
+      onClick: () => undefined,
+      onOpenArtifact: () => undefined,
+    }));
+
+    expect(classNameFor(markup, "button")).toContain("overflow-hidden");
   });
 });
