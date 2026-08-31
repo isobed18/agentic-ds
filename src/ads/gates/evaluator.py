@@ -197,6 +197,7 @@ def build_human_prompt(
     return HumanPrompt(
         stage_id=stage.id,
         question=question,
+        question_kind="checkpoint" if policy_only else "problem",
         context_summary=f"{context_summary}\n\nWhy this stopped:\n{reasons}"[:1500],
         options=options,
         allows_free_text=True,
