@@ -126,6 +126,18 @@ const TR: Record<string, string> = {
   "Analyze and validate": "Analiz et ve doğrula",
   "Build and split": "Öznitelik üret ve böl",
   "Train and evaluate": "Eğit ve değerlendir",
+  "Combine approved tables into one verified modeling dataset.":
+    "Onaylanan tabloları doğrulanmış tek bir modelleme veri kümesinde birleştirir.",
+  "Choose the prediction goal and confirm that the available data can support it.":
+    "Tahmin hedefini seçer ve mevcut verilerin bunu destekleyebildiğini doğrular.",
+  "Measure patterns, choose validation, and check for leakage before training.":
+    "Örüntüleri ölçer, doğrulama yöntemini seçer ve eğitimden önce sızıntıyı denetler.",
+  "Create model-ready features and divide the data without contaminating evaluation.":
+    "Modele hazır öznitelikler oluşturur ve değerlendirmeyi kirletmeden veriyi böler.",
+  "Train candidate models and compare them on held-out data.":
+    "Aday modelleri eğitir ve ayrılmış veriler üzerinde karşılaştırır.",
+  "Summarize the selected model, evidence, limitations, and next steps.":
+    "Seçilen modeli, kanıtları, sınırlamaları ve sonraki adımları özetler.",
   "Understand": "Anla",
   "Choose ML inputs": "ML girdilerini seç",
   "Run and review": "Çalıştır ve incele",
