@@ -19,5 +19,9 @@ export function artifactTitle(
     const named = preview.documents?.find((document) => document.title)?.title;
     return named ?? translate("Extracted document artifacts");
   }
-  return translate("Artifact details");
+  // Generic previews have no authored title, but the indexed type is still a
+  // truthful, useful name. Falling back to "Artifact details" made every such
+  // row and modal indistinguishable even after the backend exposed its type.
+  const words = preview.artifact_type.replaceAll("_", " ");
+  return translate(words.charAt(0).toLocaleUpperCase() + words.slice(1));
 }

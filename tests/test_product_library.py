@@ -116,6 +116,13 @@ def test_artifact_preview_reports_the_real_type_for_unrecognised_artifacts(
     preview = plane.artifact_preview(ref.artifact_id)
 
     assert preview["artifact_type"] == "data_card"
+    # Generic previews are deliberately privacy-safe, but they still have to
+    # carry enough structure for the UI to show something useful instead of an
+    # empty modal (#164). Scalars and collection sizes meet that contract
+    # without exposing any table rows.
+    assert preview["fields"]["table_name"] == "customers"
+    assert preview["fields"]["n_rows"] == 2
+    assert preview["collection_sizes"]["columns"] == 0
 
 
 def test_dataset_catalog_paginates_and_only_profiles_the_page(tmp_path: Path) -> None:
