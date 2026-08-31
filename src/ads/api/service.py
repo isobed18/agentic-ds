@@ -4631,9 +4631,20 @@ class ControlPlane:
                         "document understanding outputs are not ready; run the component "
                         "or disable it before starting the ML pipeline"
                     )
+            # #244/#198: the accepted plan's configuration is the baseline, but a
+            # target the person picked at the run control is an explicit choice
+            # and must win over whatever the planner proposed. Re-apply the
+            # caller's non-empty overrides after the plan so the dropdown aims the
+            # run even in fully-auto, where plan.configuration is merged in.
+            caller_overrides = {
+                key: value
+                for key, value in (configuration or {}).items()
+                if value not in (None, "")
+            }
             body = {
                 **body,
                 **plan.configuration,
+                **caller_overrides,
                 "run_mode": "fully_auto",
                 "supervision": {
                     "checkpoint_stages": plan.checkpoint_stages,

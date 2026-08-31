@@ -27,7 +27,9 @@ interface GuidedPipelineProps {
   componentOutputs: PipelineOutputReference[];
   runStatus: string | null;
   busy: boolean;
-  onRun: (runMode: "fully_auto" | "manual") => void;
+  // #244/#198: the run carries a chosen ML target column (or null to let
+  // problem discovery propose one) so the guided flow can actually be aimed.
+  onRun: (runMode: "fully_auto" | "manual", targetColumn: string | null) => void;
   onPause: () => void;
   onRetry: () => void;
   onAdvanced: () => void;
@@ -102,6 +104,16 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   // planner matters most. It lives here now too, reachable from the run toolbar.
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #244/#198: the guided flow had no way to choose the ML target, and the run
+  // passed none at all -- the free-text gate box was never read on approve. The
+  // picker is a dropdown of the base table's profiled columns, defaulting to
+  // whatever target the plan already carries, shown before the run starts. Its
+  // value is passed to the run as guidance for problem discovery.
+  const planConfig = (workspace.recommended_plan?.configuration ?? {}) as Record<string, unknown>;
+  const baseTableName = String(planConfig.base_table ?? profile.tables[0]?.name ?? "");
+  const baseTable = profile.tables.find((table) => table.name === baseTableName) ?? profile.tables[0];
+  const targetColumns = baseTable?.columns ?? [];
+  const [targetColumn, setTargetColumn] = useState<string>(String(planConfig.target_column ?? ""));
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
@@ -205,13 +217,22 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
         in their own quieter bar below, not as more chips in the same row. */}
     <div data-no-pan className="fixed top-[70px] left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2">
       <div className="flex items-center gap-2">
+        {canStart && !currentStage && targetColumns.length > 0 && (
+          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("Choose which column the model should predict, or let problem discovery propose one.")}>
+            <span className="text-ink-faint">{t("Target")}</span>
+            <select value={targetColumn} onChange={(event) => setTargetColumn(event.target.value)} className="max-w-[180px] bg-transparent text-[11px] font-medium text-ink outline-none">
+              <option value="">{t("Let the agent decide")}</option>
+              {targetColumns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.candidate_target ? " ★" : ""}</option>)}
+            </select>
+          </label>
+        )}
         {canStart && !currentStage && (
           <label className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("The agent decides each gate on its own signals unless you take that over.")}>
             <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
             {t("Approve at every stage")}
           </label>
         )}
-        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)} disabled={busy || !profile.tables.length}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}

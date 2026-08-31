@@ -79,6 +79,31 @@ describe("the run control (#197)", () => {
   });
 });
 
+describe("target-column picker (#244/#198)", () => {
+  it("offers a dropdown of the base table's profiled columns before the run starts", () => {
+    // The guided flow had no way to choose the ML target, and the free-text gate
+    // box was never read. The picker is a real <select> of the base table's
+    // columns, shown only before the run starts (canStart, no current stage).
+    expect(SOURCE).toContain("const targetColumns = baseTable?.columns ?? [];");
+    expect(SOURCE).toContain("canStart && !currentStage && targetColumns.length > 0");
+    expect(SOURCE).toContain("<select value={targetColumn}");
+    expect(SOURCE).toContain("targetColumns.map((column) =>");
+    expect(SOURCE).toContain('t("Let the agent decide")');
+  });
+
+  it("defaults to the plan's target and passes the chosen column to the run", () => {
+    // Defaulting to the plan's target means an unchanged picker is a no-op; a
+    // changed one aims the run. The value travels with the run mode into onRun.
+    expect(SOURCE).toContain('useState<string>(String(planConfig.target_column ?? ""))');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)');
+  });
+
+  it("translates the picker's tooltip", () => {
+    expect(CATALOGUE).toContain("Choose which column the model should predict, or let problem discovery propose one.");
+    expect(CATALOGUE).toContain("Modelin tahmin edeceği sütunu seçin");
+  });
+});
+
 describe("live progress on the canvas (#194)", () => {
   it("drives the current stage from the run's own signal, not only reported nodes", () => {
     // A live run whose current stage had not yet reported a workflow node used

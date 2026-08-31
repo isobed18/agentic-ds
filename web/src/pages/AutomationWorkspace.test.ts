@@ -66,4 +66,12 @@ describe("the project-first journey (#157, #165)", () => {
   it("passes the selected source into the advanced planner (#190)", () => {
     expect(AUTOMATION_SOURCE).toContain("<PipelineBuilder runId={runId} sourceId={sourceId}");
   });
+
+  it("carries the chosen ML target into the guided run (#244/#198)", () => {
+    // The guided run used to pass only the run mode, so a chosen target never
+    // reached the pipeline. GuidedPipeline's onRun now hands back the column,
+    // and runAcceptedWorkflow forwards it to startStaged as target_column.
+    expect(AUTOMATION_SOURCE).toContain("onRun={(runMode, target) => void runAcceptedWorkflow(runMode, target)}");
+    expect(AUTOMATION_SOURCE).toContain("targetColumn ? { target_column: targetColumn } : {}");
+  });
 });
