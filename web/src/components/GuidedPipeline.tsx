@@ -11,7 +11,7 @@ import {
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel } from "../lib/status";
-import { Badge, Empty, cx } from "./ui";
+import { Badge, Empty, Pause, Play, cx } from "./ui";
 import { ArtifactMetadata, hasArtifactMetadata } from "./ArtifactMetadata";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { artifactTitle } from "./artifactTitle";
@@ -197,27 +197,31 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       })}
     </div>
 
-    {/* #197: the run control is docked top-centre -- where the eye lands on the
-        canvas -- instead of floating at the bottom edge where it was missed
-        (#194). One primary button carries its own state: Run/Continue while a
-        run can start, Pause while it is live. The separate ghost pause button
-        and the loose lowercase status label are gone; the button never vanishes
-        into unstyled text. */}
-    <div data-no-pan className="fixed top-[70px] left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
-      {canStart && !currentStage && (
-        <label className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink-soft" title={t("The agent decides each gate on its own signals unless you take that over.")}>
-          <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
-          {t("Approve at every stage")}
-        </label>
-      )}
-      {canStart && <button type="button" className="btn-primary inline-flex items-center gap-1.5 text-xs" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}><span aria-hidden="true">▶</span>{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
-      {active && <button type="button" className="btn-primary inline-flex items-center gap-1.5 text-xs" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><span aria-hidden="true">⏸</span>{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
-      {failed && <button type="button" className="btn-primary text-xs" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
-      {complete && <button type="button" className="btn-primary text-xs" onClick={onOpenExecutions}>{t("Review results")}</button>}
-      {!canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
-      <button type="button" className="btn-ghost text-xs" aria-expanded={selected === "summary"} onClick={() => setSelected((current) => (current === "summary" ? null : "summary"))}>{t("Review plan")}</button>
-      <button type="button" className="btn-ghost text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
-      <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
+    {/* #197/#248: the run control is a distinct primary button docked top-centre
+        -- where the eye lands on the canvas -- carrying a stroked vector play or
+        pause icon that matches the rest of the chrome and renders identically on
+        every platform. One button swaps Run/Continue -> Pause (no separate ghost
+        pause button, no loose lowercase status label). The secondary actions sit
+        in their own quieter bar below, not as more chips in the same row. */}
+    <div data-no-pan className="fixed top-[70px] left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2">
+      <div className="flex items-center gap-2">
+        {canStart && !currentStage && (
+          <label className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("The agent decides each gate on its own signals unless you take that over.")}>
+            <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
+            {t("Approve at every stage")}
+          </label>
+        )}
+        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+        {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
+        {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
+        {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}
+        {!canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
+      </div>
+      <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
+        <button type="button" className="btn-ghost text-xs" aria-expanded={selected === "summary"} onClick={() => setSelected((current) => (current === "summary" ? null : "summary"))}>{t("Review plan")}</button>
+        <button type="button" className="btn-ghost text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
+        <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
+      </div>
     </div>
 
     {/* #97: the planner is consultable while the pipeline runs and while a gate
