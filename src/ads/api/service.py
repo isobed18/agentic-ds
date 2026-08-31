@@ -66,6 +66,7 @@ from ads.contracts.documents import (
 from ads.contracts.gates import BUILTIN_PROFILES
 from ads.contracts.integration import IntegrationPlan
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
+from ads.contracts.project import may_view_project, may_write_project
 from ads.contracts.staging import (
     GraphPatch,
     LocalizedText,
@@ -813,38 +814,71 @@ class ControlPlane:
 
     # ----------------------------------------------------------- automations
 
-    def list_projects(self) -> list[dict[str, Any]]:
-        assert self.project_store is not None
-        return [item.model_dump(mode="json") for item in self.project_store.list()]
+    def _visible_project(
+        self, project_id: str, viewer: str | None, *, write: bool = False
+    ) -> Any:
+        """The one ownership check every project-scoped route goes through (#206).
 
-    def project(self, project_id: str) -> dict[str, Any]:
+        A viewer who may not see the project gets `KeyError`, which the routes
+        answer as 404 -- not 403, because a 403 confirms the id exists and that
+        is exactly what a hidden project must not reveal. `write=True` also
+        demands the stronger right; someone who can already see the project has
+        no secret left to protect, so that refusal is an honest 403.
+        """
         assert self.project_store is not None
-        return self.project_store.get(project_id).model_dump(mode="json")
+        project = self.project_store.get(project_id)
+        if not may_view_project(project, viewer):
+            raise KeyError(project_id)
+        if write and not may_write_project(project, viewer):
+            raise PermissionError("only the owner can change this project")
+        return project
 
-    def create_project(self, name: str) -> dict[str, Any]:
+    def list_projects(self, *, viewer: str | None = None) -> list[dict[str, Any]]:
         assert self.project_store is not None
-        return self.project_store.create(name).model_dump(mode="json")
+        return [
+            item.model_dump(mode="json") for item in self.project_store.list(viewer=viewer)
+        ]
+
+    def project(self, project_id: str, *, viewer: str | None = None) -> dict[str, Any]:
+        return self._visible_project(project_id, viewer).model_dump(mode="json")
+
+    def create_project(self, name: str, *, owner: str | None = None) -> dict[str, Any]:
+        assert self.project_store is not None
+        return self.project_store.create(name, owner=owner).model_dump(mode="json")
 
     def update_project(
-        self, project_id: str, *, expected_revision: int, changes: dict[str, Any]
+        self,
+        project_id: str,
+        *,
+        expected_revision: int,
+        changes: dict[str, Any],
+        viewer: str | None = None,
     ) -> dict[str, Any]:
         assert self.project_store is not None
+        self._visible_project(project_id, viewer, write=True)
         return self.project_store.update(
             project_id, expected_revision=expected_revision, changes=changes
         ).model_dump(mode="json")
 
-    def add_project_source(self, project_id: str, source_id: str) -> dict[str, Any]:
+    def add_project_source(
+        self, project_id: str, source_id: str, *, viewer: str | None = None
+    ) -> dict[str, Any]:
         assert self.project_store is not None
-        self.project_store.get(project_id)
+        self._visible_project(project_id, viewer, write=True)
         self.source_path(source_id)
         return self.project_store.add_source(
             project_id, source_id=source_id
         ).model_dump(mode="json")
 
-    def project_data(self, project_id: str) -> list[dict[str, Any]]:
+    def project_data(
+        self, project_id: str, *, viewer: str | None = None
+    ) -> list[dict[str, Any]]:
         assert self.project_store is not None
-        project = self.project_store.get(project_id)
-        listed = {item["source_id"]: item for item in self.data_sources()}
+        project = self._visible_project(project_id, viewer)
+        # Filtered by the same viewer as the Data library: a source its owner
+        # kept private stays private inside someone else's project, so a shared
+        # project can legitimately list fewer files than its owner sees.
+        listed = {item["source_id"]: item for item in self.data_sources(viewer=viewer)}
         data: list[dict[str, Any]] = []
         for source_id in project.source_ids:
             source = listed.get(source_id)
@@ -859,10 +893,12 @@ class ControlPlane:
             data.append(item)
         return data
 
-    def project_automations(self, project_id: str) -> list[dict[str, Any]]:
+    def project_automations(
+        self, project_id: str, *, viewer: str | None = None
+    ) -> list[dict[str, Any]]:
         assert self.project_store is not None
         assert self.automation_store is not None
-        project = self.project_store.get(project_id)
+        project = self._visible_project(project_id, viewer)
         records = []
         for automation_id in project.automation_ids:
             try:
@@ -871,10 +907,12 @@ class ControlPlane:
                 continue
         return records
 
-    def create_project_automation(self, project_id: str, name: str) -> dict[str, Any]:
+    def create_project_automation(
+        self, project_id: str, name: str, *, viewer: str | None = None
+    ) -> dict[str, Any]:
         assert self.project_store is not None
         assert self.automation_store is not None
-        self.project_store.get(project_id)
+        self._visible_project(project_id, viewer, write=True)
         created = self.automation_store.create(name)
         try:
             self.project_store.add_automation(
@@ -902,7 +940,7 @@ class ControlPlane:
             )
         parents = [
             project
-            for project in self.project_store.list()
+            for project in self.project_store.list(unfiltered=True)
             if automation_id in project.automation_ids
         ]
         if len(parents) != 1:
@@ -973,7 +1011,7 @@ class ControlPlane:
         assert self.automation_store is not None
         assert self.project_store is not None
         automation = self.automation_store.get(automation_id)
-        for project in self.project_store.list():
+        for project in self.project_store.list(unfiltered=True):
             if automation_id in project.automation_ids:
                 self.project_store.remove_automation(
                     project.project_id, automation_id=automation_id
@@ -1000,7 +1038,9 @@ class ControlPlane:
             changes=changes,
         ).model_dump(mode="json")
 
-    def _project_automation_records(self, project_id: str) -> tuple[Any, list[Any]]:
+    def _project_automation_records(
+        self, project_id: str, *, viewer: str | None = None
+    ) -> tuple[Any, list[Any]]:
         """Load a project and only the automation records it still owns.
 
         #157 made the durable project store authoritative. Missing child files
@@ -1008,7 +1048,7 @@ class ControlPlane:
         """
         assert self.project_store is not None
         assert self.automation_store is not None
-        project = self.project_store.get(project_id)
+        project = self._visible_project(project_id, viewer)
         automations = []
         for automation_id in project.automation_ids:
             try:
@@ -1017,16 +1057,23 @@ class ControlPlane:
                 continue
         return project, automations
 
-    def automation_contents(self, automation_id: str) -> dict[str, Any]:
+    def automation_contents(
+        self, automation_id: str, *, viewer: str | None = None
+    ) -> dict[str, Any]:
         """Return one child automation's private inputs and outputs."""
         assert self.project_store is not None
         assert self.automation_store is not None
         automation = self.automation_store.get(automation_id)
+        # Filtered, because this payload embeds the parent project record: an
+        # automation whose only parent is hidden from the viewer reads as
+        # missing rather than as a project they may not open.
         parents = [
             project
-            for project in self.project_store.list()
+            for project in self.project_store.list(viewer=viewer)
             if automation_id in project.automation_ids
         ]
+        if not parents:
+            raise KeyError(automation_id)
         if len(parents) != 1:
             raise ValueError("automation must belong to exactly one project")
         execution_ids = set(automation.execution_ids)
@@ -1040,9 +1087,11 @@ class ControlPlane:
             "reports": [report for run in executions for report in self._report_summaries(run)],
         }
 
-    def project_contents(self, project_id: str) -> dict[str, Any]:
+    def project_contents(
+        self, project_id: str, *, viewer: str | None = None
+    ) -> dict[str, Any]:
         """Aggregate every child output and retain its automation provenance."""
-        project, automations = self._project_automation_records(project_id)
+        project, automations = self._project_automation_records(project_id, viewer=viewer)
         runs = {run.run_id: run for run in self.list_runs()}
         executions: list[dict[str, Any]] = []
         models: list[dict[str, Any]] = []
@@ -1065,7 +1114,7 @@ class ControlPlane:
                 )
         return {
             "project": project.model_dump(mode="json"),
-            "data": self.project_data(project_id),
+            "data": self.project_data(project_id, viewer=viewer),
             "automations": [item.model_dump(mode="json") for item in automations],
             "executions": executions,
             "models": models,
@@ -1095,7 +1144,9 @@ class ControlPlane:
             return "completed"
         return "idle"
 
-    def home_overview(self, *, search: str | None = None) -> dict[str, Any]:
+    def home_overview(
+        self, *, search: str | None = None, viewer: str | None = None
+    ) -> dict[str, Any]:
         """Assemble the project-first home: every project's state and the work
         projects have produced, so a person sees what is running, what is
         waiting on them, and can rediscover an output whose project they forgot.
@@ -1111,8 +1162,10 @@ class ControlPlane:
         runs = {run.run_id: run for run in self.list_runs()}
         owner_of: dict[str, tuple[str, str, str, str]] = {}
         projects: list[dict[str, Any]] = []
-        for project in self.project_store.list():
-            _, automations = self._project_automation_records(project.project_id)
+        for project in self.project_store.list(viewer=viewer):
+            _, automations = self._project_automation_records(
+                project.project_id, viewer=viewer
+            )
             statuses: list[str] = []
             execution_ids: list[str] = []
             for automation in automations:
@@ -6310,7 +6363,24 @@ class ControlPlane:
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
-    """The escalation a run stopped on, ready for the wire."""
+    """The escalation a run is stopped on RIGHT NOW, ready for the wire.
+
+    The status check is the whole point. The outcome keeps its question after
+    the run resumes, so a running run kept reporting the gate it had already
+    answered: the 2.2s poll put the stale question straight back, the card
+    re-rendered from it, and answering it returned 400 -- "this run is not
+    awaiting a human decision" -- because the run had moved on (#191).
+
+    One button appearing to work while another failed was a race, not a
+    difference between the options: whether a click landed inside a window
+    where the run happened to be waiting again.
+
+    Reported here rather than guarded in the card, because a card cannot know
+    the question is stale, and every other reader of this payload would have
+    had to learn the same rule.
+    """
+    if getattr(runtime, "status", None) != "awaiting_human":
+        return None
     question = getattr(getattr(runtime, "outcome", None), "pending_question", None)
     return question.model_dump(mode="json") if question is not None else None
 
@@ -6528,68 +6598,93 @@ def create_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    def _viewer(request: Request) -> str | None:
+        """Who is asking. Set by the auth middleware once the session is read."""
+        return getattr(request.state, "username", None)
+
+    # Every project route below takes the `Request` so it can name the viewer.
+    # A project is its creator's until they say otherwise (#206), and a route
+    # that does not ask who is calling cannot enforce that -- which is how every
+    # account came to see every project.
     @app.get("/api/projects")
-    def projects() -> list[dict[str, Any]]:
-        return plane.list_projects()
+    def projects(request: Request) -> list[dict[str, Any]]:
+        return plane.list_projects(viewer=_viewer(request))
 
     @app.post("/api/projects")
-    def create_project(body: dict[str, Any]) -> dict[str, Any]:
+    def create_project(body: dict[str, Any], request: Request) -> dict[str, Any]:
         try:
-            return plane.create_project(str(body["name"]))
+            return plane.create_project(str(body["name"]), owner=_viewer(request))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/projects/{project_id}")
-    def project(project_id: str) -> dict[str, Any]:
+    def project(project_id: str, request: Request) -> dict[str, Any]:
         try:
-            return plane.project(project_id)
+            return plane.project(project_id, viewer=_viewer(request))
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.put("/api/projects/{project_id}")
-    def update_project(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    def update_project(
+        project_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
         try:
             return plane.update_project(
                 project_id,
                 expected_revision=int(body["expected_revision"]),
                 changes=dict(body.get("changes") or {}),
+                viewer=_viewer(request),
             )
         except ProjectRevisionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/projects/{project_id}/sources")
-    def add_project_source(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    def add_project_source(
+        project_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
         try:
-            return plane.add_project_source(project_id, str(body["source_id"]))
+            return plane.add_project_source(
+                project_id, str(body["source_id"]), viewer=_viewer(request)
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project or source") from None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/projects/{project_id}/data")
-    def project_data(project_id: str) -> list[dict[str, Any]]:
+    def project_data(project_id: str, request: Request) -> list[dict[str, Any]]:
         try:
-            return plane.project_data(project_id)
+            return plane.project_data(project_id, viewer=_viewer(request))
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
 
     @app.get("/api/projects/{project_id}/automations")
-    def project_automations(project_id: str) -> list[dict[str, Any]]:
+    def project_automations(project_id: str, request: Request) -> list[dict[str, Any]]:
         try:
-            return plane.project_automations(project_id)
+            return plane.project_automations(project_id, viewer=_viewer(request))
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
 
     @app.post("/api/projects/{project_id}/automations")
-    def create_project_automation(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    def create_project_automation(
+        project_id: str, body: dict[str, Any], request: Request
+    ) -> dict[str, Any]:
         try:
-            return plane.create_project_automation(project_id, str(body["name"]))
+            return plane.create_project_automation(
+                project_id, str(body["name"]), viewer=_viewer(request)
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
         except (TypeError, ValueError) as exc:
@@ -6656,22 +6751,22 @@ def create_app(
         ]
 
     @app.get("/api/automations/{automation_id}/contents")
-    def automation_contents(automation_id: str) -> dict[str, Any]:
+    def automation_contents(automation_id: str, request: Request) -> dict[str, Any]:
         try:
-            return plane.automation_contents(automation_id)
+            return plane.automation_contents(automation_id, viewer=_viewer(request))
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown automation") from None
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/home")
-    def home(search: str | None = None) -> dict[str, Any]:
-        return plane.home_overview(search=search)
+    def home(request: Request, search: str | None = None) -> dict[str, Any]:
+        return plane.home_overview(search=search, viewer=_viewer(request))
 
     @app.get("/api/projects/{project_id}/contents")
-    def project_contents(project_id: str) -> dict[str, Any]:
+    def project_contents(project_id: str, request: Request) -> dict[str, Any]:
         try:
-            return plane.project_contents(project_id)
+            return plane.project_contents(project_id, viewer=_viewer(request))
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown project") from None
         except ValueError as exc:
@@ -6680,10 +6775,6 @@ def create_app(
     @app.get("/api/runs")
     def runs() -> list[dict[str, Any]]:
         return [summary.to_dict() for summary in plane.list_runs()]
-
-    def _viewer(request: Request) -> str | None:
-        """Who is asking. Set by the auth middleware once the session is read."""
-        return getattr(request.state, "username", None)
 
     @app.get("/api/data-sources")
     def data_sources(request: Request) -> list[dict[str, Any]]:
