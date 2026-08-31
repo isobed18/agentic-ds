@@ -744,6 +744,10 @@ const TR: Record<string, string> = {
     "Bu işlem otomasyonu, akış grafiğini ve veri seçimini siler.",
   "Its execution history and the project data are kept.":
     "Çalıştırma geçmişi ve proje verileri korunur.",
+  "This removes the project and its {count} automations.":
+    "Bu işlem projeyi ve {count} otomasyonunu siler.",
+  "The uploaded data and every run's history are kept.":
+    "Yüklenen veriler ve her çalıştırmanın geçmişi korunur.",
   "Deleting…": "Siliniyor…",
 
   "Create an automation, add data, and let the workflow grow from what the system learns.": "Bir otomasyon oluşturun, veri ekleyin ve iş akışının sistemin öğrendikleriyle büyümesine izin verin.",

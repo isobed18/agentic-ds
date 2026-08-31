@@ -19,9 +19,15 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
   const [projects, setProjects] = useState<ProjectDefinition[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<ProjectDefinition | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
+  function load() {
+    return api.projects().then(setProjects).catch((caught) => setError(messageOf(caught)));
+  }
   useEffect(() => {
-    void api.projects().then(setProjects).catch((caught) => setError(messageOf(caught))).finally(() => setBusy(false));
+    void load().finally(() => setBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function create() {
@@ -36,6 +42,17 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
     }
   }
 
+  // #181: an obsolete project needed a way out of the library, and deletion is
+  // consequential enough to warn before it happens. Refresh the library from
+  // the server rather than filtering locally, so the counts stay honest.
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteProject(deleting.project_id); setDeleting(null); await load(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-surface-sunken px-6 py-8 lg:px-10">
       <div className="mx-auto max-w-6xl">
@@ -47,15 +64,46 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
         {busy && !projects.length ? <div className="mt-16"><Spinner label={t("Loading…")} /></div> : (
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
-              <button key={project.project_id} type="button" onClick={() => onOpen(project.project_id)} className="rounded-xl border border-line bg-surface p-5 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop">
-                <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><span className="flex shrink-0 items-center gap-2"><VisibilityMark visibility={project.visibility} /><Badge tone="neutral">{t("Project")}</Badge></span></div>
-                <div className="mt-5 flex gap-4 text-xs text-ink-mute"><span>{t("{count} data sources", { count: project.source_ids.length })}</span><span>{t("{count} automations", { count: project.automation_ids.length })}</span></div>
-                <p className="mt-2 text-[10px] text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
-              </button>
+              <article key={project.project_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop">
+                <button type="button" onClick={() => onOpen(project.project_id)} className="block w-full p-5 pr-12 text-left">
+                  <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><span className="flex shrink-0 items-center gap-2"><VisibilityMark visibility={project.visibility} /><Badge tone="neutral">{t("Project")}</Badge></span></div>
+                  <div className="mt-5 flex gap-4 text-xs text-ink-mute"><span>{t("{count} data sources", { count: project.source_ids.length })}</span><span>{t("{count} automations", { count: project.automation_ids.length })}</span></div>
+                  <p className="mt-2 text-[10px] text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
+                </button>
+                <button type="button" aria-label={t("Delete project")} title={t("Delete project")} onClick={() => setDeleting(project)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
+                  <TrashIcon />
+                </button>
+              </article>
             ))}
             {!projects.length && !busy && <div className="col-span-full rounded-2xl border border-dashed border-line bg-surface py-16"><Empty title={t("No projects yet")} hint={t("Create a project, add data, then create as many automations as you need.")} /></div>}
           </div>
         )}
+      </div>
+      {deleting && <ProjectDeleteDialog project={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </div>
+  );
+}
+
+/**
+ * The same warned delete an automation gets (#181), one level up: a named
+ * target and what survives it. The project and its automations go; the uploaded
+ * data is reusable and stays in the library, and each run's history stays
+ * readable exactly as automation deletion promises.
+ */
+export function ProjectDeleteDialog({ project, busy, onCancel, onConfirm }: { project: ProjectDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description">
+      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
+        <h2 id="delete-project-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: project.name })}</h2>
+        <div id="delete-project-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
+          <p>{t("This removes the project and its {count} automations.", { count: project.automation_ids.length })}</p>
+          <p>{t("The uploaded data and every run's history are kept.")}</p>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{t("Cancel")}</button>
+          <button type="button" className="rounded-lg bg-stop-600 px-4 py-2 text-sm font-semibold text-white hover:bg-stop-700 disabled:opacity-50" disabled={busy} onClick={onConfirm}>{busy ? t("Deleting…") : t("Delete project")}</button>
+        </div>
       </div>
     </div>
   );

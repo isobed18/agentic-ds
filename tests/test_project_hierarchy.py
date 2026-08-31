@@ -162,6 +162,33 @@ def test_deleting_an_automation_detaches_it_and_drops_its_snapshot(tmp_path: Pat
     assert client.delete(f"/api/automations/{doomed['automation_id']}").status_code == 404
 
 
+def test_deleting_a_project_removes_its_automations_but_keeps_the_data(tmp_path: Path) -> None:
+    """#181: deleting a project takes its automations with it -- nothing else
+    can reach them -- while the uploaded data is reusable and stays in the
+    library, exactly as the warned dialog promises."""
+    plane = _plane(tmp_path)
+    customers = plane.upload("customers.csv", b"customer_id,churned\n1,0\n")
+    project = plane.create_project("Retention")
+    plane.add_project_source(project["project_id"], customers["source_id"])
+    first = plane.create_project_automation(project["project_id"], "Churn")
+    second = plane.create_project_automation(project["project_id"], "Signups")
+
+    client = TestClient(create_app(plane=plane))
+    deleted = client.delete(f"/api/projects/{project['project_id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["project_id"] == project["project_id"]
+    assert deleted.json()["automations"] == 2
+    # The project and both of its automations are gone.
+    assert client.get(f"/api/projects/{project['project_id']}").status_code == 404
+    assert client.get(f"/api/automations/{first['automation_id']}").status_code == 404
+    assert client.get(f"/api/automations/{second['automation_id']}").status_code == 404
+    # The uploaded data source is reusable and survives in the data library.
+    assert plane.source_path(customers["source_id"]).exists()
+    # A second delete of the same project is a clean 404, not a 500.
+    assert client.delete(f"/api/projects/{project['project_id']}").status_code == 404
+
+
 def test_deleting_an_executed_automation_keeps_the_bytes_its_runs_read(tmp_path: Path) -> None:
     """#185: the dialog promises the execution history survives the deletion.
 
