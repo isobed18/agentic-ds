@@ -257,5 +257,10 @@ function PanCanvas({ children }: { children: React.ReactNode }) {
   function stop(event: ReactPointerEvent<HTMLDivElement>) { if (drag.current?.pointerId !== event.pointerId) return; drag.current = null; releaseCanvasPointer(viewport.current, event.pointerId); setPanning(false); }
   function lostCapture(event: ReactPointerEvent<HTMLDivElement>) { if (drag.current?.pointerId !== event.pointerId) return; drag.current = null; setPanning(false); }
   useEffect(() => () => { const active = drag.current; drag.current = null; if (active) releaseCanvasPointer(viewport.current, active.pointerId); }, []);
-  return <div ref={viewport} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={lostCapture} className={cx("relative h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}><div className="flex min-h-[860px] min-w-[1700px] items-center justify-center">{children}</div></div>;
+  return <div ref={viewport} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={lostCapture} className={cx("relative h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>{/* `w-max` for the same reason as the staging canvas (#203): a block-level
+      flex container stops at the viewport (or its 1700px floor) and centred
+      content wider than that overflows to the left as well, where scrollLeft
+      cannot reach it. Sizing the container to its content means the row it
+      centres always fits. */}
+    <div className="flex min-h-[860px] w-max min-w-[1700px] items-center justify-center">{children}</div></div>;
 }

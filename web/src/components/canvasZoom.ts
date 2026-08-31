@@ -20,7 +20,22 @@ export const CANVAS_ZOOM_RATIO = 1.2;
 export const CANVAS_MIN_STEP = -4;
 export const CANVAS_MAX_STEP = 3;
 
-/** The unzoomed content box. */
+/** The unzoomed content box -- a *floor*, not a ceiling (#203).
+ *
+ * It used to be both. The graph row was drawn into a box fixed at this width
+ * and centred inside it, and the row's own minimum is 1430px: 70px of slack in
+ * a canvas whose nodes are resizable and whose fork connectors grow with the
+ * number of branches. The moment the row outgrew the box, `justify-center`
+ * overflowed it equally on *both* sides -- and the left overflow sits at a
+ * negative offset inside a scroll container whose `scrollLeft` cannot go below
+ * zero, so it was unreachable by definition. The first node in the row is
+ * "Uploaded files", which is the one that vanished.
+ *
+ * Neither collapsing the sidebar nor zooming out could help: the node was not
+ * behind the sidebar but clipped inside the canvas's own scroll box, and the
+ * box was scaled as a whole, so the overflow scaled with it and the proportion
+ * never changed.
+ */
 export const CANVAS_BASE_WIDTH = 1500;
 export const CANVAS_BASE_HEIGHT = 860;
 
@@ -55,9 +70,15 @@ export function zoomPercent(step: number): number {
  * the graph at the old bounds and the right-hand nodes -- the proposed plan and
  * the pipeline preview, which is where the eye goes last -- become unreachable.
  */
-export function scaledBox(step: number): { width: number; height: number } {
+export function scaledBox(
+  step: number,
+  content?: { width?: number; height?: number },
+): { width: number; height: number } {
   const zoom = zoomForStep(step);
-  return { width: CANVAS_BASE_WIDTH * zoom, height: CANVAS_BASE_HEIGHT * zoom };
+  return {
+    width: Math.max(CANVAS_BASE_WIDTH, content?.width ?? 0) * zoom,
+    height: Math.max(CANVAS_BASE_HEIGHT, content?.height ?? 0) * zoom,
+  };
 }
 
 /** Whether a wheel event asks for zoom rather than scroll.

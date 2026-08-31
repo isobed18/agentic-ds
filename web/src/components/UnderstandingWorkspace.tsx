@@ -403,6 +403,8 @@ function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol class
  */
 export function CanvasSurface({ children, overlay, docked = false, plannerDocked = false }: { children: React.ReactNode; overlay?: React.ReactNode; docked?: boolean; plannerDocked?: boolean }) {
   const viewport = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  const [contentBox, setContentBox] = useState({ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT });
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
   const [step, setStep] = useState(0);
@@ -420,6 +422,29 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
     }
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // The scroll extent has to follow the graph, not a guess about it (#203).
+  // The content box below sizes itself to its content, so its laid-out width is
+  // exactly what the scrolling wrapper must reserve -- and it changes without a
+  // re-render whenever a node is resized or a branch appears. ResizeObserver
+  // reports the *untransformed* layout box, which is the number wanted here:
+  // the zoom factor is applied separately, so measuring the scaled size would
+  // multiply it twice.
+  useEffect(() => {
+    const node = content.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      setContentBox((current) => {
+        const width = node.offsetWidth || CANVAS_BASE_WIDTH;
+        const height = node.offsetHeight || CANVAS_BASE_HEIGHT;
+        return current.width === width && current.height === height
+          ? current
+          : { width, height };
+      });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
   }, []);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
@@ -485,8 +510,13 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
       : plannerDocked ? "minmax(0, 1fr) min(390px, 94vw)" : "minmax(0, 1fr)";
   return <div className="relative grid h-full min-h-[30rem] overflow-hidden" style={{ gridTemplateColumns, gridTemplateRows }}>
     <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} onLostPointerCapture={lostPanCapture} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
-      <div style={scaledBox(step)}>
-        <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoomForStep(step)})`, transformOrigin: "top left" }}>{children}</div>
+      <div style={scaledBox(step, contentBox)}>
+        {/* `width: max-content` with the base box as a floor, so the box always
+            contains the graph. `justify-center` is kept -- it is safe once the
+            box can never be narrower than its content, and it is what centres a
+            small graph in a large canvas. What it cannot do is centre content
+            it does not fit, which is #203. */}
+        <div ref={content} className="flex items-center justify-center" style={{ width: "max-content", minWidth: CANVAS_BASE_WIDTH, minHeight: CANVAS_BASE_HEIGHT, transform: `scale(${zoomForStep(step)})`, transformOrigin: "top left" }}>{children}</div>
       </div>
     </div>
     {overlay}
