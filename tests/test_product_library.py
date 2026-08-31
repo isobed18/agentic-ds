@@ -200,7 +200,7 @@ def test_dataset_catalog_summarises_pdf_only_sources(tmp_path: Path) -> None:
     assert payload["document_summaries"][0]["name"] == "agreement.pdf"
 
 
-def test_experiments_models_reports_and_hardening_have_real_endpoints(
+def test_report_download_and_hardening_keep_their_real_endpoints(
     tmp_path: Path,
 ) -> None:
     plane = _plane(tmp_path)
@@ -208,7 +208,9 @@ def test_experiments_models_reports_and_hardening_have_real_endpoints(
         evaluation_artifact_id="a" * 64,
         markdown="# Result\n\nThe measured model passed its holdout checks.",
     )
-    plane.store.put(report, run_id="finished-run", stage_exec_id="report", name="final_report")
+    report_ref = plane.store.put(
+        report, run_id="finished-run", stage_exec_id="report", name="final_report"
+    )
     snapshot = plane._run_state_root / "finished-run.json"  # noqa: SLF001
     snapshot.write_text(
         json.dumps(
@@ -228,18 +230,28 @@ def test_experiments_models_reports_and_hardening_have_real_endpoints(
     )
     client = TestClient(create_app(plane=plane))
 
-    experiments = client.get("/api/catalog/experiments").json()
-    reports = client.get("/api/catalog/reports").json()
     hardening = client.get("/api/hardening").json()
 
-    assert experiments[0]["deletable"] is True
-    assert reports[0]["run_id"] == "finished-run"
-    assert client.get(f"/api/reports/{reports[0]['artifact_id']}/download").text.startswith(
+    assert client.get(f"/api/reports/{report_ref.artifact_id}/download").text.startswith(
         "# Result"
     )
     assert hardening["agents"]["tool_allowlists"] is True
     assert hardening["sandbox"]["network"] == "none"
     assert hardening["sandbox"]["root_filesystem"] == "read-only"
+
+
+def test_ui_orphaned_global_catalogue_routes_are_not_registered(tmp_path: Path) -> None:
+    """#155: project and automation views own these outputs now. Leaving the
+    old global reads registered preserves an undocumented second product model
+    that no UI can reach and lets new callers accidentally bypass containment."""
+    client = TestClient(create_app(plane=_plane(tmp_path)))
+
+    for path in (
+        "/api/catalog/experiments",
+        "/api/catalog/models",
+        "/api/catalog/reports",
+    ):
+        assert client.get(path).status_code == 404
 
 
 def test_project_contents_are_owned_by_execution_history_not_global_catalogues(
@@ -666,12 +678,22 @@ class TestAParkedRunCanBeCleared:
         assert refused.status_code == 409
         assert snapshot.exists(), "an unconfirmed delete must not remove anything"
 
-    def test_the_experiment_list_offers_it(self, tmp_path: Path) -> None:
-        """`deletable` drives the UI control, so it has to agree with the API."""
+    def test_the_project_execution_list_offers_it(self, tmp_path: Path) -> None:
+        """The project execution read model drives the delete control, so it
+        must retain the summary behaviour after the global catalogue is gone."""
         plane = _plane(tmp_path)
+        uploaded = plane.upload("customers.csv", b"customer_id\n1\n")
+        project = plane.create_project("Retention")
+        automation = plane.create_project_automation(project["project_id"], "Churn flow")
+        plane.automation_store.attach_execution(
+            automation["automation_id"],
+            run_id="parked-run",
+            source_id=uploaded["source_id"],
+        )
         _snapshot(plane, "parked-run", "awaiting_human")
 
-        entry = next(e for e in plane.experiment_catalog() if e["run_id"] == "parked-run")
+        contents = plane.project_contents(project["project_id"])
+        entry = next(e for e in contents["executions"] if e["run_id"] == "parked-run")
 
         assert entry["deletable"] is True
 
