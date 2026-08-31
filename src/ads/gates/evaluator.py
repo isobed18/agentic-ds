@@ -155,13 +155,28 @@ def build_human_prompt(
     reasons = "\n".join(f"- {outcome.message}" for outcome in outcomes)
     policy_only = {o.reason_code for o in outcomes} <= POLICY_ONLY_REASONS
 
-    options = [
-        DecisionOption(
-            option_id="approve",
-            label="Approve and continue",
-            consequence="Accept this stage's output as-is and proceed to the next stage.",
-            recommended=False,
-        ),
+    # Uretilmemis bir ciktiyi onaylamak MUMKUN degil: sonraki asama onu zorunlu
+    # girdi olarak istiyor ve kosum `MissingArtifactError` ile patliyor. Olculen
+    # vaka: problem_discovery `problem_definition` uretemedi, "Approve and
+    # continue" yine de sunuldu, secilince kosum "run '...' has no
+    # 'problem_definition' artifact" diye durdu (#198).
+    #
+    # Kural #191 ile ayni: kosumun kabul etmeyecegi bir secenek ekranda
+    # durmamali. Burada bilinen sey artifact_ids'in BOS olmasi -- asama hicbir
+    # sey uretmemis demek; kismi cikti bu kontrolden gecer, cunku hangi
+    # artifactin zorunlu oldugunu bilen yer burasi degil.
+    produced_nothing = not artifact_ids
+    options = []
+    if not produced_nothing:
+        options.append(
+            DecisionOption(
+                option_id="approve",
+                label="Approve and continue",
+                consequence="Accept this stage's output as-is and proceed to the next stage.",
+                recommended=False,
+            )
+        )
+    options += [
         DecisionOption(
             option_id="retry",
             label="Send back for rework",
@@ -188,16 +203,27 @@ def build_human_prompt(
             ),
         )
 
-    question = (
-        f"Stage {stage.id!r} is a required checkpoint. Review the output and choose how to proceed."
-        if policy_only
-        else f"Stage {stage.id!r} stopped because a problem was detected. Your decision is needed."
-    )
+    if produced_nothing:
+        question = (
+            f"Stage {stage.id!r} produced nothing, so there is no output to approve. "
+            "Send it back for rework, or stop the run."
+        )
+    elif policy_only:
+        question = (
+            f"Stage {stage.id!r} is a required checkpoint. "
+            "Review the output and choose how to proceed."
+        )
+    else:
+        question = (
+            f"Stage {stage.id!r} stopped because a problem was detected. Your decision is needed."
+        )
 
     return HumanPrompt(
         stage_id=stage.id,
         question=question,
-        question_kind="checkpoint" if policy_only else "problem",
+        question_kind=(
+            "no_output" if produced_nothing else "checkpoint" if policy_only else "problem"
+        ),
         context_summary=f"{context_summary}\n\nWhy this stopped:\n{reasons}"[:1500],
         options=options,
         allows_free_text=True,

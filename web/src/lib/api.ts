@@ -118,7 +118,7 @@ export interface HumanPrompt {
   question: string;
   /** Which kind of question this is, apart from its wording. The text itself is
    *  built in English on the server; the card needs the KIND to render Turkish. */
-  question_kind?: "problem" | "checkpoint";
+  question_kind?: "problem" | "checkpoint" | "no_output";
   context_summary: string;
   options: { option_id: string; label: string; consequence: string; downstream_effect?: string | null; recommended?: boolean }[];
   allows_free_text?: boolean;

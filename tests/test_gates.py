@@ -47,6 +47,12 @@ def _decide(**kwargs):
     kwargs.setdefault("stage", _stage())
     kwargs.setdefault("signals", QualitySignals())
     kwargs.setdefault("profile", FULL_AUTO)
+    # The runner fills this from the stage's own output immediately before the
+    # gate runs (`runner.py:218`), so a stage that produced something arrives
+    # here with ids. Defaulting to none here made every fixture look like a
+    # stage that produced NOTHING, which is a different case -- and the one
+    # that must not be offered "approve" (#198).
+    kwargs.setdefault("artifact_ids", ["stage-output"])
     return evaluate_gate(**kwargs)
 
 
@@ -427,6 +433,32 @@ class TestHumanPrompt:
         """
         checkpoint = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
         assert checkpoint.human_prompt.question_kind == "checkpoint"
+
+    def test_a_stage_that_produced_nothing_is_not_offered_approve(self) -> None:
+        """Approving an output that does not exist cannot work, so do not offer it.
+
+        Measured: problem_discovery produced no `problem_definition`, the card
+        offered "Approve and continue" anyway, and choosing it stopped the run
+        with `MissingArtifactError: run '...' has no 'problem_definition'
+        artifact` (#198). Same rule as #191 -- an option the run will refuse
+        does not belong on screen.
+        """
+        decision = _decide(
+            stage=_stage(id="problem_discovery"), profile=CHECKPOINTED, artifact_ids=[]
+        )
+
+        options = {o.option_id for o in decision.human_prompt.options}
+        assert "approve" not in options
+        assert {"retry", "abort"} <= options, "there must still be a way forward"
+        assert decision.human_prompt.question_kind == "no_output"
+        assert "produced nothing" in decision.human_prompt.question
+
+    def test_a_stage_that_produced_something_still_offers_approve(self) -> None:
+        """The guard is about absence, not about escalations in general."""
+        decision = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
+
+        options = {o.option_id for o in decision.human_prompt.options}
+        assert "approve" in options
 
     def test_escalation_never_auto_decides(self) -> None:
         decision = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)

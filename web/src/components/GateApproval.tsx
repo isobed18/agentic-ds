@@ -67,6 +67,12 @@ function questionText(prompt: { question: string; question_kind?: string; stage_
       { stage: prompt.stage_id },
     );
   }
+  if (prompt.question_kind === "no_output") {
+    return t(
+      "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.",
+      { stage: prompt.stage_id },
+    );
+  }
   if (prompt.question_kind === "problem") {
     return t("Stage {stage} stopped because a problem was detected. Your decision is needed.", {
       stage: prompt.stage_id,
