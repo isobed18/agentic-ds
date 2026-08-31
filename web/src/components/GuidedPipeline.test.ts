@@ -22,3 +22,22 @@ describe("planner access in the guided pipeline (#97)", () => {
     expect(SOURCE).toContain("plannerOpen &&");
   });
 });
+
+describe("guided pipeline node descriptions (#168)", () => {
+  it("uses one explanatory sentence per group instead of joining bare stage names", () => {
+    // Joining `node.label` values produced fragments such as "integration" and
+    // "problem discovery" that repeated the title without explaining the work.
+    const groupsSource = SOURCE.slice(
+      SOURCE.indexOf("export const GROUPS"),
+      SOURCE.indexOf("function local"),
+    );
+    const descriptions = [...groupsSource.matchAll(/description: "([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+
+    expect(descriptions).toHaveLength(6);
+    expect(descriptions.every((description) => description.endsWith("."))).toBe(true);
+    expect(SOURCE).toContain("subtitle={t(group.description)}");
+    expect(SOURCE).not.toContain("group.nodes.map((node) => t(node.label");
+  });
+});
