@@ -112,6 +112,33 @@ class _PlannerLLM:
         )
 
 
+class _PlannerWithTarget(_PlannerLLM):
+    """A staging planner that proposes a specific target column, so a test can
+    check what the run does when the person then picks a different one."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__()
+        self.target = target
+
+    def generate_structured(
+        self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
+    ) -> LLMResponse:
+        response = super().generate_structured(
+            system=system, prompt=prompt, json_schema=json_schema, profile=profile
+        )
+        parsed = dict(response.parsed or {})
+        parsed["configuration_patch"] = {
+            **parsed.get("configuration_patch", {}),
+            "target_column": self.target,
+        }
+        return LLMResponse(
+            text=response.text,
+            model=response.model,
+            latency_s=response.latency_s,
+            parsed=parsed,
+        )
+
+
 class _UnexplainedThenExplainedLLM:
     """Returns a verdict with no reason first, then a real reason on the re-roll."""
 
@@ -464,6 +491,36 @@ class TestContinuingKeepsTheWork:
             run_id, ArtifactType.AUTOMATION_EXECUTION_PLAN
         )
         assert execution_plan is not None
+
+    def test_a_picked_target_column_reaches_the_run_and_beats_the_plan_default(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        """#244/#198: the guided flow never passed a target -- the run could not
+        be aimed at anything. It now carries the picker's column into the run,
+        and because a person's pick is explicit it must win over whatever target
+        the plan proposed, even in fully-auto where plan.configuration is merged
+        in. Here the plan proposes 'physician_id' and the person picks 'tutar'."""
+        planner = _PlannerWithTarget("physician_id")
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+        run_id = _stage(client)
+
+        proposal = client.get(f"/api/runs/{run_id}/staging").json()
+        assert proposal["recommended_plan"]["configuration"]["target_column"] == "physician_id"
+        client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": proposal["artifact_id"]},
+        )
+
+        started = client.post(
+            f"/api/runs/{run_id}/start",
+            json={"run_mode": "fully_auto", "target_column": "tutar"},
+        )
+        assert started.status_code == 200, started.text
+        _settle(client, run_id, target="completed")
+
+        intent = recorder.calls[1]["intent"] or ""
+        assert "tutar" in intent, intent
+        assert "physician_id" not in intent, intent
 
     def test_fully_auto_refuses_a_proposal_that_the_human_has_not_accepted(
         self, client: TestClient

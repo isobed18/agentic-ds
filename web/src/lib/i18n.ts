@@ -182,6 +182,8 @@ const TR: Record<string, string> = {
   "Every stage stops for your approval.": "Her aşama onayınız için durur.",
   "Leave empty to let the agent discover the problem from the data.": "Ajanın problemi veriden keşfetmesi için boş bırakın.",
   "Let the agent decide": "Ajan karar versin",
+  "Choose which column the model should predict, or let problem discovery propose one.":
+    "Modelin tahmin edeceği sütunu seçin ya da problem keşfinin önermesine izin verin.",
   "Agent panel": "Ajan paneli",
   "Running a stage several times independently is what produces the agreement signal the gate uses.": "Bir aşamayı birkaç kez bağımsız çalıştırmak, kapının kullandığı uzlaşma sinyalini üretir.",
   "Let an agent write its own analysis on top of the fixed profile": "Sabit profilin üstüne bir ajan kendi analizini yazsın",

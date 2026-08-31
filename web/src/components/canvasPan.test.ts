@@ -73,6 +73,7 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
     // The guard is only worth having because this control decides whether the
     // run stops at every gate.
     expect(GUIDED_SOURCE).toContain("setApproveEachStage(event.target.checked)");
-    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto")');
+    // #244/#198: the run mode now travels alongside the chosen target column.
+    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)');
   });
 });
