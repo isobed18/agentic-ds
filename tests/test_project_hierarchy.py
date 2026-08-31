@@ -82,6 +82,37 @@ def test_automation_snapshot_freezes_while_project_pool_stays_open(tmp_path: Pat
     assert (snapshot / "0000-customers.csv").read_bytes() == b"customer_id,churned\n1,0\n"
 
 
+def test_automation_snapshot_is_not_listed_as_a_second_data_source(
+    tmp_path: Path,
+) -> None:
+    """#180: private frozen inputs must not re-enter the visible source pool."""
+    data = tmp_path / "data"
+    data.mkdir()
+    plane = ControlPlane(
+        store=ArtifactStore(data / "artifacts"),
+        source_roots=(data,),
+        upload_root=data / "uploads",
+    )
+    customers = plane.upload("customers.csv", b"customer_id,churned\n1,0\n")
+    project = plane.create_project("Retention")
+    plane.add_project_source(project["project_id"], customers["source_id"])
+    automation = plane.create_project_automation(project["project_id"], "Churn")
+
+    before = plane.data_sources()
+    selected = plane.select_automation_inputs(
+        automation["automation_id"],
+        expected_revision=automation["revision"],
+        selections=[{"source_id": customers["source_id"], "path": "customers.csv"}],
+    )
+
+    assert selected["source_id"].startswith("automation-input:")
+    assert plane.data_sources() == before
+    project_data = plane.project_data(project["project_id"])
+    assert len(project_data) == 1
+    assert project_data[0]["source_id"] == customers["source_id"]
+    assert project_data[0]["files"] == ["customers.csv"]
+
+
 def test_automation_rejects_files_outside_its_project_pool(tmp_path: Path) -> None:
     plane = _plane(tmp_path)
     outside = plane.upload("outside.csv", b"id\n1\n")
