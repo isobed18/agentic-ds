@@ -111,6 +111,16 @@ export function automationView(input: {
   if (!input.sourceId && !(input.runId && input.workspace)) return "empty";
   if (!input.runId) return "source";
   if (input.advancedGraph) return "workflow";
+  // An accepted plan is a decision, not a run state, so it is read before the
+  // status list below (#191). It used to be read after, which meant any answer
+  // that put the run back into `queued`, `staging`, `failed` or `interrupted`
+  // -- a gate answered "send back for rework" being the reported one -- dropped
+  // the workspace out of the guided ML pipeline and back onto the staging
+  // canvas, even though the plan it had accepted was unchanged. The run's
+  // trouble belongs on the pipeline that is running, not on the screen for
+  // deciding whether to have one.
+  const accepted = input.workspace?.recommended_plan;
+  if (accepted && (accepted.status === "accepted" || accepted.accepted)) return "guided_pipeline";
   if (
     !input.workspace
     || ["queued", "staging", "failed", "interrupted"].includes(input.runStatus ?? "")
@@ -119,7 +129,6 @@ export function automationView(input: {
   }
   const plan = input.workspace.recommended_plan;
   if (!plan) return "understanding";
-  if (plan && (plan.status === "accepted" || plan.accepted)) return "guided_pipeline";
   return "proposal";
 }
 
