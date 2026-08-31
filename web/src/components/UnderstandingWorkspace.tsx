@@ -116,7 +116,7 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
   return (
     <CanvasSurface docked={selection !== null} plannerDocked={plannerOpen} overlay={<>
       <button type="button" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
-      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} busy={busy} runId={runId} />}
+      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} onTalkToPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
       {previewError && <p className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{previewError}</p>}
       {plannerOpen && <DockedPanel><PlannerPanel runId={runId} sourceId={sourceId} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={onWorkspaceUpdated} starterPrompts={[t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")]} /></DockedPanel>}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
@@ -218,7 +218,7 @@ export function BranchNode({ title, files, steps, artifactIds, onClick, onOpenAr
   </button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
 }
 
-function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, busy = false, runId }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; busy?: boolean; runId?: string | null }) {
+function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onTalkToPlanner, busy = false, runId }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onTalkToPlanner?: () => void; busy?: boolean; runId?: string | null }) {
   const titles: Record<Exclude<CanvasSelection, null>, string> = {
     source: t("Uploaded files"), discovery: t("Intake and source routing"), structured: t("Structured data"), documents: t("Understand documents"), synthesis: t("Cross-source synthesis"), proposal: t("Proposed plan"),
   };
@@ -228,7 +228,7 @@ function RoutingInspector({ selection, profile, workspace, routing, onClose, onO
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
     {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
-    {selection === "proposal" && (workspace && onAccept && onAdvanced ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
+    {selection === "proposal" && (workspace && onAccept && onAdvanced && onTalkToPlanner ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onTalkToPlanner={onTalkToPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
   </Inspector>;
 }
 
@@ -372,13 +372,35 @@ export function SourceOverview({ profile, onRemoveFile, onAddFiles, busy = false
   return <div><div className="grid grid-cols-2 gap-2"><Metric label={t("PDF documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Document pages")} value={counts.pages} /><Metric label={t("Structured rows")} value={counts.rows.toLocaleString()} /></div><div className="mt-5 flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Files provided")}</p>{onAddFiles && <button type="button" className="btn-ghost !py-1 text-xs" disabled={busy} onClick={onAddFiles}>+ {t("Add files")}</button>}</div><SourceFiles profile={profile} onRemove={onRemoveFile} busy={busy} /></div>;
 }
 
-function PlanProposal({ profile, workspace, onAccept, onAdvanced, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept: () => void; onAdvanced: () => void; busy: boolean }) {
+/**
+ * The proposed plan, in its two shapes.
+ *
+ * #187: the blocked shape used to end on "no pipeline will run unless a human
+ * explicitly overrides this recommendation" with nothing on the panel to
+ * override with -- an instruction with no target, on a screen that could not
+ * then be advanced. The override is real: every Planner turn writes its
+ * `pipeline_decision` straight back as `pipeline_recommendation`, so a
+ * conversation that changes its mind re-renders this panel into the accept
+ * branch below. What was missing was the route to it -- the only entry point
+ * was the canvas button, which sits outside the panel and was connected to
+ * this message in no way at all.
+ *
+ * So the blocked branch opens the Planner itself, and says what kind of stop
+ * this is. That last part matters because there is a second human-feedback
+ * prompt in the product -- the run gate `ApprovalCard`, which asks a question
+ * and takes an answer -- and from the outside the two were indistinguishable:
+ * both stop progress, both invoke a human, and only one of them could be
+ * answered. This one is a recommendation with nothing pending, and the copy
+ * now says so rather than leaving a person hunting for an answer UI that was
+ * never going to appear.
+ */
+export function PlanProposal({ profile, workspace, onAccept, onAdvanced, onTalkToPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept: () => void; onAdvanced: () => void; onTalkToPlanner: () => void; busy: boolean }) {
   const plan = workspace.recommended_plan;
   if (!plan) return <Spinner label={t("The Planner is preparing a proposal…")} />;
   const recommendation = plan.pipeline_recommendation ?? "create_pipeline";
   if (recommendation !== "create_pipeline") {
     const denied = recommendation === "no_pipeline";
-    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 border-t border-line pt-4"><button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation.")}</p></div>;
+    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 border-t border-line pt-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("What happens next")}</p><p className="mt-2 text-[11px] leading-relaxed text-ink-mute">{t("This is the Planner's recommendation, not a question waiting on your answer. No pipeline runs while it stands, and it changes only if the Planner reaches a different conclusion — so tell it what it missed, and its next reply can propose one.")}</p><div className="mt-4 flex flex-wrap gap-2"><button type="button" className="btn-primary" onClick={onTalkToPlanner}>{t("Ask the Planner to reconsider")}</button><button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div></div></div>;
   }
   const steps = visibleWorkflowSteps(workspace, activeLanguage());
   const target = String(plan.configuration.target_column ?? "");

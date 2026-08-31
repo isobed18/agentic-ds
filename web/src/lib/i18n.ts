@@ -887,7 +887,11 @@ const TR: Record<string, string> = {
   "More evidence is needed before ML": "ML öncesinde daha fazla kanıt gerekiyor",
   "The Planner did not recommend an executable pipeline from the available evidence.": "Planlayıcı mevcut kanıtlardan çalıştırılabilir bir işlem hattı önermedi.",
   "Open graph to override": "Geçersiz kılmak için grafiği aç",
-  "No pipeline will run unless a human explicitly overrides this recommendation.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir işlem hattı çalışmaz.",
+  // the proposal panel's blocked branch (#187)
+  "What happens next": "Sırada ne var",
+  "This is the Planner's recommendation, not a question waiting on your answer. No pipeline runs while it stands, and it changes only if the Planner reaches a different conclusion — so tell it what it missed, and its next reply can propose one.":
+    "Bu, Planlayıcının önerisidir; yanıtınızı bekleyen bir soru değildir. Bu öneri geçerli olduğu sürece hiçbir işlem hattı çalışmaz ve öneri yalnızca Planlayıcı farklı bir sonuca varırsa değişir — bu yüzden ona neyi atladığını söyleyin, bir sonraki yanıtı bir işlem hattı önerebilir.",
+  "Ask the Planner to reconsider": "Planlayıcıdan yeniden değerlendirmesini isteyin",
   "Inspecting and routing uploaded files…": "Yüklenen dosyalar inceleniyor ve yönlendiriliyor…",
   "Model {target}": "{target} modelle",
   "Analyze and explain the available evidence": "Mevcut kanıtı analiz et ve açıkla",
