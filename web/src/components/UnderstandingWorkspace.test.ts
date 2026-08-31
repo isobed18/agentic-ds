@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, SourceOverview } from "./UnderstandingWorkspace";
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
+import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
+import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 
 Object.defineProperty(globalThis, "localStorage", {
   value: { getItem: () => null },
@@ -92,6 +94,40 @@ describe("the understanding inspector layout", () => {
     expect(classNameFor(markup, "aside").split(" ")).toContain("min-h-0");
     const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
     expect(planner).toContain("min-h-0");
+  });
+
+  it("sizes the content box to the graph instead of clipping it (#203)", () => {
+    // The "Yüklenen dosyalar" node sat off-screen past the left edge, under the
+    // collapsible menu, and neither collapsing the menu nor panning nor zooming
+    // could reach it. It was not behind the sidebar: the graph row (min 1430px,
+    // with resizable nodes and connectors that grow per branch) outgrew the
+    // fixed 1500px box it was centred in, and `justify-center` pushed half the
+    // overflow to a negative offset that `scrollLeft` cannot reach.
+    const markup = renderToStaticMarkup(createElement(CanvasSurface, {
+      children: createElement("div", { className: "flex min-w-[1430px]" }, "Canvas content"),
+    }));
+
+    // A floor, not a fixed size, so the box always contains the graph. Read
+    // off the content box itself: the scrolling wrapper around it is still
+    // sized in pixels, which is the whole point of `scaledBox`.
+    const content = markup.match(/<div class="flex items-center justify-center" style="([^"]+)"/)?.[1];
+    expect(content, "the content box should be present").toBeTruthy();
+    expect(content).toContain("width:max-content");
+    expect(content).toContain(`min-width:${CANVAS_BASE_WIDTH}px`);
+    // And it is no longer pinned to that width, which is what clipped it.
+    expect(content).not.toMatch(new RegExp(`(^|;)width:${CANVAS_BASE_WIDTH}px`));
+    // Centring stays -- it is correct once the box cannot be narrower than its
+    // content, and it is what centres a small graph in a large canvas.
+    expect(markup).toContain("justify-center");
+  });
+
+  it("lets the guided pipeline canvas grow with its row too (#203)", () => {
+    // Same shape, one component over: `PanCanvas` centres its children inside a
+    // block-level container that stops at the viewport or its 1700px floor, so
+    // the first node there is exposed to the identical failure once the row
+    // grows. Read from source because PanCanvas is not exported.
+    const panCanvas = GUIDED_SOURCE.slice(GUIDED_SOURCE.indexOf("function PanCanvas"));
+    expect(panCanvas).toContain("w-max min-w-[1700px]");
   });
 
   it("gives the planner and inspector separate dock columns", () => {

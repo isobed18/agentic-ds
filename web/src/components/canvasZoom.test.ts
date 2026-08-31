@@ -91,6 +91,30 @@ describe("the scrollable box", () => {
   it("is exactly the base box at the default", () => {
     expect(scaledBox(0)).toEqual({ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT });
   });
+
+  it("grows to a graph wider than the base box (#203)", () => {
+    // The base width is a floor, not a ceiling. A row wider than it used to be
+    // centred inside it and overflowed on both sides; the left half sat at a
+    // negative offset that scrollLeft can never reach, so the first node --
+    // "Uploaded files" -- was unreachable by panning or zooming.
+    const wide = scaledBox(0, { width: 1900, height: 1000 });
+    expect(wide).toEqual({ width: 1900, height: 1000 });
+  });
+
+  it("keeps the floor when the graph is smaller than it", () => {
+    // The paired half: a small graph must still get the full canvas rather
+    // than a box shrunk to its own nodes.
+    expect(scaledBox(0, { width: 900, height: 400 })).toEqual({
+      width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT,
+    });
+  });
+
+  it("scales a content-sized box like any other", () => {
+    const zoom = zoomForStep(2);
+    const box = scaledBox(2, { width: 1900 });
+    expect(box.width).toBeCloseTo(1900 * zoom, 6);
+    expect(box.height).toBeCloseTo(CANVAS_BASE_HEIGHT * zoom, 6);
+  });
 });
 
 describe("telling zoom from scroll", () => {
