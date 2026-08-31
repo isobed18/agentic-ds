@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AutomationContents, AutomationDefinition, RunSummary, StagingWorkspace } from "../lib/api";
-import { activeRunByAutomation, automationView, availableProjectViews, isAbandonedDraft, preferredExecution, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
+import { activeRunByAutomation, automationOrigin, automationParams, automationView, availableProjectViews, isAbandonedDraft, preferredExecution, projectReturnParams, projectView, sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 
 describe("which automation tabs to show (#157, #165)", () => {
   const contents = (over: Partial<AutomationContents> = {}): AutomationContents => ({
@@ -290,5 +290,34 @@ describe("proposed workflow step labels", () => {
     // step in English while the rest of the panel was Turkish (#61).
     expect(visibleWorkflowSteps(workspace, "tr")).toEqual(["Modelleri eğit"]);
     expect(visibleWorkflowSteps(workspace, "en")).toEqual(["Train models"]);
+  });
+});
+
+describe("returning to the tab an automation was opened from (#199)", () => {
+  it("carries the originating project tab into the automation URL", () => {
+    expect(automationParams("project-1", "automation-1", "automations")).toEqual({
+      project: "project-1",
+      automation: "automation-1",
+      from: "automations",
+    });
+  });
+
+  it("restores that tab on the way back instead of the overview", () => {
+    expect(projectReturnParams("project-1", "automations")).toEqual({ project: "project-1", view: "automations" });
+    expect(projectReturnParams("project-1", "reports")).toEqual({ project: "project-1", view: "reports" });
+  });
+
+  it("omits the origin for the overview, which is already the fallback", () => {
+    expect(automationOrigin(null)).toBeNull();
+    expect(automationOrigin("overview")).toBeNull();
+    expect(automationOrigin("nonsense")).toBeNull();
+    expect(automationParams("project-1", "automation-1", null)).toEqual({ project: "project-1", automation: "automation-1" });
+    expect(projectReturnParams("project-1", null)).toEqual({ project: "project-1" });
+  });
+
+  it("reads the origin out of a project tab name and rejects anything else", () => {
+    expect(automationOrigin("models")).toBe("models");
+    expect(projectView("data")).toBe("data");
+    expect(projectView("editor")).toBe("overview");
   });
 });
