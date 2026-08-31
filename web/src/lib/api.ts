@@ -635,6 +635,8 @@ export interface RunProgressSnapshot {
 export interface ArtifactPreview {
   artifact_id: string;
   artifact_type: string;
+  fields?: Record<string, string | number | boolean>;
+  collection_sizes?: Record<string, number>;
   engine?: string;
   engine_version?: string | null;
   duration_seconds?: number;
