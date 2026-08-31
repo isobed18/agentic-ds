@@ -1052,6 +1052,36 @@ _TR.update(
     }
 )
 
+_TR.update(
+    {
+        # --- #200: gate verdict and reason codes in the final report. The same
+        # human-readable labels the UI shows (web/src/lib/status.ts), so a gate
+        # reads identically in the report and on screen instead of as raw enum
+        # text like `auto_proceed` or `lift_within_noise`.
+        "Continued": "Devam etti",
+        "Sent back": "Geri gönderildi",
+        "Asked you": "Size soruldu",
+        "Stopped": "Durduruldu",
+        "You asked to review this step": "Bu adımı gözden geçirmek istediniz",
+        "A feature may leak the answer": "Bir öznitelik cevabı sızdırıyor olabilir",
+        "Leakage still present after rework": "Düzeltmeden sonra da sızıntı sürüyor",
+        "Agent challenged the leakage finding": "Agent sızıntı bulgusuna itiraz etti",
+        "No attempts left": "Deneme hakkı kalmadı",
+        "The same failure repeated": "Aynı hata tekrarlandı",
+        "Personal data would leave the machine": "Kişisel veri makineden çıkacaktı",
+        "A step would modify the source data": "Bir adım kaynak veriyi değiştirecekti",
+        "The model did not beat the baseline": "Model referans modeli geçemedi",
+        "The improvement is within noise": "İyileşme gürültü sınırları içinde",
+        "Fold-to-fold scores vary widely": "Katlamalar arası skorlar çok değişken",
+        "The proposals disagreed": "Öneriler birbirini tutmadı",
+        "Not enough data to support this": "Bunu destekleyecek kadar veri yok",
+        "The split left a fold unusable": "Bölme bir katlamayı kullanılamaz bıraktı",
+        "A required check did not pass": "Zorunlu bir kontrol geçmedi",
+        "This step is high risk": "Bu adım yüksek riskli",
+        "Nothing to flag": "İşaretlenecek bir şey yok",
+    }
+)
+
 _CATALOGUE: dict[str, dict[str, str]] = {"tr": _TR, "en": {}}
 
 __all__ = ["DEFAULT", "SUPPORTED", "current", "normalise", "t", "using"]

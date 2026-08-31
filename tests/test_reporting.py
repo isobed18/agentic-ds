@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from sklearn.preprocessing import StandardScaler
 
+from ads.api import i18n
 from ads.contracts.base import ArtifactType
 from ads.contracts.gates import GateDecision, GateVerdict
 from ads.contracts.leakage import LeakageFinding, LeakageKind, LeakageReport
@@ -301,3 +302,48 @@ def test_unresolved_blocking_leakage_is_not_described_as_cleared(reporting_input
     assert report.unresolved_blocking_leakage
     assert "Blocking leakage remains unresolved" in markdown
     assert "not clear to ship" in markdown
+
+
+def test_report_prose_and_gate_codes_follow_the_render_language(reporting_inputs) -> None:
+    """#200: the report is rendered on a background worker where the language
+    ContextVar is unset, so it defaulted to Turkish and dropped English agent
+    prose and raw enum codes (`auto_proceed`) into an otherwise Turkish document.
+    The prose is now carried bilingually, and verdict/reason codes go through the
+    same labels the UI shows, so the whole report follows one language."""
+    training, leakage, strategy, base_problem = reporting_inputs
+    problem = base_problem.model_copy(
+        update={
+            "title": "Estimate the outcome",
+            "title_tr": "Sonucu tahmin et",
+            "description": "Estimate the continuous outcome from prediction-time information.",
+            "description_tr": "Sonucu tahmin anındaki bilgilerden kestir.",
+        }
+    )
+    gate = GateDecision(
+        stage_id="intake",
+        attempt=1,
+        verdict=GateVerdict.AUTO_PROCEED,
+        reason_code="profile_checkpoint",
+        triggered_rules=[],
+    )
+    report = build_evaluation_report(training, leakage, strategy, problem, gate_decisions=[gate])
+
+    with i18n.using("tr"):
+        tr = render_markdown(report)
+    with i18n.using("en"):
+        en = render_markdown(report)
+
+    # The title heading uses the language's prose: a Turkish reader gets the
+    # Turkish title, not an English one dropped into a translated heading.
+    assert tr.splitlines()[0] == "# Değerlendirme raporu: Sonucu tahmin et"
+    assert en.splitlines()[0] == "# Evaluation report: Estimate the outcome"
+    # The Problem-and-model description paragraph follows the render language.
+    assert "Sonucu tahmin anındaki bilgilerden kestir." in tr
+    assert "Estimate the continuous outcome from prediction-time information." in en
+    # Gate codes read as the UI's labels in each language, never raw enum text.
+    assert "Devam etti" in tr
+    assert "Bu adımı gözden geçirmek istediniz" in tr
+    assert "Continued" in en
+    assert "You asked to review this step" in en
+    assert "**auto_proceed**" not in tr
+    assert "**auto_proceed**" not in en

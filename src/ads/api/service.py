@@ -141,7 +141,12 @@ from ads.pipeline import (
     configure_full_pipeline_state,
     configure_pipeline_state,
 )
-from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
+from ads.pipeline.stages import (
+    CANDIDATE_LIMIT_KEY,
+    RUN_LANGUAGE_KEY,
+    STAGE_DIRECTIVES_KEY,
+    VALIDATION_FOLDS_KEY,
+)
 from ads.projects import ProjectRevisionConflict, ProjectStore
 from ads.sandbox import SandboxConfig, SandboxManager
 from ads.skills import render_skills, select_skills
@@ -4688,6 +4693,10 @@ class ControlPlane:
         if not 2 <= folds <= 20:
             raise ValueError("n_folds must be between 2 and 20")
         state.blackboard[VALIDATION_FOLDS_KEY] = folds
+        # #200: capture the language now, in the request, so the report the
+        # background worker renders later is in the language actually chosen
+        # rather than the worker's "tr" ContextVar default.
+        state.blackboard[RUN_LANGUAGE_KEY] = i18n.current()
 
         runtime.configuration.update(
             {
@@ -4934,6 +4943,9 @@ class ControlPlane:
             run_seed=run_seed,
             user_intent=run_intent,
         )
+        # #200: bind the request's language to the run so the report renders in
+        # it on the worker rather than defaulting to "tr".
+        state.blackboard[RUN_LANGUAGE_KEY] = i18n.current()
         llm: StructuredLLM | None = None
         if mode == "agent":
             llm = self.llm_factory() if self.llm_factory else OllamaClient()
