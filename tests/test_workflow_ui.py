@@ -431,6 +431,54 @@ def test_planner_chat_can_configure_and_remember_rules_without_raw_rows(
     assert "Reference guidance only" in fake.calls[0]["system"]
 
 
+class _UnparseablePlannerLLM:
+    """A backend whose model reply could not be decoded, mirroring what Ollama
+    and DeepSeek do on malformed output: parsed=None, the raw parser text in
+    parse_error. #242 is exactly this reaching the route."""
+
+    def __init__(self, parse_error: str) -> None:
+        self.parse_error = parse_error
+
+    def generate_structured(
+        self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
+    ) -> LLMResponse:
+        return LLMResponse(
+            text="{...truncated...",
+            model=profile.name,
+            latency_s=0.01,
+            parsed=None,
+            parse_error=self.parse_error,
+        )
+
+
+def test_malformed_planner_reply_is_a_502_with_a_readable_message_not_a_400_offset(
+    tmp_path: Path,
+) -> None:
+    """#242: a JSON decode failure on the model's reply used to surface as an
+    HTTP 400 whose whole body was the parser's offset -- "Expecting ',' delimiter:
+    line 1 column 5151 (char 5150)". json.JSONDecodeError subclasses ValueError,
+    so the route's `except ValueError` caught it and blamed the request. A bad
+    model reply is an upstream failure (502) and the offset must never be the
+    user-facing text."""
+    offset = "Expecting ',' delimiter: line 1 column 5151 (char 5150)"
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: _UnparseablePlannerLLM(offset)
+    client = TestClient(create_app(plane=plane))
+
+    response = client.post(
+        "/api/planner/chat",
+        json={"message": "Give me a plan.", "source_id": "safe-demo"},
+    )
+
+    # Not a 400: the request was fine, the model's answer was not.
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    # The parser offset is for the logs, never the person.
+    assert offset not in detail
+    assert "char 5150" not in detail
+    assert "malformed" in detail.lower()
+
+
 def test_ml_planner_recovers_source_context_and_ranks_problems_without_gate_actions(
     tmp_path: Path, monkeypatch
 ) -> None:
