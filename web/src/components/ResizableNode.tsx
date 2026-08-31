@@ -38,7 +38,13 @@ export function ResizableNode({
   defaultHeight?: number;
   bounds?: Partial<ResizeBounds>;
   className?: string;
-  children: ReactNode;
+  /**
+   * #186: a card whose layout depends on how wide it currently is takes a
+   * function instead. The width handed over is the one this component puts in
+   * the inline style, so a child cannot disagree with what is rendered, and no
+   * measuring pass is needed to find it out.
+   */
+  children: ReactNode | ((width: number) => ReactNode);
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<NodeSize | null>(null);
@@ -46,6 +52,7 @@ export function ResizableNode({
     null,
   );
   const limits: ResizeBounds = { ...DEFAULT_BOUNDS, ...bounds };
+  const width = size?.width ?? defaultWidth;
 
   function begin(edge: ResizeEdge, event: ReactPointerEvent<HTMLSpanElement>) {
     if (!ref.current) return;
@@ -86,9 +93,9 @@ export function ResizableNode({
     <div
       ref={ref}
       className={className}
-      style={{ width: size?.width ?? defaultWidth, height: size?.height ?? defaultHeight }}
+      style={{ width, height: size?.height ?? defaultHeight }}
     >
-      {children}
+      {typeof children === "function" ? children(width) : children}
       {HANDLES.map((handle) => (
         <span
           key={handle.edge}
