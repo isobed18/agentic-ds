@@ -26,8 +26,10 @@ from ads.contracts.eda import (
     TargetRelationship,
 )
 from ads.contracts.gates import DecisionOption, GateDecision, GateVerdict, HumanPrompt
+from ads.contracts.staging import StagingWorkspace
 from ads.documents.pdf import PdfDocument, PdfPage
 from ads.llm import LLMResponse, ModelProfile
+from ads.staging import build_default_blueprint
 from ads.store import ArtifactStore
 
 
@@ -1078,3 +1080,63 @@ def test_runs_without_ui_snapshots_still_have_switchable_progress(tmp_path: Path
     assert progress["legacy_snapshot"] is True
     assert progress["status"] == "archived"
     assert progress["attempts"][0]["stage_id"] == "problem_discovery"
+
+
+def test_a_refused_graph_edit_costs_the_edit_and_not_the_answer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """#193: the planner could save a graph the runner would always reject.
+
+    A turn that asked for a target column authored a `plan-validation` node with
+    no incoming `integrated_table` edge. `apply_planner_graph_operations` only
+    checked that the edges it was handed were well-formed, so the write
+    succeeded and every later attempt to continue failed with a 400 the person
+    could do nothing about.
+
+    The edit is now refused where it is made. What is checked here is the other
+    half: refusing it must not cost the reply that came with it, or a bad graph
+    proposal would take the whole conversation down with it.
+    """
+    fake = _PlannerFakeLLM(
+        {
+            "reply": "Use `churned` as the target.",
+            "reply_tr": "Hedef olarak `churned` kullanın.",
+            "configuration_patch": {"target_column": "churned"},
+            "pipeline_component_additions": [
+                {"catalog_id": "agent.plan_validation", "component_id": "plan-validation"}
+            ],
+        }
+    )
+    plane = _plane(tmp_path)
+    plane.llm_factory = lambda: fake
+
+    baseline = build_default_blueprint(has_tables=True, has_documents=False)
+    workspace = StagingWorkspace(
+        source_id="safe-demo",
+        source_fingerprint="fingerprint",
+        pipeline_blueprint=baseline,
+    )
+    monkeypatch.setattr(plane, "_latest_staging_workspace", lambda run_id: workspace)
+    monkeypatch.setattr(
+        plane,
+        "progress",
+        lambda run_id: {"run_id": run_id, "status": "staged", "events": [], "attempts": []},
+    )
+    monkeypatch.setattr(plane, "gate_decisions", lambda run_id: [])
+
+    result = plane.planner_chat(
+        message="Set the target column.",
+        source_id="safe-demo",
+        run_id="staged-run",
+    )
+
+    # The answer survives, and so does the part of it that needed no graph edit.
+    assert result["reply"].startswith("Use `churned`")
+    assert result["configuration_patch"]["target_column"] == "churned"
+
+    # The graph is untouched, and the refusal says what was wrong with it.
+    assert "pipeline_blueprint" not in result
+    rejected = result["graph_edit_rejected"]
+    assert "plan-validation" in rejected
+    assert "integrated_table" in rejected
+    assert "pipeline_connections" in rejected

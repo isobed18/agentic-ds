@@ -2,6 +2,7 @@
 
 from ads.automation.catalog import (
     AutomationComponentDefinition,
+    PlannerGraphEditRejected,
     add_problem_branches,
     apply_planner_graph_operations,
     automation_component_catalog,
@@ -20,6 +21,7 @@ from ads.automation.store import AutomationRevisionConflict, AutomationStore
 __all__ = [
     "AutomationComponentDefinition",
     "add_problem_branches",
+    "PlannerGraphEditRejected",
     "apply_planner_graph_operations",
     "automation_component_catalog",
     "compile_automation_plan",
