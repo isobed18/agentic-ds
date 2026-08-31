@@ -103,11 +103,13 @@ from ads.llm import (
     DEFAULT_DEEPSEEK_TIMEOUT,
     DEFAULT_REQUESTS_PER_MINUTE,
     LARGE,
+    MAX_RUN_SEED,
     ClaudeCliClient,
     DeepSeekClient,
     OllamaClient,
     RateLimiter,
     StructuredLLM,
+    derive_agent_seed,
 )
 from ads.llm.budget import (
     BudgetedLLM,
@@ -344,11 +346,27 @@ _PIPELINE_STAGES = {
     "report",
 }
 
-# #65: the document-only "is ML applicable" verdict was one unseeded LLM call,
-# so identical PDFs could yield different verdicts run-to-run. A fixed seed makes
-# the first attempt reproducible; the retry offsets it so an unexplained verdict
-# gets a genuinely different roll rather than the same empty answer again.
-_STAGING_ANALYSIS_SEED = 20240711
+# Agent calls outside the executable workflow reserve stable virtual stage
+# ordinals so they share the same run-level derivation without colliding with
+# actual workflow nodes.
+_STAGING_ANALYSIS_STAGE_ORDINAL = 100
+_PLANNER_CHAT_STAGE_ORDINAL = 101
+
+
+def _new_run_seed() -> int:
+    return uuid.uuid4().int % (MAX_RUN_SEED + 1)
+
+
+def _coerce_run_seed(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("run_seed must be an integer")
+    try:
+        seed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("run_seed must be an integer") from exc
+    if not 0 <= seed <= MAX_RUN_SEED:
+        raise ValueError(f"run_seed must be between 0 and {MAX_RUN_SEED}")
+    return seed
 
 
 class _PlannerLocalizedText(BaseModel):
@@ -1280,8 +1298,12 @@ class ControlPlane:
                     documents = load_pdf_directory(self.source_path(source_id))
                     document_context = pdf_prompt_context(documents, message)
         run_context: dict[str, Any] | None = None
+        planner_run_seed: int | None = None
         if run_id:
             if run_progress and run_progress.get("status") != "unknown":
+                configured_seed = (run_progress.get("configuration") or {}).get("run_seed")
+                if configured_seed is not None:
+                    planner_run_seed = _coerce_run_seed(configured_seed)
                 run_context = {
                     "run_id": run_id,
                     "status": run_progress.get("status"),
@@ -1460,11 +1482,21 @@ class ControlPlane:
             default=str,
         )
         try:
+            planner_profile = LARGE
+            if planner_run_seed is not None:
+                planner_profile = LARGE.with_seed(
+                    derive_agent_seed(
+                        planner_run_seed,
+                        stage_ordinal=_PLANNER_CHAT_STAGE_ORDINAL,
+                        attempt=1,
+                        call_ordinal=len((history or []) + stored_history),
+                    )
+                )
             response = llm.generate_structured(
                 system=system,
                 prompt=prompt,
                 json_schema=_PlannerChatReply.model_json_schema(),
-                profile=LARGE,
+                profile=planner_profile,
             )
             if response.parsed is None:
                 raise ValueError(response.parse_error or "planner returned no structured response")
@@ -2868,11 +2900,19 @@ class ControlPlane:
             last_error: Exception | None = None
             for _attempt in range(2):
                 try:
+                    run_seed = _coerce_run_seed(runtime.configuration["run_seed"])
                     response = llm.generate_structured(
                         system=system,
                         prompt=prompt,
                         json_schema=_StagingAnalysisReply.model_json_schema(),
-                        profile=LARGE.with_seed(_STAGING_ANALYSIS_SEED + _attempt),
+                        profile=LARGE.with_seed(
+                            derive_agent_seed(
+                                run_seed,
+                                stage_ordinal=_STAGING_ANALYSIS_STAGE_ORDINAL,
+                                attempt=1,
+                                call_ordinal=_attempt,
+                            )
+                        ),
                     )
                     if response.parsed is None:
                         raise ValueError(
@@ -3958,6 +3998,14 @@ class ControlPlane:
         later perform. Continuing it resumes the same state at the next stage,
         so nothing measured here is measured twice.
         """
+        requested_configuration = dict(configuration or {})
+        supplied_run_seed = requested_configuration.get("run_seed")
+        run_seed = (
+            _coerce_run_seed(supplied_run_seed)
+            if supplied_run_seed is not None
+            else _new_run_seed()
+        )
+        requested_configuration["run_seed"] = run_seed
         source_path = self.source_path(source_id)
         profile = self.source_profile(source_id)
         if not profile.get("tables"):
@@ -3968,6 +4016,7 @@ class ControlPlane:
                 run_id=run_id,
                 store=self.store,
                 profile=BUILTIN_PROFILES["full_auto"],
+                run_seed=run_seed,
             )
             runtime = _RuntimeRun(
                 run_id=run_id,
@@ -3978,7 +4027,7 @@ class ControlPlane:
                     "mode": "agent",
                     "reuse_cache": reuse_cache,
                     "document_only": True,
-                    **(configuration or {}),
+                    **requested_configuration,
                 },
                 status="staging",
                 current_stage="document_understanding",
@@ -4017,13 +4066,28 @@ class ControlPlane:
         fingerprint = self._source_fingerprint(source_id)
         with self._lock:
             cached_staged = self._staged_cache.get(source_id)
-        if reuse_cache and cached_staged is not None and cached_staged[0] == fingerprint:
+        cached_seed = (
+            cached_staged[1].get("run_seed")
+            if cached_staged is not None and cached_staged[0] == fingerprint
+            else None
+        )
+        can_reuse_cache = (
+            reuse_cache
+            and cached_staged is not None
+            and cached_staged[0] == fingerprint
+            and cached_seed is not None
+            and (supplied_run_seed is None or run_seed == cached_seed)
+        )
+        if can_reuse_cache:
             cached_data = cached_staged[1]
+            run_seed = _coerce_run_seed(cached_seed)
+            requested_configuration["run_seed"] = run_seed
             run_id = f"run-{uuid.uuid4().hex[:8]}"
             state = RunState(
                 run_id=run_id,
                 store=self.store,
                 profile=BUILTIN_PROFILES["full_auto"],
+                run_seed=run_seed,
             )
             llm: StructuredLLM | None = self.llm_factory() if self.llm_factory else OllamaClient()
             if isinstance(llm, OllamaClient) and not llm.is_available():
@@ -4066,6 +4130,7 @@ class ControlPlane:
                 new_att.decision = att_data.get("decision")
                 new_att.critique = att_data.get("critique")
                 new_att.error = att_data.get("error")
+                new_att.agent_seeds = list(att_data.get("agent_seeds", []))
                 state.active_attempt = None
 
             runtime = _RuntimeRun(
@@ -4076,7 +4141,7 @@ class ControlPlane:
                     "source_id": source_id,
                     "mode": "agent",
                     "reuse_cache": True,
-                    **(configuration or {}),
+                    **requested_configuration,
                 },
                 status="staging",
             )
@@ -4140,6 +4205,7 @@ class ControlPlane:
             run_id=run_id,
             store=self.store,
             profile=BUILTIN_PROFILES["full_auto"],
+            run_seed=run_seed,
         )
         llm = self.llm_factory() if self.llm_factory else OllamaClient()
         if isinstance(llm, OllamaClient) and not llm.is_available():
@@ -4176,7 +4242,7 @@ class ControlPlane:
                 # just executed.
                 "mode": "agent",
                 "reuse_cache": False,
-                **(configuration or {}),
+                **requested_configuration,
             },
             status="staging",
         )
@@ -4236,9 +4302,11 @@ class ControlPlane:
                                         "decision": att.decision,
                                         "critique": att.critique,
                                         "error": att.error,
+                                        "agent_seeds": list(att.agent_seeds),
                                     }
                                     for att in state.attempts
                                 ],
+                                "run_seed": runtime.configuration["run_seed"],
                                 "artifacts": [
                                     {
                                         "artifact_id": a.artifact_id,
@@ -4304,6 +4372,10 @@ class ControlPlane:
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status not in {"staging", "staged"}:
             raise ValueError("this run is not staged")
+        if "run_seed" in configuration and _coerce_run_seed(configuration["run_seed"]) != int(
+            runtime.configuration["run_seed"]
+        ):
+            raise ValueError("run_seed is immutable after a run is created")
         with self._lock:
             runtime.configuration.update(configuration)
             runtime.updated_at = _now()
@@ -4325,6 +4397,11 @@ class ControlPlane:
                 "this staged run did not survive a restart and cannot be continued; "
                 "choose the dataset again"
             )
+        if configuration and "run_seed" in configuration:
+            if _coerce_run_seed(configuration["run_seed"]) != int(
+                runtime.configuration["run_seed"]
+            ):
+                raise ValueError("run_seed is immutable after a run is created")
         body = {**runtime.configuration, **(configuration or {})}
         spec, registry, state, llm = runtime.resume
         workspace = self._latest_staging_workspace(run_id)
@@ -4569,6 +4646,26 @@ class ControlPlane:
             # entries as well or the run remains visible in the library.
             self.store.delete_run(run_id)
 
+    def rerun_with_same_seed(self, run_id: str) -> dict[str, Any]:
+        """Create a fresh staged run that replays the recorded sampler seed.
+
+        Support needs a new run rather than mutating the old audit record. Cache
+        reuse is deliberately disabled: reusing an earlier agent artifact would
+        prove neither that the sampler reproduced it nor where a divergence began.
+        """
+        progress = self.progress(run_id)
+        configuration = dict(progress.get("configuration") or {})
+        source_id = str(progress.get("source_id") or configuration.get("source_id") or "")
+        if not source_id:
+            raise ValueError("the original run does not record its source")
+        if configuration.get("run_seed") is None:
+            raise ValueError("the original run predates recorded run seeds")
+        run_seed = _coerce_run_seed(configuration["run_seed"])
+        for key in ("automation_id", "parent_run_id", "branch_label", "rerun_of"):
+            configuration.pop(key, None)
+        configuration.update({"run_seed": run_seed, "rerun_of": run_id})
+        return self.stage_run(source_id, configuration, reuse_cache=False)
+
     def start_run(
         self,
         *,
@@ -4585,6 +4682,7 @@ class ControlPlane:
         run_mode: str = "auto",
         parent_run_id: str | None = None,
         branch_label: str | None = None,
+        run_seed: int | None = None,
     ) -> str:
         source_path = self.source_path(source_id)
         if mode not in {"agent", "manual"}:
@@ -4594,6 +4692,7 @@ class ControlPlane:
         if mode == "manual":
             self._validate_configuration(source_id, integration_plan, problem, validation_strategy)
         run_id = f"ui-{uuid.uuid4().hex[:12]}"
+        run_seed = _coerce_run_seed(run_seed) if run_seed is not None else _new_run_seed()
         run_intent = instructions.strip() if instructions and instructions.strip() else None
         if mode == "agent":
             preferences = (
@@ -4641,6 +4740,7 @@ class ControlPlane:
             run_id=run_id,
             store=self.store,
             profile=profile,
+            run_seed=run_seed,
             user_intent=run_intent,
         )
         llm: StructuredLLM | None = None
@@ -4699,6 +4799,7 @@ class ControlPlane:
             "run_mode": run_mode,
             "parent_run_id": parent_run_id,
             "branch_label": branch_label,
+            "run_seed": run_seed,
         }
         runtime = _RuntimeRun(
             run_id=run_id,
@@ -5070,6 +5171,7 @@ class ControlPlane:
                 "input_bindings": dict(attempt.input_bindings),
                 "verdict": attempt.decision.verdict.value if attempt.decision else None,
                 "error": attempt.error,
+                "agent_seeds": list(attempt.agent_seeds),
                 "critique": attempt.critique.model_dump(mode="json") if attempt.critique else None,
             }
             for attempt in runtime.state.attempts
@@ -6664,10 +6766,21 @@ def create_app(
                 run_mode=str(body.get("run_mode", "auto")),
                 parent_run_id=body.get("parent_run_id"),
                 branch_label=body.get("branch_label"),
+                run_seed=body.get("run_seed"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         return {"run_id": run_id}
+
+    @app.post("/api/runs/{run_id}/rerun")
+    def rerun_with_same_seed(run_id: str, request: Request) -> dict[str, Any]:
+        _guard_paid_backend(request)
+        try:
+            return plane.rerun_with_same_seed(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown run") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/runs/{run_id}/stages/{stage_id}/direct")
     def direct_stage(run_id: str, stage_id: str, body: dict[str, Any]) -> dict[str, Any]:

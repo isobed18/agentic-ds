@@ -86,11 +86,13 @@ class FinalReport(Artifact):
 
     evaluation_artifact_id: str
     markdown: str
+    run_seed: int | None = None
 
     def summary(self) -> dict[str, object]:
         return {
             "evaluation_artifact_id": self.evaluation_artifact_id,
             "n_characters": len(self.markdown),
+            "run_seed": self.run_seed,
         }
 
 
@@ -644,10 +646,13 @@ def reporting_stage(state: RunState, correction: list[str] | None = None) -> Sta
     del correction
     evaluation = _build_evaluation(state)
     markdown = render_markdown(evaluation).rstrip()
+    if state.run_seed is not None:
+        markdown += f"\n\n## Reproducibility\n\nRun seed: `{state.run_seed}`"
     state.blackboard[FINAL_MARKDOWN_KEY] = markdown
     final = FinalReport(
         evaluation_artifact_id=compute_artifact_id(evaluation),
         markdown=markdown,
+        run_seed=state.run_seed,
     )
     return StageResult(
         artifacts=[evaluation, final],

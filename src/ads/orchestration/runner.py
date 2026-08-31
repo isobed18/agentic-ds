@@ -29,6 +29,7 @@ from typing import Protocol
 from ads.contracts.base import Artifact
 from ads.contracts.gates import CritiqueResult, GateDecision, GateVerdict, QualitySignals
 from ads.gates import GatePolicy, StageHistory, evaluate_gate
+from ads.llm import SeededStructuredLLM, StructuredLLM, agent_seed_scope
 from ads.orchestration.critic import CritiqueContext, RubricRegistry, critique_stage
 from ads.orchestration.spec import ComponentRegistry, EdgeCondition, WorkflowSpec
 from ads.orchestration.state import RunState, StageAttempt
@@ -157,6 +158,7 @@ def run_workflow(
 
         definition = spec.stage(current)
         stage_spec = policy.stage(current)
+        stage_ordinal = spec.stage_ids().index(current)
 
         # Decide self-retry from control flow *before* anything is consumed.
         # Correction text is not retry identity: a RETRY may legitimately carry
@@ -183,8 +185,17 @@ def run_workflow(
         )
         state.active_attempt = attempt
         emit("stage_started", stage=current, attempt=attempt.attempt)
+        seed_scope = None
         try:
-            result = registry.resolve(definition.component)(state, correction)
+            if state.run_seed is None:
+                result = registry.resolve(definition.component)(state, correction)
+            else:
+                with agent_seed_scope(
+                    run_seed=state.run_seed,
+                    stage_ordinal=stage_ordinal,
+                    attempt=attempt.attempt,
+                ) as seed_scope:
+                    result = registry.resolve(definition.component)(state, correction)
         except Exception as exc:  # noqa: BLE001 - recorded, then gated
             state.active_attempt = None
             attempt.error = f"{type(exc).__name__}: {exc}"
@@ -197,6 +208,9 @@ def run_workflow(
                 decisions=decisions,
                 error=attempt.error,
             )
+        finally:
+            if seed_scope is not None:
+                attempt.agent_seeds.extend(seed_scope.seeds)
 
         state.active_attempt = None
         for index, artifact in enumerate(result.artifacts):
@@ -205,7 +219,26 @@ def run_workflow(
         # The Orchestrator judges the stage against a rubric the stage does not
         # own. A stage-supplied critique is kept only when no rubric exists —
         # otherwise the judged would also be the judge.
-        attempt.critique = _critique(rubrics, current, result, state, critic_llm) or result.critique
+        if state.run_seed is not None and isinstance(critic_llm, StructuredLLM):
+            seeded_critic = (
+                critic_llm
+                if isinstance(critic_llm, SeededStructuredLLM)
+                else SeededStructuredLLM(critic_llm)
+            )
+            with agent_seed_scope(
+                run_seed=state.run_seed,
+                stage_ordinal=stage_ordinal,
+                attempt=attempt.attempt,
+                call_ordinal=len(attempt.agent_seeds),
+            ) as critique_seed_scope:
+                attempt.critique = (
+                    _critique(rubrics, current, result, state, seeded_critic) or result.critique
+                )
+            attempt.agent_seeds.extend(critique_seed_scope.seeds)
+        else:
+            attempt.critique = (
+                _critique(rubrics, current, result, state, critic_llm) or result.critique
+            )
         attempt.ended_at = datetime.now(UTC)
 
         decision = evaluate_gate(

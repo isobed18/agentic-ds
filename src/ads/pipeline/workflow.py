@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ads.contracts.base import ArtifactType
-from ads.llm import StructuredLLM
+from ads.llm import SeededStructuredLLM, StructuredLLM
 from ads.orchestration import ComponentRegistry, StageDefinition, WorkflowSpec, linear_spec
 from ads.pipeline.agent_stages import (
     make_problem_discovery_stage,
@@ -173,6 +173,8 @@ def build_default_spec() -> WorkflowSpec:
 
 def build_full_registry(llm: StructuredLLM, *, panel_size: int = 1) -> ComponentRegistry:
     """Register deterministic and agent-backed components against ``llm``."""
+    if not isinstance(llm, SeededStructuredLLM):
+        llm = SeededStructuredLLM(llm)
     registry = build_default_registry()
     registry.register(
         "pipeline.schema_discovery",

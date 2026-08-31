@@ -355,6 +355,7 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
     )
     spec, registry = build_full_spec(llm)
     state = _state(tmp_path, sample_dir, "full-agent-pipeline")
+    state.run_seed = 777
 
     outcome = run_workflow(
         spec,
@@ -366,6 +367,10 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
 
     assert outcome.completed, outcome.error
     assert len(llm.calls) == 9
+    call_seeds = [call["profile"].seed for call in llm.calls]
+    assert all(seed is not None for seed in call_seeds)
+    assert len(set(call_seeds)) == len(call_seeds)
+    assert [seed for attempt in state.attempts for seed in attempt.agent_seeds] == call_seeds
     assert state.attempt_count("schema_discovery") == 1
     assert state.attempt_count("problem_discovery") == 1
     assert state.attempt_count("validation_strategy") == 1

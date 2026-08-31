@@ -93,6 +93,7 @@ def _state(
         run_id=run_id,
         store=ArtifactStore(tmp_path / run_id),
         profile=FULL_AUTO,
+        run_seed=12345,
     )
     configure_pipeline_state(
         state,
@@ -155,6 +156,8 @@ def test_default_pipeline_runs_end_to_end_on_real_sample_data(
     final = state.require(ArtifactType.FINAL_REPORT, FinalReport, name="final_report")
     assert final.markdown == markdown
     assert len(final.evaluation_artifact_id) == 64
+    assert final.run_seed == state.run_seed
+    assert f"Run seed: `{state.run_seed}`" in final.markdown
 
 
 def test_leakage_retry_drops_offending_column_on_second_attempt(

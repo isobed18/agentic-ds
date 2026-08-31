@@ -14,7 +14,15 @@ from typing import Any
 
 import httpx
 
-from ads.llm import LARGE, ModelProfile, OllamaClient
+from ads.llm import (
+    LARGE,
+    LLMResponse,
+    ModelProfile,
+    OllamaClient,
+    SeededStructuredLLM,
+    agent_seed_scope,
+    derive_agent_seed,
+)
 
 
 def _capturing_client(captured: dict[str, Any]) -> OllamaClient:
@@ -63,3 +71,32 @@ def test_with_seed_leaves_temperature_and_context_intact() -> None:
 def test_with_temperature_carries_an_existing_seed() -> None:
     profile = ModelProfile(name="m", seed=9).with_temperature(0.5)
     assert (profile.seed, profile.temperature) == (9, 0.5)
+
+
+def test_run_scope_gives_every_model_call_a_distinct_reproducible_seed() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.profiles: list[ModelProfile] = []
+
+        def generate_structured(self, **kwargs: Any) -> LLMResponse:
+            self.profiles.append(kwargs["profile"])
+            return LLMResponse(text="{}", model=kwargs["profile"].name, latency_s=0)
+
+    recorder = Recorder()
+    llm = SeededStructuredLLM(recorder)
+
+    with agent_seed_scope(run_seed=1234, stage_ordinal=2, attempt=3) as scope:
+        for _ in range(2):
+            llm.generate_structured(
+                system="s",
+                prompt="p",
+                json_schema={"type": "object"},
+                profile=LARGE,
+            )
+
+    expected = [
+        derive_agent_seed(1234, stage_ordinal=2, attempt=3, call_ordinal=call)
+        for call in range(2)
+    ]
+    assert [profile.seed for profile in recorder.profiles] == expected
+    assert scope.seeds == expected
