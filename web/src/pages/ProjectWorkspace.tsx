@@ -323,6 +323,7 @@ export function AutomationInputSelector({ projectId, automation, onSelected, onP
   useEffect(() => { void api.projectData(projectId).then(setData).catch((caught) => setError(messageOf(caught))).finally(() => setBusy(false)); }, [projectId]);
   if (busy) return <div className="grid h-full place-items-center"><Spinner label={t("Loading project data…")} /></div>;
   const files = data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label })));
+  const allSelected = everyFileSelected(files, selected);
   async function save() {
     const selections = files.filter((item) => selected.has(keyOf(item))).map(({ source_id, path }) => ({ source_id, path }));
     if (!selections.length) return;
@@ -331,10 +332,22 @@ export function AutomationInputSelector({ projectId, automation, onSelected, onP
     catch (caught) { setError(messageOf(caught)); setBusy(false); }
   }
   if (!files.length) return <div className="grid h-full place-items-center p-8"><div className="max-w-xl rounded-2xl border border-brand-200 bg-brand-50 p-8 text-center"><Empty title={t("Add project data first")} hint={t("Automations choose files from the project. Uploading never starts inside an automation.")} /><button type="button" className="btn-primary mt-5" onClick={onProjectData}>{t("Go to project data")}</button></div></div>;
-  return <div className="h-full overflow-y-auto p-6"><div className="mx-auto max-w-3xl"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Automation data")}</p><h1 className="mt-1 text-xl font-semibold text-ink">{t("Select project files for this automation")}</h1><p className="mt-1 text-sm text-ink-mute">{t("This automation receives a private snapshot. Adding project data later will not change it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{error}</p>}<div className="mt-5 space-y-2">{files.map((file) => { const key = keyOf(file); return <label key={key} className="card flex cursor-pointer items-center gap-3 p-4"><input type="checkbox" checked={selected.has(key)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(key); else next.delete(key); return next; })} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-ink">{file.path}</span><span className="block truncate text-xs text-ink-mute">{file.label}</span></span></label>; })}</div><button type="button" className="btn-primary mt-5" disabled={!selected.size || busy} onClick={() => void save()}>{busy ? t("Saving…") : t("Use selected data")}</button></div></div>;
+  return <div className="h-full overflow-y-auto p-6"><div className="mx-auto max-w-3xl"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Automation data")}</p><h1 className="mt-1 text-xl font-semibold text-ink">{t("Select project files for this automation")}</h1><p className="mt-1 text-sm text-ink-mute">{t("This automation receives a private snapshot. Adding project data later will not change it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{error}</p>}<div className="mt-5 flex justify-end"><button type="button" className="btn-ghost text-xs" onClick={() => setSelected(allSelected ? new Set() : new Set(files.map(keyOf)))}>{allSelected ? t("Unselect all") : t("Select all")}</button></div><div className="mt-2 space-y-2">{files.map((file) => { const key = keyOf(file); return <label key={key} className="card flex cursor-pointer items-center gap-3 p-4"><input type="checkbox" checked={selected.has(key)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(key); else next.delete(key); return next; })} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-ink">{file.path}</span><span className="block truncate text-xs text-ink-mute">{file.label}</span></span></label>; })}</div><button type="button" className="btn-primary mt-5" disabled={!selected.size || busy} onClick={() => void save()}>{busy ? t("Saving…") : t("Use selected data")}</button></div></div>;
 }
 
 const PROJECT_VIEWS: ProjectView[] = ["overview", "data", "automations", "models", "reports"];
 function projectViewLabel(view: ProjectView): string { switch (view) { case "data": return t("Data"); case "automations": return t("Automations"); case "models": return t("Models"); case "reports": return t("Reports"); default: return t("Overview"); } }
 function keyOf(file: AutomationInputFile): string { return `${file.source_id}\u0000${file.path}`; }
+
+/**
+ * #184: the select-all toggle's label is derived, not stored. A separate "all
+ * selected" flag would drift the moment someone unticked one row by hand, and
+ * the button would then offer to unselect a selection that is no longer
+ * complete. An empty list is never "all selected": `[].every()` is true, which
+ * would put "Unselect all" above nothing.
+ */
+export function everyFileSelected(files: AutomationInputFile[], selected: Set<string>): boolean {
+  return files.length > 0 && files.every((file) => selected.has(keyOf(file)));
+}
+
 function messageOf(caught: unknown): string { return caught instanceof Error ? caught.message : String(caught); }
