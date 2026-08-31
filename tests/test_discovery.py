@@ -11,11 +11,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ads.agents.base import AgentContext
 from ads.agents.problem_discovery import (
     attach_support,
     build_context,
+    build_spec,
     validate_candidates_are_distinct,
     validate_metric_matches_task,
+    validate_supervised_candidate_when_targets_available,
     validate_targets_exist,
     validate_task_matches_target_shape,
 )
@@ -291,6 +294,42 @@ class TestProblemDiscoveryValidators:
         proposal = ProblemDiscoveryProposal.model_validate({"candidates": [one, two]})
         failures = validate_candidates_are_distinct(proposal, context)
         assert any(f.code == "duplicate_framing" for f in failures)
+
+    def test_all_unsupervised_proposal_is_repaired_when_targets_are_available(
+        self, context
+    ) -> None:
+        proposal = _proposal(
+            title="Find unusual physicians",
+            title_tr="Olağandışı hekimleri bul",
+            task_type="anomaly_detection",
+            target_column=None,
+            primary_metric="silhouette",
+            business_rationale="Review unusual records when no label is usable.",
+            business_rationale_tr="Etiket kullanılamadığında olağandışı kayıtları incele.",
+        )
+
+        failures = validate_supervised_candidate_when_targets_available(proposal, context)
+
+        assert [failure.code for failure in failures] == ["supervised_target_required"]
+        assert failures[0].field_path == "candidates"
+        assert "annual_comp" in (failures[0].repair_suggestion or "")
+        assert "balanced_flag" in (failures[0].repair_suggestion or "")
+        assert validate_supervised_candidate_when_targets_available in build_spec().validators
+
+    def test_unsupervised_proposal_remains_valid_when_no_target_is_usable(self) -> None:
+        context = AgentContext(
+            sections={},
+            facts={"known_columns": ["feature"], "target_candidates": []},
+        )
+        proposal = _proposal(
+            title="Find unusual records",
+            title_tr="Olağandışı kayıtları bul",
+            task_type="anomaly_detection",
+            target_column=None,
+            primary_metric="silhouette",
+        )
+
+        assert validate_supervised_candidate_when_targets_available(proposal, context) == []
 
     def test_candidate_ids_are_system_assigned(self, context) -> None:
         """Models emit empty strings for fields that carry no meaning to them."""
