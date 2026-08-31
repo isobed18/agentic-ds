@@ -170,7 +170,10 @@ describe("the status vocabulary", () => {
       eager: true,
     })["./status.ts"] as string;
 
-    const labels = [...source.matchAll(/^\s*\w+:\s*"((?:[^"\\]|\\.)*)"\s*,/gm)].map((m) => m[1]);
+    // STATUS_TONES maps a state to how it looks, not to a word anyone reads
+    // (#195). Every other quoted value in the file is prose a reader sees.
+    const prose = source.replace(/const STATUS_TONES[\s\S]*?\n};/, "");
+    const labels = [...prose.matchAll(/^\s*\w+:\s*"((?:[^"\\]|\\.)*)"\s*,/gm)].map((m) => m[1]);
     expect(labels.length, "no label maps parsed out of status.ts").toBeGreaterThan(20);
 
     const known = new Set(catalogueKeys());
