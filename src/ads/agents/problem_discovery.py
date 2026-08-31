@@ -56,6 +56,10 @@ average_precision or roc_auc over accuracy.
 - `evidence_columns` must list real ABT columns that make the framing plausible.
 - `business_rationale` states who would use the model and for what decision. \
 Be concrete and avoid generic phrasing.
+- When Candidate targets is non-empty, at least one proposal must be a supervised \
+task using an exact name from that list. You may also propose anomaly detection, \
+but it cannot replace every measured supervised opportunity. If you believe a \
+listed target is unsuitable, name it and explain why in `business_rationale`.
 - Write every human-facing field twice in the same response: canonical English
   in `title` and `business_rationale`, and a faithful Turkish rendering in
   `title_tr` and `business_rationale_tr`. Do not run a separate translation pass.
@@ -122,6 +126,48 @@ def validate_targets_exist(
                     )
                 )
     return failures
+
+
+def validate_supervised_candidate_when_targets_available(
+    proposal: ProblemDiscoveryProposal, context: AgentContext
+) -> list[ValidationFailure]:
+    """Do not silently discard every usable label the profiler supplied.
+
+    Anomaly detection remains a valid framing, but when deterministic profiling
+    found target candidates the agent must put at least one of them through the
+    measured support path. A failure here is intentionally repairable by the
+    normal agent retry loop; feasibility is still decided later by
+    ``compute_support``, never by this validator.
+    """
+    targets = list(dict.fromkeys(context.facts.get("target_candidates", [])))
+    if not targets:
+        return []
+    target_set = set(targets)
+    if any(
+        candidate.task_type in SUPERVISED_TASKS
+        and candidate.target_column in target_set
+        for candidate in proposal.candidates
+    ):
+        return []
+    shown = targets[:8]
+    suffix = ", ..." if len(targets) > len(shown) else ""
+    choices = ", ".join(repr(target) for target in shown) + suffix
+    return [
+        ValidationFailure(
+            layer="semantic",
+            code="supervised_target_required",
+            detail=(
+                "The profile supplied usable target candidates, but the proposal "
+                "contains no supervised framing that uses one of them."
+            ),
+            field_path="candidates",
+            repair_suggestion=(
+                "Add at least one supervised candidate using one of these measured "
+                f"target candidates: {choices}. An anomaly-detection option may remain "
+                "as an additional candidate; explain rejected targets in its business rationale."
+            ),
+        )
+    ]
 
 
 def validate_task_matches_target_shape(
@@ -233,6 +279,7 @@ def build_spec() -> AgentSpec[ProblemDiscoveryProposal]:
         profile=LARGE,
         validators=(
             validate_targets_exist,
+            validate_supervised_candidate_when_targets_available,
             validate_task_matches_target_shape,
             validate_candidates_are_distinct,
             validate_metric_matches_task,
@@ -302,6 +349,7 @@ __all__ = [
     "build_spec",
     "validate_candidates_are_distinct",
     "validate_metric_matches_task",
+    "validate_supervised_candidate_when_targets_available",
     "validate_targets_exist",
     "validate_task_matches_target_shape",
 ]
