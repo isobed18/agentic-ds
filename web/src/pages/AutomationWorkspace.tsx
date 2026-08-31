@@ -11,7 +11,7 @@ import {
 } from "../components/UnderstandingWorkspace";
 import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
-import { Badge, Empty, Spinner, cx } from "../components/ui";
+import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationContents,
@@ -218,7 +218,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken">
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
         <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams(projectReturnParams(projectId, origin))}>← {t("Project overview")}</button>
-        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[260px] max-w-[26vw] rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none" />
+        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} title={name} className={cx("truncate rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none", NAME_FIELD_WIDTH)} />
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}

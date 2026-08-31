@@ -11,6 +11,26 @@ import { useState, type ReactNode } from "react";
 export const cx = (...parts: (string | false | null | undefined)[]) =>
   parts.filter(Boolean).join(" ");
 
+/**
+ * #183: the width of a workspace header's rename field.
+ *
+ * It was `w-[290px] max-w-[28vw]`, which reads as responsive but is not: the
+ * vw cap only bites below roughly a 1000px viewport, so at every ordinary
+ * window size the box sat at a flat 290px and never moved. clamp() makes the
+ * viewport term the driver instead, with the pixel values as floor and
+ * ceiling, so the field tracks the window continuously.
+ *
+ * The ceiling is well under the old fixed width because the section tabs are
+ * centred in the same header by absolute positioning -- they are outside the
+ * flex flow and cannot push back -- so the field has to yield on its own or it
+ * grows underneath them.
+ *
+ * Shared because the project and automation headers sit one navigation step
+ * apart and are read as the same control; two copies of the numbers would
+ * drift.
+ */
+export const NAME_FIELD_WIDTH = "min-w-0 w-[clamp(112px,13vw,216px)]";
+
 type Tone = "neutral" | "ok" | "warn" | "stop" | "brand";
 
 const TONE: Record<Tone, string> = {
