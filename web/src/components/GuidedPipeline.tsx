@@ -119,7 +119,12 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
     };
     void refresh();
     return () => { cancelled = true; if (timer !== null) window.clearTimeout(timer); };
-  }, [runId]);
+    // #197: also re-run when the caller's runStatus changes. Pressing Run stops
+    // the button being the only thing that moved: the poll had already parked
+    // itself (it only re-arms while a run is live), so without this the fresh
+    // "running" never arrived and the control kept reading "staged" until a
+    // reload remounted the component.
+  }, [runId, runStatus]);
 
   const attempts = useMemo(() => Array.isArray(progress?.attempts) ? progress.attempts as Array<Record<string, unknown>> : [], [progress]);
   const artifactIdsByStage = useMemo(() => {
@@ -136,8 +141,16 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   const structured = (profile.source_files ?? []).filter((file) => file.route === "structured");
   const documents = (profile.source_files ?? []).filter((file) => file.route === "documents");
   const candidateTables = workspace.document_extractions?.reduce((sum, extraction) => sum + extraction.table_candidates, 0) ?? 0;
-  const activeStatus = String(progress?.status ?? runStatus ?? "staged");
+  // #197: right after Run is clicked the poll has not refetched, so `progress`
+  // still holds the pre-click "staged" and used to outrank the fresh prop. Trust
+  // a non-staged polled status (the freshest truth while a run is live), but
+  // otherwise defer to the caller's runStatus so the control flips the instant
+  // the run starts instead of only after a reload.
+  const polledStatus = progress?.status ? String(progress.status) : null;
+  const activeStatus = polledStatus && polledStatus !== "staged" ? polledStatus : String(runStatus ?? polledStatus ?? "staged");
   const canStart = activeStatus === "staged";
+  const active = ["running", "resuming"].includes(activeStatus);
+  const currentStage = String((progress as Record<string, unknown> | null)?.current_stage ?? "");
   const failed = ["failed", "interrupted", "aborted"].includes(activeStatus);
   const complete = activeStatus === "completed";
 
@@ -172,18 +185,24 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       })}
     </div>
 
-    <div data-no-pan className="fixed bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
-      {canStart && !String((progress as Record<string, unknown> | null)?.current_stage ?? "") && (
+    {/* #197: the run control is docked top-centre -- where the eye lands on the
+        canvas -- instead of floating at the bottom edge where it was missed
+        (#194). One primary button carries its own state: Run/Continue while a
+        run can start, Pause while it is live. The separate ghost pause button
+        and the loose lowercase status label are gone; the button never vanishes
+        into unstyled text. */}
+    <div data-no-pan className="fixed top-[70px] left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-line bg-surface/95 p-2 shadow-pop backdrop-blur">
+      {canStart && !currentStage && (
         <label className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-[11px] font-medium text-ink-soft" title={t("The agent decides each gate on its own signals unless you take that over.")}>
           <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
           {t("Approve at every stage")}
         </label>
       )}
-      {canStart && <button type="button" className="btn-primary text-xs" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}>{busy ? t("Working…") : t(String((progress as Record<string, unknown> | null)?.current_stage ?? "") ? "Continue base pipeline" : "Run base ML pipeline")}</button>}
-      {["running", "resuming"].includes(activeStatus) && <button type="button" className="btn-ghost text-xs" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}>{progress?.pause_requested ? t("Pause requested…") : t("Pause after current stage")}</button>}
+      {canStart && <button type="button" className="btn-primary inline-flex items-center gap-1.5 text-xs" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto")} disabled={busy || !profile.tables.length}><span aria-hidden="true">▶</span>{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+      {active && <button type="button" className="btn-primary inline-flex items-center gap-1.5 text-xs" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><span aria-hidden="true">⏸</span>{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
       {failed && <button type="button" className="btn-primary text-xs" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
       {complete && <button type="button" className="btn-primary text-xs" onClick={onOpenExecutions}>{t("Review results")}</button>}
-      {!canStart && !failed && !complete && <StatusBadge status={activeStatus} />}
+      {!canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
       <button type="button" className="btn-ghost text-xs" aria-expanded={selected === "summary"} onClick={() => setSelected((current) => (current === "summary" ? null : "summary"))}>{t("Review plan")}</button>
       <button type="button" className="btn-ghost text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
       <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>

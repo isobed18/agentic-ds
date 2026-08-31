@@ -56,7 +56,9 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
   });
 
   it("excludes the whole guided run toolbar from the pan gesture", () => {
-    const opens = GUIDED_SOURCE.indexOf('<div data-no-pan className="fixed bottom-4');
+    // #197 moved the run control from the bottom edge to top-centre; it stays
+    // marked data-no-pan so a drag on it never pans the canvas underneath.
+    const opens = GUIDED_SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]');
     expect(opens, "the guided run toolbar is no longer marked data-no-pan").toBeGreaterThan(-1);
 
     // Everything up to the toolbar's own closing tag, at its indentation.

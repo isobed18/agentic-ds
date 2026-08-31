@@ -38,6 +38,34 @@ describe("planner access in the guided pipeline (#97)", () => {
   });
 });
 
+describe("the run control (#197)", () => {
+  it("docks the control top-centre instead of floating at the bottom edge", () => {
+    // Bottom-middle placement was easy to miss, so the whole workspace read as
+    // stuck (#194). Top-centre is where the eye lands on the canvas.
+    expect(SOURCE).toContain("fixed top-[70px] left-1/2");
+    expect(SOURCE).not.toContain("fixed bottom-4 left-1/2");
+  });
+
+  it("carries state in one Run/Pause primary button, not a button that becomes loose text", () => {
+    // Run and Continue while a run can start; Pause while it is live -- both are
+    // the same primary control with a glyph, and the separate ghost pause button
+    // is gone. No lowercase status label stands in where a button used to be.
+    expect(SOURCE).toContain('<span aria-hidden="true">▶</span>');
+    expect(SOURCE).toContain('<span aria-hidden="true">⏸</span>');
+    expect(SOURCE).toContain('t(currentStage ? "Continue" : "Run")');
+    expect(SOURCE).toContain("{active && <button");
+    expect(SOURCE).not.toContain('t("Pause after current stage")');
+  });
+
+  it("reacts to its own click without a reload", () => {
+    // The poll had parked itself and stale progress outranked the fresh prop, so
+    // the button only changed after a remount. Re-arm on runStatus, and trust a
+    // non-staged polled status over the pre-click "staged".
+    expect(SOURCE).toContain("}, [runId, runStatus]);");
+    expect(SOURCE).toContain('polledStatus && polledStatus !== "staged" ? polledStatus : String(runStatus');
+  });
+});
+
 describe("guided pipeline node descriptions (#168)", () => {
   it("uses one explanatory sentence per group instead of joining bare stage names", () => {
     // Joining `node.label` values produced fragments such as "integration" and
