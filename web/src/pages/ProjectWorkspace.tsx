@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
-import { Badge, Empty, Metric, Spinner, cx } from "../components/ui";
+import { Badge, Empty, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationDefinition,
@@ -110,9 +110,9 @@ export function ProjectWorkspace({
     <div className="flex h-full min-h-0 flex-col bg-surface-sunken">
       <header className="relative flex min-h-[64px] shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
         <button type="button" className="btn-ghost !px-2 text-xs" onClick={onBack}>← {t("Projects")}</button>
-        <label className="flex min-w-0 w-[290px] max-w-[28vw] items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-1.5" title={t("Rename project")}>
+        <label className={cx("flex items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-1.5", NAME_FIELD_WIDTH)} title={t("Rename project")}>
           <span aria-hidden="true" className="text-ink-faint">✎</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-ink outline-none" />
+          <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} title={name} className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold text-ink outline-none" />
         </label>
         <nav aria-label={t("Project sections")} className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">
           {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3 py-1.5 text-xs font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}

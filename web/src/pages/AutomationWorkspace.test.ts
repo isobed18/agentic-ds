@@ -46,6 +46,17 @@ describe("the project-first journey (#157, #165)", () => {
     expect(AUTOMATION_SOURCE).toContain("<AutomationInputSelector");
   });
 
+  it("returns to the project tab the automation was opened from (#199)", () => {
+    // The back button must never rebuild the query from scratch again: doing so
+    // dropped the tab and always landed on Overview.
+    expect(AUTOMATION_SOURCE).toContain("onClick={() => setParams(projectReturnParams(projectId, origin))}");
+    expect(AUTOMATION_SOURCE).toContain('const origin = automationOrigin(params.get("from"));');
+    expect(AUTOMATION_SOURCE).toContain('onOpenAutomation={(id) => setParams(automationParams(projectId, id, automationOrigin(params.get("view"))))}');
+    // Every rewrite of the automation's own URL keeps the origin, so a tab
+    // switch or a started run cannot strip it before the person heads back.
+    expect(AUTOMATION_SOURCE.match(/setParams\(\{[^}]*automation: automationId/g)).toBeNull();
+  });
+
   it("uses automation-scoped output data and keeps the human gate reachable", () => {
     expect(AUTOMATION_SOURCE).toContain("api.automationContents(automationId)");
     expect(AUTOMATION_SOURCE).toContain("<ApprovalCard");

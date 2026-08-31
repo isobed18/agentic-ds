@@ -19,7 +19,9 @@ describe("planner access in the guided pipeline (#97)", () => {
   it("exposes a toggle in the run toolbar that opens the panel", () => {
     // Reachable from the fixed run-control toolbar, gated on its own open state
     // so it does not permanently occupy the canvas.
-    expect(SOURCE).toContain('onClick={() => setPlannerOpen(true)}');
+    // #188: this test always called the control a toggle, but the handler it
+    // pinned only ever opened the panel. Now it flips, so the assertion says so.
+    expect(SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
     expect(SOURCE).toContain('t("Chat with Planner")');
     expect(SOURCE).toContain("plannerOpen &&");
   });

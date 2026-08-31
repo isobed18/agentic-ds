@@ -447,10 +447,16 @@ def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[Load
     return tables
 
 
-def load_path(path: str | Path) -> list[LoadedTable]:
-    """Dispatch on file extension. Returns a list because a workbook is many tables."""
+def load_path(path: str | Path, *, as_format: str | None = None) -> list[LoadedTable]:
+    """Dispatch on file extension. Returns a list because a workbook is many tables.
+
+    `as_format` overrides the extension with a type that was MEASURED from the
+    content. A file with no extension, or one whose name lies, has no usable
+    suffix to dispatch on; refusing it there is how a valid table went missing
+    without a word (#208).
+    """
     path = Path(path)
-    suffix = path.suffix.lower()
+    suffix = as_format if as_format else path.suffix.lower()
     if suffix in CSV_SUFFIXES:
         return [load_csv(path)]
     if suffix in EXCEL_SUFFIXES:
@@ -462,6 +468,8 @@ def load_path(path: str | Path) -> list[LoadedTable]:
 
 def load_directory_with_failures(
     directory: str | Path,
+    *,
+    measured_formats: dict[str, str] | None = None,
 ) -> tuple[list[LoadedTable], dict[str, str]]:
     """Load every supported file, and report the ones that could not be read.
 
@@ -479,23 +487,33 @@ def load_directory_with_failures(
     """
     directory = Path(directory)
     supported = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES
+    # Uzantisi kullanilamayan ama turu ICERIKTEN olculmus dosyalar. Bu tarayici
+    # yalnizca uzantiya bakiyordu, yani uzantisiz gecerli bir tablo hicbir hata
+    # verilmeden gorunmez oluyordu -- mimarinin onlemek icin kuruldugu sessiz
+    # veri kaybinin ta kendisi (#208).
+    measured = measured_formats or {}
     tables: list[LoadedTable] = []
     failures: dict[str, str] = {}
     for path in sorted(directory.iterdir()):
-        if not (path.is_file() and path.suffix.lower() in supported):
+        if not path.is_file():
+            continue
+        olculen = measured.get(path.name)
+        if path.suffix.lower() not in supported and olculen is None:
             continue
         try:
-            tables.extend(load_path(path))
+            tables.extend(load_path(path, as_format=olculen))
         except Exception as exc:  # noqa: BLE001 - any reader failure is per-file news
             failures[path.name] = str(exc).strip() or exc.__class__.__name__
     return tables, failures
 
 
-def load_directory(directory: str | Path) -> list[LoadedTable]:
+def load_directory(
+    directory: str | Path, *, measured_formats: dict[str, str] | None = None
+) -> list[LoadedTable]:
     """Load every supported file in a directory, sorted for deterministic order.
 
     Unreadable files are skipped. Use `load_directory_with_failures` when the
     caller needs to tell someone which file was dropped and why.
     """
-    tables, _ = load_directory_with_failures(directory)
+    tables, _ = load_directory_with_failures(directory, measured_formats=measured_formats)
     return tables

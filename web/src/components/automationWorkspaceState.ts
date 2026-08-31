@@ -1,5 +1,6 @@
 import type { AutomationContents, AutomationDefinition, RunSummary, SourceProfile, StagingWorkspace } from "../lib/api";
 import type { Language } from "../lib/i18n";
+import type { ProjectView } from "../pages/ProjectWorkspace";
 import { isRunActive } from "../lib/status";
 
 /** The tabs one automation can show. */
@@ -157,4 +158,45 @@ export function visibleWorkflowSteps(workspace: StagingWorkspace, language: Lang
     .filter((component) => component.enabled && !hidden.has(component.catalog_id ?? ""))
     .filter((component) => component.kind !== "template")
     .map((component) => component.title[language]);
+}
+
+/**
+ * The project tab a URL names, defaulting to the overview (#157).
+ */
+export function projectView(view: string | null): ProjectView {
+  if (view === "data" || view === "automations" || view === "models" || view === "reports") return view;
+  return "overview";
+}
+
+/**
+ * Where "← Project overview" should actually land, and how it learns that (#199).
+ *
+ * `view` means two different things at the two levels -- the project's tab and
+ * the automation's tab -- so the automation URL cannot just keep carrying the
+ * project's `view`. The origin travels under its own key, `from`, and the back
+ * button turns it back into `view` on the way out. Automations are opened from
+ * the Automations tab, so landing on Overview every time meant a click back into
+ * Automations on every single trip.
+ *
+ * `overview` is the project screen's own fallback, so it is omitted rather than
+ * written out as a redundant parameter -- an automation opened from the overview
+ * produces the same short URL it always did.
+ */
+export function automationOrigin(view: string | null): ProjectView | null {
+  const origin = projectView(view);
+  return origin === "overview" ? null : origin;
+}
+
+/** The automation URL, carrying the project tab it was opened from (#199). */
+export function automationParams(
+  projectId: string,
+  automationId: string,
+  origin: ProjectView | null,
+): Record<string, string> {
+  return { project: projectId, automation: automationId, ...(origin && origin !== "overview" ? { from: origin } : {}) };
+}
+
+/** The project URL to return to, restoring the tab the automation was opened from (#199). */
+export function projectReturnParams(projectId: string, origin: ProjectView | null): Record<string, string> {
+  return { project: projectId, ...(origin && origin !== "overview" ? { view: origin } : {}) };
 }

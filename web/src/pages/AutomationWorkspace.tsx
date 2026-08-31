@@ -9,9 +9,9 @@ import {
   UnderstandingAndProposal,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
-import { automationView, availableProjectViews, preferredExecution, type WorkspaceView } from "../components/automationWorkspaceState";
+import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
-import { Badge, Empty, Spinner, cx } from "../components/ui";
+import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationContents,
@@ -23,7 +23,7 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { t } from "../lib/i18n";
-import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace, type ProjectView } from "./ProjectWorkspace";
+import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
@@ -33,13 +33,18 @@ export function AutomationWorkspace() {
     return <ProjectLibrary onOpen={(id) => setParams({ project: id })} />;
   }
   if (!automationId) {
-    return <ProjectWorkspace projectId={projectId} view={projectView(params.get("view"))} onView={(view) => setParams({ project: projectId, ...(view === "overview" ? {} : { view }) })} onBack={() => setParams({})} onOpenAutomation={(id) => setParams({ project: projectId, automation: id })} />;
+    return <ProjectWorkspace projectId={projectId} view={projectView(params.get("view"))} onView={(view) => setParams({ project: projectId, ...(view === "overview" ? {} : { view }) })} onBack={() => setParams({})} onOpenAutomation={(id) => setParams(automationParams(projectId, id, automationOrigin(params.get("view"))))} />;
   }
   return <AutomationEditor projectId={projectId} automationId={automationId} />;
 }
 
 function AutomationEditor({ projectId, automationId }: { projectId: string; automationId: string }) {
   const [params, setParams] = useSearchParams();
+  // The project tab this automation was opened from (#199). Every rewrite of
+  // the automation's URL below goes through `automationParams` so the origin
+  // survives tab switches and run selection, and "← Project overview" can put
+  // the person back where they started instead of on the overview.
+  const origin = automationOrigin(params.get("from"));
   const [automation, setAutomation] = useState<AutomationDefinition | null>(null);
   const [name, setName] = useState("");
   // Deep-links from /experiments, /workflows and notifications all write
@@ -132,7 +137,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
 
   function applyWorkspace(next: StagingWorkspace) {
     setWorkspace(next); setRunId(next.run_id); if (next.pipeline_blueprint) setBlueprint(next.pipeline_blueprint);
-    setParams({ project: projectId, automation: automationId, run: next.run_id }, { replace: true });
+    setParams({ ...automationParams(projectId, automationId, origin), run: next.run_id }, { replace: true });
     void refreshAutomation().catch((caught) => setError(messageOf(caught)));
   }
 
@@ -144,7 +149,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
 
   async function startUnderstanding() {
     if (!sourceId || busy) return; setBusy(true); setError(null);
-    try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ project: projectId, automation: automationId, run: staged.run_id }, { replace: true }); await refreshAutomation(); }
+    try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true }); await refreshAutomation(); }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
@@ -182,7 +187,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       } else {
         const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId);
         setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null);
-        setParams({ project: projectId, automation: automationId, run: staged.run_id }, { replace: true });
+        setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true });
         await refreshAutomation();
       }
     } catch (caught) { setError(messageOf(caught)); }
@@ -207,13 +212,13 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     if (contents && !views.includes(activeView)) setActiveView("editor");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contents]);
-  const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ project: projectId, automation: automationId, ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
+  const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ ...automationParams(projectId, automationId, origin), ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken">
       <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
-        <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams({ project: projectId })}>← {t("Project overview")}</button>
-        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} className="min-w-0 w-[260px] max-w-[26vw] rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none" />
+        <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams(projectReturnParams(projectId, origin))}>← {t("Project overview")}</button>
+        <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} title={name} className={cx("truncate rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none", NAME_FIELD_WIDTH)} />
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}
@@ -254,11 +259,6 @@ function initialView(view: string | null): WorkspaceView {
   if (view === "runs") return "executions";
   if (view === "data" || view === "executions" || view === "models" || view === "reports") return view;
   return "editor";
-}
-
-function projectView(view: string | null): ProjectView {
-  if (view === "data" || view === "automations" || view === "models" || view === "reports") return view;
-  return "overview";
 }
 
 // Each label is a literal inside t() so the catalogue scanner can see it -- a

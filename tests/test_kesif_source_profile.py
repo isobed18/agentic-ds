@@ -296,9 +296,45 @@ def test_uzantisiz_gecerli_tablo_karantinaya_dusmuyor(tmp_path: Path) -> None:
     rotalar = {f["name"]: f["route"] for f in profil["source_files"]}
     assert rotalar["uzantisiz_veri"] == "structured", "olcum rotayi vermeli"
     assert rotalar["giderler.csv"] == "structured", "normal dosya etkilenmemeli"
-    # Dosyanin YUKLENMESI ayri bir engel: `load_directory` hala uzantiyla
-    # filtreliyor (kesif-entegrasyon.md 3.2). Bu test rotanin artik dogru
-    # oldugunu kilitler; yukleme yarisi #208'de acik kaliyor.
+    # Ve gercekten YUKLENIYOR. Rotayi duzeltip dosyayi yuklememek, kabul
+    # edilen bir dosyanin yine sessizce kaybolmasi demekti.
+    tablolar = {t["name"]: (t["rows"], t["columns_count"]) for t in profil["tables"]}
+    uzantisiz = next(ad for ad in tablolar if "uzantisiz" in ad)
+    assert tablolar[uzantisiz] == tablolar["giderler"], (
+        "ayni icerik ayni tabloyu vermeli"
+    )
+
+
+def test_olculemeyen_uzantisiz_dosya_yine_de_yuklenmiyor(tmp_path: Path) -> None:
+    """Kapiyi olcume acmak, uzantisiz her seyi yuklemek degil.
+
+    Bu testin varlik sebebi: tarayicidan uzanti filtresini tamamen kaldirmak
+    yukaridaki testi gecirirdi ama README'yi de tablo diye ayristirmaya
+    calisirdi -- bu proje o hatayi bir kez yasadi (bkz. load_directory
+    docstring'i).
+    """
+    from ads.api.service import ControlPlane
+    from ads.store import ArtifactStore
+
+    kaynak = tmp_path / "data" / "karisik"
+    kaynak.mkdir(parents=True)
+    pd.DataFrame({"id": [1, 2]}).to_csv(kaynak / "temiz.csv", index=False)
+    (kaynak / "BENIOKU").write_text(
+        "Proje Notlari\n\nBu klasor ocak ayinda toplanan olcumleri iceriyor ve\n"
+        "ilgili raporlar ayri bir dizinde tutuluyor.\n",
+        encoding="utf-8",
+    )
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profil = plane.source_profile("karisik")
+
+    tablo_adlari = {t["name"] for t in profil["tables"]}
+    assert not any("benioku" in ad.lower() for ad in tablo_adlari), (
+        "duzyazi tablo olarak ayristirilmamali"
+    )
+    assert "temiz" in tablo_adlari
 
 
 def test_uzantisi_yalan_soyleyen_dosya_hala_karantinada(tmp_path: Path) -> None:

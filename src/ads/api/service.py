@@ -184,8 +184,61 @@ def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
     return karar.akis.value if karar.deterministik else None
 
 
+# Olculen format -> yukleyicinin anladigi uzanti. Magika'nin etiketi ile
+# `ads.intake.loaders` kumeleri ayni dili konusmuyor; eslemeyi burada tek yerde
+# tutuyoruz.
+_MEASURED_FORMAT_SUFFIX = {
+    "csv": ".csv", "tsv": ".tsv", "txt": ".txt",
+    "xlsx": ".xlsx", "xlsm": ".xlsm",
+    "parquet": ".parquet",
+}
+_LOADABLE_SUFFIXES = CSV_SUFFIXES | EXCEL_SUFFIXES | PARQUET_SUFFIXES
+
+
+def _file_detection_inventory(source_root: Path) -> tuple[Any, str | None]:
+    """Bir klasoru BIR KEZ olc; sonucu hem yukleme hem raporlama kullanir.
+
+    Basarisizlik profili DUSURMEZ. Hatanin TURU geri veriliyor cunku
+    "olculemedi" tek basina teshis edilemez -- hangi hatanin oldugunu bilmek
+    ile bilmemek arasindaki fark, bir kullanicinin bildirdigi sorunu bulup
+    bulamamak oluyor.
+    """
+    if _file_inventory is None:
+        return None, None
+    try:
+        return _file_inventory(source_root, ocr=False), None
+    except Exception as error:  # Detection must never take down the profile.
+        return None, type(error).__name__
+
+
+def _measured_table_formats(source_root: Path, env) -> dict[str, str]:
+    """Uzantisi kullanilamayan ama ICERIGI tablo olarak olculen dosyalar.
+
+    Yukleme kapisi bu dosyalari zaten kabul ediyor (#103); tarayicinin onlari
+    gormemesi, kabul edilen bir dosyanin sessizce kaybolmasi demekti (#208).
+    Uzantisi ZATEN destekleniyorsa dokunulmaz -- uzanti dogru oldugu surece
+    olcum devreye girmez.
+    """
+    if env is None:
+        return {}
+    olculen: dict[str, str] = {}
+    for karar in env.get("kararlar", []):
+        yol = Path(karar.yol)
+        if yol.suffix.lower() in _LOADABLE_SUFFIXES:
+            continue
+        if not karar.deterministik or karar.akis.value != "tablo":
+            continue
+        uzanti = _MEASURED_FORMAT_SUFFIX.get(karar.format)
+        if uzanti:
+            olculen[yol.name] = uzanti
+    return olculen
+
+
 def _measure_file_detection(
-    source_root: Path, source_files: list[dict[str, Any]]
+    source_root: Path,
+    source_files: list[dict[str, Any]],
+    env: Any = None,
+    error_name: str | None = None,
 ) -> dict[str, Any]:
     """Her kaynak dosyanin turunu ICERIKTEN olc ve `source_files`'i zenginlestir.
 
@@ -199,11 +252,10 @@ def _measure_file_detection(
     """
     if _file_inventory is None:
         return {"used": False, "reason": "file detection extra is not installed"}
-
-    try:
-        env = _file_inventory(source_root, ocr=False)
-    except Exception as error:  # Detection must never take down the profile.
-        return {"used": False, "reason": f"detection failed: {type(error).__name__}"}
+    if env is None and error_name is None:
+        env, error_name = _file_detection_inventory(source_root)
+    if env is None:
+        return {"used": False, "reason": f"detection failed: {error_name}"}
 
     girdiler = {row["name"]: row for row in source_files}
     uyusmazlik = 0
@@ -3724,7 +3776,13 @@ class ControlPlane:
             return persisted
 
         source_path = self.source_path(source_id)
-        loaded, unreadable = load_directory_with_failures(source_path)
+        detection_env, detection_error = _file_detection_inventory(Path(source_path).resolve())
+        loaded, unreadable = load_directory_with_failures(
+            source_path,
+            measured_formats=_measured_table_formats(
+                Path(source_path).resolve(), detection_env
+            ),
+        )
         documents = load_pdf_directory(source_path)
         cards = profile_tables(loaded)
         if not cards and not documents:
@@ -3812,7 +3870,9 @@ class ControlPlane:
                     "table_names": tables_by_file.get(name, []),
                 }
             )
-        detection_summary = _measure_file_detection(source_root, source_files)
+        detection_summary = _measure_file_detection(
+            source_root, source_files, detection_env, detection_error
+        )
         # Olcum uzantiyla CELISIYORSA artik sessiz kalmiyor. `.csv` adi verilmis
         # bir PDF yapisal veri diye yutuluyordu: 37 satir x 1 kolon, kolon adi
         # `pdf_1_4` -- yani %PDF-1.4 basligi -- ve info seviyesinin ustunde tek
