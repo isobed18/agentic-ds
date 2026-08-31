@@ -49,13 +49,25 @@ describe("the run control (#197)", () => {
 
   it("carries state in one Run/Pause primary button, not a button that becomes loose text", () => {
     // Run and Continue while a run can start; Pause while it is live -- both are
-    // the same primary control with a glyph, and the separate ghost pause button
-    // is gone. No lowercase status label stands in where a button used to be.
-    expect(SOURCE).toContain('<span aria-hidden="true">▶</span>');
-    expect(SOURCE).toContain('<span aria-hidden="true">⏸</span>');
+    // the same primary control, and the separate ghost pause button is gone. No
+    // lowercase status label stands in where a button used to be.
     expect(SOURCE).toContain('t(currentStage ? "Continue" : "Run")');
     expect(SOURCE).toContain("{active && <button");
     expect(SOURCE).not.toContain('t("Pause after current stage")');
+  });
+
+  it("uses stroked vector play/pause icons, not OS text glyphs, and a distinct primary button (#248)", () => {
+    // Literal ▶/⏸ render in whatever emoji font the OS supplies; the run button
+    // uses the same stroked 20x20 chrome as everything else, and the primary
+    // control is its own row above a separate, quieter secondary bar rather than
+    // one chip among five.
+    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, cx } from "./ui"');
+    expect(SOURCE).toContain("><Play />");
+    expect(SOURCE).toContain("><Pause />");
+    expect(SOURCE).not.toContain('<span aria-hidden="true">▶</span>');
+    expect(SOURCE).not.toContain('<span aria-hidden="true">⏸</span>');
+    // The Run button and the Review-plan/Planner/Advanced bar are separate rows.
+    expect(SOURCE).toContain('flex -translate-x-1/2 flex-col items-center gap-2');
   });
 
   it("reacts to its own click without a reload", () => {

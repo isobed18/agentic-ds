@@ -173,6 +173,26 @@ export function Globe({ label, className }: { label?: string; className?: string
   );
 }
 
+// #248: the run control's play/pause were literal ▶/⏸ characters, which render
+// in whatever emoji font the OS supplies and never match the stroked chrome.
+// These are the same 20x20 stroked glyphs as everything else.
+export function Play({ label, className }: { label?: string; className?: string }) {
+  return (
+    <VisibilityGlyph label={label} className={className}>
+      <path d="M7 5.25 14.5 10 7 14.75V5.25Z" />
+    </VisibilityGlyph>
+  );
+}
+
+export function Pause({ label, className }: { label?: string; className?: string }) {
+  return (
+    <VisibilityGlyph label={label} className={className}>
+      <rect x="6.5" y="5" width="2.4" height="10" rx="1" />
+      <rect x="11.1" y="5" width="2.4" height="10" rx="1" />
+    </VisibilityGlyph>
+  );
+}
+
 export function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="card flex min-w-[128px] flex-col gap-0.5 px-3.5 py-2.5">
