@@ -846,7 +846,17 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs?: number):
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, `${res.status} ${res.statusText}${body ? ` — ${body.slice(0, 240)}` : ""}`);
+    // #242: an error body's own {"detail": "..."} is the sentence written for a
+    // person; surfacing the raw JSON blob (or a JSON parser offset buried inside
+    // it) as the message is what made the planner failure unreadable. Prefer the
+    // detail string; fall back to the trimmed body, then to the status line.
+    let message = "";
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed.detail === "string") message = parsed.detail;
+    } catch { /* not JSON — fall through to the raw text */ }
+    if (!message) message = body.slice(0, 240);
+    throw new ApiError(res.status, message || `${res.status} ${res.statusText}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

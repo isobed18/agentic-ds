@@ -630,6 +630,25 @@ class _RunPauseRequested(Exception):
     """Internal control-flow signal raised only at a completed stage boundary."""
 
 
+class PlannerResponseError(RuntimeError):
+    """The planner's model returned a response the service could not use.
+
+    #242: ``json.JSONDecodeError`` subclasses ``ValueError``, so a malformed
+    model reply used to be caught by the planner route's ``except ValueError``
+    and reported to the client as an HTTP 400 whose entire body was the JSON
+    parser's own offset text -- ``Expecting ',' delimiter: line 1 column 5151
+    (char 5150)``. That status blames the request (which was fine) and the
+    message names a character in a payload the user never wrote and cannot see.
+    A model that returns unparseable output is an upstream failure, not a bad
+    request, so this is raised distinctly, mapped to 502 with a readable
+    message, while the raw parser detail is preserved for the logs only.
+    """
+
+    def __init__(self, message: str, *, cause: str | None = None) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
 @dataclass
 class ControlPlane:
     """Framework-free application service behind the local FastAPI UI."""
@@ -1629,7 +1648,14 @@ class ControlPlane:
                 profile=planner_profile,
             )
             if response.parsed is None:
-                raise ValueError(response.parse_error or "planner returned no structured response")
+                # #242: parse_error is the model's problem (often a raw JSON
+                # decode offset), not the caller's. Keep it for the logs but
+                # hand the client a readable, actionable message via a 502.
+                raise PlannerResponseError(
+                    "The planner could not produce a usable response: the model "
+                    "returned malformed output. Please try again.",
+                    cause=response.parse_error,
+                )
             reply = _PlannerChatReply.model_validate(response.parsed)
         finally:
             if isinstance(llm, OllamaClient):
@@ -6659,6 +6685,11 @@ def create_app(
                 run_id=body.get("run_id"),
                 stage_id=body.get("stage_id"),
             )
+        except PlannerResponseError as exc:
+            # #242: a malformed model reply is an upstream failure, not a bad
+            # request. 502 says the gateway got a bad response from the model,
+            # and the detail is a readable sentence rather than a parser offset.
+            raise HTTPException(status_code=502, detail=str(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
