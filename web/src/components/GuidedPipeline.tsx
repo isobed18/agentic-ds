@@ -37,18 +37,48 @@ interface GuidedPipelineProps {
  *  during staging is the shape that will actually run. Exported rather than
  *  copied: tests/test_guided_pipeline_groups.py holds every id here to the
  *  workflow spec, and a second hand-maintained list would not inherit that. */
-export const GROUPS: Array<{ id: string; title: string; stages: string[] }> = [
-  { id: "prepare", title: "Prepare ML data", stages: ["integration"] },
-  { id: "objective", title: "Define the objective", stages: ["problem_discovery"] },
+export const GROUPS: Array<{ id: string; title: string; description: string; stages: string[] }> = [
+  {
+    id: "prepare",
+    title: "Prepare ML data",
+    description: "Combine approved tables into one verified modeling dataset.",
+    stages: ["integration"],
+  },
+  {
+    id: "objective",
+    title: "Define the objective",
+    description: "Choose the prediction goal and confirm that the available data can support it.",
+    stages: ["problem_discovery"],
+  },
   // `eda` and `leakage_audit` are the ids the established workflow declares.
   // This group previously named `exploratory_analysis` (an artifact type) and
   // `lineage_audit` (an id nothing produces), so both stages ran but were
   // silently dropped from this group's status, inspection, and artifact count.
   // tests/test_guided_pipeline_groups.py holds every id here to the spec.
-  { id: "analysis", title: "Analyze and validate", stages: ["validation_strategy", "eda", "leakage_audit"] },
-  { id: "features", title: "Build and split", stages: ["feature_pipeline", "splitting"] },
-  { id: "model", title: "Train and evaluate", stages: ["training", "evaluation"] },
-  { id: "report", title: "Review results", stages: ["report"] },
+  {
+    id: "analysis",
+    title: "Analyze and validate",
+    description: "Measure patterns, choose validation, and check for leakage before training.",
+    stages: ["validation_strategy", "eda", "leakage_audit"],
+  },
+  {
+    id: "features",
+    title: "Build and split",
+    description: "Create model-ready features and divide the data without contaminating evaluation.",
+    stages: ["feature_pipeline", "splitting"],
+  },
+  {
+    id: "model",
+    title: "Train and evaluate",
+    description: "Train candidate models and compare them on held-out data.",
+    stages: ["training", "evaluation"],
+  },
+  {
+    id: "report",
+    title: "Review results",
+    description: "Summarize the selected model, evidence, limitations, and next steps.",
+    stages: ["report"],
+  },
 ];
 
 function local(value: { en: string; tr: string }): string {
@@ -137,7 +167,7 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
       {groups.map((group, index) => {
         const status = groupStatus(group.nodes, activeStatus, index);
         const groupArtifactIds = group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []);
-        return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={group.nodes.length ? group.nodes.map((node) => t(node.label ?? node.id.replaceAll("_", " "))).join(" · ") : group.stages.map((stage) => t(stage.replaceAll("_", " "))).join(" · ")} status={status} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry"} complete={isSucceeded(status)} />}</div>;
+        return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry"} complete={isSucceeded(status)} />}</div>;
       })}
     </div>
 

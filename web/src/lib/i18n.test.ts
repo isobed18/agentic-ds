@@ -73,8 +73,9 @@ describe("labels the scanner cannot see", () => {
    */
   it("translates every stage title on the pipeline graph", () => {
     const known = new Set(catalogueKeys());
-    const missing = GROUPS.map((group) => group.title).filter((title) => !known.has(title));
-    expect(missing, "stage titles reaching t() through a variable").toEqual([]);
+    const visibleText = GROUPS.flatMap((group) => [group.title, group.description]);
+    const missing = visibleText.filter((text) => !known.has(text));
+    expect(missing, "stage titles and descriptions reaching t() through variables").toEqual([]);
   });
 
   it("pins the top-level navigation labels the scanner cannot see", () => {
