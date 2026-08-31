@@ -204,4 +204,19 @@ describe("understanding node status placement", () => {
     expect(markup).toContain("cursor-ns-resize");
     expect(markup).toContain("cursor-nwse-resize");
   });
+
+  it("clips long content inside a resized node card (#160)", () => {
+    // Resizing narrower used to let the title and secondary text paint outside
+    // the rounded card and over adjacent edges.
+    const markup = renderToStaticMarkup(createElement(BranchNode, {
+      title: "A very long structured-data title that must stay inside its card",
+      files: [],
+      steps: [],
+      artifactIds: [],
+      onClick: () => undefined,
+      onOpenArtifact: () => undefined,
+    }));
+
+    expect(classNameFor(markup, "button")).toContain("overflow-hidden");
+  });
 });

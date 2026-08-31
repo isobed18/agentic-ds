@@ -81,7 +81,7 @@ function ComponentNode({ data, selected }: NodeProps<ComponentFlowNode>) {
     <article className={cx("h-[82px] w-56 rounded-xl border bg-surface shadow-card", selected ? "border-brand-500 ring-2 ring-brand-100" : "border-line", !component.enabled && "opacity-55")}>
       {component.inputs.map((port, index) => <Handle key={`in:${port.id}`} id={`in:${port.id}`} type="target" position={Position.Left} style={{ top: `${32 + ((index + 1) * 40) / (component.inputs.length + 1)}%` }} className="!h-2 !w-2 !border-2 !border-white !bg-slate-400" />)}
       {component.outputs.map((port, index) => <Handle key={`out:${port.id}`} id={`out:${port.id}`} type="source" position={Position.Right} style={{ top: `${32 + ((index + 1) * 40) / (component.outputs.length + 1)}%` }} className="!h-2 !w-2 !border-2 !border-white !bg-slate-400" />)}
-      <div className="flex h-full items-center gap-3 px-3.5 py-3">
+      <div className="flex h-full items-center gap-3 overflow-hidden rounded-xl px-3.5 py-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-sm font-bold text-brand-700">{local(component.title).slice(0, 1)}</span>
         <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-semibold text-ink">{local(component.title)}</span><span className="mt-1 block text-[10px] font-medium text-ink-mute">{t(status)}</span></span>
         <span className="flex flex-col items-end gap-1">{component.control.execution === "pause_after" && <Badge tone="warn">{t("Pause")}</Badge>}{component.branch_id && <Badge tone="brand">{component.branch_id}</Badge>}{artifactCount > 0 && <Badge tone="neutral">{artifactCount}</Badge>}</span>
@@ -95,7 +95,7 @@ function BranchNode({ data, selected }: NodeProps<BranchFlowNode>) {
     <article className={cx("h-[92px] w-[250px] rounded-2xl border-2 border-dashed bg-brand-50 px-4 py-3 shadow-card", selected ? "border-brand-500" : "border-brand-200")}>
       <Handle type="target" position={Position.Left} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-400" />
       <Handle type="source" position={Position.Right} className="!h-2.5 !w-2.5 !border-2 !border-white !bg-brand-400" />
-      <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-100 text-brand-700">⑂</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{data.branchId}</p><p className="text-[10px] text-ink-mute">{data.componentCount} {t("workflow steps collapsed")}</p></div></div>
+      <div className="flex items-center gap-3 overflow-hidden"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-100 text-brand-700">⑂</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{data.branchId}</p><p className="truncate text-[10px] text-ink-mute">{data.componentCount} {t("workflow steps collapsed")}</p></div></div>
       <button type="button" className="mt-2 text-[10px] font-semibold text-brand-700" onClick={(event) => { event.stopPropagation(); data.onExpand(data.branchId); }}>{t("Expand branch")}</button>
     </article>
   );
