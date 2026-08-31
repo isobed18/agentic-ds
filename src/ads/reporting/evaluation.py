@@ -210,6 +210,11 @@ def build_evaluation_report(
     return EvaluationReport(
         problem_title=problem.title,
         problem_description=problem.description,
+        # #200: carry the Turkish prose the problem was authored with so the
+        # report reads in one language rather than an English title in an
+        # otherwise Turkish document.
+        problem_title_tr=problem.title_tr,
+        problem_description_tr=problem.description_tr,
         task_type=problem.task_type,
         target_column=problem.target_column,
         primary_metric=primary,

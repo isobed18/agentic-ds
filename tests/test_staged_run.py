@@ -522,6 +522,23 @@ class TestContinuingKeepsTheWork:
         assert "tutar" in intent, intent
         assert "physician_id" not in intent, intent
 
+    def test_the_run_captures_the_language_it_was_started_in_for_the_report(
+        self, client: TestClient
+    ) -> None:
+        """#200: the final report renders on a background worker, outside any
+        request, where the language ContextVar is unset and falls back to the
+        'tr' default -- so an English UI still got a Turkish report. The run now
+        captures the language it was started in so the worker can render in it."""
+        from ads.pipeline.stages import RUN_LANGUAGE_KEY
+
+        run_id = _stage(client)
+
+        client.post(f"/api/runs/{run_id}/start?lang=en", json={})
+        _settle(client, run_id, target="completed")
+
+        state = client.plane._runtime_runs[run_id].resume[2]  # noqa: SLF001
+        assert state.blackboard[RUN_LANGUAGE_KEY] == "en"
+
     def test_fully_auto_refuses_a_proposal_that_the_human_has_not_accepted(
         self, client: TestClient
     ) -> None:

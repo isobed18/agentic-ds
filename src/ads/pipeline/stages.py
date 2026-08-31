@@ -74,6 +74,14 @@ DROPPED_FEATURES_KEY: Final = "pipeline.dropped_features"
 TRAINING_FRAME_COLUMNS_KEY: Final = "pipeline.training_frame_columns"
 FEATURE_SPEC_KEY: Final = "pipeline.feature_spec"
 FINAL_MARKDOWN_KEY: Final = "pipeline.final_markdown"
+#: #200: the language the run was started in. The report is rendered on a
+#: background worker, outside any request, where the per-request language
+#: ContextVar is unset and falls back to the "tr" default -- so an English UI
+#: still got a Turkish report skeleton, and the Turkish half was an accident of
+#: that default rather than a response to the language selection. Capturing the
+#: chosen language at start and binding it here lets the reporting stage render
+#: in the language actually chosen.
+RUN_LANGUAGE_KEY: Final = "pipeline.run_language"
 
 _DROP_FEATURE = re.compile(r"^\s*drop_feature\s*:\s*([^#]+)", re.IGNORECASE)
 
@@ -644,8 +652,20 @@ def evaluation_stage(state: RunState, correction: list[str] | None = None) -> St
 def reporting_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
     """Refresh complete gate history and render the final Markdown handoff."""
     del correction
+    from contextlib import nullcontext
+
+    from ads.api import i18n
+
     evaluation = _build_evaluation(state)
-    markdown = render_markdown(evaluation).rstrip()
+    # #200: render in the language the run was started in, not the worker's
+    # ContextVar default. Without this the report followed "tr" by accident
+    # regardless of the UI's language, and could never reflect an English UI.
+    # Only bind when a language was actually captured: an uncaptured run (e.g. a
+    # direct pipeline invocation) must keep whatever language is ambient rather
+    # than being forced to the default.
+    language = state.blackboard.get(RUN_LANGUAGE_KEY)
+    with (i18n.using(language) if language else nullcontext()):
+        markdown = render_markdown(evaluation).rstrip()
     if state.run_seed is not None:
         markdown += f"\n\n## Reproducibility\n\nRun seed: `{state.run_seed}`"
     state.blackboard[FINAL_MARKDOWN_KEY] = markdown
@@ -668,6 +688,7 @@ __all__ = [
     "EXECUTION_BACKEND_KEY",
     "FEATURE_SPEC_KEY",
     "FINAL_MARKDOWN_KEY",
+    "RUN_LANGUAGE_KEY",
     "INTEGRATION_GRAIN_PRESERVED_KEY",
     "FinalReport",
     "MODEL_FRAME_KEY",

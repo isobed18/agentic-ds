@@ -89,6 +89,15 @@ class EvaluationReport(Artifact):
 
     problem_title: str
     problem_description: str
+    # #200: the report is rendered in a background worker, outside any request,
+    # so it cannot translate agent prose after the fact. The problem artifact is
+    # authored bilingually upstream (ProblemDefinition.title_tr/description_tr);
+    # carry both languages here so a Turkish reader gets a fully Turkish report
+    # instead of an English title and paragraph dropped into it. Empty when the
+    # upstream author produced no Turkish variant, in which case the renderer
+    # falls back to the English prose rather than a blank.
+    problem_title_tr: str = ""
+    problem_description_tr: str = ""
     task_type: TaskType
     target_column: str | None = None
     primary_metric: Metric
