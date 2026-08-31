@@ -53,6 +53,11 @@ jobs:
       # `build` is `tsc -b && vite build`, so this type-checks as well.
       - name: Build
         run: npm --prefix web run build
+      # The web suite had no CI step at all, so the palette guard added for
+      # #196 -- a colour utility naming a stop the theme never defines emits
+      # no rule and no error -- could not have failed anything.
+      - name: Test
+        run: npm --prefix web test
       # The bundle is committed so the server can be run straight from a
       # checkout. If a source change lands without a rebuild, the deployed UI
       # is silently the previous one -- which has happened here before.
