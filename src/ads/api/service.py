@@ -140,6 +140,7 @@ from ads.projects import ProjectRevisionConflict, ProjectStore
 from ads.sandbox import SandboxConfig, SandboxManager
 from ads.skills import render_skills, select_skills
 from ads.staging import (
+    StagingWorkspaceConflict,
     apply_component_updates,
     build_default_blueprint,
     document_engine_catalog,
@@ -1875,7 +1876,9 @@ class ControlPlane:
         if latest_ref is None:
             raise ValueError("the staging workspace is not ready")
         if latest_ref.artifact_id != base_artifact_id:
-            raise ValueError("the staging workspace changed; reload before saving this pipeline")
+            raise StagingWorkspaceConflict(
+                "the staging workspace changed; reload before saving this pipeline"
+            )
         previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
         if previous.pipeline_blueprint is None:
             raise ValueError("the staging pipeline is not ready")
@@ -1933,7 +1936,9 @@ class ControlPlane:
         if latest_ref is None:
             raise ValueError("the staging workspace is not ready")
         if latest_ref.artifact_id != base_artifact_id:
-            raise ValueError("the staging workspace changed; reload before saving layout")
+            raise StagingWorkspaceConflict(
+                "the staging workspace changed; reload before saving layout"
+            )
         previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
         layout = PipelineLayout.model_validate(raw_layout)
         component_ids = {
@@ -1975,7 +1980,9 @@ class ControlPlane:
         if latest_ref is None:
             raise ValueError("the staging workspace is not ready")
         if latest_ref.artifact_id != base_artifact_id:
-            raise ValueError("the staging workspace changed; review the latest proposal")
+            raise StagingWorkspaceConflict(
+                "the staging workspace changed; review the latest proposal"
+            )
         previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
         if previous.recommended_plan is None:
             raise ValueError("the Planner has not proposed a workflow")
@@ -6888,6 +6895,8 @@ def create_app(
                 dict(body["blueprint"]),
                 base_artifact_id=str(body["base_artifact_id"]),
             )
+        except StagingWorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -6899,6 +6908,8 @@ def create_app(
                 dict(body["layout"]),
                 base_artifact_id=str(body["base_artifact_id"]),
             )
+        except StagingWorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -6909,6 +6920,8 @@ def create_app(
                 run_id,
                 base_artifact_id=str(body["base_artifact_id"]),
             )
+        except StagingWorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 

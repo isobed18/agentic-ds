@@ -1032,6 +1032,35 @@ export const api = {
       `/api/runs/${runId}/staging/plan/accept`,
       { method: "POST", body: JSON.stringify({ base_artifact_id: baseArtifactId }) },
     ),
+  /**
+   * Accept the plan, against the workspace as it is now (#167).
+   *
+   * The base artifact id is a moving value: the workspace is polled every
+   * 2200ms and rewritten on each tick, so any snapshot the runner writes
+   * between the last tick and this POST invalidates the id that was just sent.
+   * Accepting then failed outright, and two seconds later the client was
+   * holding the newer snapshot anyway with no path back to the accept the
+   * person had already asked for.
+   *
+   * Re-reads and retries on 409, the way `updateAutomationSafely` does for a
+   * revision conflict. Only on 409: a malformed request is the client's own
+   * mistake and would fail identically however many times it is repeated,
+   * which is why the route had to stop reporting both as 400 first.
+   */
+  async acceptStagingPlanSafely(
+    runId: string,
+    baseArtifactId: string,
+  ): Promise<StagingWorkspace & { execution_plan_artifact_id: string }> {
+    let base = baseArtifactId;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await api.acceptStagingPlan(runId, base);
+      } catch (caught) {
+        if (attempt >= 3 || !(caught instanceof ApiError) || caught.status !== 409) throw caught;
+        base = (await api.stagingWorkspace(runId)).artifact_id;
+      }
+    }
+  },
   /** Record accept/reject decisions for extracted PDF table candidates.
    *
    * Two calls rather than one, because the backend keeps the decision and the
