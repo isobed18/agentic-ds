@@ -5855,10 +5855,6 @@ class ControlPlane:
             pass
         return detail
 
-    def experiment_catalog(self) -> list[dict[str, Any]]:
-        """Runs enriched with safe configuration, progress, and gate summaries."""
-        return [self._experiment_summary(summary) for summary in self.list_runs()]
-
     def _experiment_summary(self, summary: RunSummary) -> dict[str, Any]:
         try:
             progress = self.progress(summary.run_id)
@@ -5878,10 +5874,6 @@ class ControlPlane:
             "latest_gate": decisions[-1] if decisions else None,
             "deletable": summary.status not in {"queued", "running", "staging"},
         }
-
-    def model_catalog(self) -> list[dict[str, Any]]:
-        """Saved trained-model artifacts across runs, with no training rows."""
-        return [model for run in self.list_runs() for model in self._model_summaries(run)]
 
     def _model_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         models: list[dict[str, Any]] = []
@@ -5924,10 +5916,6 @@ class ControlPlane:
                 }
             )
         return models
-
-    def report_catalog(self) -> list[dict[str, Any]]:
-        """Final report artifacts with safe previews and export ids."""
-        return [report for run in self.list_runs() for report in self._report_summaries(run)]
 
     def _report_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         reports: list[dict[str, Any]] = []
@@ -6440,18 +6428,6 @@ def create_app(
         search: str | None = None, page: int = 1, page_size: int = 25
     ) -> dict[str, Any]:
         return plane.dataset_catalog(search=search, page=page, page_size=page_size)
-
-    @app.get("/api/catalog/experiments")
-    def experiment_catalog() -> list[dict[str, Any]]:
-        return plane.experiment_catalog()
-
-    @app.get("/api/catalog/models")
-    def model_catalog() -> list[dict[str, Any]]:
-        return plane.model_catalog()
-
-    @app.get("/api/catalog/reports")
-    def report_catalog() -> list[dict[str, Any]]:
-        return plane.report_catalog()
 
     @app.get("/api/hardening")
     def hardening_status() -> dict[str, Any]:
