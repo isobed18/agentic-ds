@@ -54,6 +54,73 @@ export const statusLabel = (s?: string | null) =>
   })[s ?? ""] ?? (s ?? "").replace(/_/g, " "));
 
 /**
+ * How a status *looks* — the one mapping both canvases read (#195).
+ *
+ * The two canvases speak two different status vocabularies: the understanding
+ * page's nodes carry `ProgressStatus` (`complete`/`running`/`failed`/`pending`)
+ * and the ML pipeline's carry `WorkflowNode["status"]` (`succeeded`/`blocked`/
+ * `retry`/…), with run-level states (`queued`, `staging`, `awaiting_human`)
+ * reaching the same badges from the run header. Each page used to fold its own
+ * vocabulary into colours itself, so the two drifted apart: different palettes,
+ * a pulse guarded by `motion-reduce` on one page and unguarded on the other.
+ *
+ * Folding *both* vocabularies into one presentation here is the actual work:
+ * with a single mapping the two canvases are identical by construction rather
+ * than by two lists being kept in sync.
+ */
+export type StatusTone = "complete" | "running" | "attention" | "pending";
+
+const STATUS_TONES: Record<string, StatusTone> = {
+  complete: "complete",
+  completed: "complete",
+  succeeded: "complete",
+  queued: "running",
+  staging: "running",
+  running: "running",
+  resuming: "running",
+  retry: "running",
+  blocked: "attention",
+  failed: "attention",
+  interrupted: "attention",
+  awaiting_human: "attention",
+  staged: "pending",
+  pending: "pending",
+};
+
+export const statusTone = (s?: string | null): StatusTone => STATUS_TONES[s ?? ""] ?? "pending";
+
+/**
+ * The badge vocabulary: capitalised, one label per state (#195).
+ *
+ * `statusLabel` is deliberately lowercase — its own comment calls the backend
+ * vocabulary "precise but not prose" — which is right for the sentence
+ * fragments it feeds ("running · 3m 12s") and wrong for a badge standing on its
+ * own. The ML pipeline's nodes rendered `statusLabel` in a badge, so they read
+ * "tamamlandı"/"bekliyor" beside the understanding page's
+ * "Tamamlandı"/"Bekliyor". Badges take these; `statusLabel` stays for the
+ * mid-sentence uses it was written for.
+ */
+const BADGE_LABELS: Record<string, string> = {
+  pending: "Waiting",
+  queued: "Queued",
+  staging: "Reading the data",
+  staged: "Ready to run",
+  running: "Processing",
+  resuming: "Resuming",
+  retry: "Retrying",
+  blocked: "Needs approval",
+  failed: "Failed",
+  succeeded: "Complete",
+  complete: "Complete",
+  completed: "Complete",
+  interrupted: "Interrupted",
+  awaiting_human: "Needs you",
+};
+
+export const statusBadgeLabel = (s?: string | null): string =>
+  t(BADGE_LABELS[s ?? ""] ?? titleCase((s ?? "").replace(/_/g, " ")));
+
+/**
  * Gate verdicts and reason codes are internal vocabulary. They stay in the API
  * and the audit record — the run's own history should read as sentences, not as
  * enum values a reader has to decode.

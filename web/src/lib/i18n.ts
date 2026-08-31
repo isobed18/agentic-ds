@@ -43,6 +43,18 @@ const TR: Record<string, string> = {
   "interrupted": "yarıda kaldı",
   "needs you": "sizi bekliyor",
 
+  // The same states as badges (#195). Capitalised, because a badge stands on
+  // its own; the lowercase entries above stay for the mid-sentence uses
+  // (`statusLabel`) they were written for. "Complete", "Waiting", "Processing",
+  // "Failed" and "Ready to run" are already in the catalogue further down.
+  "Queued": "Sırada",
+  "Reading the data": "Veri okunuyor",
+  "Resuming": "Devam ediyor",
+  "Retrying": "Yeniden deniyor",
+  "Needs approval": "Onay bekliyor",
+  "Interrupted": "Yarıda kaldı",
+  "Needs you": "Sizi bekliyor",
+
   // gate verdicts and reasons
   "The planner did not respond. Please try again.":
     "Planner yanıt vermedi. Lütfen tekrar deneyin.",
