@@ -844,9 +844,32 @@ class ControlPlane:
         return self.automation_store.create(name).model_dump(mode="json")
 
     def delete_automation(self, automation_id: str) -> dict[str, Any]:
-        """Delete a saved graph without deleting its independently audited runs."""
+        """Delete a saved graph without deleting its independently audited runs.
+
+        The parent project is detached first (#185). Both names are only
+        reachable through the definition being deleted, and the project card
+        counts this id list, so a stale entry counts a deleted draft forever.
+
+        A never-executed automation also takes its private input snapshot with
+        it: nothing else can name that directory afterwards. One that did run
+        keeps the snapshot, because its runs still resolve their source bytes
+        through that path and the deletion promises the history stays readable.
+        """
         assert self.automation_store is not None
-        return {"automation_id": automation_id, **self.automation_store.delete(automation_id)}
+        assert self.project_store is not None
+        automation = self.automation_store.get(automation_id)
+        for project in self.project_store.list():
+            if automation_id in project.automation_ids:
+                self.project_store.remove_automation(
+                    project.project_id, automation_id=automation_id
+                )
+        removed = self.automation_store.delete(automation_id)
+        snapshot = _AUTOMATION_INPUT_ID.fullmatch(automation.source_id or "")
+        if snapshot and not automation.execution_ids:
+            shutil.rmtree(
+                self._automation_input_root / snapshot.group(1), ignore_errors=True
+            )
+        return {"automation_id": automation_id, **removed}
 
     def update_automation(
         self,

@@ -94,3 +94,65 @@ def test_automation_rejects_files_outside_its_project_pool(tmp_path: Path) -> No
             expected_revision=automation["revision"],
             selections=[{"source_id": outside["source_id"], "path": "outside.csv"}],
         )
+
+
+def test_deleting_an_automation_detaches_it_and_drops_its_snapshot(tmp_path: Path) -> None:
+    """#185: the UI lost its delete control, so the leftovers went unnoticed.
+
+    Both leftovers are only reachable through the definition being deleted: the
+    parent's id list is what the project card counts, and the input snapshot is
+    named by a token stored on the automation itself.
+    """
+    plane = _plane(tmp_path)
+    customers = plane.upload("customers.csv", b"customer_id,churned\n1,0\n")
+    project = plane.create_project("Retention")
+    plane.add_project_source(project["project_id"], customers["source_id"])
+    kept = plane.create_project_automation(project["project_id"], "Churn")
+    doomed = plane.create_project_automation(project["project_id"], "Untitled automation")
+    selected = plane.select_automation_inputs(
+        doomed["automation_id"],
+        expected_revision=doomed["revision"],
+        selections=[{"source_id": customers["source_id"], "path": "customers.csv"}],
+    )
+    snapshot = plane.source_path(selected["source_id"])
+    assert snapshot.is_dir()
+
+    client = TestClient(create_app(plane=plane))
+    deleted = client.delete(f"/api/automations/{doomed['automation_id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["automation_id"] == doomed["automation_id"]
+    assert not snapshot.exists()
+    assert plane.project(project["project_id"])["automation_ids"] == [kept["automation_id"]]
+    assert [item["name"] for item in client.get(
+        f"/api/projects/{project['project_id']}/automations"
+    ).json()] == ["Churn"]
+    assert client.get(f"/api/automations/{doomed['automation_id']}").status_code == 404
+    assert client.delete(f"/api/automations/{doomed['automation_id']}").status_code == 404
+
+
+def test_deleting_an_executed_automation_keeps_the_bytes_its_runs_read(tmp_path: Path) -> None:
+    """#185: the dialog promises the execution history survives the deletion.
+
+    A run resolves its source through the snapshot path, so reclaiming that
+    directory would leave the kept history unable to read its own inputs.
+    """
+    plane = _plane(tmp_path)
+    customers = plane.upload("customers.csv", b"customer_id,churned\n1,0\n")
+    project = plane.create_project("Retention")
+    plane.add_project_source(project["project_id"], customers["source_id"])
+    automation = plane.create_project_automation(project["project_id"], "Churn")
+    selected = plane.select_automation_inputs(
+        automation["automation_id"],
+        expected_revision=automation["revision"],
+        selections=[{"source_id": customers["source_id"], "path": "customers.csv"}],
+    )
+    plane.attach_automation_execution(
+        automation["automation_id"], run_id="run-a1b2c3d4", source_id=selected["source_id"]
+    )
+    snapshot = plane.source_path(selected["source_id"])
+
+    plane.delete_automation(automation["automation_id"])
+
+    assert (snapshot / "0000-customers.csv").read_bytes() == b"customer_id,churned\n1,0\n"
+    assert plane.project(project["project_id"])["automation_ids"] == []
