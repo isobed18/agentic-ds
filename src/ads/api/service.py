@@ -224,14 +224,28 @@ def _measure_file_detection(
         if not karar.deterministik and karar.yargi_sebebi:
             satir["detection_reason"] = karar.yargi_sebebi
 
-        # Uyusmazlik yalnizca kesif KESIN konustugunda ve uzantiyla farkli
-        # bir seride bulustugunda iddia edilir. Kararsizsa sessiz kalir.
+        # Uyusmazlik yalnizca kesif KESIN konustugunda ve uzantinin GERCEKTEN
+        # baska bir sey iddia ettigi durumda one surulur. Kararsizsa sessiz
+        # kalir.
+        #
+        # `unsupported` bir iddia DEGILDIR: dosyanin uzantisi yok ya da
+        # taninmiyor demektir, yani ortada celisilecek bir sav yok. Bunu
+        # celiski saymak, kapinin ICERIGE bakarak kabul ettigi uzantisiz bir
+        # tabloyu hemen ardindan karantinaya atiyordu -- iki yarim birbirini
+        # yiyordu (#208).
         olculen_rota = _DETECTED_FLOW_TO_ROUTE.get(akis)
+        uzanti_iddia_ediyor = satir["route"] not in {"unsupported", "needs_review"}
         celisiyor = (
             karar.deterministik
             and olculen_rota is not None
+            and uzanti_iddia_ediyor
             and olculen_rota != satir["route"]
         )
+        # Uzanti susuyorsa olcum rotayi VERIR; kapinin dosyayi kabul etme
+        # gerekcesi zaten buydu.
+        if karar.deterministik and olculen_rota is not None and not uzanti_iddia_ediyor:
+            satir["route"] = olculen_rota
+            satir["detection_supplied_route"] = True
         satir["detection_conflicts_with_extension"] = celisiyor
         if celisiyor:
             uyusmazlik += 1
@@ -3707,11 +3721,20 @@ class ControlPlane:
                 continue
             karantina.update(tables_by_file.get(satir["name"], []))
             satir["route"] = "needs_review"
-            satir["reason"] = (
-                f"Extension claims {satir['format']!r} but the content measures as "
-                f"{satir.get('detected_flow')!r}. "
-                + (satir.get("detection_evidence") or "")
-            ).strip()
+            kanit = satir.get("detection_evidence") or ""
+            uzanti, olculen = satir["format"], satir.get("detected_flow")
+            # Diger `reason` alanlari iki dilli; bu da oyle olmali, yoksa
+            # Turkce arayuzde tek Ingilizce satir olarak duruyordu.
+            satir["reason"] = {
+                "en": (
+                    f"Extension claims {uzanti!r} but the content measures as "
+                    f"{olculen!r}. {kanit}"
+                ).strip(),
+                "tr": (
+                    f"Uzanti {uzanti!r} diyor ama icerik {olculen!r} olarak "
+                    f"olculdu. {kanit}"
+                ).strip(),
+            }
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,

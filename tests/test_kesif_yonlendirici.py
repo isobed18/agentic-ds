@@ -362,3 +362,47 @@ def test_ocr_acikca_istenirse_calisir(
 
     assert cagrildi == [True]
     assert k.akis is Flow.TABLE
+
+def test_tirnak_icindeki_ayrac_tabloyu_duzyaziya_cevirmiyor(tmp_path: Path) -> None:
+    """titanic.csv duzyazi sayilip belge akisina gidiyordu.
+
+    `_delimiter_signal` ham `str.count` kullaniyordu, yani
+    `"Braund, Mr. Owen Harris"` tek bir alan degil iki alan gibi sayiliyordu.
+    Olculdu: baslikta 11, satirlarda 12 virgul -> tutarlilik 0,0025. Icinde
+    isim, adres ya da serbest not olan her disa aktarim bu sekle giriyor.
+    """
+    dosya = tmp_path / "yolcular.csv"
+    dosya.write_text(
+        "id,ad,sinif,ucret\n"
+        '1,"Braund, Mr. Owen Harris",3,7.25\n'
+        '2,"Cumings, Mrs. John Bradley (Florence Briggs Thayer)",1,71.28\n'
+        '3,"Heikkinen, Miss. Laina",3,7.92\n'
+        '4,"Futrelle, Mrs. Jacques Heath",1,53.10\n',
+        encoding="utf-8",
+    )
+
+    k = route(dosya)
+
+    assert k.sekil == "tablo"
+    assert k.akis is Flow.TABLE
+
+
+def test_gercek_duzyazi_hala_duzyazi(tmp_path: Path) -> None:
+    """Ayrac sayimini tirnak farkindali yapmak her seyi tablo yapmamali.
+
+    Bu testin varlik sebebi: sinyali gevsetip tablo lehine egmek yukaridaki
+    testi gecirirdi ama duzyaziyi da tablo sayardi.
+    """
+    dosya = tmp_path / "rapor.txt"
+    dosya.write_text(
+        "Aylik Faaliyet Raporu\n\n"
+        "Ocak ayinda satis hacmi bir onceki aya gore artti, bu artisin buyuk\n"
+        "bolumu ikinci bolgeden geldi ve lojistik tarafinda teslimat suresi\n"
+        "kisaldi. Ikinci depo icin fizibilite calismasi baslatilacak, sonucu\n"
+        "onumuzdeki donemde degerlendirilecek.\n",
+        encoding="utf-8",
+    )
+
+    k = route(dosya)
+
+    assert k.sekil != "tablo"

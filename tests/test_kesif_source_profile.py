@@ -123,9 +123,14 @@ def test_uzantisiz_gecerli_tablo_gorunur_oluyor(tmp_path: Path) -> None:
     ozet, dosyalar = _profil_uret(kok)
 
     satir = dosyalar[0]
-    assert satir["route"] == "unsupported"     # pipeline bunu sessizce eler
+    # Uzantinin OLMAMASI bir iddia degil. Eskiden burasi "unsupported" idi ve
+    # yorumunda "pipeline bunu sessizce eler" yaziyordu; artik celisilecek bir
+    # sav olmadigi icin olcum rotayi veriyor (#208).
+    assert satir["route"] == "structured"
     assert satir["detected_flow"] == "tablo"      # kesif tablo oldugunu OLCTU
-    assert satir["detection_conflicts_with_extension"] is True
+    # Celiski DEGIL: uzanti hicbir sey iddia etmiyor ki celisebilsin.
+    assert satir["detection_conflicts_with_extension"] is False
+    assert satir["detection_supplied_route"] is True
     assert "detection_evidence" in satir
 
 
@@ -265,3 +270,55 @@ def test_calisma_kitabi_yanlis_uzantiyla_da_aciliyor(tmp_path: Path) -> None:
     assert k.format == "xlsx"
     assert k.akis is Flow.TABLE
     assert k.deterministik is True
+
+
+def test_uzantisiz_gecerli_tablo_karantinaya_dusmuyor(tmp_path: Path) -> None:
+    """Kapi icerige bakip kabul ediyor, profil uzantiya bakip atiyordu.
+
+    `uzantisiz_veri`, `penguins.csv` ile bayt bayt ayniydi: biri 344 x 7
+    tablo oldu, digeri needs_review'e dusup profilden hic cikmadi. Uzantinin
+    OLMAMASI bir iddia degildir; celisilecek bir sav yoksa olcum rotayi verir.
+    """
+    from ads.api.service import ControlPlane
+    from ads.store import ArtifactStore
+
+    kaynak = tmp_path / "data" / "karisik"
+    kaynak.mkdir(parents=True)
+    icerik = "kalem,tutar,oran\nkira,12500,15\nsu,890,1\nelektrik,3240,4\ninternet,1100,2\n"
+    (kaynak / "giderler.csv").write_text(icerik, encoding="utf-8")
+    (kaynak / "uzantisiz_veri").write_text(icerik, encoding="utf-8")
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profil = plane.source_profile("karisik")
+
+    rotalar = {f["name"]: f["route"] for f in profil["source_files"]}
+    assert rotalar["uzantisiz_veri"] == "structured", "olcum rotayi vermeli"
+    assert rotalar["giderler.csv"] == "structured", "normal dosya etkilenmemeli"
+    # Dosyanin YUKLENMESI ayri bir engel: `load_directory` hala uzantiyla
+    # filtreliyor (kesif-entegrasyon.md 3.2). Bu test rotanin artik dogru
+    # oldugunu kilitler; yukleme yarisi #208'de acik kaliyor.
+
+
+def test_uzantisi_yalan_soyleyen_dosya_hala_karantinada(tmp_path: Path) -> None:
+    """Celiski kuralini gevsetmek, yalan soyleyen uzantiyi serbest birakmamali."""
+    from ads.api.service import ControlPlane
+    from ads.file_detection.sample_batch import _pdf_bytes
+    from ads.store import ArtifactStore
+
+    kaynak = tmp_path / "data" / "yalan"
+    kaynak.mkdir(parents=True)
+    pd.DataFrame({"id": [1, 2], "deger": ["a", "b"]}).to_csv(kaynak / "temiz.csv", index=False)
+    (kaynak / "musteri_listesi.csv").write_bytes(
+        _pdf_bytes(["Aylik Faaliyet Raporu", "Ocak 2026 doneminde satis hacmi artti."])
+    )
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profil = plane.source_profile("yalan")
+
+    rotalar = {f["name"]: f["route"] for f in profil["source_files"]}
+    assert rotalar["musteri_listesi.csv"] == "needs_review"
+    assert rotalar["temiz.csv"] == "structured"

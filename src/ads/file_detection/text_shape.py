@@ -63,13 +63,37 @@ def _nonempty_lines(metin: str, azami: int = 400) -> list[str]:
 # SINYALLER — her biri 0.0 ile 1.0 arasi bir oran doner
 # ---------------------------------------------------------------------------
 
+def _delimiter_count(satir: str, aday: str) -> int:
+    """Tirnak ICINDEKI ayraci saymadan, satirdaki ayrac sayisi.
+
+    Ham `str.count` sayimi `"Braund, Mr. Owen Harris"` gibi tek bir alani iki
+    alan gibi gosteriyordu. titanic.csv'de basligin 11, satirlarin 12 virgulu
+    oluyor; tutarlilik 0,0025'e dusuyor, tablo sinyali kaybediyor ve dosya
+    DUZYAZI sayilip belge akisina gidiyordu (#209). Icinde isim, adres ya da
+    serbest not olan her disa aktarim bu sekle giriyor -- kenar durum degil.
+    """
+    icerde, adet, i, n = False, 0, 0, len(satir)
+    while i < n:
+        c = satir[i]
+        if c == '"':
+            # CSV'de tirnak, ikilenerek kacirilir: "" tek bir tirnak demektir.
+            if icerde and i + 1 < n and satir[i + 1] == '"':
+                i += 1
+            else:
+                icerde = not icerde
+        elif c == aday and not icerde:
+            adet += 1
+        i += 1
+    return adet
+
+
 def _delimiter_signal(satirlar: list[str]) -> tuple[float, str]:
     """Satirlar arasinda TUTARLI ayrac var mi."""
     if len(satirlar) < 2:
         return 0.0, "satir yetersiz"
     en_iyi, en_iyi_ad = 0.0, ""
     for aday in (";", ",", "\t", "|"):
-        adetler = [s.count(aday) for s in satirlar]
+        adetler = [_delimiter_count(s, aday) for s in satirlar]
         if adetler[0] == 0:
             continue
         ayni = sum(1 for a in adetler if a == adetler[0])
