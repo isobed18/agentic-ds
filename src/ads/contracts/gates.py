@@ -224,7 +224,7 @@ class HumanPrompt(FrozenModel):
     # Ingilizce uretiliyor ve kart onu ham basiyordu; arayuz Turkcelestirmek
     # icin cumleyi degil TURU bilmek zorunda (#192). Varsayilan, alani
     # gondermeyen eski cagiranlar icin.
-    question_kind: str = Field(default="problem", pattern="^(problem|checkpoint)$")
+    question_kind: str = Field(default="problem", pattern="^(problem|checkpoint|no_output)$")
     context_summary: str = Field(max_length=1500)
     options: list[DecisionOption] = Field(default_factory=list)
     allows_free_text: bool = True

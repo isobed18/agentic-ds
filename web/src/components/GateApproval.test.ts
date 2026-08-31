@@ -121,3 +121,33 @@ describe("the gate decision card in Turkish (#192)", () => {
     expect(render({ question: "ESKI_SUNUCU_SORUSU" })).toContain("ESKI_SUNUCU_SORUSU");
   });
 });
+
+describe("a gate on a stage that produced nothing (#198)", () => {
+  it("explains why approve is missing instead of just dropping it", () => {
+    const decision = {
+      stage_id: "problem_discovery",
+      attempt: 1,
+      verdict: "escalate",
+      reason_code: "stage_risk_requires_review",
+      triggered_rules: [],
+      human_prompt: {
+        stage_id: "problem_discovery",
+        question: "RAW",
+        question_kind: "no_output",
+        context_summary: "",
+        options: [
+          { option_id: "retry", label: "x", consequence: "y" },
+          { option_id: "abort", label: "z", consequence: "w" },
+        ],
+      },
+    } as unknown as GateDecision;
+
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+
+    expect(markup).toContain("problem_discovery aşaması hiçbir şey üretmedi");
+    expect(markup).toContain("Yeniden çalışması için geri gönder");
+    expect(markup).not.toContain("Onayla ve devam et");
+  });
+});

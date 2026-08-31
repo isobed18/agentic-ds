@@ -511,6 +511,7 @@ const TR: Record<string, string> = {
   "Exploratory analysis": "Keşifsel analiz",
   "Ask the Planner to reconsider": "Planner'a yeniden değerlendirmesini söyle",
   "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir pipeline çalışmaz. Geçersiz kılma yeri Planner'dır: eksik olanı söylersen bir pipeline önerebilir.",
+  "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.": "{stage} aşaması hiçbir şey üretmedi, onaylanacak bir çıktı yok. Yeniden çalışması için geri gönder ya da koşumu durdur.",
   "Approve and continue": "Onayla ve devam et",
   "Accept this stage's output as-is and proceed to the next stage.": "Bu aşamanın çıktısını olduğu gibi kabul et ve sonraki aşamaya geç.",
   "Send back for rework": "Yeniden çalışması için geri gönder",
