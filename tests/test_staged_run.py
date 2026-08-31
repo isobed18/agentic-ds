@@ -874,11 +874,26 @@ def test_a_run_that_stopped_to_ask_carries_the_question(client: TestClient) -> N
         final_stage="schema_discovery",
         decisions=[decision],
     )
+    # The worker sets this from the outcome (`runtime.status = runtime.outcome.status`);
+    # the fixture builds the outcome by hand, so it has to say so too. It is the
+    # field the answer endpoint checks, so a question reported without it would
+    # be one the run refuses to accept.
+    runtime.status = RunStatus.AWAITING_HUMAN
 
     progress = client.get(f"/api/runs/{run_id}/progress").json()
 
     assert progress["pending_question"] is not None
     assert progress["pending_question"]["human_prompt"]["options"][0]["option_id"] == "retry"
+
+    # And the half that was broken: the outcome KEEPS its question after the run
+    # resumes. Reporting it then put the answered card back on screen every 2.2
+    # seconds, and answering it returned 400 -- "this run is not awaiting a human
+    # decision" -- because the run had moved on (#191).
+    runtime.status = "running"
+
+    resumed = client.get(f"/api/runs/{run_id}/progress").json()
+
+    assert resumed["pending_question"] is None
 
 
 class TestStagedRunCaching:
