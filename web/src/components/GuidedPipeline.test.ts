@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import SOURCE from "./GuidedPipeline.tsx?raw";
 import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
 import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
+import CATALOGUE from "../lib/i18n.ts?raw";
 
 describe("planner access in the guided pipeline (#97)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {
@@ -63,6 +64,37 @@ describe("the run control (#197)", () => {
     // non-staged polled status over the pre-click "staged".
     expect(SOURCE).toContain("}, [runId, runStatus]);");
     expect(SOURCE).toContain('polledStatus && polledStatus !== "staged" ? polledStatus : String(runStatus');
+  });
+});
+
+describe("live progress on the canvas (#194)", () => {
+  it("drives the current stage from the run's own signal, not only reported nodes", () => {
+    // A live run whose current stage had not yet reported a workflow node used
+    // to fall through to "pending" and read as idle. groupStatus now takes the
+    // run's current_stage/active and marks that group running.
+    expect(SOURCE).toContain("stages.includes(currentStage) || (!currentStage && groupIndex === 0)");
+    expect(SOURCE).toContain("const groupStatuses = groups.map(");
+  });
+
+  it("distinguishes a pipeline waiting to be started from one that is running", () => {
+    // The accepted-but-unstarted first group reads "waiting to start" and points
+    // at the Run control instead of sharing the neutral "pending" look.
+    expect(SOURCE).toContain("const waiting = canStart &&");
+    expect(SOURCE).toContain('t("Waiting to start")');
+    expect(SOURCE).toContain('t("Press Run above to start")');
+  });
+
+  it("animates the arrows into and out of the running stage", () => {
+    // The arrow after "Data understood" was hardcoded inert.
+    expect(SOURCE).not.toContain("<Arrow active={false} complete />");
+    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete />');
+    expect(SOURCE).toContain('groupStatuses[index + 1] === "running"');
+  });
+
+  it("translates the new waiting strings", () => {
+    for (const key of ["Waiting to start", "Press Run above to start"]) {
+      expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
+    }
   });
 });
 

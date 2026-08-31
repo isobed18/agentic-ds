@@ -932,6 +932,8 @@ const TR: Record<string, string> = {
   "Delete this data project? Its execution history will be kept.": "Bu veri projesi silinsin mi? Çalıştırma geçmişi korunacak.",
   "Run workflow": "İş akışını çalıştır",
   "Working…": "Çalışıyor…",
+  "Waiting to start": "Başlamayı bekliyor",
+  "Press Run above to start": "Başlatmak için yukarıdaki Çalıştır'a basın",
   "The Planner is preparing a proposal…": "Planlayıcı bir öneri hazırlıyor…",
   "This accepted plan is document/report analysis only; no ML run is implied.": "Kabul edilen bu plan yalnızca belge/rapor analizidir; ML çalışması anlamına gelmez.",
   "Automation designer": "Otomasyon tasarımcısı",

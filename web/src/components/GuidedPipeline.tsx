@@ -153,6 +153,9 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   const currentStage = String((progress as Record<string, unknown> | null)?.current_stage ?? "");
   const failed = ["failed", "interrupted", "aborted"].includes(activeStatus);
   const complete = activeStatus === "completed";
+  // #194: one status per group, computed once so the node, its incoming arrow,
+  // and the "waiting to start" hint all agree about what is happening.
+  const groupStatuses = groups.map((group, index) => groupStatus(group.nodes, activeStatus, index, group.stages, currentStage, active));
 
   async function inspectGroup(groupId: string) {
     setSelected(groupId); setDetail(null); setError(null);
@@ -177,11 +180,20 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   return <PanCanvas>
     <div className="flex min-w-[1530px] items-center gap-5 px-8 pb-32 pt-20">
       <GuidedNode title={t("Data understood")} subtitle={t("Intake, routing, and synthesis complete")} status="succeeded" artifactIds={componentOutputs.flatMap((output) => output.artifact_ids)} onClick={() => setSelected("summary")} onOpenArtifact={(id) => void openArtifact(id)} />
-      <Arrow active={false} complete />
+      {/* #194: this arrow was hardcoded inert, so the move into the first ML
+          stage showed nothing. Animate it while that stage is actually running. */}
+      <Arrow active={groupStatuses[0] === "running"} complete />
       {groups.map((group, index) => {
-        const status = groupStatus(group.nodes, activeStatus, index);
+        const status = groupStatuses[index];
         const groupArtifactIds = group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []);
-        return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry"} complete={isSucceeded(status)} />}</div>;
+        // #194: an accepted-but-unstarted pipeline showed every group as
+        // "pending" -- identical to a running pipeline's unreached stages. Mark
+        // the group the run will start with as "waiting to start" so it points
+        // at the Run control instead of masquerading as work in progress.
+        const waiting = canStart && (currentStage ? group.stages.includes(currentStage) : index === 0);
+        const activeNode = group.nodes.find((node) => isActive(node.status));
+        const footer = status === "running" ? elapsedLabel(activeNode?.elapsed_seconds) ?? t("Working…") : undefined;
+        return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} footer={footer} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry" || groupStatuses[index + 1] === "running"} complete={isSucceeded(status)} />}</div>;
       })}
     </div>
 
@@ -226,11 +238,17 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
   </PanCanvas>;
 }
 
-function groupStatus(nodes: WorkflowNode[], runStatus: string, groupIndex: number): WorkflowNode["status"] {
+function groupStatus(nodes: WorkflowNode[], runStatus: string, groupIndex: number, stages: string[], currentStage: string, active: boolean): WorkflowNode["status"] {
   if (nodes.some((node) => node.status === "failed" || node.status === "blocked")) return nodes.find((node) => isAttention(node.status))!.status;
   if (nodes.some((node) => isActive(node.status))) return nodes.find((node) => isActive(node.status))!.status;
   if (nodes.length && nodes.every((node) => isSucceeded(node.status))) return "succeeded";
   if (["failed", "interrupted", "aborted"].includes(runStatus) && groupIndex === 0 && !nodes.length) return "failed";
+  // #194: a live run whose current stage falls in this group has not reported a
+  // workflow node yet, so it used to share the unreached "pending" look with
+  // every later stage and the canvas read as idle. Drive it from the run's own
+  // signal instead: current_stage when the runner has named one, otherwise the
+  // first not-yet-started group of a running pipeline.
+  if (active && (stages.includes(currentStage) || (!currentStage && groupIndex === 0))) return "running";
   return "pending";
 }
 
@@ -252,8 +270,12 @@ function PlanSummary({ profile, workspace, structured, documents, candidateTable
 
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file) => <Badge key={file} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
 
-function GuidedNode({ title, subtitle, status, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
-  return <ResizableNode className="relative shrink-0" defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300")}><NodeStatusHeader status={status} /><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p></button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
+function GuidedNode({ title, subtitle, status, waiting = false, footer, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; footer?: string; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+  // #194: a group waiting to be started reads distinctly -- a dashed brand ring
+  // and its own "Waiting to start" badge -- instead of the neutral "pending"
+  // it shares with stages a running pipeline simply has not reached. A running
+  // group shows its elapsed footer so a long stage looks long, not hung.
+  return <ResizableNode className="relative shrink-0" defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-[10px] font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}</button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 // The head tracks the line: once #196 made `bg-ok-300` a real class, a
