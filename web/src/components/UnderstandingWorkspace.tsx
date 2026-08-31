@@ -24,6 +24,7 @@ import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_STEP, CANVAS_MIN_STEP
 import { ArtifactNodes } from "./ArtifactNodes";
 import { ArtifactMetadata, hasArtifactMetadata } from "./ArtifactMetadata";
 import { artifactTitle } from "./artifactTitle";
+import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
 import { ResizableNode } from "./ResizableNode";
 import { DocumentTableReview } from "./DocumentTableReview";
 
@@ -207,7 +208,7 @@ function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact }
 export function BranchNode({ title, files, steps, artifactIds, onClick, onOpenArtifact }: { title: string; files: RoutedSourceFile[]; steps: RoutingSubstep[]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   const status: ProgressStatus = steps.some((step) => step.status === "failed") ? "failed" : steps.some((step) => step.status === "running") ? "running" : steps.every((step) => step.status === "complete") ? "complete" : "pending";
   const secondary = steps.find((step) => step.detail)?.detail;
-  return <ResizableNode className="relative" defaultWidth={290}><button type="button" onClick={onClick} className={cx("h-full w-full rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", status === "running" && "border-brand-400 ring-4 ring-brand-50", status === "failed" && "border-stop-300")}>
+  return <ResizableNode className="relative" defaultWidth={290}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", status === "running" && "border-brand-400 ring-4 ring-brand-50", status === "failed" && "border-stop-300")}>
     <div className="flex items-start gap-3"><StatusMark status={status} /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-ink">{title}</p><p className="mt-0.5 text-[10px] text-ink-mute">{t("{count} files", { count: files.length })}</p></div></div>
     <div className="mt-3 flex flex-wrap gap-1">{files.slice(0, 3).map((file) => <span key={file.name} title={file.name} className="max-w-[120px] truncate rounded-md bg-surface-sunken px-2 py-1 text-[9px] font-medium text-ink-mute">{file.name}</span>)}{files.length > 3 && <span className="rounded-md bg-surface-sunken px-2 py-1 text-[9px] text-ink-faint">+{files.length - 3}</span>}</div>
     {secondary && <p className="mt-2 text-[9px] font-medium text-ink-mute">{t(secondary)}</p>}
@@ -423,7 +424,7 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
     // A press that lands on a control or inside a panel belongs there. Panels
     // are asides docked beside the canvas, and without them in this list a drag
     // across their text panned the graph instead of selecting the text (#56).
-    if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,aside,[role='dialog'],[data-no-pan]")) return;
+    if (event.button !== 0 || isCanvasPanBlocked(event.target)) return;
     const node = viewport.current;
     if (!node) return;
     drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: node.scrollLeft, top: node.scrollTop };
@@ -441,9 +442,19 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
     const node = viewport.current;
     if (drag.current?.pointerId !== event.pointerId) return;
     drag.current = null;
-    if (node?.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+    releaseCanvasPointer(node, event.pointerId);
     setPanning(false);
   }
+  function lostPanCapture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    setPanning(false);
+  }
+  useEffect(() => () => {
+    const active = drag.current;
+    drag.current = null;
+    if (active) releaseCanvasPointer(viewport.current, active.pointerId);
+  }, []);
 
   // The inspector used to be fixed over a full-width viewport, so opening it
   // made the right-hand nodes unreachable even after panning (#40). The
@@ -459,7 +470,7 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
     : docked ? "minmax(0, 1fr) min(440px, 94vw)"
       : plannerDocked ? "minmax(0, 1fr) min(390px, 94vw)" : "minmax(0, 1fr)";
   return <div className="relative grid h-full min-h-[30rem]" style={{ gridTemplateColumns }}>
-    <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
+    <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} onLostPointerCapture={lostPanCapture} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
       <div style={scaledBox(step)}>
         <div className="flex items-center justify-center" style={{ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT, transform: `scale(${zoomForStep(step)})`, transformOrigin: "top left" }}>{children}</div>
       </div>
@@ -488,7 +499,7 @@ function GraphEdge({ status }: { status: ProgressStatus }) { return <div classNa
 function ForkConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 ${height / 2} H20 M20 ${height / 2} V8 M20 ${height / 2} V${height - 8} M20 8 H48 M20 ${height - 8} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : "#cbd5e1"} strokeWidth="1.5" /></svg>; }
 function MergeConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 8 H28 M0 ${height - 8} H28 M28 8 V${height - 8} M28 ${height / 2} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : status === "running" ? "#4f7cff" : "#cbd5e1"} strokeWidth="1.5" /><path d={`M43 ${height / 2 - 4} L48 ${height / 2} L43 ${height / 2 + 4}`} fill="none" stroke="#94a3b8" strokeWidth="1.5" /></svg>; }
 function StatusMark({ status }: { status: ProgressStatus }) { return <span className={cx("relative grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[9px]", status === "complete" ? "border-ok-300 bg-ok-50 text-ok-700" : status === "running" ? "border-brand-400 bg-brand-50 text-brand-700" : status === "failed" ? "border-stop-300 bg-stop-50 text-stop-700" : "border-line bg-surface text-ink-faint")}>{status === "complete" ? "✓" : status === "running" ? <><span>●</span><span className="absolute inset-0 animate-ping rounded-full bg-brand-300 opacity-40 motion-reduce:animate-none" /></> : status === "failed" ? "!" : "○"}</span>; }
-function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><div className="flex items-start justify-between gap-3"><StatusMark status={status} /><Badge tone={status === "complete" ? "ok" : status === "failed" ? "stop" : status === "running" ? "brand" : "neutral"}>{t(status === "complete" ? "Complete" : status === "running" ? "Processing" : status === "failed" ? "Failed" : "Waiting")}</Badge></div><p className="mt-3 text-sm font-semibold text-ink">{title}</p><p className="mt-1 text-[11px] text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 text-[10px] font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "h-full w-full p-4" : "h-full w-full p-5", "rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <ResizableNode className="relative shrink-0" defaultWidth={compact ? 190 : 230}>{card}<ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact ?? (() => {})} /></ResizableNode>; }
+function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><div className="flex items-start justify-between gap-3"><StatusMark status={status} /><Badge tone={status === "complete" ? "ok" : status === "failed" ? "stop" : status === "running" ? "brand" : "neutral"}>{t(status === "complete" ? "Complete" : status === "running" ? "Processing" : status === "failed" ? "Failed" : "Waiting")}</Badge></div><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 text-[11px] text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 truncate text-[10px] font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "h-full w-full p-4" : "h-full w-full p-5", "overflow-hidden rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <ResizableNode className="relative shrink-0" defaultWidth={compact ? 190 : 230}>{card}<ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact ?? (() => {})} /></ResizableNode>; }
 export function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) { return <aside className="z-20 flex h-full w-full flex-col border-l border-line bg-surface shadow-2xl"><header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header>{/* Scroll only the body: overflow used to sit on the aside, so the header
     and its × scrolled out of reach on a long panel (#75). */}<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5"><div className="mt-5">{children}</div></div></aside>; }
 export function DockedPanel({ children }: { children: React.ReactNode }) { return <div data-docked-panel className="z-30 flex h-full min-w-0 w-full overflow-hidden border-l border-line bg-surface shadow-2xl [&>aside]:!w-full">{children}</div>; }

@@ -15,6 +15,7 @@ import { Badge, Empty, cx } from "./ui";
 import { ArtifactMetadata, hasArtifactMetadata } from "./ArtifactMetadata";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { artifactTitle } from "./artifactTitle";
+import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
 import { PlannerPanel } from "./PlannerPanel";
 import { ResizableNode } from "./ResizableNode";
 
@@ -162,7 +163,7 @@ export function GuidedPipeline({ runId, profile, workspace, componentOutputs, ru
         above the plan/stage details panel, with its own close control. */}
     {plannerOpen && <div className="fixed inset-y-[58px] right-0 z-30 flex"><PlannerPanel runId={runId} open onToggle={() => setPlannerOpen(false)} starterPrompts={[t("What is this gate asking?"), t("What do you recommend here?"), t("Explain the current stage.")]} /></div>}
 
-    {selected && <aside className="fixed inset-y-[58px] right-0 z-20 flex w-[min(440px,94vw)] flex-col border-l border-line bg-surface shadow-2xl">
+    {selected && <aside data-no-pan className="fixed inset-y-[58px] right-0 z-20 flex w-[min(440px,94vw)] flex-col border-l border-line bg-surface shadow-2xl">
       <header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(selected === "summary" ? "Accepted ML plan" : "Base ML pipeline")}</p><h2 className="mt-1 text-base font-semibold text-ink">{t(selected === "summary" ? "What will run" : groups.find((group) => group.id === selected)?.title ?? "Stage details")}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" onClick={() => setSelected(null)}>×</button></header>
       {/* Scroll only the body: overflow used to sit on the aside, so the header
           and its × scrolled out of reach on a long panel (#75). */}
@@ -202,7 +203,7 @@ function PlanSummary({ profile, workspace, structured, documents, candidateTable
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file) => <Badge key={file} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
 
 function GuidedNode({ title, subtitle, status, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
-  return <ResizableNode className="relative shrink-0" defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300")}><div className="flex items-center justify-between"><StatusDot status={status} /><Badge tone={isSucceeded(status) ? "ok" : isAttention(status) ? "stop" : isActive(status) ? "brand" : "neutral"}>{statusLabel(status)}</Badge></div><p className="mt-3 text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p></button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
+  return <ResizableNode className="relative shrink-0" defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300")}><div className="flex items-center justify-between"><StatusDot status={status} /><Badge tone={isSucceeded(status) ? "ok" : isAttention(status) ? "stop" : isActive(status) ? "brand" : "neutral"}>{statusLabel(status)}</Badge></div><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p></button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 function Arrow({ active, complete }: { active: boolean; complete: boolean }) { return <div className={cx("relative h-px w-8 shrink-0", complete ? "bg-ok-300" : "bg-slate-300")}><span className="absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t border-slate-400" />{active && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400" />}</div>; }
@@ -218,8 +219,10 @@ function PanCanvas({ children }: { children: React.ReactNode }) {
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const [panning, setPanning] = useState(false);
-  function start(event: ReactPointerEvent<HTMLDivElement>) { if (event.button !== 0 || (event.target as HTMLElement).closest("button,input,textarea,select,a,[role='dialog']")) return; const node = viewport.current; if (!node) return; drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: node.scrollLeft, top: node.scrollTop }; node.setPointerCapture(event.pointerId); setPanning(true); }
+  function start(event: ReactPointerEvent<HTMLDivElement>) { if (event.button !== 0 || isCanvasPanBlocked(event.target)) return; const node = viewport.current; if (!node) return; drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: node.scrollLeft, top: node.scrollTop }; node.setPointerCapture(event.pointerId); setPanning(true); }
   function move(event: ReactPointerEvent<HTMLDivElement>) { const origin = drag.current; const node = viewport.current; if (!origin || !node || origin.pointerId !== event.pointerId) return; node.scrollLeft = origin.left - (event.clientX - origin.x); node.scrollTop = origin.top - (event.clientY - origin.y); }
-  function stop(event: ReactPointerEvent<HTMLDivElement>) { const node = viewport.current; if (drag.current?.pointerId !== event.pointerId) return; drag.current = null; if (node?.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId); setPanning(false); }
-  return <div ref={viewport} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} className={cx("relative h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}><div className="flex min-h-[860px] min-w-[1700px] items-center justify-center">{children}</div></div>;
+  function stop(event: ReactPointerEvent<HTMLDivElement>) { if (drag.current?.pointerId !== event.pointerId) return; drag.current = null; releaseCanvasPointer(viewport.current, event.pointerId); setPanning(false); }
+  function lostCapture(event: ReactPointerEvent<HTMLDivElement>) { if (drag.current?.pointerId !== event.pointerId) return; drag.current = null; setPanning(false); }
+  useEffect(() => () => { const active = drag.current; drag.current = null; if (active) releaseCanvasPointer(viewport.current, active.pointerId); }, []);
+  return <div ref={viewport} onPointerDown={start} onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={lostCapture} className={cx("relative h-full overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}><div className="flex min-h-[860px] min-w-[1700px] items-center justify-center">{children}</div></div>;
 }
