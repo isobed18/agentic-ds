@@ -53,10 +53,10 @@ describe("the human gate escalation card (#81)", () => {
 
 
 describe("the gate decision card in Turkish (#192)", () => {
-  function render(prompt: Partial<GateDecision["human_prompt"]> & object) {
+  function render(prompt: Partial<GateDecision["human_prompt"]> & object, attempt = 1) {
     const decision = {
       stage_id: "evaluation",
-      attempt: 1,
+      attempt,
       verdict: "escalate",
       reason_code: "stage_risk_requires_review",
       triggered_rules: [],
@@ -103,6 +103,15 @@ describe("the gate decision card in Turkish (#192)", () => {
     const markup = render({ options: [{ option_id: "brand_new", label: "SERVER_SAYS", consequence: "SERVER_WHY" }] });
     expect(markup).toContain("SERVER_SAYS");
     expect(markup).toContain("SERVER_WHY");
+  });
+
+  it("marks a re-escalation as a new question rather than a card that came back (#191)", () => {
+    // A rework can legitimately escalate the same stage again, and the card
+    // reappearing looked exactly like the stale one that used to return every
+    // 2.2 seconds. The attempt is what tells a real loop from a stale card.
+    expect(render({}, 3)).toContain("3. deneme");
+    // The first escalation has nothing to disambiguate, so it stays quiet.
+    expect(render({}, 1)).not.toContain("deneme");
   });
 
   it("renders the question from question_kind, and falls back to the raw text", () => {

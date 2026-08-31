@@ -117,6 +117,15 @@ export function ApprovalCard({
           {sent ? t("Answer sent") : t("Approval required")}
         </Badge>
         <span className="text-xs text-ink-mute">{reasonLabel(decision.reason_code)}</span>
+        {/* #191: a rework can legitimately re-escalate the same stage, and the
+            old card reappearing looked exactly like the stale one that used to
+            come back forever. The attempt says which escalation this is, so a
+            genuine loop is distinguishable from a card that never left. */}
+        {decision.attempt > 1 && (
+          <span className="text-xs text-ink-faint">
+            {t("Attempt {count}", { count: decision.attempt })}
+          </span>
+        )}
       </div>
       {sent && (
         <p className="mb-2 text-xs text-ok-700">

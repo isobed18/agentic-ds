@@ -139,6 +139,48 @@ describe("automation progressive disclosure", () => {
     })).toBe("workflow");
   });
 
+  /** A staged workspace whose plan is in the given state. */
+  function staged(planOver: Record<string, unknown>) {
+    return {
+      artifact_id: "workspace", run_id: "run-1", source_id: "source",
+      source_fingerprint: "fingerprint", intake_artifact_ids: [], schema_artifact_ids: [],
+      cache_reused: false, relationship_explanations: [], reports: [],
+      pipeline_layout: { version: "1" as const, nodes: [], collapsed_branches: [] },
+      component_outputs: [], document_extractions: [], chat_history: [],
+      recommended_plan: {
+        proposal_id: "plan-1", status: "proposed", mode: "fully_auto" as const,
+        configuration: {}, stage_directives: {}, checkpoint_stages: [],
+        auto_proceed_stages: [], max_retries_by_stage: {}, rationale: [], accepted: false,
+        ...planOver,
+      },
+    } as unknown as Parameters<typeof automationView>[0]["workspace"];
+  }
+
+  it("keeps an accepted plan on the guided pipeline whatever the run is doing (#191)", () => {
+    // The other half of the gate report: answering "send back for rework" put
+    // the run into a pre-staging status, and the status list was read BEFORE
+    // the plan, so the workspace left the guided ML pipeline for the staging
+    // canvas -- with the accepted plan completely unchanged. The reporter saw
+    // their ML workflow become "the regular one".
+    const accepted = staged({ status: "accepted", accepted: true });
+    for (const runStatus of ["queued", "staging", "failed", "interrupted", "running", "awaiting_human"]) {
+      expect(automationView({
+        sourceId: "source", runId: "run-1", runStatus, workspace: accepted, advancedGraph: false,
+      }), runStatus).toBe("guided_pipeline");
+    }
+  });
+
+  it("still drops an unaccepted plan back to understanding on those statuses", () => {
+    // The paired half: the status list is right for everything before
+    // acceptance, and moving the plan check ahead of it must not disable it.
+    const proposed = staged({});
+    for (const runStatus of ["queued", "staging", "failed", "interrupted"]) {
+      expect(automationView({
+        sourceId: "source", runId: "run-1", runStatus, workspace: proposed, advancedGraph: false,
+      }), runStatus).toBe("understanding");
+    }
+  });
+
   it("summarizes four PDFs without inventing structured data", () => {
     const documents = Array.from({ length: 4 }, (_, index) => ({
       name: `report-${index}.pdf`, format: "pdf" as const, pages: 10 + index,

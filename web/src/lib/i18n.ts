@@ -570,6 +570,7 @@ const TR: Record<string, string> = {
   "Recorded. The run is resuming — this card clears on the next refresh.":
     "Kaydedildi. Koşu devam ediyor — bu kart bir sonraki yenilemede kapanacak.",
   "Attempts": "Denemeler",
+  "Attempt {count}": "{count}. deneme",
   "Decision history": "Karar geçmişi",
   "Artifacts": "Çıktılar",
   "Artifacts ({count})": "Çıktılar ({count})",
