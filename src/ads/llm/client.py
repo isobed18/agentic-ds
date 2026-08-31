@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -22,6 +25,9 @@ import httpx
 
 DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_TIMEOUT = 300.0
+MAX_RUN_SEED = 2_147_483_647
+_STAGE_SEED_STRIDE = 1_000_000
+_ATTEMPT_SEED_STRIDE = 10_000
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,100 @@ class StructuredLLM(Protocol):
         json_schema: dict[str, Any],
         profile: ModelProfile,
     ) -> LLMResponse: ...
+
+
+def derive_agent_seed(
+    run_seed: int,
+    *,
+    stage_ordinal: int,
+    attempt: int,
+    call_ordinal: int = 0,
+) -> int:
+    """Derive one stable sampler seed from its exact place in a run.
+
+    The strides prevent a stage retry from colliding with the next stage, while
+    ``call_ordinal`` makes nested investigator turns and panel members distinct.
+    The final modulo keeps the value in the signed 32-bit range accepted by all
+    supported local inference backends.
+    """
+    if not 0 <= run_seed <= MAX_RUN_SEED:
+        raise ValueError(f"run_seed must be between 0 and {MAX_RUN_SEED}")
+    if stage_ordinal < 0 or attempt < 1 or call_ordinal < 0:
+        raise ValueError("stage_ordinal and call_ordinal must be non-negative; attempt starts at 1")
+    return (
+        run_seed
+        + stage_ordinal * _STAGE_SEED_STRIDE
+        + (attempt - 1) * _ATTEMPT_SEED_STRIDE
+        + call_ordinal
+    ) % (MAX_RUN_SEED + 1)
+
+
+@dataclass
+class AgentSeedScope:
+    """Mutable call counter local to one orchestration stage attempt."""
+
+    run_seed: int
+    stage_ordinal: int
+    attempt: int
+    call_ordinal: int = 0
+    seeds: list[int] = field(default_factory=list)
+
+    def next_seed(self) -> int:
+        seed = derive_agent_seed(
+            self.run_seed,
+            stage_ordinal=self.stage_ordinal,
+            attempt=self.attempt,
+            call_ordinal=self.call_ordinal,
+        )
+        self.call_ordinal += 1
+        self.seeds.append(seed)
+        return seed
+
+
+_AGENT_SEED_SCOPE: ContextVar[AgentSeedScope | None] = ContextVar(
+    "ads_agent_seed_scope", default=None
+)
+
+
+@contextmanager
+def agent_seed_scope(
+    *,
+    run_seed: int,
+    stage_ordinal: int,
+    attempt: int,
+    call_ordinal: int = 0,
+) -> Iterator[AgentSeedScope]:
+    """Seed all wrapped structured calls made synchronously inside one attempt."""
+    scope = AgentSeedScope(run_seed, stage_ordinal, attempt, call_ordinal)
+    token = _AGENT_SEED_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        _AGENT_SEED_SCOPE.reset(token)
+
+
+class SeededStructuredLLM:
+    """Apply the active run scope to every call, including nested agent turns."""
+
+    def __init__(self, inner: StructuredLLM) -> None:
+        self.inner = inner
+
+    def generate_structured(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        json_schema: dict[str, Any],
+        profile: ModelProfile,
+    ) -> LLMResponse:
+        scope = _AGENT_SEED_SCOPE.get()
+        seeded = profile.with_seed(scope.next_seed()) if scope is not None else profile
+        return self.inner.generate_structured(
+            system=system,
+            prompt=prompt,
+            json_schema=json_schema,
+            profile=seeded,
+        )
 
 
 def dereference_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -224,12 +324,17 @@ class OllamaClient:
 
 
 __all__ = [
+    "AgentSeedScope",
     "DEFAULT_BASE_URL",
     "LARGE",
     "SMALL",
     "LLMResponse",
+    "MAX_RUN_SEED",
     "ModelProfile",
     "OllamaClient",
+    "SeededStructuredLLM",
     "StructuredLLM",
+    "agent_seed_scope",
     "dereference_schema",
+    "derive_agent_seed",
 ]

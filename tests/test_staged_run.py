@@ -185,6 +185,35 @@ def _settle(client: TestClient, run_id: str, target: str = "staged") -> None:
 
 
 class TestStagingRunsTheFirstStages:
+    def test_a_run_level_seed_is_derived_and_persisted(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = _stage(client)
+
+        progress = client.get(f"/api/runs/{run_id}/progress").json()
+        run_seed = progress["configuration"]["run_seed"]
+
+        assert isinstance(run_seed, int)
+        assert recorder.calls[0]["state"].run_seed == run_seed
+
+    def test_support_can_rerun_with_the_exact_same_seed(self, client: TestClient) -> None:
+        original = _stage(client)
+        original_seed = client.get(f"/api/runs/{original}/progress").json()["configuration"][
+            "run_seed"
+        ]
+
+        response = client.post(f"/api/runs/{original}/rerun")
+
+        assert response.status_code == 200, response.text
+        repeated = response.json()["run_id"]
+        _settle(client, repeated)
+        repeated_configuration = client.get(f"/api/runs/{repeated}/progress").json()[
+            "configuration"
+        ]
+        assert repeated != original
+        assert repeated_configuration["run_seed"] == original_seed
+        assert repeated_configuration["rerun_of"] == original
+
     def test_default_pipeline_is_available_before_a_run_exists(self, client: TestClient) -> None:
         response = client.get("/api/data-sources/demo/pipeline-blueprint")
 

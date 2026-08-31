@@ -49,6 +49,8 @@ class StageAttempt:
     critique: CritiqueResult | None = None
     decision: GateDecision | None = None
     error: str | None = None
+    agent_seeds: list[int] = field(default_factory=list)
+    """Exact sampler seeds consumed by this attempt, in call order."""
 
     @property
     def unmet_criteria(self) -> frozenset[str]:
@@ -73,6 +75,8 @@ class RunState:
     run_id: str
     store: ArtifactStore
     profile: AutonomyProfile
+    run_seed: int | None = None
+    """Run-level sampler seed; persisted by the control plane for replay."""
     user_intent: str | None = None
     attempts: list[StageAttempt] = field(default_factory=list)
     active_attempt: StageAttempt | None = None
