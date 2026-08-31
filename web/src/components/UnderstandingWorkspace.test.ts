@@ -63,6 +63,37 @@ describe("the understanding inspector layout", () => {
     expect(markup.indexOf("SCROLL_BODY")).toBeGreaterThan(scrollIndex);
   });
 
+  it("clamps the canvas row so a tall panel scrolls instead of growing (#161)", () => {
+    // The reason closing and reopening the panel never helped: this is layout,
+    // not state. The grid's single implicit row is `auto`, so it grew to the
+    // inspector's full content height, the aside's `h-full` resolved to the
+    // grown row, and its `overflow-y-auto` body was never shorter than its
+    // content -- no scrollbar, no wheel movement, bottom unreachable.
+    const markup = renderToStaticMarkup(createElement(CanvasSurface, {
+      docked: true,
+      plannerDocked: true,
+      children: createElement("div", null, "Canvas content"),
+      overlay: createElement(Fragment, null,
+        createElement(Inspector, {
+          title: "Uploaded files",
+          eyebrow: "Source",
+          onClose: () => undefined,
+          children: createElement("p", null, "A very long list of files"),
+        }),
+        createElement(DockedPanel, { children: createElement("p", null, "Planner content") }),
+      ),
+    }));
+
+    // The row can never exceed the surface, whatever a panel contains.
+    expect(markup).toContain("grid-template-rows:minmax(0, 1fr)");
+    expect(classNameFor(markup, "div")).toContain("overflow-hidden");
+    // And each docked column may actually shrink to it: a grid item's automatic
+    // minimum size is its content, so without this it overflows the clamped row.
+    expect(classNameFor(markup, "aside").split(" ")).toContain("min-h-0");
+    const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
+    expect(planner).toContain("min-h-0");
+  });
+
   it("gives the planner and inspector separate dock columns", () => {
     // The regression this exists for (#48). The planner used to be an
     // absolute right-edge overlay above the inspector, so opening it swallowed
