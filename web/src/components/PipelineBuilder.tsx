@@ -327,10 +327,10 @@ export function PipelineBuilder({ runId = null, sourceId = null, baseArtifactId 
       <header className="z-20 flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface px-4 py-2.5">
         {onExitAdvanced && <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={onExitAdvanced}>← {t("Back to proposal")}</button>}
         <div className="mr-auto"><h2 className="text-sm font-semibold text-ink">{t("Workflow")}</h2><p className="text-[10px] text-ink-mute">{t("The accepted graph defines the plan; layout is visual state only.")}</p></div>
-        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => setCatalogOpen(true)}>+ {t("Add component")}</button>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" aria-expanded={catalogOpen} onClick={() => setCatalogOpen((open) => !open)}>+ {t("Add component")}</button>
         <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => void runAutoLayout()} disabled={busy}>{t("Auto layout")}</button>
         <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={collapseAllBranches} disabled={!draft.components.some((component) => component.branch_id)}>{t("Collapse branches")}</button>
-        <button type="button" className="btn-ghost !py-1.5 text-xs" onClick={() => setPlannerOpen(true)}>{t("Planner")}</button>
+        <button type="button" className="btn-ghost !py-1.5 text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Planner")}</button>
         <button type="button" className="btn-primary !py-1.5 text-xs" onClick={() => void saveBlueprint()} disabled={busy || saved}>{saved ? t("Saved") : t("Save workflow")}</button>
       </header>
       {error && <p className="absolute left-4 top-16 z-30 max-w-xl rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700 shadow-card">{error}</p>}
