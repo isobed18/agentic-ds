@@ -98,15 +98,27 @@ export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: str
   const titles = useArtifactTitles(shown, open);
   if (!ids.length) return null;
   return (
-    <div className="absolute left-1/2 top-full z-10 flex w-full -translate-x-1/2 -translate-y-1/2 flex-col items-center">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
-      >
-        {t("Artifacts ({count})", { count: shown.length })}
-      </button>
+    // The column's top is pinned to the node's bottom edge and carries no
+    // height-proportional transform, so the list below can only grow downward.
+    // A translate percentage resolves against the element's *own* height, so
+    // while the column wrapped both the pill and the list, every height change
+    // was split between its two ends: the list grew down by half and the pill
+    // rose by half. Opening the list moved the control out from under the
+    // cursor that clicked it, and each artifact `useSequentialReveal` appends
+    // during a run lifted it again until it overlapped its node (#162).
+    <div className="absolute left-1/2 top-full z-10 flex w-full -translate-x-1/2 flex-col items-center">
+      {/* The straddle from #66 moves onto the pill, whose own height never
+          changes, so it is a fixed offset rather than a share of the column. */}
+      <div className="-translate-y-1/2">
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+        >
+          {t("Artifacts ({count})", { count: shown.length })}
+        </button>
+      </div>
       {open && (
         <ol className="pointer-events-auto mt-2 flex w-full min-w-0 flex-col gap-2" aria-label={t("Artifacts")}>
           {shown.map((id, index) => (

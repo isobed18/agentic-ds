@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactNodes } from "./ArtifactNodes";
+import SOURCE from "./ArtifactNodes.tsx?raw";
 
 // Force the default (English) catalogue so the opener text is predictable.
 Object.defineProperty(globalThis, "localStorage", {
@@ -20,11 +21,23 @@ describe("the artifacts opener under a node", () => {
     expect(markup).toContain('aria-expanded="false"');
     // The parenthesised count format the redesign asks for, in any language.
     expect(markup).toMatch(/\(\d+\)/);
-    // Its opener straddles a fixed top anchor and the list grows only downward;
-    // bottom anchoring made the opener rise over the card as the list grew (#162).
-    expect(markup).toContain("top-full");
-    expect(markup).toContain("-translate-y-1/2");
-    expect(markup).not.toContain("bottom-0");
+    // The property that actually matters (#162): the column holding the list
+    // has its top pinned to the node's edge and *no* height-proportional
+    // transform. Asserting the class names alone let a change that recentred
+    // the column on the edge pass -- `bottom-0 translate-y-1/2` and
+    // `top-full -translate-y-1/2` place a wrapper identically, because the
+    // percentage resolves against the wrapper's own height either way.
+    const column = markup.match(/^<div class="([^"]+)"/)?.[1] ?? "";
+    expect(column).toContain("top-full");
+    expect(column).not.toContain("bottom-0");
+    expect(column, "the wrapper containing the list must not scale with its height").not.toMatch(/translate-y/);
+    // The straddle from #66 survives, as a fixed offset on the pill alone: its
+    // wrapper closes before the list starts, so the list cannot move it.
+    const straddle = SOURCE.indexOf('className="-translate-y-1/2"');
+    const list = SOURCE.indexOf("<ol");
+    expect(straddle).toBeGreaterThan(-1);
+    expect(list).toBeGreaterThan(straddle);
+    expect(SOURCE.slice(straddle, list)).toContain("</div>");
     // Collapsed: the dashed numbered list is not in the DOM until opened.
     expect(markup).not.toContain("<ol");
   });
