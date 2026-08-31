@@ -48,11 +48,17 @@ export function PlannerPanel({
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
   const [problemRecommendations, setProblemRecommendations] = useState<ProblemRecommendation[]>([]);
+  // #246: a planner graph edit the runner would refuse is dropped server-side
+  // (#231) with the reason in `graph_edit_rejected`. The panel used to ignore
+  // it, so the planner's reply could say it was moving the run to the ML stage
+  // while the edit that would have done so was silently discarded and nothing
+  // appeared. Hold the reason so the refusal is shown, never silent.
+  const [graphEditRejected, setGraphEditRejected] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
-    if (!runId) { setMessages([]); setRecommendations([]); setProblemRecommendations([]); return; }
+    if (!runId) { setMessages([]); setRecommendations([]); setProblemRecommendations([]); setGraphEditRejected(null); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loadWorkspace = async () => {
@@ -96,6 +102,10 @@ export function PlannerPanel({
         run_id: runId, stage_id: stageId, source_id: sourceId, message: text,
       });
       const reply = res.reply ?? res.message ?? "(no reply)";
+      // #246: surface a refused graph edit rather than dropping it. Without
+      // this the reply's prose ("moving on to the ML stage") is all the person
+      // sees, while the edit that would carry the run there was rejected.
+      setGraphEditRejected(typeof res.graph_edit_rejected === "string" ? res.graph_edit_rejected : null);
       const proposed: string[] = [];
       const configuration = res.configuration_patch;
       if (configuration && typeof configuration === "object" && !Array.isArray(configuration)) {
@@ -195,6 +205,13 @@ export function PlannerPanel({
             </li>
           ))}
         </ul>
+
+        {graphEditRejected && (
+          <section className="mb-4 rounded-lg border border-warn-300 bg-warn-50 px-3 py-2.5" role="alert">
+            <p className="mb-1 text-[11px] font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
+            <p className="text-[10px] leading-relaxed text-warn-800">{graphEditRejected}</p>
+          </section>
+        )}
 
         {recommendations.length > 0 && (
           <section className="mb-4 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2.5">
