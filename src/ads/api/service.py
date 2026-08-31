@@ -906,6 +906,33 @@ class ControlPlane:
             project_id, expected_revision=expected_revision, changes=changes
         ).model_dump(mode="json")
 
+    def delete_project(
+        self, project_id: str, *, viewer: str | None = None
+    ) -> dict[str, Any]:
+        """Delete a project and its automations, keeping data and run history.
+
+        #181: the promise automation deletion (`delete_automation`) makes, one
+        level up. Only someone who may change the project may remove it
+        (`write=True`); the warned dialog covers the accidental click. Each
+        child automation is removed through that same path, so its runs stay
+        readable and its private input snapshot is dropped only when nothing
+        executed. The project's uploaded data sources are reusable and shared,
+        so they are left in the data library untouched.
+        """
+        assert self.project_store is not None
+        assert self.automation_store is not None
+        project = self._visible_project(project_id, viewer, write=True)
+        removed_automations = 0
+        for automation_id in list(project.automation_ids):
+            try:
+                self.delete_automation(automation_id)
+                removed_automations += 1
+            except KeyError:
+                # A stale id that names no definition must not block the delete.
+                continue
+        removed = self.project_store.delete(project_id)
+        return {"project_id": project_id, "automations": removed_automations, **removed}
+
     def add_project_source(
         self, project_id: str, source_id: str, *, viewer: str | None = None
     ) -> dict[str, Any]:
@@ -6693,6 +6720,15 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown project") from None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project(project_id: str, request: Request) -> dict[str, Any]:
+        try:
+            return plane.delete_project(project_id, viewer=_viewer(request))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown project") from None
 
     @app.post("/api/projects/{project_id}/visibility")
     def set_project_visibility(

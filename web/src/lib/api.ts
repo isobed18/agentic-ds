@@ -941,6 +941,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ visibility }),
     }),
+  /** #181: delete a project and its automations; data and run history are kept. */
+  deleteProject: (id: string) =>
+    request<{ project_id: string; automations: number }>(
+      `/api/projects/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
   projectData: (id: string) =>
     request<ProjectDataSource[]>(`/api/projects/${encodeURIComponent(id)}/data`),
   addProjectSource: (id: string, sourceId: string) =>
