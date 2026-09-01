@@ -6485,6 +6485,26 @@ class ControlPlane:
                 snapshot.unlink()
         return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
 
+    def delete_model(self, artifact_id: str) -> dict[str, Any]:
+        """Delete one trained-model artifact. The run it came from is untouched."""
+        artifact_type = self.store.type_of(artifact_id)
+        if artifact_type is None:
+            raise KeyError(artifact_id)
+        if artifact_type != ArtifactType.TRAINED_MODEL:
+            raise ValueError(f"artifact {artifact_id!r} is not a trained model")
+        removed = self.store.delete_artifact(artifact_id)
+        return {"artifact_id": artifact_id, **removed}
+
+    def delete_report(self, artifact_id: str) -> dict[str, Any]:
+        """Delete one final-report artifact. The run it came from is untouched."""
+        artifact_type = self.store.type_of(artifact_id)
+        if artifact_type is None:
+            raise KeyError(artifact_id)
+        if artifact_type != ArtifactType.FINAL_REPORT:
+            raise ValueError(f"artifact {artifact_id!r} is not a final report")
+        removed = self.store.delete_artifact(artifact_id)
+        return {"artifact_id": artifact_id, **removed}
+
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
     """The escalation a run is stopped on RIGHT NOW, ready for the wire.
@@ -7374,6 +7394,24 @@ def create_app(
                 "Content-Disposition": f'attachment; filename="ads-report-{artifact_id[:12]}.md"'
             },
         )
+
+    @app.delete("/api/models/{artifact_id}")
+    def delete_model(artifact_id: str) -> dict[str, Any]:
+        try:
+            return plane.delete_model(artifact_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown model") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.delete("/api/reports/{artifact_id}")
+    def delete_report(artifact_id: str) -> dict[str, Any]:
+        try:
+            return plane.delete_report(artifact_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown report") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     if static_dir.is_dir():
         # Registered last, deliberately: a catch-all declared before the API
