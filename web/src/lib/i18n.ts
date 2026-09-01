@@ -1138,6 +1138,10 @@ const TR: Record<string, string> = {
   "Add data before or after automations. Existing automation snapshots do not change.":
     "Otomasyonlardan önce veya sonra veri ekleyin. Mevcut otomasyon anlık görüntüleri değişmez.",
   "Upload new files": "Yeni dosyalar yükle",
+  "Ready local dataset": "Hazır yerel veri seti",
+  "Use PDF demo": "PDF demosunu kullan",
+  "Adding PDF demo…": "PDF demosu ekleniyor…",
+  "A PDF table plus matching CSV truth.": "Bir PDF tablosu ve eşleşen CSV doğrusu.",
   "Choose previously uploaded data": "Daha önce yüklenen veriyi seç",
   "Add to project": "Projeye ekle",
   "No data in this project": "Bu projede veri yok",
