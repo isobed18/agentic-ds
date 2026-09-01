@@ -27,6 +27,7 @@ describe("the badge vocabulary", () => {
     expect(statusBadgeLabel("blocked")).toBe("Onay bekliyor");
     expect(statusBadgeLabel("retry")).toBe("Yeniden deniyor");
     expect(statusBadgeLabel("staging")).toBe("Veri okunuyor");
+    expect(statusBadgeLabel("branches_running")).toBe("Dallar çalışıyor");
     expect(statusBadgeLabel("awaiting_human")).toBe("Sizi bekliyor");
   });
 
@@ -48,6 +49,7 @@ describe("the status tone", () => {
     expect(statusTone("succeeded")).toBe("complete");
     expect(statusTone("complete")).toBe("complete");
     expect(statusTone("running")).toBe("running");
+    expect(statusTone("branches_running")).toBe("running");
     expect(statusTone("retry")).toBe("running");
     expect(statusTone("failed")).toBe("attention");
     expect(statusTone("blocked")).toBe("attention");

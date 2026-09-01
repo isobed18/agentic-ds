@@ -95,6 +95,92 @@ describe("automation progressive disclosure", () => {
     })).toBe("understanding");
   });
 
+  it("does not treat a deferred plan as a proposal to accept (#316)", () => {
+    // Every planner reply persists a plan, so the record's mere existence used
+    // to mean "the ML flow is ready" -- asking a question about the raw files
+    // unlocked the run controls, including when the planner's own reply said to
+    // review the extracted PDF tables first.
+    const base = {
+      artifact_id: "workspace",
+      run_id: "run-1",
+      source_id: "source",
+      source_fingerprint: "fingerprint",
+      intake_artifact_ids: [],
+      schema_artifact_ids: [],
+      cache_reused: false,
+      relationship_explanations: [],
+      reports: [],
+      pipeline_layout: { version: "1" as const, nodes: [], collapsed_branches: [] },
+      component_outputs: [],
+      document_extractions: [],
+      chat_history: [],
+      recommended_plan: {
+        proposal_id: "plan-1",
+        status: "proposed" as const,
+        mode: "fully_auto" as const,
+        configuration: {},
+        stage_directives: {},
+        checkpoint_stages: [],
+        auto_proceed_stages: [],
+        max_retries_by_stage: {},
+        rationale: [],
+        accepted: false,
+      },
+    };
+    const view = (recommendation: "create_pipeline" | "defer_pipeline" | "no_pipeline") =>
+      automationView({
+        sourceId: "source", runId: "run-1", runStatus: "staged",
+        workspace: { ...base, recommended_plan: { ...base.recommended_plan, pipeline_recommendation: recommendation } },
+        advancedGraph: false,
+      });
+
+    expect(view("defer_pipeline")).toBe("understanding");
+    expect(view("no_pipeline")).toBe("understanding");
+    expect(view("create_pipeline")).toBe("proposal");
+  });
+
+  it("still shows a proposal recorded before the recommendation field existed", () => {
+    // Absence is an old artifact, not a deferral; those were all proposals.
+    expect(automationView({
+      sourceId: "source", runId: "run-1", runStatus: "staged",
+      workspace: {
+        artifact_id: "workspace", run_id: "run-1", source_id: "source",
+        source_fingerprint: "fingerprint", intake_artifact_ids: [], schema_artifact_ids: [],
+        cache_reused: false, relationship_explanations: [], reports: [],
+        pipeline_layout: { version: "1", nodes: [], collapsed_branches: [] },
+        component_outputs: [], document_extractions: [], chat_history: [],
+        recommended_plan: {
+          proposal_id: "plan-old", status: "proposed", mode: "fully_auto",
+          configuration: {}, stage_directives: {}, checkpoint_stages: [],
+          auto_proceed_stages: [], max_retries_by_stage: {}, rationale: [], accepted: false,
+        },
+      },
+      advancedGraph: false,
+    })).toBe("proposal");
+  });
+
+  it("keeps a deferred plan out of the way of an accepted one", () => {
+    // Acceptance is a human decision and outranks the recommendation: a plan
+    // somebody accepted stays in the guided pipeline whatever it recommends.
+    expect(automationView({
+      sourceId: "source", runId: "run-1", runStatus: "staged",
+      workspace: {
+        artifact_id: "workspace", run_id: "run-1", source_id: "source",
+        source_fingerprint: "fingerprint", intake_artifact_ids: [], schema_artifact_ids: [],
+        cache_reused: false, relationship_explanations: [], reports: [],
+        pipeline_layout: { version: "1", nodes: [], collapsed_branches: [] },
+        component_outputs: [], document_extractions: [], chat_history: [],
+        recommended_plan: {
+          proposal_id: "plan-1", status: "accepted", mode: "fully_auto",
+          pipeline_recommendation: "defer_pipeline",
+          configuration: {}, stage_directives: {}, checkpoint_stages: [],
+          auto_proceed_stages: [], max_retries_by_stage: {}, rationale: [], accepted: true,
+        },
+      },
+      advancedGraph: false,
+    })).toBe("guided_pipeline");
+  });
+
   it("keeps the accepted proposal in the guided pipeline unless advanced editing is requested", () => {
     const base = {
       artifact_id: "workspace",

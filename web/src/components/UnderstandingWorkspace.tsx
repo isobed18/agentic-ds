@@ -259,7 +259,7 @@ function MeasuredType({ file }: { file: RoutedSourceFile }) {
   </div>;
 }
 
-function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
+export function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
   // #98: this list had no bound, so a sharded upload made the Yapısal veri panel
   // one unscrollable column with no way to find a file. Search + page size +
   // paging, mirroring the /datasets catalog (#72). State resets to page 1 when
@@ -279,7 +279,11 @@ function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-1.5">
         <input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={t("Search files…")} className="field !h-7 text-[11px]" />
-        <label className="flex items-center gap-1 text-[10px] text-ink-mute"><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="field !h-7 text-[10px]">{[25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}</select>{t("per page")}</label>
+        {/* #293: "per page" is one short word in English and two in Turkish
+            ("sayfa başına"). Without this the label broke across two lines
+            inside a 28px-tall row and read as clipped text. The parent already
+            wraps, so the label moves to its own line instead of splitting. */}
+        <label className="flex items-center gap-1 whitespace-nowrap text-[10px] text-ink-mute"><select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="field !h-7 text-[10px]">{[25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}</select>{t("per page")}</label>
       </div>
       {pager}
     </div>

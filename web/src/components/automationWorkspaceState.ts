@@ -129,6 +129,15 @@ export function automationView(input: {
   }
   const plan = input.workspace.recommended_plan;
   if (!plan) return "understanding";
+  // #316: a plan that recommends deferring is not a proposal to accept. Every
+  // planner reply persists a plan, so treating the record's existence as "the
+  // ML flow is ready" meant asking a question about the raw files unlocked the
+  // run controls -- including when the planner's own reply said to review the
+  // extracted PDF tables first. Absence of the field is an old record from
+  // before it existed, and those were all proposals.
+  if (plan.pipeline_recommendation === "defer_pipeline" || plan.pipeline_recommendation === "no_pipeline") {
+    return "understanding";
+  }
   return "proposal";
 }
 

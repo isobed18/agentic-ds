@@ -2,7 +2,7 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
+import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, RoutingDetails, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
@@ -329,5 +329,17 @@ describe("understanding node status placement", () => {
     // The prop chain is gone with it, not merely unrendered.
     expect(WORKSPACE_SOURCE).not.toContain("onReuseCache");
     expect(WORKSPACE_SOURCE).not.toContain("reuseCache");
+  });
+
+  it("keeps the page-size label on one line whatever the language calls it (#293)", () => {
+    // "per page" is one short word in English and two in Turkish -- "sayfa
+    // başına". The label sits in a 28px-tall flex row, so the Turkish pair
+    // broke across two lines and read as clipped text. The parent already
+    // wraps, so the label moves to its own line rather than splitting.
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{ name: "orders.csv", format: "csv", route: "structured", tableNames: [] }],
+    }));
+
+    expect(classNameFor(markup, "label")).toContain("whitespace-nowrap");
   });
 });
