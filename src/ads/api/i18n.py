@@ -1079,6 +1079,24 @@ _TR.update(
         "A required check did not pass": "Zorunlu bir kontrol geçmedi",
         "This step is high risk": "Bu adım yüksek riskli",
         "Nothing to flag": "İşaretlenecek bir şey yok",
+        # --- staged-run resume errors (#282)
+        "This run no longer exists; choose the dataset again.": (
+            "Bu koşu artık mevcut değil; veri setini yeniden seçin."
+        ),
+        "This run is waiting for your answer to a question, not for a restart.": (
+            "Bu koşu yeniden başlatılmayı değil, bir soruya cevabınızı bekliyor."
+        ),
+        "This run already finished and cannot be resumed.": (
+            "Bu koşu zaten tamamlandı ve devam ettirilemez."
+        ),
+        "This run was aborted and cannot be resumed.": (
+            "Bu koşu durduruldu ve devam ettirilemez."
+        ),
+        "This run failed and cannot be resumed; start a new run.": (
+            "Bu koşu başarısız oldu ve devam ettirilemez; yeni bir koşu başlatın."
+        ),
+        "This run is already in progress.": "Bu koşu zaten devam ediyor.",
+        "This run is not staged.": "Bu koşu evreleme aşamasında değil.",
     }
 )
 
