@@ -13,6 +13,7 @@ import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
 import { Badge, Empty, Pause, Play, Reload, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
+import { DocumentTableReview } from "./DocumentTableReview";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
@@ -325,7 +326,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
-        ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
+        ? <PlanSummary runId={runId} profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} onWorkspaceUpdated={onWorkspaceUpdated} />
         : selectedGroup?.nodes.length
           ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
           : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
@@ -362,7 +363,12 @@ function groupStatus(nodes: WorkflowNode[], runStatus: string, groupIndex: numbe
   return "pending";
 }
 
-function PlanSummary({ profile, workspace, structured, documents, candidateTables }: { profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; candidateTables: number }) {
+function PlanSummary({ runId, profile, workspace, structured, documents, candidateTables, onWorkspaceUpdated }: { runId: string; profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; candidateTables: number; onWorkspaceUpdated: (workspace: StagingWorkspace) => void }) {
+  // #311: the note below said candidates "remain review-only until explicitly
+  // promoted" and offered no way to promote them -- the only Review button was
+  // on the staging document panel, a canvas away. The same dialog opens here.
+  const extractionId = workspace.document_extractions?.at(-1)?.artifact_id;
+  const [reviewing, setReviewing] = useState(false);
   const plan = workspace.recommended_plan!;
   const config = plan.configuration;
   const target = String(config.target_column ?? "");
@@ -371,7 +377,11 @@ function PlanSummary({ profile, workspace, structured, documents, candidateTable
   const baseGrain = Array.isArray(config.base_grain) ? config.base_grain.map(String).join(", ") : "—";
   return <div className="space-y-5">
     <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={structured} tone="ok" empty={t("No trusted structured input is selected.")} /></section>
-    {documents.length > 0 && <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><FileRoles title={t("Document context")} files={documents} tone="neutral" empty="" /><p className="mt-3 text-[10px] leading-relaxed text-ink-mute">{candidateTables ? t("{count} extracted table candidates remain review-only until explicitly promoted.", { count: candidateTables }) : t("Documents inform understanding but do not silently become training rows.")}</p></section>}
+    {documents.length > 0 && <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><FileRoles title={t("Document context")} files={documents} tone="neutral" empty="" /><p className="mt-3 text-[10px] leading-relaxed text-ink-mute">{candidateTables ? t("{count} extracted table candidates remain review-only until explicitly promoted.", { count: candidateTables }) : t("Documents inform understanding but do not silently become training rows.")}</p>{candidateTables > 0 && extractionId && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: candidateTables })}</button>}</section>}
+    {/* Promoting turns candidates into real tables, so the count above and the
+        ML inputs beside it are both stale afterwards. Re-read the workspace
+        rather than leaving the panel describing what was true before. */}
+    {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} onClose={() => setReviewing(false)} onPromoted={() => { void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("ML objective")}</p><p className="mt-2 text-sm font-semibold text-ink">{objective}</p>{target && <p className="mt-1 text-[11px] text-ink-mute">{t("Target")}: {target}</p>}</section>
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Execution scope")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{t("Run the established base pipeline through integration, analysis, training, evaluation, and reporting.")}</p>{plan.checkpoint_stages.length > 0 ? <div className="mt-3 flex flex-wrap gap-1.5">{plan.checkpoint_stages.map((stage) => <Badge key={stage} tone="warn">{t("Review after {stage}", { stage: stage.replaceAll("_", " ") })}</Badge>)}</div> : <p className="mt-2 text-[10px] text-ink-faint">{t("No optional human checkpoints; hard safety gates still apply.")}</p>}</section>
     {plan.rationale.length > 0 && <section className="rounded-xl bg-violet-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Planner rationale")}</p><ul className="mt-2 space-y-2">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></section>}
