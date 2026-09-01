@@ -328,7 +328,7 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
     // The staging run is already "staged" while the plan is unaccepted, so
     // every run control has to be gated on the decision, not on the status.
     expect(SOURCE).toContain("const canStart = accepted && activeStatus ===");
-    expect(SOURCE).toContain('const active = accepted && ["running", "resuming"]');
+    expect(SOURCE).toContain("const active = accepted && isRunActive(activeStatus)");
     expect(SOURCE).toContain('const failed = accepted && ["failed", "interrupted", "aborted"]');
     expect(SOURCE).toContain('const complete = accepted && activeStatus === "completed"');
   });
