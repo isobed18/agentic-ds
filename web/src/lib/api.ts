@@ -120,6 +120,11 @@ export interface HumanPrompt {
    *  built in English on the server; the card needs the KIND to render Turkish. */
   question_kind?: "problem" | "checkpoint" | "no_output";
   context_summary: string;
+  /** #262: suspect columns behind a leakage escalation, empty otherwise. */
+  leakage_suspect_columns?: string[];
+  /** Subset of leakage_suspect_columns that are target-correlation suspects
+   *  rather than structural ones (labelling only; both still get offered). */
+  leakage_target_columns?: string[];
   options: { option_id: string; label: string; consequence: string; downstream_effect?: string | null; recommended?: boolean }[];
   allows_free_text?: boolean;
 }

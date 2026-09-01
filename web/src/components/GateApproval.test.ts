@@ -122,6 +122,62 @@ describe("the gate decision card in Turkish (#192)", () => {
   });
 });
 
+describe("the leakage gate offers columns to drop instead of free text (#262)", () => {
+  it("renders a default-checked checkbox per suspect column, labelled by kind", () => {
+    const decision = {
+      stage_id: "leakage_audit",
+      attempt: 3,
+      verdict: "escalate",
+      reason_code: "leakage_unresolved",
+      triggered_rules: ["leakage_unresolved"],
+      human_prompt: {
+        stage_id: "leakage_audit",
+        question: "RAW",
+        context_summary: "",
+        leakage_suspect_columns: ["total_comp_ytd", "followup_missing"],
+        leakage_target_columns: ["total_comp_ytd"],
+        options: [{ option_id: "retry", label: "Send back", consequence: "c" }],
+      },
+    } as unknown as GateDecision;
+
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+
+    expect(markup).toContain("Çıkarılacak sütunlar");
+    expect(markup).toContain("total_comp_ytd");
+    expect(markup).toContain("followup_missing");
+    expect(markup).toContain("hedef sızıntısı");
+    expect(markup).toContain("engelleyici sızıntı");
+    // Both boxes start checked, matching what the auto-retry would have dropped.
+    expect((markup.match(/type="checkbox"/g) ?? []).length).toBe(2);
+    expect((markup.match(/checked=""/g) ?? []).length).toBe(2);
+  });
+
+  it("shows no drop-columns section for an escalation without suspect columns", () => {
+    const decision = {
+      stage_id: "evaluation",
+      attempt: 1,
+      verdict: "escalate",
+      reason_code: "model_below_baseline",
+      triggered_rules: [],
+      human_prompt: {
+        stage_id: "evaluation",
+        question: "RAW",
+        context_summary: "",
+        options: [{ option_id: "retry", label: "Send back", consequence: "c" }],
+      },
+    } as unknown as GateDecision;
+
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+
+    expect(markup).not.toContain("Çıkarılacak sütunlar");
+    expect(markup).not.toContain('type="checkbox"');
+  });
+});
+
 describe("a gate on a stage that produced nothing (#198)", () => {
   it("explains why approve is missing instead of just dropping it", () => {
     const decision = {

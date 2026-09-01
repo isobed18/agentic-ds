@@ -154,6 +154,9 @@ def build_human_prompt(
     """
     reasons = "\n".join(f"- {outcome.message}" for outcome in outcomes)
     policy_only = {o.reason_code for o in outcomes} <= POLICY_ONLY_REASONS
+    # #262: surface the leakage rule's own suspect-column data so the card can
+    # offer checkboxes instead of asking for hand-typed `drop_feature:` syntax.
+    leakage_outcome = next((o for o in outcomes if o.correction_columns), None)
 
     # Uretilmemis bir ciktiyi onaylamak MUMKUN degil: sonraki asama onu zorunlu
     # girdi olarak istiyor ve kosum `MissingArtifactError` ile patliyor. Olculen
@@ -225,6 +228,12 @@ def build_human_prompt(
             "no_output" if produced_nothing else "checkpoint" if policy_only else "problem"
         ),
         context_summary=f"{context_summary}\n\nWhy this stopped:\n{reasons}"[:1500],
+        leakage_suspect_columns=(
+            list(leakage_outcome.correction_columns) if leakage_outcome else []
+        ),
+        leakage_target_columns=(
+            sorted(leakage_outcome.target_leakage_columns) if leakage_outcome else []
+        ),
         options=options,
         allows_free_text=True,
         artifacts_to_review=artifact_ids,

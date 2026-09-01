@@ -155,6 +155,39 @@ class TestHardConstraintsAreUnbypassable:
         assert decision.verdict is GateVerdict.ESCALATE
         assert decision.human_prompt is not None
 
+    def test_unresolved_leakage_escalation_carries_its_suspect_columns(self) -> None:
+        """#262: the human should not have to hand-type `drop_feature: <col>`.
+
+        Once retries are exhausted, the escalation must carry the exact same
+        suspect-column data the automatic retry already computed, split by
+        whether each is a target-correlation suspect or a structural one --
+        the same distinction the auto-retry instruction comment draws.
+        """
+        decision = _decide(
+            signals=QualitySignals(
+                max_target_correlation=0.99,
+                target_relationship_suspect_columns=["total_comp_ytd"],
+                structural_leakage_suspect_columns=["followup_missing"],
+            ),
+            history=StageHistory(attempts=3),
+            stage=_stage(max_attempts=3),
+        )
+        assert decision.verdict is GateVerdict.ESCALATE
+        prompt = decision.human_prompt
+        assert prompt is not None
+        assert set(prompt.leakage_suspect_columns) == {"total_comp_ytd", "followup_missing"}
+        assert prompt.leakage_target_columns == ["total_comp_ytd"]
+
+    def test_non_leakage_escalation_carries_no_suspect_columns(self) -> None:
+        decision = _decide(
+            stage=_stage(id="evaluation", risk_class=RiskClass.HIGH),
+            signals=QualitySignals(best_score=0.61, naive_baseline_score=0.63),
+            profile=CHECKPOINTED,
+        )
+        assert decision.human_prompt is not None
+        assert decision.human_prompt.leakage_suspect_columns == []
+        assert decision.human_prompt.leakage_target_columns == []
+
 
 class TestPrecedence:
     def test_hard_rule_determines_the_verdict(self) -> None:
