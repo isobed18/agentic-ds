@@ -2,10 +2,12 @@ import { t } from "../lib/i18n";
 /**
  * Run notifications.
  *
- * Derived from the run list rather than maintained separately: a bell that
- * keeps its own notion of "needs attention" drifts from what the runs actually
- * say, and then the badge lies. Everything here is read from `/api/runs`, which
- * already reports status and any pending question.
+ * Derived from what the server already reports rather than maintained
+ * separately: a bell that keeps its own notion of "needs attention" drifts from
+ * what the runs actually say, and then the badge lies. Everything here is read
+ * from `/api/runs`, which reports status and any pending question, and
+ * `/api/home`, whose recent list carries the models and reports runs produced
+ * along with the project and automation that own them.
  *
  * Seen state is per browser and deliberately shallow — this marks which items
  * you have already looked at, not which decisions you have made. The decision
@@ -17,23 +19,14 @@ import { t } from "../lib/i18n";
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type RunSummary } from "../lib/api";
-import { reasonLabel } from "../lib/status";
+import { api } from "../lib/api";
+import { itemsFrom, type NotificationItem } from "./notificationItems";
 import { dismissAll, dismissOne, pruneDismissed, visibleItems } from "./notificationDismissal";
 import { cx } from "./ui";
 
 const SEEN_KEY = "ads.notifications.seen";
 const DISMISSED_KEY = "ads.notifications.dismissed";
 const POLL_MS = 8000;
-
-interface Item {
-  id: string;
-  runId: string;
-  tone: "stop" | "warn" | "ok";
-  title: string;
-  detail: string;
-  at?: string;
-}
 
 function readIds(key: string): Set<string> {
   try {
@@ -43,46 +36,8 @@ function readIds(key: string): Set<string> {
   }
 }
 
-function itemsFrom(runs: RunSummary[]): Item[] {
-  const items: Item[] = [];
-  for (const run of runs) {
-    const label = run.label ?? run.dataset ?? run.run_id;
-    if (run.pending_question) {
-      items.push({
-        // Keyed by stage and attempt so a second question on the same run is a
-        // new notification rather than a silent overwrite.
-        id: `${run.run_id}:ask:${run.pending_question.stage_id}:${run.pending_question.attempt}`,
-        runId: run.run_id,
-        tone: "stop",
-        title: t("Waiting for you"),
-        detail: `${label} — ${reasonLabel(run.pending_question.reason_code)}`,
-        at: run.last_activity,
-      });
-    } else if (run.status === "completed") {
-      items.push({
-        id: `${run.run_id}:done`,
-        runId: run.run_id,
-        tone: "ok",
-        title: t("Run finished"),
-        detail: label,
-        at: run.last_activity,
-      });
-    } else if (run.status === "failed") {
-      items.push({
-        id: `${run.run_id}:failed`,
-        runId: run.run_id,
-        tone: "warn",
-        title: t("Run stopped with an error"),
-        detail: label,
-        at: run.last_activity,
-      });
-    }
-  }
-  return items.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
-}
-
 export function Notifications() {
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState<Set<string>>(() => readIds(SEEN_KEY));
   const [dismissed, setDismissed] = useState<Set<string>>(() => readIds(DISMISSED_KEY));
@@ -91,7 +46,11 @@ export function Notifications() {
 
   const refresh = useCallback(async () => {
     try {
-      const next = itemsFrom(await api.runs());
+      // One interval for both. The artifact events are a bonus on top of the
+      // run events, so a failing /api/home degrades to the run-only panel this
+      // was rather than blanking it.
+      const [runs, home] = await Promise.all([api.runs(), api.home().catch(() => null)]);
+      const next = itemsFrom(runs, home?.recent ?? []);
       setItems(next);
       // Pruned only after a poll succeeded: pruning against an empty list
       // because the API was briefly down would resurrect everything cleared.
@@ -189,7 +148,7 @@ export function Notifications() {
                   className="flex items-start border-b border-line-soft last:border-b-0 hover:bg-surface-sunken"
                 >
                   <button
-                    onClick={() => { setOpen(false); navigate(`/projects?view=runs&run=${i.runId}`); }}
+                    onClick={() => { setOpen(false); navigate(i.href); }}
                     className="flex min-w-0 flex-1 items-start gap-3 py-3 pl-4 text-left"
                   >
                     <span
