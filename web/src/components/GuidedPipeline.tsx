@@ -204,7 +204,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // "staged" while its plan is still a proposal, so without this the toolbar
   // would offer Run for a pipeline nobody had agreed to yet.
   const canStart = accepted && activeStatus === "staged";
-  const active = accepted && ["running", "resuming"].includes(activeStatus);
+  const active = accepted && isRunActive(activeStatus);
   const currentStage = String((progress as Record<string, unknown> | null)?.current_stage ?? "");
   const failed = accepted && ["failed", "interrupted", "aborted"].includes(activeStatus);
   const complete = accepted && activeStatus === "completed";
