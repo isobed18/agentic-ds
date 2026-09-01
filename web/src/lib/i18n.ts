@@ -142,15 +142,20 @@ const TR: Record<string, string> = {
   "Intake": "Veri Alma",
   "Prepare ML data": "ML verisini hazırla",
   "Define the objective": "Hedefi tanımla",
-  "Analyze and validate": "Analiz et ve doğrula",
+  "Choose validation": "Doğrulamayı seç",
+  "Leakage audit": "Sızıntı denetimi",
   "Build and split": "Öznitelik üret ve böl",
   "Train and evaluate": "Eğit ve değerlendir",
   "Combine approved tables into one verified modeling dataset.":
     "Onaylanan tabloları doğrulanmış tek bir modelleme veri kümesinde birleştirir.",
   "Choose the prediction goal and confirm that the available data can support it.":
     "Tahmin hedefini seçer ve mevcut verilerin bunu destekleyebildiğini doğrular.",
-  "Measure patterns, choose validation, and check for leakage before training.":
-    "Örüntüleri ölçer, doğrulama yöntemini seçer ve eğitimden önce sızıntıyı denetler.",
+  "Decide how training and holdout data are separated to keep evaluation honest.":
+    "Değerlendirmenin dürüst kalması için eğitim ve holdout verisinin nasıl ayrılacağına karar verir.",
+  "Measure distributions, missingness, and relationships before training.":
+    "Eğitimden önce dağılımları, eksiklikleri ve ilişkileri ölçer.",
+  "Check candidate features for information that would make results unrealistically good.":
+    "Sonuçları gerçek dışı derecede iyi gösterecek bilgiler için aday öznitelikleri denetler.",
   "Create model-ready features and divide the data without contaminating evaluation.":
     "Modele hazır öznitelikler oluşturur ve değerlendirmeyi kirletmeden veriyi böler.",
   "Train candidate models and compare them on held-out data.":

@@ -162,7 +162,9 @@ describe("guided pipeline node descriptions (#168)", () => {
       (match) => match[1],
     );
 
-    expect(descriptions).toHaveLength(6);
+    // #212 split the "Analyze and validate" group into one node each for
+    // validation_strategy, eda and leakage_audit, taking the count from 6 to 8.
+    expect(descriptions).toHaveLength(8);
     expect(descriptions.every((description) => description.endsWith("."))).toBe(true);
     expect(SOURCE).toContain("subtitle={t(group.description)}");
     expect(SOURCE).not.toContain("group.nodes.map((node) => t(node.label");
