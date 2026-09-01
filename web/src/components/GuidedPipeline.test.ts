@@ -208,12 +208,21 @@ describe("live progress on the canvas (#194)", () => {
     expect(SOURCE).toContain('t("Press Run above to start")');
   });
 
-  it("animates the arrows into and out of the running stage", () => {
+  it("animates the arrow into the running stage, and only that one (#313)", () => {
     // The arrow into the first ML group was hardcoded inert. #214 deleted the
     // "Data understood" tile it used to leave; it leaves "Proposed plan" now.
+    //
+    // #313: this test used to pin the inter-group rule
+    // `status === "running" || … || groupStatuses[index + 1] === "running"`,
+    // which lit the arrow behind a running group as well as the one in front
+    // of it -- the defect itself, asserted. One rule now decides every arrow,
+    // and `pipelineArrows.test.ts` holds the behaviour.
     expect(SOURCE).not.toContain("<Arrow active={false} complete />");
-    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete={accepted}');
-    expect(SOURCE).toContain('groupStatuses[index + 1] === "running"');
+    expect(SOURCE).toContain('import { activeArrows } from "./pipelineArrows"');
+    expect(SOURCE).toContain("const arrowActive = activeArrows(groupStatuses)");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[0]} complete={accepted}");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[index + 1]}");
+    expect(SOURCE).not.toContain('groupStatuses[index + 1] === "running"');
   });
 
   it("translates the new waiting strings", () => {
