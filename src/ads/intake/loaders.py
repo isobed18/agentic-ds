@@ -324,6 +324,47 @@ def _sniff_csv(path: Path) -> tuple[str, str]:
     return encoding, delimiter
 
 
+_LEADING_ZERO = re.compile(r"^0\d+$")
+
+
+def _leading_zero_columns(
+    path: Path, frame: pd.DataFrame, *, encoding: str, delimiter: str
+) -> list[str]:
+    """Columns pandas read as whole numbers whose TEXT began with a zero.
+
+    `007` is not the number seven. Pandas reads it as 7 whatever the quoting,
+    and by the time the frame exists the zeros are gone, so nothing downstream
+    can tell. Measured consequence: the same key stays text in a Parquet file,
+    which carries its types in the schema, and `detect_relationships` then
+    reports two obviously-joined tables as unrelated -- zero relationships, no
+    warning (#281).
+
+    Only the integer columns are re-read, and only as text, so this costs one
+    narrow pass rather than parsing the file twice. Reading a sample instead
+    would be cheaper still and would miss a file whose first zero-padded value
+    is far down; a source that loses a join is not worth that trade.
+    """
+    integer_columns = [
+        column for column in frame.columns if pd.api.types.is_integer_dtype(frame[column])
+    ]
+    if not integer_columns:
+        return []
+    raw = pd.read_csv(
+        path,
+        encoding=encoding,
+        sep=delimiter,
+        skipinitialspace=True,
+        usecols=integer_columns,
+        dtype=str,
+        keep_default_na=False,
+    )
+    return [
+        column
+        for column in integer_columns
+        if any(_LEADING_ZERO.match(value.strip()) for value in raw[column])
+    ]
+
+
 def load_csv(path: str | Path, *, name: str | None = None) -> LoadedTable:
     path = Path(path)
     encoding, delimiter = _sniff_csv(path)
@@ -360,6 +401,25 @@ def load_csv(path: str | Path, *, name: str | None = None) -> LoadedTable:
     frame = pd.read_csv(
         path, encoding=encoding, sep=delimiter, low_memory=False, skipinitialspace=True
     )
+    # Re-read the columns whose zeros pandas ate, as text. The zeros ARE the
+    # identifier -- a member number, an invoice number, a postal code -- and
+    # losing them costs the join, not just the display (#281).
+    padded = _leading_zero_columns(path, frame, encoding=encoding, delimiter=delimiter)
+    if padded:
+        frame = pd.read_csv(
+            path,
+            encoding=encoding,
+            sep=delimiter,
+            low_memory=False,
+            skipinitialspace=True,
+            dtype=dict.fromkeys(padded, str),
+        )
+        table.add_issue(
+            "warn",
+            "leading_zeros_preserved",
+            f"Kept {sorted(padded)} as text: their values begin with a zero, which a "
+            "number cannot carry. Verify these are identifiers rather than measurements.",
+        )
     frame, norm_issues = normalize_columns(frame)
     frame, empty_issues = _drop_empty(frame)
     frame, mixed_issues = _resolve_mixed_types(frame)
