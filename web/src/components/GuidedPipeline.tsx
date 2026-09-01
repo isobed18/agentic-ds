@@ -10,7 +10,7 @@ import {
   type WorkflowNode,
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
-import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel } from "../lib/status";
+import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
 import { Badge, Empty, Pause, Play, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
@@ -114,7 +114,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         setWorkflow(nextWorkflow);
         setProgress(nextProgress);
         const status = String(nextProgress.status ?? "");
-        if (["queued", "staging", "running", "resuming"].includes(status)) timer = window.setTimeout(refresh, 1500);
+        if (isRunActive(status)) timer = window.setTimeout(refresh, 1500);
       } catch (caught) {
         if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
       }
