@@ -247,7 +247,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
             top-right global source picker and upload button are intentionally gone. */}
         <div className="ml-auto"><LanguagePicker /></div>
       </header>
-      {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+      {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {/* A stage gate that escalated to a human: shown here, above the run, so
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}

@@ -21,7 +21,7 @@ export function YourData({ onOpen }: { onOpen: (sourceId: string) => void }) {
           {t("Sources stay separate from staging. Open one when you want intake, document understanding, schema discovery, reports, and planner chat.")}
         </p>
       </header>
-      {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{error}</p>}
+      {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {sources === null && <Spinner label={t("Loading datasets…")} />}
       {sources?.length === 0 && <Empty title={t("No data yet")} hint={t("Open Staging to upload structured files or PDFs.")} />}
       {sources && sources.length > 0 && (

@@ -59,7 +59,7 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Complete a run through the training stage to save a model.")} />;
   return (
     <>
-      {error && <p className="mb-3 text-xs text-stop-700">{error}</p>}
+      {error && <p className="mb-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {models.map((model) => (
           <article key={model.artifact_id} className="card px-4 py-3.5">
@@ -120,7 +120,7 @@ function ReportsView({ contents, onChanged }: { contents: AutomationContents | n
   if (!reports.length) return <Empty title={t("No reports yet")} hint={t("Reports appear once a run reaches the report stage.")} />;
   return (
     <>
-      {error && <p className="mb-3 text-xs text-stop-700">{error}</p>}
+      {error && <p className="mb-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="space-y-2">
         {reports.map((report) => (
           <article key={report.artifact_id} className="card flex items-center gap-3 px-4 py-3">

@@ -112,7 +112,7 @@ export function LaunchDialog({
             {t("Reuse a previous analysis of unchanged files")}
           </label>
           {loading && <Spinner label={t("Loading datasets…")} />}
-          {error && <p className="mb-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+          {error && <p className="mb-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
           <div className="grid gap-2.5">
             {sources.map((s) => {

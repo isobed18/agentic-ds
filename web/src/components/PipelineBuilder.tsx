@@ -333,7 +333,7 @@ export function PipelineBuilder({ runId = null, sourceId = null, baseArtifactId 
         <button type="button" className="btn-ghost !py-1.5 text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Planner")}</button>
         <button type="button" className="btn-primary !py-1.5 text-xs" onClick={() => void saveBlueprint()} disabled={busy || saved}>{saved ? t("Saved") : t("Save workflow")}</button>
       </header>
-      {error && <p className="absolute left-4 top-16 z-30 max-w-xl rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700 shadow-card">{error}</p>}
+      {error && <p className="absolute left-4 top-16 z-30 max-w-xl rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700 shadow-card">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="min-h-0 flex-1">
         {nodes.length === 0 ? <div className="grid h-full place-items-center"><Spinner label={t("Preparing workflow…")} /></div> : (
           <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} onNodeClick={(_, node) => { if (node.type === "pipelineComponent") setSelected(node.id); }} onNodeDragStop={(_, node) => { if (node.type === "pipelineComponent") void persistLayout({ id: node.id, x: node.position.x, y: node.position.y }); }} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} {...WORKFLOW_INTERACTION} zoomActivationKeyCode={["Control", "Meta"]} deleteKeyCode={collapsedBranches.size ? null : ["Backspace", "Delete"]} aria-label={t("Accepted data science workflow")}>

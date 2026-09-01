@@ -289,7 +289,7 @@ export function PlannerPanel({
             </div>
           ))}
           {busy && <Spinner label={t("Planner is thinking…")} />}
-          {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+          {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
           <div ref={endRef} />
         </div>
       </div>

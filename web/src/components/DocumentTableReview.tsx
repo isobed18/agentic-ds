@@ -99,7 +99,7 @@ export function DocumentTableReview({
           <button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close")} onClick={onClose}>×</button>
         </div>
 
-        {error && <p role="alert" className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+        {error && <p role="alert" className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
         {promoted !== null ? (
           <div className="mt-5 rounded-xl border border-ok-200 bg-ok-50 px-4 py-4">

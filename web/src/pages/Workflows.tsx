@@ -234,7 +234,7 @@ export function Workflows() {
           </div>
         </div>
 
-        {error && <p className="mx-6 mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+        {error && <p className="mx-6 mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
         <PipelineRail nodes={nodes} selected={stageId} onSelect={setStageId} pseudoBranches={pseudoBranches} />
         <StageWorkspace
