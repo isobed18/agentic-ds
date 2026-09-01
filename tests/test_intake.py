@@ -325,6 +325,52 @@ class TestLoaders:
         assert pd.api.types.is_integer_dtype(table.frame["tutar"])
         assert "leading_zeros_preserved" not in {i.code for i in table.issues}
 
+    def test_a_formula_column_is_not_called_empty(self, tmp_path: Path) -> None:
+        """The column is full of formulas; the run said "all-null" (#288).
+
+        Someone looking at that workbook sees numbers. Being told the column was
+        empty sends them to the column instead of to how the file was written.
+        """
+        from openpyxl import Workbook
+
+        path = tmp_path / "formullu.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["a", "b", "toplam"])
+        ws.append([1, 2, "=A2+B2"])
+        ws.append([3, 4, "=A3+B3"])
+        wb.save(path)
+
+        table = load_excel(path)[0]
+
+        codes = {i.code for i in table.issues}
+        assert "formula_columns_without_results" in codes
+        assert "empty_columns_dropped" not in codes, "the old message was not true"
+        detail = next(i.detail for i in table.issues if i.code == "formula_columns_without_results")
+        assert "toplam" in detail
+        assert "re-save" in detail, "a message with no next step is half a message"
+
+    def test_a_genuinely_empty_column_is_still_called_empty(self, tmp_path: Path) -> None:
+        """Guards the fix: not every dropped column is a formula.
+
+        Renaming the message unconditionally would hide the ordinary case, which
+        is a real and different thing to tell someone about.
+        """
+        from openpyxl import Workbook
+
+        path = tmp_path / "bos_kolon.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["a", "b", "kullanilmayan"])
+        ws.append([1, 2, None])
+        ws.append([3, 4, None])
+        wb.save(path)
+
+        table = load_excel(path)[0]
+
+        assert "empty_columns_dropped" in {i.code for i in table.issues}
+        assert "formula_columns_without_results" not in {i.code for i in table.issues}
+
     def test_empty_sheet_reported_not_crashed(self, tmp_path: Path) -> None:
         path = tmp_path / "book.xlsx"
         with pd.ExcelWriter(path, engine="openpyxl") as writer:
