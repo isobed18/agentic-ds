@@ -1092,6 +1092,16 @@ export const api = {
         configuration: pipelineBlueprint ? { pipeline_blueprint: pipelineBlueprint } : undefined,
       }),
     }),
+  /**
+   * Re-runs an automation from the seed its most recent run recorded, rather
+   * than a fresh random one (backend `rerun_with_same_seed`). Returns a new
+   * staged run, same shape as `stageRun` -- the saved graph and the run being
+   * re-run are both left untouched (#247).
+   */
+  rerun: (runId: string) =>
+    request<{ run_id: string; status: string; profile: SourceProfile }>(`/api/runs/${runId}/rerun`, {
+      method: "POST",
+    }),
   stagingWorkspace: (runId: string) =>
     request<StagingWorkspace>(`/api/runs/${runId}/staging`),
   stagingComponents: () =>

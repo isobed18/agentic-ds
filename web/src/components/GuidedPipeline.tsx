@@ -11,7 +11,7 @@ import {
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
-import { Badge, Empty, Pause, Play, cx } from "./ui";
+import { Badge, Empty, Pause, Play, Reload, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
@@ -48,6 +48,11 @@ interface GuidedPipelineProps {
   onRun: (runMode: "fully_auto" | "manual", targetColumn: string | null) => void;
   onPause: () => void;
   onRetry: () => void;
+  // #247: runs the current automation again from its recorded seed as a new
+  // execution, deliberately -- not framed as retrying a failure the way
+  // onRetry is, and reachable without leaving the workspace for Execution
+  // history.
+  onRerun: () => void;
   onAdvanced: () => void;
   onOpenExecutions: () => void;
 }
@@ -68,7 +73,7 @@ function local(value: { en: string; tr: string }): string {
  * on screen. One canvas (`CanvasSurface`, which has zoom; `PanCanvas` did not),
  * one selection, one docked panel, one toolbar.
  */
-export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onAdvanced, onOpenExecutions }: GuidedPipelineProps) {
+export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onRerun, onAdvanced, onOpenExecutions }: GuidedPipelineProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<RunProgressSnapshot | null>(null);
   // One selection for both halves of the graph. Staging ids ("discovery",
@@ -245,6 +250,10 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}
         {accepted && !canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
+        {/* #247: runs the current automation again, deliberately -- as a new
+            execution recorded in Execution history, not as recovery from a
+            failure the way Retry above is framed. */}
+        {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-surface/95 text-ink-soft shadow-card backdrop-blur transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
       </div>
       <div className="flex items-center gap-2">
         <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>

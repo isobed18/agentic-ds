@@ -184,6 +184,18 @@ export function Play({ label, className }: { label?: string; className?: string 
   );
 }
 
+// #247: the re-run control needs the same stroked-glyph treatment as
+// Play/Pause above -- not a text character, which would repeat the #245
+// literal-glyph problem those two were written to fix.
+export function Reload({ label, className }: { label?: string; className?: string }) {
+  return (
+    <VisibilityGlyph label={label} className={className}>
+      <path d="M15.25 6.25A6 6 0 1 0 16 10" />
+      <path d="M15.25 3v3.5h-3.5" />
+    </VisibilityGlyph>
+  );
+}
+
 export function Pause({ label, className }: { label?: string; className?: string }) {
   return (
     <VisibilityGlyph label={label} className={className}>

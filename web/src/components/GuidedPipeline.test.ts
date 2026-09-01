@@ -64,7 +64,7 @@ describe("the run control (#197)", () => {
     // uses the same stroked 20x20 chrome as everything else, and the primary
     // control is its own row above a separate, quieter secondary bar rather than
     // one chip among five.
-    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, cx } from "./ui"');
+    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, Reload, cx } from "./ui"');
     expect(SOURCE).toContain("><Play />");
     expect(SOURCE).toContain("><Pause />");
     expect(SOURCE).not.toContain('<span aria-hidden="true">▶</span>');
@@ -79,6 +79,17 @@ describe("the run control (#197)", () => {
     // non-staged polled status over the pre-click "staged".
     expect(SOURCE).toContain("}, [runId, runStatus, accepted]);");
     expect(SOURCE).toContain('polledStatus && polledStatus !== "staged" ? polledStatus : String(runStatus');
+  });
+});
+
+describe("re-run control (#247)", () => {
+  it("exposes a vector reload icon that fires onRerun, not a text glyph or a route through Execution history", () => {
+    expect(SOURCE).toContain("onRerun: () => void;");
+    expect(SOURCE).toContain("onClick={onRerun}");
+    expect(SOURCE).toContain("><Reload /></button>");
+    expect(PAGE_SOURCE).toContain("async function rerunAutomation()");
+    expect(PAGE_SOURCE).toContain("const staged = await api.rerun(runId);");
+    expect(PAGE_SOURCE).toContain("onRerun={() => void rerunAutomation()}");
   });
 });
 
