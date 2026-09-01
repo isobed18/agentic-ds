@@ -53,24 +53,29 @@ from ads.agents.validation_strategy import (
 )
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.base import ArtifactType
-from ads.contracts.datacard import DataCard, SemanticType
+from ads.contracts.datacard import ColumnProfile, DataCard, SemanticType
 from ads.contracts.gates import QualitySignals
 from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal, IntegrationTrial
 from ads.contracts.problem import (
+    Metric,
+    ProblemCandidateProposal,
     ProblemDefinition,
     ProblemDiscoveryProposal,
+    TaskType,
 )
 from ads.contracts.validation import (
     ValidationSignals,
     ValidationStrategy,
     ValidationStrategyProposal,
 )
+from ads.discovery.support import MAX_CLASSES
 from ads.intake import detect_primary_keys, detect_relationships
 from ads.llm import StructuredLLM
 from ads.orchestration import RunState, StageResult
 from ads.pipeline.stages import (
     ABT_FRAME_KEY,
     EXECUTION_BACKEND_KEY,
+    QUICK_PROBLEM_KEY,
     SOURCE_CARDS_KEY,
     SOURCE_FRAMES_KEY,
     STAGE_DIRECTIVES_KEY,
@@ -461,6 +466,86 @@ def _abt_frame(state: RunState) -> pd.DataFrame:
     return frame
 
 
+#: Deterministic per-task default, matched to what the ProblemDiscoveryAgent's
+#: own system prompt already tells the LLM to prefer -- an imbalance-aware
+#: metric over plain accuracy, and silhouette for the unsupervised case.
+_QUICK_METRIC_BY_TASK: dict[TaskType, Metric] = {
+    TaskType.REGRESSION: Metric.RMSE,
+    TaskType.BINARY_CLASSIFICATION: Metric.ROC_AUC,
+    TaskType.MULTICLASS_CLASSIFICATION: Metric.BALANCED_ACCURACY,
+    TaskType.ANOMALY_DETECTION: Metric.SILHOUETTE,
+}
+
+
+def _infer_supervised_task_type(profile: ColumnProfile) -> TaskType:
+    """Read a task type off a target column's own measured shape (#241).
+
+    Same rule the ProblemDiscoveryAgent's system prompt states for the LLM to
+    follow: 2 distinct values is binary, 3+ is multiclass, continuous numeric is
+    regression. Falls back to regression for a shape that fits none of those --
+    ``compute_support`` then raises the mismatch as a named blocking reason on
+    the candidate rather than this function raising and failing the stage, so
+    the human sees why instead of the run just breaking.
+    """
+    if profile.semantic_type in (SemanticType.NUMERIC_CONTINUOUS, SemanticType.NUMERIC_DISCRETE):
+        return TaskType.REGRESSION
+    if profile.semantic_type is SemanticType.BOOLEAN:
+        return TaskType.BINARY_CLASSIFICATION
+    if profile.semantic_type is SemanticType.CATEGORICAL:
+        if profile.n_unique == 2:
+            return TaskType.BINARY_CLASSIFICATION
+        if 3 <= profile.n_unique <= MAX_CLASSES:
+            return TaskType.MULTICLASS_CLASSIFICATION
+    return TaskType.REGRESSION
+
+
+def _quick_problem_proposal(selection: dict[str, Any], card: DataCard) -> ProblemCandidateProposal:
+    """Build the one candidate a quick-pick selection names, with no LLM call.
+
+    Mirrors what the agent proposes for the same shape of target, so the
+    ``ProblemDefinition`` this produces is indistinguishable downstream from one
+    a human confirmed out of the agent's proposals (#241).
+    """
+    kind = selection.get("kind")
+    if kind == "flag_anomalies":
+        return ProblemCandidateProposal(
+            title="Flag unusual rows",
+            title_tr="Alışılmadık satırları işaretle",
+            task_type=TaskType.ANOMALY_DETECTION,
+            target_column=None,
+            business_rationale=(
+                "Surfaces rows that deviate from the rest of the measured data, for manual "
+                "review rather than a labelled prediction."
+            ),
+            business_rationale_tr=(
+                "Etiketli bir tahmin yerine, ölçülen verinin geri kalanından sapan satırları "
+                "manuel inceleme için ortaya çıkarır."
+            ),
+            evidence_columns=[],
+            primary_metric=Metric.SILHOUETTE,
+        )
+    if kind == "predict_column":
+        target_column = str(selection.get("target_column") or "")
+        profile = card.column(target_column)
+        task_type = _infer_supervised_task_type(profile) if profile else TaskType.REGRESSION
+        return ProblemCandidateProposal(
+            title=f"Predict {target_column}"[:120],
+            title_tr=f"{target_column} sütununu tahmin et"[:120],
+            task_type=task_type,
+            target_column=target_column,
+            business_rationale=(
+                f"Predicts {target_column} for each row so downstream decisions can act on it."
+            )[:800],
+            business_rationale_tr=(
+                f"Her satır için {target_column} sütununu tahmin ederek sonraki kararların "
+                "buna göre alınmasını sağlar."
+            )[:800],
+            evidence_columns=[target_column] if profile else [],
+            primary_metric=_QUICK_METRIC_BY_TASK[task_type],
+        )
+    raise ValueError(f"unknown quick problem selection kind {kind!r}")
+
+
 def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     """Create problem discovery plus deterministic support attachment/selection."""
     spec = _single_call(_require_evidence(build_problem_spec(), "column_profile", "null_rate"))
@@ -468,6 +553,45 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     def stage(state: RunState, correction: list[str] | None = None) -> StageResult:
         card = state.require(ArtifactType.DATA_CARD, DataCard)
         frame = _abt_frame(state)
+        # #241: a problem stated through the quick-pick selector is honoured on
+        # the first attempt without ever calling the LLM. A rejected gate still
+        # falls back to the full agent conversation below on retry (`correction`
+        # is only set then) -- reproposing the same deterministic framing would
+        # not be a rework, and the person clearly wants something else.
+        quick_selection = state.blackboard.get(QUICK_PROBLEM_KEY)
+        if quick_selection is not None and correction is None:
+            candidates = attach_support(
+                ProblemDiscoveryProposal(
+                    candidates=[_quick_problem_proposal(quick_selection, card)]
+                ),
+                card,
+                frame,
+                user_intent=state.user_intent,
+            )
+            selected = candidates.candidates[0]
+            problem = ProblemDefinition(
+                task_type=selected.task_type,
+                target_column=selected.target_column,
+                primary_metric=selected.primary_metric,
+                title=selected.title,
+                title_tr=selected.title_tr,
+                description=selected.business_rationale,
+                description_tr=selected.business_rationale_tr,
+                excluded_columns=[],
+                confirmed_by="human",
+                source_candidate_id=selected.candidate_id,
+            )
+            support = selected.support
+            return StageResult(
+                artifacts=[candidates, problem],
+                names={0: "problem_candidates", 1: "problem_definition"},
+                signals=QualitySignals(
+                    n_rows=support.n_rows,
+                    minority_class_count=support.minority_class_count,
+                    rows_per_feature=support.rows_per_feature,
+                ),
+                digest=str(candidates.summary()),
+            )
         context = _with_correction(
             build_problem_context(card, user_intent=state.user_intent), correction
         )

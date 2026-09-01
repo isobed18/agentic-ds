@@ -45,7 +45,13 @@ interface GuidedPipelineProps {
   onWorkspaceUpdated: (workspace: StagingWorkspace) => void;
   // #244/#198: the run carries a chosen ML target column (or null to let
   // problem discovery propose one) so the guided flow can actually be aimed.
-  onRun: (runMode: "fully_auto" | "manual", targetColumn: string | null) => void;
+  // #241: `problemKind` set skips the planner conversation entirely -- the
+  // named problem type is confirmed straight from the selector.
+  onRun: (
+    runMode: "fully_auto" | "manual",
+    targetColumn: string | null,
+    problemKind: "predict_column" | "flag_anomalies" | null,
+  ) => void;
   onPause: () => void;
   onRetry: () => void;
   // #247: runs the current automation again from its recorded seed as a new
@@ -103,9 +109,22 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const baseTable = profile.tables.find((table) => table.name === baseTableName) ?? profile.tables[0];
   const targetColumns = baseTable?.columns ?? [];
   const [targetColumn, setTargetColumn] = useState<string>(String(planConfig.target_column ?? ""));
+  // #241: the common problem shapes named straight from the selector, skipping
+  // the planner conversation. "ask_planner" is the pre-existing behaviour --
+  // the column above is only a hint the agent may take or leave.
+  const [problemKind, setProblemKind] = useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner");
   // Accepting is a state change on one canvas, not a navigation, so the panel
   // follows the plan it was reviewing into the summary of what will run.
   useEffect(() => { if (accepted) setSelected("summary"); }, [accepted]);
+  // "Predict a column" needs an actual column, unlike the planner hint above
+  // which is free to stay empty ("let the agent decide"). Land on a sensible
+  // one automatically rather than leaving Run disabled on an empty picker.
+  useEffect(() => {
+    if (problemKind !== "predict_column" || targetColumn) return;
+    const preferred = targetColumns.find((column) => column.candidate_target) ?? targetColumns[0];
+    if (preferred) setTargetColumn(preferred.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [problemKind]);
   useEffect(() => {
     let cancelled = false;
     let timer: number | null = null;
@@ -230,11 +249,25 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     <div data-no-pan className="fixed top-[70px] left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-2">
       <div className="flex items-center gap-2">
         {!accepted && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}
-        {canStart && !currentStage && targetColumns.length > 0 && (
+        {/* #241: for an ordinary problem, name it directly instead of opening
+            a planner conversation and waiting for a proposal. "Ask the
+            planner" keeps today's behaviour unchanged -- the target below
+            stays a hint, not a confirmed choice. */}
+        {canStart && !currentStage && (
+          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("State the ML problem directly, or ask the planner to propose one.")}>
+            <span className="text-ink-faint">{t("Problem")}</span>
+            <select value={problemKind} onChange={(event) => setProblemKind(event.target.value as typeof problemKind)} className="max-w-[160px] bg-transparent text-[11px] font-medium text-ink outline-none">
+              <option value="ask_planner">{t("Ask the planner")}</option>
+              {targetColumns.length > 0 && <option value="predict_column">{t("Predict a column")}</option>}
+              <option value="flag_anomalies">{t("Flag unusual rows")}</option>
+            </select>
+          </label>
+        )}
+        {canStart && !currentStage && targetColumns.length > 0 && problemKind !== "flag_anomalies" && (
           <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("Choose which column the model should predict, or let problem discovery propose one.")}>
             <span className="text-ink-faint">{t("Target")}</span>
             <select value={targetColumn} onChange={(event) => setTargetColumn(event.target.value)} className="max-w-[180px] bg-transparent text-[11px] font-medium text-ink outline-none">
-              <option value="">{t("Let the agent decide")}</option>
+              {problemKind === "ask_planner" && <option value="">{t("Let the agent decide")}</option>}
               {targetColumns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.candidate_target ? " ★" : ""}</option>)}
             </select>
           </label>
@@ -245,7 +278,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
             {t("Approve at every stage")}
           </label>
         )}
-        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)} disabled={busy || !profile.tables.length}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)} disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}

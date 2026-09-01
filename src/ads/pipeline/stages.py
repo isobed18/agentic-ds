@@ -62,6 +62,14 @@ AGENT_RUNTIME_POLICY_KEY: Final = "pipeline.agent_runtime_policy"
 #: from a specific failed attempt and dies with it, while a directive is what a
 #: human asked for and applies every time that stage runs, including the first.
 STAGE_DIRECTIVES_KEY: Final = "pipeline.stage_directives"
+#: A problem stated directly through the quick-pick selector rather than through
+#: a planner conversation (#241): {"kind": "predict_column" | "flag_anomalies",
+#: "target_column": str | None}. When set, problem_discovery builds the
+#: ProblemDefinition deterministically from it on the first attempt instead of
+#: calling the LLM, so a common problem never has to wait on a proposal. A
+#: rejected gate still falls back to the full agent conversation on retry,
+#: because reproposing the same deterministic framing would not be a rework.
+QUICK_PROBLEM_KEY: Final = "pipeline.quick_problem_selection"
 
 LOADED_TABLES_KEY: Final = "pipeline.loaded_tables"
 SOURCE_FRAMES_KEY: Final = "pipeline.source_frames"

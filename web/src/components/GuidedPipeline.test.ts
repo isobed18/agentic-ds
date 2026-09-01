@@ -109,12 +109,43 @@ describe("target-column picker (#244/#198)", () => {
     // Defaulting to the plan's target means an unchanged picker is a no-op; a
     // changed one aims the run. The value travels with the run mode into onRun.
     expect(SOURCE).toContain('useState<string>(String(planConfig.target_column ?? ""))');
-    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
   });
 
   it("translates the picker's tooltip", () => {
     expect(CATALOGUE).toContain("Choose which column the model should predict, or let problem discovery propose one.");
     expect(CATALOGUE).toContain("Modelin tahmin edeceği sütunu seçin");
+  });
+});
+
+describe("quick problem selector (#241)", () => {
+  it("offers a problem-kind picker that defaults to asking the planner", () => {
+    // Before this, an ordinary problem ("predict this column", "flag the odd
+    // ones") had no path but the planner conversation. "ask_planner" preserves
+    // that exact existing behaviour as the default.
+    expect(SOURCE).toContain('useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner")');
+    expect(SOURCE).toContain('<option value="ask_planner">{t("Ask the planner")}</option>');
+    expect(SOURCE).toContain('<option value="predict_column">{t("Predict a column")}</option>');
+    expect(SOURCE).toContain('<option value="flag_anomalies">{t("Flag unusual rows")}</option>');
+  });
+
+  it("passes the picked kind to onRun instead of always going through the planner", () => {
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
+  });
+
+  it("requires a target column before Run is enabled for a predict-column pick", () => {
+    expect(SOURCE).toContain('disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}');
+  });
+
+  it("translates the picker's options", () => {
+    expect(CATALOGUE).toContain('"Ask the planner": "Planlayıcıya sor"');
+    expect(CATALOGUE).toContain('"Predict a column": "Bir sütunu tahmin et"');
+    expect(CATALOGUE).toContain('"Flag unusual rows": "Alışılmadık satırları işaretle"');
+  });
+
+  it("forwards the selection to startStaged as problem_selection", () => {
+    expect(PAGE_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
+    expect(PAGE_SOURCE).toContain("problem_selection: { kind: problemKind, target_column: targetColumn }");
   });
 });
 

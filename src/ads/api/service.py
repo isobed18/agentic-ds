@@ -144,6 +144,7 @@ from ads.pipeline import (
 )
 from ads.pipeline.stages import (
     CANDIDATE_LIMIT_KEY,
+    QUICK_PROBLEM_KEY,
     RUN_LANGUAGE_KEY,
     STAGE_DIRECTIVES_KEY,
     VALIDATION_FOLDS_KEY,
@@ -4696,6 +4697,30 @@ class ControlPlane:
         if not 2 <= folds <= 20:
             raise ValueError("n_folds must be between 2 and 20")
         state.blackboard[VALIDATION_FOLDS_KEY] = folds
+        # #241: a problem stated through the quick-pick selector, skipping the
+        # planner conversation. Shape-checked here so a malformed request fails
+        # immediately rather than surfacing as a background run failure; the
+        # column's actual fitness (does it exist, is its shape viable) is
+        # checked deterministically once problem_discovery runs, exactly as it
+        # would be for an agent-proposed candidate.
+        problem_selection = body.get("problem_selection")
+        if problem_selection is not None:
+            if not isinstance(problem_selection, dict):
+                raise ValueError("problem_selection must be an object")
+            kind = problem_selection.get("kind")
+            if kind not in {"predict_column", "flag_anomalies"}:
+                raise ValueError(
+                    "problem_selection.kind must be 'predict_column' or 'flag_anomalies'"
+                )
+            target_column = problem_selection.get("target_column") or None
+            if kind == "predict_column" and not target_column:
+                raise ValueError(
+                    "problem_selection.target_column is required for 'predict_column'"
+                )
+            state.blackboard[QUICK_PROBLEM_KEY] = {
+                "kind": kind,
+                "target_column": str(target_column) if target_column else None,
+            }
         # #200: capture the language now, in the request, so the report the
         # background worker renders later is in the language actually chosen
         # rather than the worker's "tr" ContextVar default.
