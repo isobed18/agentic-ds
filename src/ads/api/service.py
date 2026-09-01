@@ -3059,10 +3059,17 @@ class ControlPlane:
             },
             default=str,
         )
+        reply_language = i18n.normalise(str(runtime.configuration.get("language") or ""))
+        reply_instruction = (
+            "Write reply only in Turkish."
+            if reply_language == "tr"
+            else "Write reply only in English."
+        )
         system = (
             "Create the automatic pre-pipeline data-understanding synthesis. Return two or three "
-            "short bilingual report artifacts and a bounded runtime rationale. Use English "
-            "for reply. Artifacts remain bilingual: use English and Turkish in artifact fields. "
+            "short bilingual report artifacts and a bounded runtime rationale. "
+            f"{reply_instruction} Artifacts remain bilingual: use English and Turkish in "
+            "artifact fields. "
             "Explain each modality "
             "and cross-source relationships. Measured/extracted evidence must be verbally "
             "distinct from interpretation. Cite document evidence with file name and page. "
@@ -4244,6 +4251,10 @@ class ControlPlane:
         so nothing measured here is measured twice.
         """
         requested_configuration = dict(configuration or {})
+        # The automatic Planner greeting is authored once, before any chat
+        # exists. Capture the request language before work moves to a background
+        # thread; later chat replies follow the user's message and stay verbatim.
+        requested_configuration["language"] = i18n.current()
         supplied_run_seed = requested_configuration.get("run_seed")
         run_seed = (
             _coerce_run_seed(supplied_run_seed)
