@@ -27,8 +27,6 @@ export interface WorkflowNode {
   elapsed_seconds?: number | null;
   started_at?: string | null;
   ended_at?: string | null;
-  branch_of?: string | null;
-  label?: string;
 }
 
 export interface Workflow {

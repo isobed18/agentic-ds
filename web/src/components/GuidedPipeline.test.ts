@@ -162,7 +162,7 @@ describe("guided pipeline node descriptions (#168)", () => {
       (match) => match[1],
     );
 
-    expect(descriptions).toHaveLength(6);
+    expect(descriptions).toHaveLength(8);
     expect(descriptions.every((description) => description.endsWith("."))).toBe(true);
     expect(SOURCE).toContain("subtitle={t(group.description)}");
     expect(SOURCE).not.toContain("group.nodes.map((node) => t(node.label");
@@ -270,5 +270,28 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
     for (const key of ["Accepted ML plan", "Base ML pipeline", "What will run", "Stage details"]) {
       expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
     }
+  });
+});
+
+describe("EDA has its own canvas node (#212)", () => {
+  it("gives validation, EDA, and leakage each their own group instead of sharing one", () => {
+    // The three used to share one "Analyze and validate" node, so EDA -- the
+    // stage people most want to watch -- had no name anyone could find on the
+    // canvas. One node per stage now, same as everywhere else.
+    expect(GROUPS_SOURCE).toContain('id: "validation_strategy"');
+    expect(GROUPS_SOURCE).toContain('id: "eda"');
+    expect(GROUPS_SOURCE).toContain('id: "leakage_audit"');
+    expect(GROUPS_SOURCE).not.toContain('id: "analysis"');
+  });
+
+  it("names a stage row from the shared stageName helper instead of the raw id", () => {
+    // `t(node.label ?? node.id.replaceAll("_", " "))` always fell to the raw id
+    // (the backend never sent `label`), so a row read as lowercase "eda" or,
+    // for anything else, an untranslated lowercase-space id like
+    // "problem discovery". `stageName` is the same helper StageWorkspace.tsx
+    // already used for its own header, so both screens agree on the name.
+    expect(SOURCE).toContain('import { elapsedLabel, isActive, isAttention, isSucceeded, stageName, statusLabel, isRunActive } from "../lib/status"');
+    expect(SOURCE).toContain("{stageName(node.id)}");
+    expect(SOURCE).not.toContain("node.label");
   });
 });

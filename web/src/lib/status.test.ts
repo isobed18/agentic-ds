@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { statusBadgeLabel, statusLabel, statusTone } from "./status";
+import { stageName, statusBadgeLabel, statusLabel, statusTone, titleize } from "./status";
 
 describe("the badge vocabulary", () => {
   it("gives both canvases the same capitalised label for the same state", () => {
@@ -57,5 +57,25 @@ describe("the status tone", () => {
   it("treats an unknown state as waiting rather than as a failure", () => {
     expect(statusTone(undefined)).toBe("pending");
     expect(statusTone("something else")).toBe("pending");
+  });
+});
+
+describe("stage names (#212)", () => {
+  it("special-cases eda instead of naively title-casing it", () => {
+    // Naive title-casing gives "Eda" -- not a word, and not what anyone calls
+    // this stage. This is the one id that cannot be derived from itself.
+    expect(titleize("eda")).toBe("Exploratory analysis");
+  });
+
+  it("title-cases every other id from its underscored form", () => {
+    expect(titleize("problem_discovery")).toBe("Problem Discovery");
+    expect(titleize("leakage_audit")).toBe("Leakage Audit");
+    expect(titleize("validation_strategy")).toBe("Validation Strategy");
+    expect(titleize("training")).toBe("Training");
+  });
+
+  it("translates the titled name, not the raw id", () => {
+    expect(stageName("eda")).toBe("Keşifsel analiz");
+    expect(stageName("leakage_audit")).toBe("Sızıntı Denetimi");
   });
 });

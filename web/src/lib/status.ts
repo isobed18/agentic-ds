@@ -168,6 +168,22 @@ function titleCase(s: string): string {
 }
 
 /**
+ * Stage ids are codes, so they are translated through the catalogue by their
+ * English display name rather than by prettifying the identifier. Prettifying
+ * produced strings like "Eda" that no catalogue could sensibly hold, which is
+ * why a stage kept reading as its raw id (or a naive capitalization of it)
+ * wherever this was not yet used (#212).
+ */
+export function stageName(id: string): string {
+  return t(titleize(id));
+}
+
+export function titleize(id: string): string {
+  if (id === "eda") return "Exploratory analysis";
+  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
  * A stage duration, at the precision a person actually reads. Seconds below a
  * minute, minutes and seconds below an hour: "3m 12s" answers "is this stuck?"
  * and "192.4 seconds" makes you do the arithmetic yourself.

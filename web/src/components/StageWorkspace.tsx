@@ -23,7 +23,7 @@ import {
   type Story,
   type WorkflowNode,
 } from "../lib/api";
-import { elapsedLabel, reasonLabel, statusLabel, verdictLabel } from "../lib/status";
+import { elapsedLabel, reasonLabel, stageName, statusLabel, verdictLabel } from "../lib/status";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { BranchPicker } from "./BranchPicker";
 import { SensitivityOverride } from "./SensitivityOverride";
@@ -32,7 +32,6 @@ import { ApprovalCard } from "./GateApproval";
 import { NeedsAttention, type AttentionItem } from "./NeedsAttention";
 import { SchemaMap } from "./SchemaMap";
 import { IntakeStage } from "./IntakeStage";
-import { stageName } from "./PipelineRail";
 import { Badge, DataTable, Disclosure, Empty, Metric, Spinner, cx, toneFor } from "./ui";
 
 /** Long floats are measurements, not identifiers — show them at human precision. */
