@@ -16,8 +16,10 @@ import { ArtifactNodes } from "./ArtifactNodes";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
+import { activeArrows } from "./pipelineArrows";
 import { PlannerPanel } from "./PlannerPanel";
 import { stageName } from "./PipelineRail";
+import { checkText, runErrorText, stageFailure, type StageFailure } from "./stageFailure";
 import { ResizableNode } from "./ResizableNode";
 import { buildStagingRoutingState } from "./stagingRoutingState";
 import {
@@ -62,7 +64,6 @@ interface GuidedPipelineProps {
   // history.
   onRerun: () => void;
   onAdvanced: () => void;
-  onOpenExecutions: () => void;
 }
 
 function local(value: { en: string; tr: string }): string {
@@ -81,7 +82,7 @@ function local(value: { en: string; tr: string }): string {
  * on screen. One canvas (`CanvasSurface`, which has zoom; `PanCanvas` did not),
  * one selection, one docked panel, one toolbar.
  */
-export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onRerun, onAdvanced, onOpenExecutions }: GuidedPipelineProps) {
+export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onRerun, onAdvanced }: GuidedPipelineProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<RunProgressSnapshot | null>(null);
   // One selection for both halves of the graph. Staging ids ("discovery",
@@ -203,7 +204,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // "staged" while its plan is still a proposal, so without this the toolbar
   // would offer Run for a pipeline nobody had agreed to yet.
   const canStart = accepted && activeStatus === "staged";
-  const active = accepted && ["running", "resuming"].includes(activeStatus);
+  const active = accepted && isRunActive(activeStatus);
   const currentStage = String((progress as Record<string, unknown> | null)?.current_stage ?? "");
   const failed = accepted && ["failed", "interrupted", "aborted"].includes(activeStatus);
   const complete = accepted && activeStatus === "completed";
@@ -216,10 +217,22 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const mlSelected = selected && ML_SELECTIONS.includes(selected) ? selected : null;
   const stagingSelected = selected && !mlSelected ? selected as Exclude<CanvasSelection, null> : null;
   const selectedGroup = groups.find((group) => group.id === mlSelected);
+  // #295: a failed group used to render its own description as the hint of an
+  // empty state -- prose about what the stage does, in a panel opened to find
+  // out why it did not. The evidence exists; it was two clicks away inside the
+  // per-stage attempt history.
+  const selectedGroupStatus = selectedGroup ? groupStatuses[groups.indexOf(selectedGroup)] : null;
+  const selectedFailure = isAttention(selectedGroupStatus)
+    ? stageFailure(detail, runErrorText(progress?.error))
+    : null;
 
   async function inspectGroup(groupId: string) {
     setSelected(groupId); setDetail(null); setError(null);
-    const first = groups.find((group) => group.id === groupId)?.nodes.find((node) => node.attempt_count > 0);
+    const nodes = groups.find((group) => group.id === groupId)?.nodes.filter((node) => node.attempt_count > 0) ?? [];
+    // #295: the failed node, not simply the first one. A group's earlier stages
+    // succeed and its last one fails, so loading the first attempted stage
+    // fetched a clean history and the panel had no failure to report.
+    const first = nodes.find((node) => isAttention(node.status)) ?? nodes[0];
     if (!first) return;
     try { setDetail(await api.stage(runId, first.id)); }
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
@@ -240,8 +253,12 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // The ML half of the row, hanging off the "Proposed plan" node rather than
   // off a "Data understood" tile that stood in for the graph this canvas used
   // to discard. The first arrow is a real edge out of the plan (#214).
+  // #313: an arrow pulses for the group it points *into*, and nothing else.
+  // The inter-group arrows used to light for the group behind them as well, so
+  // a running group animated both its incoming and its outgoing edge.
+  const arrowActive = activeArrows(groupStatuses);
   const mlPipeline = <>
-    <Arrow active={groupStatuses[0] === "running"} complete={accepted} dimmed={!accepted} />
+    <Arrow active={arrowActive[0]} complete={accepted} dimmed={!accepted} />
     {groups.map((group, index) => {
       const status = groupStatuses[index];
       const groupArtifactIds = group.stages.flatMap((stage) => visibleArtifactIdsByStage.get(stage) ?? []);
@@ -252,7 +269,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       const waiting = canStart && (currentStage ? group.stages.includes(currentStage) : index === 0);
       const activeNode = group.nodes.find((node) => isActive(node.status));
       const footer = status === "running" ? elapsedLabel(activeNode?.elapsed_seconds) ?? t("Working…") : undefined;
-      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry" || groupStatuses[index + 1] === "running"} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
+      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
     })}
   </>;
 
@@ -300,7 +317,6 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)} disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
-        {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}
         {accepted && !canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
         {/* #247: runs the current automation again, deliberately -- as a new
             execution recorded in Execution history, not as recovery from a
@@ -308,7 +324,6 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-surface/95 text-ink-soft shadow-card backdrop-blur transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
       </div>
       <div className="flex items-center gap-2">
-        <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
           {/* #305: only offered when there is something to reveal, so the normal
@@ -319,6 +334,18 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       </div>
     </div>
 
+    {/* #284: the Planner opener is a persistent entry point, not one of the run
+        controls, so it gets the opposite edge to itself instead of a slot in
+        the top toolbar. `fixed` is safe here for the same reason the toolbar
+        above is: `overlay` is rendered outside CanvasSurface's scaled content,
+        and a fixed element inside a transformed ancestor is positioned against
+        that ancestor -- which is exactly how this button used to slide across
+        the screen as the graph zoomed (#60). It clears the zoom bar, which
+        keeps to the bottom-right. */}
+    <div data-no-pan className="fixed bottom-6 left-1/2 z-10 -translate-x-1/2">
+      <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
+    </div>
+
     {/* One panel for the whole graph. A staging node opens the staging
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
@@ -326,9 +353,20 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
         ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
-        : selectedGroup?.nodes.length
-          ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
-          : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
+        : <div className="space-y-4">
+            {/* #295: the diagnosis leads. Below it the stage rows still hold
+                the full attempt history for anyone who wants it. */}
+            {selectedFailure && <FailureNotice failure={selectedFailure} />}
+            {selectedGroup?.nodes.length
+              ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
+              : selectedFailure
+                ? null
+                : isAttention(selectedGroupStatus)
+                  // Failed, and the run recorded nothing about it. Saying so is
+                  // still better than describing what the stage would have done.
+                  ? <Empty title={t("This stage failed")} hint={t("No error was recorded for it.")} />
+                  : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
+          </div>}
     </Inspector>}
 
     {/* #97: the planner is consultable while the pipeline runs and while a gate
@@ -395,6 +433,21 @@ function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, 
 // completed arrow drew an emerald line into a grey head. Each half is one stop
 // deeper than its line so the point stays legible against it.
 function Arrow({ active, complete, dimmed = false }: { active: boolean; complete: boolean; dimmed?: boolean }) { return <div className={cx("relative h-px w-8 shrink-0", complete ? "bg-ok-300" : "bg-slate-300", dimmed && "opacity-60")}><span className={cx("absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t", complete ? "border-ok-400" : "border-slate-400")} />{active && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400" />}</div>; }
+
+/** The diagnosis, at the top of a failed group's panel (#295).
+ *
+ * The stage's own error is prose from the run; the checks below it are the
+ * mechanical criteria the attempt did not meet, which are usually the more
+ * specific answer -- "the plan failed a trial execution against the real
+ * tables" says what to change, where a stack trace does not.
+ */
+function FailureNotice({ failure }: { failure: StageFailure }) {
+  return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
+    <p className="text-[10px] font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
+    {failure.error && <p className="mt-2 break-words text-xs leading-relaxed text-stop-800">{failure.error}</p>}
+    {failure.checks.length > 0 && <ul className="mt-2 space-y-1">{failure.checks.map((check) => <li key={check.id} className="text-[11px] leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}</li>)}</ul>}
+  </section>;
+}
 
 function StageRow({ node, artifactIds, onInspect, onOpenArtifact }: { node: WorkflowNode; artifactIds: string[]; onInspect: () => void; onOpenArtifact: (id: string) => void }) { return <section className="rounded-xl border border-line p-3"><button type="button" className="flex w-full items-start gap-3 text-left" onClick={onInspect}><StatusMark status={node.status} /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-ink">{stageName(node.id)}</span><span className="mt-1 block text-[10px] text-ink-mute">{statusLabel(node.status)}{elapsedLabel(node.elapsed_seconds) ? ` · ${elapsedLabel(node.elapsed_seconds)}` : ""}</span></span></button>{artifactIds.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">{artifactIds.map((id, index) => <button type="button" key={id} onClick={() => onOpenArtifact(id)} className="rounded-md bg-brand-50 px-2 py-1 text-[9px] font-semibold text-brand-700">▣ {t("Artifact {number}", { number: index + 1 })}</button>)}</div>}</section>; }
 

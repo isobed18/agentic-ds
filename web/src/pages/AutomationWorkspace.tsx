@@ -4,12 +4,14 @@ import { PipelineBuilder } from "../components/PipelineBuilder";
 import { GuidedPipeline } from "../components/GuidedPipeline";
 import { ApprovalCard } from "../components/GateApproval";
 import { LanguagePicker } from "../components/Shell";
+import { Notifications } from "../components/Notifications";
 import {
   SourceSummary,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
 import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
+import { runErrorText } from "../components/stageFailure";
 import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -22,24 +24,8 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { isRunActive } from "../lib/status";
-import { activeLanguage, t } from "../lib/i18n";
+import { t } from "../lib/i18n";
 import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
-
-/**
- * A run error is either plain text (older records, and errors we do not
- * recognise) or a bilingual object. Reading both is what let the message be
- * translated at all -- the red banner was English-only because this field was
- * a raw Python string (#263, #265).
- */
-function runErrorText(value: unknown): string | null {
-  if (typeof value === "string") return value || null;
-  if (value && typeof value === "object") {
-    const pair = value as { en?: string; tr?: string };
-    const chosen = activeLanguage() === "tr" ? (pair.tr ?? pair.en) : pair.en;
-    return chosen || null;
-  }
-  return null;
-}
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
@@ -264,14 +250,18 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}
-        <div className="ml-auto"><LanguagePicker /></div>
+        {/* #286: the shared top bar is suppressed for every page inside a
+            project, so this contextual header is the only place notifications
+            can live here. Composed in rather than duplicated: it is the same
+            component the shell renders everywhere else. */}
+        <div className="ml-auto flex items-center gap-1"><LanguagePicker /><Notifications /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {/* A stage gate that escalated to a human: shown here, above the run, so
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
       {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard key={`${pendingQuestion.stage_id}:${pendingQuestion.attempt}`} runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind) => void runAcceptedWorkflow(runMode, target, problemKind)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onRerun={() => void rerunAutomation()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind) => void runAcceptedWorkflow(runMode, target, problemKind)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onRerun={() => void rerunAutomation()} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
     </div>
   );
 }

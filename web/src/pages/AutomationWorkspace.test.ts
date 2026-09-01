@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import AUTOMATION_SOURCE from "./AutomationWorkspace.tsx?raw";
 import PROJECT_SOURCE from "./ProjectWorkspace.tsx?raw";
+import SHELL_SOURCE from "../components/Shell.tsx?raw";
 
 describe("the project-first journey (#157, #165)", () => {
   it("routes project, then automation, as two distinct levels", () => {
@@ -84,5 +85,35 @@ describe("the project-first journey (#157, #165)", () => {
   it("forwards a quick-picked problem kind as problem_selection, skipping the planner (#241)", () => {
     expect(AUTOMATION_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
     expect(AUTOMATION_SOURCE).toContain("problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}");
+  });
+});
+
+describe("reaching notifications from inside a project (#286)", () => {
+  it("keeps the bell on every page inside a project", () => {
+    // `Shell` suppresses its whole top bar -- bell included -- for any URL
+    // carrying `?project=`, which is every page inside a project. A run that
+    // finished while someone was in the editor could not be seen or dismissed
+    // without navigating out first.
+    for (const source of [AUTOMATION_SOURCE, PROJECT_SOURCE]) {
+      expect(source).toContain('import { Notifications } from "../components/Notifications"');
+      expect(source).toContain("<LanguagePicker /><Notifications />");
+    }
+  });
+
+  it("composes the shell's own component rather than a second bell", () => {
+    // Two implementations would mean two seen-state readers of the same
+    // localStorage key, drifting the moment one of them changed.
+    expect(SHELL_SOURCE).toContain('import { Notifications } from "./Notifications"');
+    expect(SHELL_SOURCE).toContain("<Notifications />");
+    for (const source of [AUTOMATION_SOURCE, PROJECT_SOURCE]) {
+      expect(source).not.toContain("localStorage.getItem(\"ads.notifications");
+    }
+  });
+
+  it("still suppresses the shared top bar inside a project", () => {
+    // The contextual header replaces it; this is why the bell had to be
+    // composed in rather than un-guarded in the shell.
+    expect(SHELL_SOURCE).toContain("const isAutomationEditor = location.pathname.startsWith(\"/projects\")");
+    expect(SHELL_SOURCE).toContain("{!isAutomationEditor && <header");
   });
 });
