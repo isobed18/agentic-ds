@@ -18,6 +18,7 @@ import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
 import { PlannerPanel } from "./PlannerPanel";
 import { stageName } from "./PipelineRail";
+import { checkText, runErrorText, stageFailure, type StageFailure } from "./stageFailure";
 import { ResizableNode } from "./ResizableNode";
 import { buildStagingRoutingState } from "./stagingRoutingState";
 import {
@@ -216,10 +217,22 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const mlSelected = selected && ML_SELECTIONS.includes(selected) ? selected : null;
   const stagingSelected = selected && !mlSelected ? selected as Exclude<CanvasSelection, null> : null;
   const selectedGroup = groups.find((group) => group.id === mlSelected);
+  // #295: a failed group used to render its own description as the hint of an
+  // empty state -- prose about what the stage does, in a panel opened to find
+  // out why it did not. The evidence exists; it was two clicks away inside the
+  // per-stage attempt history.
+  const selectedGroupStatus = selectedGroup ? groupStatuses[groups.indexOf(selectedGroup)] : null;
+  const selectedFailure = isAttention(selectedGroupStatus)
+    ? stageFailure(detail, runErrorText(progress?.error))
+    : null;
 
   async function inspectGroup(groupId: string) {
     setSelected(groupId); setDetail(null); setError(null);
-    const first = groups.find((group) => group.id === groupId)?.nodes.find((node) => node.attempt_count > 0);
+    const nodes = groups.find((group) => group.id === groupId)?.nodes.filter((node) => node.attempt_count > 0) ?? [];
+    // #295: the failed node, not simply the first one. A group's earlier stages
+    // succeed and its last one fails, so loading the first attempted stage
+    // fetched a clean history and the panel had no failure to report.
+    const first = nodes.find((node) => isAttention(node.status)) ?? nodes[0];
     if (!first) return;
     try { setDetail(await api.stage(runId, first.id)); }
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
@@ -326,9 +339,20 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
         ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
-        : selectedGroup?.nodes.length
-          ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
-          : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
+        : <div className="space-y-4">
+            {/* #295: the diagnosis leads. Below it the stage rows still hold
+                the full attempt history for anyone who wants it. */}
+            {selectedFailure && <FailureNotice failure={selectedFailure} />}
+            {selectedGroup?.nodes.length
+              ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
+              : selectedFailure
+                ? null
+                : isAttention(selectedGroupStatus)
+                  // Failed, and the run recorded nothing about it. Saying so is
+                  // still better than describing what the stage would have done.
+                  ? <Empty title={t("This stage failed")} hint={t("No error was recorded for it.")} />
+                  : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
+          </div>}
     </Inspector>}
 
     {/* #97: the planner is consultable while the pipeline runs and while a gate
@@ -395,6 +419,21 @@ function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, 
 // completed arrow drew an emerald line into a grey head. Each half is one stop
 // deeper than its line so the point stays legible against it.
 function Arrow({ active, complete, dimmed = false }: { active: boolean; complete: boolean; dimmed?: boolean }) { return <div className={cx("relative h-px w-8 shrink-0", complete ? "bg-ok-300" : "bg-slate-300", dimmed && "opacity-60")}><span className={cx("absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t", complete ? "border-ok-400" : "border-slate-400")} />{active && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400" />}</div>; }
+
+/** The diagnosis, at the top of a failed group's panel (#295).
+ *
+ * The stage's own error is prose from the run; the checks below it are the
+ * mechanical criteria the attempt did not meet, which are usually the more
+ * specific answer -- "the plan failed a trial execution against the real
+ * tables" says what to change, where a stack trace does not.
+ */
+function FailureNotice({ failure }: { failure: StageFailure }) {
+  return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
+    <p className="text-[10px] font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
+    {failure.error && <p className="mt-2 break-words text-xs leading-relaxed text-stop-800">{failure.error}</p>}
+    {failure.checks.length > 0 && <ul className="mt-2 space-y-1">{failure.checks.map((check) => <li key={check.id} className="text-[11px] leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}</li>)}</ul>}
+  </section>;
+}
 
 function StageRow({ node, artifactIds, onInspect, onOpenArtifact }: { node: WorkflowNode; artifactIds: string[]; onInspect: () => void; onOpenArtifact: (id: string) => void }) { return <section className="rounded-xl border border-line p-3"><button type="button" className="flex w-full items-start gap-3 text-left" onClick={onInspect}><StatusMark status={node.status} /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-ink">{stageName(node.id)}</span><span className="mt-1 block text-[10px] text-ink-mute">{statusLabel(node.status)}{elapsedLabel(node.elapsed_seconds) ? ` · ${elapsedLabel(node.elapsed_seconds)}` : ""}</span></span></button>{artifactIds.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">{artifactIds.map((id, index) => <button type="button" key={id} onClick={() => onOpenArtifact(id)} className="rounded-md bg-brand-50 px-2 py-1 text-[9px] font-semibold text-brand-700">▣ {t("Artifact {number}", { number: index + 1 })}</button>)}</div>}</section>; }
 
