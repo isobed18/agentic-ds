@@ -153,6 +153,11 @@ def build_human_prompt(
     way on a genuinely open decision defeats the point of asking.
     """
     reasons = "\n".join(f"- {outcome.message}" for outcome in outcomes)
+    # Ordered, de-duplicated: multiple tiers can fire the same rule family (a
+    # retry-budget rule and a stuck-loop rule can both name the same criteria),
+    # and the card renders one line per code via the client's own reasonLabel
+    # translation rather than this English `reasons` prose.
+    reason_codes = list(dict.fromkeys(outcome.reason_code for outcome in outcomes))
     policy_only = {o.reason_code for o in outcomes} <= POLICY_ONLY_REASONS
     # #262: surface the leakage rule's own suspect-column data so the card can
     # offer checkboxes instead of asking for hand-typed `drop_feature:` syntax.
@@ -228,6 +233,8 @@ def build_human_prompt(
             "no_output" if produced_nothing else "checkpoint" if policy_only else "problem"
         ),
         context_summary=f"{context_summary}\n\nWhy this stopped:\n{reasons}"[:1500],
+        context_note=context_summary[:500],
+        reason_codes=reason_codes,
         leakage_suspect_columns=(
             list(leakage_outcome.correction_columns) if leakage_outcome else []
         ),

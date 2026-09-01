@@ -452,6 +452,29 @@ class TestHumanPrompt:
         assert prompt.artifacts_to_review == ["abc123"]
         assert "Three candidate problems" in prompt.context_summary
 
+    def test_prompt_carries_the_boilerplate_and_reason_codes_separately(self) -> None:
+        """#259: the client needs to translate this card, not just print it.
+
+        `context_summary` stays the free-English joined blob for audit/back-
+        compat, but the client cannot translate prose it did not write. The
+        boilerplate (`context_note`) and the fired rules' `reason_codes` are the
+        same closed vocabulary `GateDecision.reason_code` already uses, so the
+        client can render a translated version instead.
+        """
+        decision = _decide(
+            stage=_stage(id="problem_discovery", risk_class=RiskClass.CRITICAL),
+            profile=CHECKPOINTED,
+            artifact_ids=["abc123"],
+            context_summary="Three candidate problems were proposed.",
+        )
+        prompt = decision.human_prompt
+        assert prompt is not None
+        assert prompt.context_note == "Three candidate problems were proposed."
+        # The headline reason is picked from the same fired outcomes that
+        # populate reason_codes, so it must be one of them.
+        assert decision.reason_code in prompt.reason_codes
+        assert len(prompt.reason_codes) == len(set(prompt.reason_codes)), "must be de-duplicated"
+
     def test_prompt_offers_precomputed_options(self) -> None:
         decision = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
         options = {o.option_id for o in decision.human_prompt.options}

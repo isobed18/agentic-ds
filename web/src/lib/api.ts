@@ -120,6 +120,8 @@ export interface HumanPrompt {
    *  built in English on the server; the card needs the KIND to render Turkish. */
   question_kind?: "problem" | "checkpoint" | "no_output";
   context_summary: string;
+  context_note?: string;
+  reason_codes?: string[];
   /** #262: suspect columns behind a leakage escalation, empty otherwise. */
   leakage_suspect_columns?: string[];
   /** Subset of leakage_suspect_columns that are target-correlation suspects

@@ -225,7 +225,19 @@ class HumanPrompt(FrozenModel):
     # icin cumleyi degil TURU bilmek zorunda (#192). Varsayilan, alani
     # gondermeyen eski cagiranlar icin.
     question_kind: str = Field(default="problem", pattern="^(problem|checkpoint|no_output)$")
+    # Free English prose built server-side with no active language, kept
+    # verbatim (boilerplate + per-rule detail, joined) for audit records and
+    # existing callers. `context_note` and `reason_codes` below are additive:
+    # they let the client render a translated, non-overlapping version instead
+    # of dumping this raw (#259), the same way `question_kind` let it translate
+    # the heading instead of the prose in #192.
     context_summary: str = Field(max_length=1500)
+    # Just the stage's own boilerplate line, no per-rule detail appended -- a
+    # small finite set the client's translation catalogue already covers.
+    context_note: str = Field(default="", max_length=500)
+    # The reason code(s) behind the stop, in the same closed vocabulary as
+    # GateDecision.reason_code.
+    reason_codes: list[str] = Field(default_factory=list)
     # #262: the exact suspect columns behind a leakage escalation, already
     # computed by the rule that fired. Lets the card offer checkboxes built
     # from the same data the automatic retry already uses, instead of a human
