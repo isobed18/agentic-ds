@@ -406,6 +406,46 @@ class TestContinuingKeepsTheWork:
         with pytest.raises(_RunPauseRequested):
             event("gate_decided", {"stage": "training", "verdict": "auto_proceed"})
 
+    @pytest.mark.parametrize("verdict", ["escalate", "abort"])
+    def test_a_pause_request_is_dropped_when_the_run_stops_for_another_reason(
+        self, client: TestClient, verdict: str
+    ) -> None:
+        """#282: an escalate/abort boundary stops the run on its own, not
+        because of the pause. Leaving `pause_requested` set would silently
+        re-pause the run the next time it advances -- e.g. right after a
+        human answers the gate it escalated to -- even though nobody asked
+        for that stop this time."""
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "running"
+        runtime.pause_requested = True
+        event = client.plane._event_recorder(runtime)  # noqa: SLF001
+
+        event("gate_decided", {"stage": "training", "verdict": verdict})
+
+        assert runtime.pause_requested is False
+        assert runtime.events[-1]["event"] == "pause_request_resolved"
+        assert runtime.events[-1]["reason"] == verdict
+
+        # The next auto-proceed boundary must run through, not pause again.
+        event("gate_decided", {"stage": "evaluation", "verdict": "auto_proceed"})
+
+    def test_resuming_a_run_that_is_not_staged_names_why(self, client: TestClient) -> None:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "completed"
+
+        response = client.post(f"/api/runs/{run_id}/start?lang=en", json={})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "This run already finished and cannot be resumed."
+
+    def test_resuming_an_unknown_run_names_why(self, client: TestClient) -> None:
+        response = client.post("/api/runs/does-not-exist/start?lang=en", json={})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "This run no longer exists; choose the dataset again."
+
     def test_the_run_id_does_not_change(self, client: TestClient) -> None:
         """It used to be replaced by a freshly started run, which threw away
         the intake the person had just read and re-ran it against the same
