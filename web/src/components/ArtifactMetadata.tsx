@@ -1,10 +1,50 @@
 import type { ArtifactPreview } from "../lib/api";
-import { t } from "../lib/i18n";
+import { activeLanguage, t, type Language } from "../lib/i18n";
 import { countUnit } from "./collectionUnit";
+
+type FieldValue = string | number | boolean;
 
 function fieldLabel(key: string): string {
   const words = key.replaceAll("_", " ");
   return words.charAt(0).toLocaleUpperCase() + words.slice(1);
+}
+
+function isBlank(value: FieldValue | undefined): boolean {
+  return value === undefined || (typeof value === "string" && value.trim() === "");
+}
+
+/**
+ * Collapse `foo` / `foo_tr` pairs down to the one the reader can actually read.
+ *
+ * The generic preview fallback in `artifact_preview()` copies every scalar in
+ * the payload into `fields`, and several contracts store both languages as
+ * sibling keys -- `EvaluationReport` carries `problem_title` next to
+ * `problem_title_tr`. Rendering the dict as it arrives therefore showed a
+ * Turkish reader the same problem title and description twice, once in each
+ * language, as two separate cards (#290).
+ *
+ * The Turkish half is never a label of its own: it fills its English sibling's
+ * slot, or -- when there is no sibling -- appears under the base name. A blank
+ * `_tr` counts as absent, because the contract defaults it to `""` when the
+ * upstream author produced no Turkish variant, and an empty card is worse than
+ * English prose.
+ */
+export function localizedFields(
+  fields: Record<string, FieldValue>,
+  language: Language,
+): [string, FieldValue][] {
+  const entries: [string, FieldValue][] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    const base = key.endsWith("_tr") ? key.slice(0, -"_tr".length) : "";
+    if (base) {
+      if (base in fields || isBlank(value)) continue;
+      entries.push([base, value]);
+      continue;
+    }
+    const turkish = fields[`${key}_tr`];
+    entries.push([key, language === "tr" && !isBlank(turkish) ? (turkish as FieldValue) : value]);
+  }
+  return entries;
 }
 
 export function hasArtifactMetadata(preview: ArtifactPreview): boolean {
@@ -18,7 +58,7 @@ export function hasArtifactMetadata(preview: ArtifactPreview): boolean {
  * types, but both dialogs ignored them and therefore opened an empty card (#164).
  */
 export function ArtifactMetadata({ preview }: { preview: ArtifactPreview }) {
-  const fields = Object.entries(preview.fields ?? {});
+  const fields = localizedFields(preview.fields ?? {}, activeLanguage());
   const collections = Object.entries(preview.collection_sizes ?? {});
   if (!fields.length && !collections.length) return null;
 
