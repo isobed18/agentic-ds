@@ -1201,6 +1201,11 @@ export const api = {
     request<{ run_id: string; status: string }>(`/api/runs/${runId}/discard`, { method: "POST" }),
   runOptions: () => request<RunOptions>("/api/run-options"),
   dataSources: () => request<DataSource[]>("/api/data-sources"),
+  installPdfDemo: () =>
+    request<{ source_id: string; label: string; files: string[]; reused: boolean }>(
+      "/api/demo-data/pdf",
+      { method: "POST" },
+    ),
   sourceProfile: (id: string) =>
     request<SourceProfile>(`/api/data-sources/${encodeURIComponent(id)}/profile`),
   defaultStagingPipeline: (id: string) =>

@@ -196,11 +196,17 @@ def _tables_from_markdown(markdown: str, source_file: str) -> list[ExtractedTabl
             index += 1
             continue
         block = [lines[index], lines[index + 1]]
+        columns = _split_markdown_row(lines[index])
         cursor = index + 2
         while cursor < len(lines) and "|" in lines[cursor] and lines[cursor].strip():
+            cells = _split_markdown_row(lines[cursor])
+            # PDF text extraction can collapse a page footer onto the table
+            # without a blank line. A differently shaped pipe-bearing line is
+            # the end of this table, not evidence that the whole table is bad.
+            if len(cells) != len(columns):
+                break
             block.append(lines[cursor])
             cursor += 1
-        columns = _split_markdown_row(block[0])
         rows = [_split_markdown_row(line) for line in block[2:]]
         if columns and all(len(row) == len(columns) for row in rows):
             tables.append(
@@ -217,12 +223,24 @@ def _tables_from_markdown(markdown: str, source_file: str) -> list[ExtractedTabl
 
 
 def _text_layer(path: Path, settings: dict[str, Any], output_dir: Path) -> ExtractedDocument:
-    del settings, output_dir
+    del output_dir
     parsed = load_pdf(path)
     english, turkish = split_warnings([pdf_issue(parsed.issue)] if parsed.issue else [])
     markdown = "\n\n".join(
         f"<!-- page {page.number} -->\n\n{page.text}" for page in parsed.pages if page.text
     )
+    tables: list[ExtractedTableCandidate] = []
+    if settings.get("extract_tables", True):
+        for page in parsed.pages:
+            for table in _tables_from_markdown(page.text, path.name):
+                tables.append(
+                    table.model_copy(
+                        update={
+                            "candidate_id": _candidate_id(path.name, "table", len(tables) + 1),
+                            "page_number": page.number,
+                        }
+                    )
+                )
     return ExtractedDocument(
         source_file=path.name,
         title=parsed.title,
@@ -233,6 +251,7 @@ def _text_layer(path: Path, settings: dict[str, Any], output_dir: Path) -> Extra
             for page in parsed.pages
             if page.text
         ],
+        tables=tables,
         warnings=english,
         warnings_tr=turkish,
     )

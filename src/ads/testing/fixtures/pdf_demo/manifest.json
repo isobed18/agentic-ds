@@ -1,0 +1,16 @@
+{
+  "benchmark": "pdf-extraction-v0",
+  "expected": {
+    "candidate_tables": 1,
+    "columns": [
+      "order_id",
+      "region",
+      "units",
+      "revenue_try"
+    ],
+    "page_number": 1,
+    "row_count": 6
+  },
+  "ground_truth_file": "quarterly_orders.csv",
+  "source_file": "quarterly_orders.pdf"
+}

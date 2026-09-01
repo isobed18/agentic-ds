@@ -10,3 +10,4 @@ src/ads/api/static/*.html        text eol=lf
 src/ads/api/static/assets/*.js   text eol=lf
 src/ads/api/static/assets/*.css  text eol=lf
 web/index.html                   text eol=lf
+src/ads/testing/fixtures/pdf_demo/*.pdf binary

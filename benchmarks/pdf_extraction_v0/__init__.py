@@ -1,0 +1,1 @@
+"""Offline PDF extraction benchmark."""
