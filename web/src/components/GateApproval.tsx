@@ -139,7 +139,34 @@ export function ApprovalCard({
         </p>
       )}
       <h3 className="text-sm font-semibold text-ink">{questionText(prompt)}</h3>
-      <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-ink-mute">{prompt.context_summary}</p>
+      {/* #259: `context_summary` is raw English prose (boilerplate + per-rule
+          detail, joined) built server-side with no active language. When the
+          server also sent the additive `reason_codes` field, translate: the
+          boilerplate via `context_note` (a small finite set already in the
+          client catalogue, translated the same way GuidedPipeline.tsx
+          translates a stage's description) and each reason via the same
+          `reasonLabel` the badge above already uses. A run recorded before
+          this change has no `reason_codes` and falls back to the untranslated
+          `context_summary` it always had. */}
+      {prompt.reason_codes && prompt.reason_codes.length > 0 ? (
+        <>
+          {prompt.context_note && (
+            <p className="mt-1 break-words text-xs leading-relaxed text-ink-mute">{t(prompt.context_note)}</p>
+          )}
+          <div className="mt-2">
+            <p className="text-xs font-medium text-ink-mute">{t("Why this stopped:")}</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {prompt.reason_codes.map((code) => (
+                <li key={code} className="break-words text-xs leading-relaxed text-ink-mute">{reasonLabel(code)}</li>
+              ))}
+            </ul>
+          </div>
+        </>
+      ) : (
+        prompt.context_summary && (
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-mute">{prompt.context_summary}</p>
+        )
+      )}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {prompt.options.map((o) => {

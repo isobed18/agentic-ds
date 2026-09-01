@@ -122,6 +122,59 @@ describe("the gate decision card in Turkish (#192)", () => {
   });
 });
 
+describe("the gate card's per-rule detail (#259)", () => {
+  it("translates the boilerplate and each reason when the server sends reason_codes", () => {
+    const decision = {
+      stage_id: "schema_discovery",
+      attempt: 3,
+      verdict: "escalate",
+      reason_code: "retry_budget_exhausted",
+      triggered_rules: ["retry_budget_exhausted", "repeated_identical_failure"],
+      human_prompt: {
+        stage_id: "schema_discovery",
+        question: "RAW",
+        question_kind: "problem",
+        context_summary: "SHOULD_NOT_RENDER_RAW_ENGLISH_BLOB",
+        context_note: "Load and deterministically profile every source table.",
+        reason_codes: ["retry_budget_exhausted", "repeated_identical_failure"],
+        options: [],
+      },
+    } as unknown as GateDecision;
+
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+
+    expect(markup).toContain("Neden durdu:");
+    expect(markup).toContain("Deneme hakkı kalmadı");
+    expect(markup).toContain("Aynı hata tekrarlandı");
+    expect(markup).not.toContain("SHOULD_NOT_RENDER_RAW_ENGLISH_BLOB");
+  });
+
+  it("falls back to the raw context_summary when reason_codes is absent (an older run)", () => {
+    const decision = {
+      stage_id: "schema_discovery",
+      attempt: 1,
+      verdict: "escalate",
+      reason_code: "retry_budget_exhausted",
+      triggered_rules: [],
+      human_prompt: {
+        stage_id: "schema_discovery",
+        question: "RAW",
+        context_summary: "OLD_RUN_RAW_ENGLISH_CONTEXT",
+        options: [],
+      },
+    } as unknown as GateDecision;
+
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { runId: "run-x", decision, onAnswered: () => undefined }),
+    );
+
+    expect(markup).toContain("OLD_RUN_RAW_ENGLISH_CONTEXT");
+    expect(markup).not.toContain("Neden durdu:");
+  });
+});
+
 describe("a gate on a stage that produced nothing (#198)", () => {
   it("explains why approve is missing instead of just dropping it", () => {
     const decision = {

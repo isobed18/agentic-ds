@@ -153,6 +153,10 @@ const REASON_LABELS: Record<string, string> = {
   unmet_mandatory_criteria: "A required check did not pass",
   risk_class_gate: "This step is high risk",
   clean: "Nothing to flag",
+  critique_errors: "The agent's own review raised errors",
+  separator_needs_confirmation: "A column may perfectly determine the target",
+  repeated_validation_failures: "Output kept failing validation",
+  profile_requires_confirmation: "Your profile requires confirmation at every stage",
 };
 
 export const reasonLabel = (code: string): string =>

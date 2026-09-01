@@ -120,6 +120,8 @@ export interface HumanPrompt {
    *  built in English on the server; the card needs the KIND to render Turkish. */
   question_kind?: "problem" | "checkpoint" | "no_output";
   context_summary: string;
+  context_note?: string;
+  reason_codes?: string[];
   options: { option_id: string; label: string; consequence: string; downstream_effect?: string | null; recommended?: boolean }[];
   allows_free_text?: boolean;
 }
