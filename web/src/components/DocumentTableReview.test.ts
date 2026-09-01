@@ -47,10 +47,23 @@ describe("the extracted-table review (#303)", () => {
     expect(SOURCE).toContain('decisions.get(candidate.candidateId) ?? "rejected"');
   });
 
+  it("flags a candidate with no rows and refuses to accept it (#310)", () => {
+    // The preview strips row data, so a candidate carrying headers and an
+    // empty `rows` list looked exactly as promotable as a real table -- and
+    // failed on promote with a raw Python message. The row count is already in
+    // the preview; say so on the card and block the only choice that crashes.
+    expect(SOURCE).toContain("const empty = candidate.rowCount === 0");
+    expect(SOURCE).toContain('t("No data extracted — cannot be accepted")');
+    expect(SOURCE).toContain("disabled={empty}");
+    // Rejecting one is still possible, so a review can be completed.
+    expect(SOURCE).toContain('decide(candidate.candidateId, "rejected")');
+  });
+
   it("translates the new review copy", () => {
     expect(CATALOGUE).toContain('"Accept": "Kabul et"');
     expect(CATALOGUE).toContain('"Reject": "Reddet"');
     expect(CATALOGUE).toContain('"{rows} rows × {columns} columns": "{rows} satır × {columns} sütun"');
     expect(CATALOGUE).toContain('"Decide on every table first ({count} left).":');
+    expect(CATALOGUE).toContain('"No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez"');
   });
 });

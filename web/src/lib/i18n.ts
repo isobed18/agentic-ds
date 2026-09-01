@@ -836,6 +836,7 @@ const TR: Record<string, string> = {
   "Accept or reject this table": "Bu tabloyu kabul et veya reddet",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
+  "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
   "Decide on every table first ({count} left).": "Önce her tabloya karar verin ({count} kaldı).",
   "Stays out": "Dışarıda kalır",
