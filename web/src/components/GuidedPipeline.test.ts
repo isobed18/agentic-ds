@@ -169,6 +169,18 @@ describe("guided pipeline node descriptions (#168)", () => {
   });
 });
 
+describe("guided pipeline stage names (#294)", () => {
+  it("uses the standalone translated stage name instead of a lowercase stage id", () => {
+    // Stage ids are lowercase codes. Passing them directly to t() selects the
+    // catalogue's mid-sentence Turkish labels (for example "birleştirme").
+    // The shared formatter selects the capitalized standalone labels and also
+    // expands `eda` to its real display name.
+    expect(SOURCE).toContain('import { stageName } from "./PipelineRail"');
+    expect(SOURCE).toContain("{stageName(node.id)}");
+    expect(SOURCE).not.toContain('t(node.label ?? node.id.replaceAll("_", " "))');
+  });
+});
+
 /**
  * One continuous graph, for the whole life of the run (#214).
  *
