@@ -389,6 +389,29 @@ class ArtifactStore:
             "orphaned_payloads": len(orphaned),
         }
 
+    def delete_artifact(self, artifact_id: str) -> dict[str, int]:
+        """Delete one artifact's index rows across every run it appears in.
+
+        Scoped by id alone, matching the download routes, which also take no
+        run_id: from the outside a content-addressed artifact is one entity
+        regardless of which run(s) indexed it. As with `delete_run`, the
+        payload is left for later garbage collection rather than removed here.
+        """
+        if not artifact_id.strip():
+            raise ValueError("artifact_id must not be empty")
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    deleted = conn.execute(
+                        "DELETE FROM artifacts WHERE artifact_id=?", (artifact_id,)
+                    ).rowcount
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+        return {"index_entries": deleted}
+
     @staticmethod
     def _row_to_ref(row: sqlite3.Row) -> ArtifactRef:
         return ArtifactRef(

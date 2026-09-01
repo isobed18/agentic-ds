@@ -6,7 +6,8 @@
  * from the same reusable input can appear here. Source reuse is instead made
  * legible: the Data view names the other projects bound to the same input.
  */
-import type { AutomationContents } from "../lib/api";
+import { useState } from "react";
+import { api, type AutomationContents, type ModelSummary, type ReportSummary } from "../lib/api";
 import type { WorkspaceView } from "./automationWorkspaceState";
 import { Badge, Empty, Spinner } from "./ui";
 import { t } from "../lib/i18n";
@@ -18,18 +19,20 @@ export function ProjectContentsPanel({
   view,
   contents,
   loading,
+  onChanged,
 }: {
   view: WorkspaceView;
   contents: AutomationContents | null;
   loading: boolean;
+  onChanged: () => void;
 }) {
   if (loading && !contents) return <div className="grid h-full place-items-center"><Spinner label={t("Loading…")} /></div>;
   return (
     <div className="h-full overflow-y-auto bg-surface-sunken px-6 py-6">
       <div className="mx-auto max-w-5xl">
         {view === "data" && <DataView contents={contents} />}
-        {view === "models" && <ModelsView contents={contents} />}
-        {view === "reports" && <ReportsView contents={contents} />}
+        {view === "models" && <ModelsView contents={contents} onChanged={onChanged} />}
+        {view === "reports" && <ReportsView contents={contents} onChanged={onChanged} />}
       </div>
     </div>
   );
@@ -41,65 +44,101 @@ function DataView({ contents }: { contents: AutomationContents | null }) {
   return <section><h2 className="text-lg font-semibold text-ink">{t("Selected automation data")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Only these project files belong to this automation.")}</p><div className="mt-4 space-y-2">{data.map((file) => <article key={`${file.source_id}:${file.path}`} className="card flex items-center gap-3 px-4 py-3"><span aria-hidden="true">▤</span><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.path}</p><p className="truncate font-mono text-[10px] text-ink-faint">{file.source_id}</p></div></article>)}</div></section>;
 }
 
-function ModelsView({ contents }: { contents: AutomationContents | null }) {
+function ModelsView({ contents, onChanged }: { contents: AutomationContents | null; onChanged: () => void }) {
   const models = contents?.models ?? [];
+  const [deleting, setDeleting] = useState<ModelSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteModel(deleting.artifact_id); setDeleting(null); onChanged(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Complete a run through the training stage to save a model.")} />;
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {models.map((model) => (
-        <article key={model.artifact_id} className="card px-4 py-3.5">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold">{model.display_name}</h3>
-              <p className="text-xs text-ink-mute">{model.estimator}</p>
+    <>
+      {error && <p className="mb-3 text-xs text-stop-700">{error}</p>}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {models.map((model) => (
+          <article key={model.artifact_id} className="card px-4 py-3.5">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold">{model.display_name}</h3>
+                <p className="text-xs text-ink-mute">{model.estimator}</p>
+              </div>
+              <div className="flex items-center gap-1">
+                {model.saved && <Badge tone="ok">{t("saved")}</Badge>}
+                <button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
+                  <TrashIcon />
+                </button>
+              </div>
             </div>
-            {model.saved && <Badge tone="ok">{t("saved")}</Badge>}
-          </div>
-          <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
-            <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
-            <Pair label={t("CV mean")} value={num(model.cv_mean)} />
-            <Pair label={t("CV std")} value={num(model.cv_std)} />
-            <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
-          </dl>
-          <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
-            <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
-              run {model.run_id} · {model.candidate_count} candidates
-            </p>
-            {/* #166: a completed run leaves a saved model that must be
-                downloadable. Only a saved model has a joblib blob behind it. */}
-            {model.saved && (
-              <a
-                href={`/api/models/${model.artifact_id}/download`}
-                className="btn-ghost !py-1 text-xs"
-                download
-              >
-                {t("Download model")}
-              </a>
-            )}
-          </div>
-        </article>
-      ))}
-    </div>
+            <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
+              <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
+              <Pair label={t("CV mean")} value={num(model.cv_mean)} />
+              <Pair label={t("CV std")} value={num(model.cv_std)} />
+              <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
+            </dl>
+            <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
+              <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
+                run {model.run_id} · {model.candidate_count} candidates
+              </p>
+              {/* #166: a completed run leaves a saved model that must be
+                  downloadable. Only a saved model has a joblib blob behind it. */}
+              {model.saved && (
+                <a
+                  href={`/api/models/${model.artifact_id}/download`}
+                  className="btn-ghost !py-1 text-xs"
+                  download
+                >
+                  {t("Download model")}
+                </a>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+      {deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </>
   );
 }
 
-function ReportsView({ contents }: { contents: AutomationContents | null }) {
+function ReportsView({ contents, onChanged }: { contents: AutomationContents | null; onChanged: () => void }) {
   const reports = contents?.reports ?? [];
+  const [deleting, setDeleting] = useState<ReportSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteReport(deleting.artifact_id); setDeleting(null); onChanged(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
   if (!reports.length) return <Empty title={t("No reports yet")} hint={t("Reports appear once a run reaches the report stage.")} />;
   return (
-    <div className="space-y-2">
-      {reports.map((report) => (
-        <article key={report.artifact_id} className="card flex items-center gap-3 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-medium">{String(report.title ?? report.preview ?? "Evaluation report")}</h3>
-            <p className="font-mono text-[11px] text-ink-faint">run {report.run_id}</p>
-          </div>
-          <a href={`/api/reports/${report.artifact_id}/download`} className="btn-ghost !py-1.5 text-xs" download>
-            {t("Download")}
-          </a>
-        </article>
-      ))}
-    </div>
+    <>
+      {error && <p className="mb-3 text-xs text-stop-700">{error}</p>}
+      <div className="space-y-2">
+        {reports.map((report) => (
+          <article key={report.artifact_id} className="card flex items-center gap-3 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-medium">{String(report.title ?? report.preview ?? "Evaluation report")}</h3>
+              <p className="font-mono text-[11px] text-ink-faint">run {report.run_id}</p>
+            </div>
+            <a href={`/api/reports/${report.artifact_id}/download`} className="btn-ghost !py-1.5 text-xs" download>
+              {t("Download")}
+            </a>
+            <button type="button" aria-label={t("Delete report")} title={t("Delete report")} onClick={() => setDeleting(report)} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
+              <TrashIcon />
+            </button>
+          </article>
+        ))}
+      </div>
+      {deleting && <ArtifactDeleteDialog title={t("Delete this report?")} confirmLabel={t("Delete report")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </>
   );
 }
 
@@ -110,4 +149,39 @@ function Pair({ label, value }: { label: string; value: string }) {
       <dd className="text-sm font-semibold text-ink">{value}</dd>
     </div>
   );
+}
+
+/**
+ * A model or report is a byproduct of a run, not a top-level record with its
+ * own name -- there's nothing more specific to warn about than "this output",
+ * unlike an automation/project delete which also names what else is affected.
+ */
+function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
+      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
+        <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{t("Cancel")}</button>
+          <button type="button" className="rounded-lg bg-stop-600 px-4 py-2 text-sm font-semibold text-white hover:bg-stop-700 disabled:opacity-50" disabled={busy} onClick={onConfirm}>{busy ? t("Deleting…") : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M3.75 5.5h12.5M8 5.5V4.25c0-.41.34-.75.75-.75h2.5c.41 0 .75.34.75.75V5.5" strokeLinecap="round" />
+      <path d="M5.75 5.5l.62 9.9c.04.61.55 1.1 1.16 1.1h4.94c.61 0 1.12-.49 1.16-1.1l.62-9.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 8.5v5M11.5 8.5v5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function messageOf(caught: unknown): string {
+  return caught instanceof Error ? caught.message : String(caught);
 }

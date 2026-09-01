@@ -475,6 +475,42 @@ def test_saved_model_is_downloadable_and_an_unsaved_one_reports_no_blob(
     assert client.get("/api/models/" + "f" * 64 + "/download").status_code == 404
 
 
+def test_model_and_report_deletion_removes_only_that_artifact(tmp_path: Path) -> None:
+    """#258: a model or report can be deleted on its own, without touching its run.
+
+    Deleting one artifact must not delete the run that produced it, nor any
+    other artifact indexed under that run -- unlike `delete_run`, which takes
+    everything. Attempting to delete a model through the report route (or vice
+    versa) is refused, since the wrong route silently deleting the wrong kind
+    of artifact would be far worse than a 400.
+    """
+    plane = _plane(tmp_path)
+    model_ref = plane.store.put(
+        _trained_model(blob_id=None), run_id="run-1", stage_exec_id="training", name="trained_model"
+    )
+    report_ref = plane.store.put(
+        FinalReport(evaluation_artifact_id="a" * 64, markdown="# Result\n\nOK."),
+        run_id="run-1",
+        stage_exec_id="report",
+        name="final_report",
+    )
+    client = TestClient(create_app(plane=plane))
+
+    assert client.delete(f"/api/models/{report_ref.artifact_id}").status_code == 400
+    assert client.delete(f"/api/reports/{model_ref.artifact_id}").status_code == 400
+    assert client.delete("/api/models/" + "f" * 64).status_code == 404
+
+    deleted = client.delete(f"/api/models/{model_ref.artifact_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["artifact_id"] == model_ref.artifact_id
+    remaining = {ref.artifact_id for ref in plane.store.list("run-1")}
+    assert model_ref.artifact_id not in remaining
+    assert report_ref.artifact_id in remaining
+
+    assert client.delete(f"/api/reports/{report_ref.artifact_id}").status_code == 200
+    assert plane.store.list("run-1") == []
+
+
 def test_left_product_navigation_is_functional_not_decorative(tmp_path: Path) -> None:
     """Every sidebar destination must route somewhere and be backed by data.
 
