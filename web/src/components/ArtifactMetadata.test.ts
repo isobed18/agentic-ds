@@ -30,6 +30,15 @@ describe("generic artifact metadata", () => {
     expect(markup).toContain("N rows");
     expect(markup).toContain("24");
     expect(markup).toContain("Columns");
-    expect(markup).toMatch(/6 (items|öğe)/);
+    // #297: a column count says "columns", not the generic "items"/"öğe".
+    expect(markup).toMatch(/6 (columns|sütun)/);
+  });
+
+  it("keeps the generic unit for a collection of opaque items (#297)", () => {
+    const markup = renderToStaticMarkup(createElement(ArtifactMetadata, {
+      preview: { artifact_id: "gate-1", artifact_type: "gate", collection_sizes: { triggered_rules: 3 } },
+    }));
+
+    expect(markup).toMatch(/3 (items|öğe)/);
   });
 });

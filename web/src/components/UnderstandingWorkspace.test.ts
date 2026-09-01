@@ -232,7 +232,8 @@ describe("understanding node status placement", () => {
     expect(markup).toContain("Veri kartı");
     expect(markup).toContain("customers");
     expect(markup).toContain("24");
-    expect(markup).toContain("6 öğe");
+    // #297: a column count carries the column unit, not the generic "öğe".
+    expect(markup).toContain("6 sütun");
     expect(markup).not.toContain("Artifact kaydedildi");
   });
 

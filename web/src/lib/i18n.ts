@@ -1285,7 +1285,18 @@ const TR: Record<string, string> = {
   "Artifact recorded": "Artifact kaydedildi",
   "Fields": "Alanlar",
   "Collection counts": "Koleksiyon sayıları",
+  // Turkish takes no plural after a numeral: "42 sütun", not "42 sütunlar".
+  // "öğe" stays the fallback for collections that really do hold opaque items.
   "{count} items": "{count} öğe",
+  "{count} columns": "{count} sütun",
+  "{count} rows": "{count} satır",
+  "{count} tables": "{count} tablo",
+  "{count} documents": "{count} belge",
+  "{count} pages": "{count} sayfa",
+  "{count} warnings": "{count} uyarı",
+  "{count} findings": "{count} bulgu",
+  "{count} candidates": "{count} aday",
+  "{count} metrics": "{count} metrik",
   "Data card": "Veri kartı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
