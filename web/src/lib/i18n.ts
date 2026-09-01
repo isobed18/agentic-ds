@@ -1052,6 +1052,15 @@ const TR: Record<string, string> = {
   // Project-first home (#111): projects are the only top-level concept, so the
   // home page reports their state and carries the browsing job the deleted
   // global catalogues used to do.
+  "Welcome to Agentic DS": "Agentic DS'e hoş geldiniz",
+  "Your data-science work starts inside a project.":
+    "Veri bilimi çalışmalarınız bir projenin içinde başlar.",
+  "Keep data, automations, models, and reports together. Open Projects to create or continue your work.":
+    "Veriyi, otomasyonları, modelleri ve raporları bir arada tutun. Çalışmanızı oluşturmak veya sürdürmek için Projeler'i açın.",
+  "Open Projects": "Projeleri aç",
+  "Local by design": "Tasarımı gereği yerel",
+  "Measured before modeled": "Modellemeden önce ölçülür",
+  "Decisions stay reviewable": "Kararlar incelenebilir kalır",
   "Your projects": "Projeleriniz",
   "Everything lives inside a project — see what each is doing and what it has produced.":
     "Her şey bir projenin içinde yaşar — her birinin ne yaptığını ve ne ürettiğini görün.",

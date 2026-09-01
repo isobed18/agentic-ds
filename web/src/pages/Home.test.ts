@@ -1,67 +1,37 @@
-/**
- * The home page is the only browsing surface after #111, so a result there has
- * to lead back to the exact project and run that produced it. These pin the
- * link composition: a project with runs opens on its latest run, and a produced
- * output opens its owning project's run -- an output with no project has nowhere
- * to go rather than a link to a project that does not exist.
- */
 import { describe, expect, it } from "vitest";
-import { outputHref, projectHref } from "./Catalog";
-import type { HomeOutput, HomeProject } from "../lib/api";
 
-const project = (over: Partial<HomeProject>): HomeProject => ({
-  project_id: "project-abc123def456",
-  name: "Retention",
-  visibility: "private",
-  mine: true,
-  status: "saved",
-  source_id: "upload:xyz",
-  execution_count: 0,
-  updated_at: "2026-01-01T00:00:00+00:00",
-  state: "idle",
-  needs_attention: false,
-  latest_run_id: null,
-  ...over,
-});
+import SOURCE from "./Catalog.tsx?raw";
+import CATALOGUE from "../lib/i18n.ts?raw";
 
-describe("home links", () => {
-  it("opens a project with no runs on its workspace", () => {
-    expect(projectHref(project({}))).toBe("/projects?project=project-abc123def456");
+const HOME = SOURCE.slice(SOURCE.indexOf("export function Home"));
+
+describe("the minimal home page (#301)", () => {
+  it("welcomes the reader and sends detailed work to Projects", () => {
+    expect(HOME).toContain('t("Welcome to Agentic DS")');
+    expect(HOME).toContain('t("Your data-science work starts inside a project.")');
+    expect(HOME).toContain('<Link to="/projects" className="btn-primary');
+    expect(HOME).toContain('t("Open Projects")');
+    expect(HOME.match(/btn-primary/g)).toHaveLength(1);
   });
 
-  it("opens a project with runs on its overview, not inside an automation", () => {
-    expect(projectHref(project({ latest_run_id: "run-9" }))).toBe(
-      "/projects?project=project-abc123def456",
-    );
+  it("is an orientation page, not another project catalogue", () => {
+    expect(HOME).not.toContain("api.home(");
+    expect(HOME).not.toContain("Search projects and outputs");
+    expect(HOME).not.toContain("Recently produced");
+    expect(HOME).toContain("bg-gradient-to-br");
   });
 
-  it("links a produced output to its owning project's run", () => {
-    const output: HomeOutput = {
-      kind: "report",
-      project_id: "project-abc123def456",
-      project_name: "Retention",
-      automation_id: "automation-fed654cba321",
-      automation_name: "Churn model",
-      run_id: "run-9",
-      artifact_id: "a".repeat(64),
-      label: "Holdout summary",
-      created_at: "2026-01-01T00:00:00+00:00",
-    };
-    expect(outputHref(output)).toBe(
-      "/projects?project=project-abc123def456&automation=automation-fed654cba321&view=executions&run=run-9",
-    );
-  });
-
-  it("gives an ownerless output no destination rather than a broken one", () => {
-    const orphan: HomeOutput = {
-      kind: "model",
-      project_id: null,
-      project_name: null,
-      run_id: "run-orphan",
-      artifact_id: "b".repeat(64),
-      label: "Trained model",
-      created_at: "2026-01-01T00:00:00+00:00",
-    };
-    expect(outputHref(orphan)).toBeNull();
+  it("ships Turkish copy for every new visible string", () => {
+    for (const key of [
+      "Welcome to Agentic DS",
+      "Your data-science work starts inside a project.",
+      "Keep data, automations, models, and reports together. Open Projects to create or continue your work.",
+      "Open Projects",
+      "Local by design",
+      "Measured before modeled",
+      "Decisions stay reviewable",
+    ]) {
+      expect(CATALOGUE).toContain(`"${key}":`);
+    }
   });
 });

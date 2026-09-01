@@ -103,13 +103,12 @@ describe("labels the scanner cannot see", () => {
 });
 
 describe("catalogue screens request translations at the render boundary", () => {
-  it("translates the home subtitle at the render boundary", () => {
-    // #111 replaced the marketing home (whose "Review your data" card carried
-    // the #73 description) with a project-first one. The defect that test
-    // guarded -- descriptive copy rendering as raw English because it never
-    // reached t() -- must not return through the new home's own subtitle.
+  it("translates the minimal home's orientation copy at the render boundary", () => {
+    // #301 replaced the project catalogue with a minimal welcome page. Keep
+    // its scope-defining copy behind t() so Turkish does not silently fall back
+    // to the English source text.
     expect(CATALOG_SOURCE).toContain(
-      't("Everything lives inside a project — see what each is doing and what it has produced.")',
+      't("Your data-science work starts inside a project.")',
     );
   });
 

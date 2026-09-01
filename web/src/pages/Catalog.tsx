@@ -4,14 +4,14 @@ import { t } from "../lib/i18n";
  *
  * #111 makes projects the only top-level concept, so the four global catalogues
  * (Datasets, Experiments, Models, Reports) are gone -- their outputs now live
- * inside the project that produced them (see ProjectContents). Home is the
- * project-first browsing surface; Settings shows the enforced guarantees.
+ * inside the project that produced them (see ProjectContents). Home is a
+ * minimal orientation surface; project browsing lives at /projects. Settings
+ * shows the enforced guarantees.
  */
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Disclosure, Empty, Metric, Spinner } from "../components/ui";
-import { api, type Hardening, type HomeOutput, type HomeOverview, type HomeProject, type ProjectState } from "../lib/api";
-import { VisibilityMark } from "./ProjectWorkspace";
+import { Disclosure, Spinner } from "../components/ui";
+import { api, type Hardening } from "../lib/api";
 
 function useAsync<T>(load: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -88,155 +88,36 @@ export function Settings() {
   );
 }
 
-const STATE_TONE: Record<ProjectState, "brand" | "warn" | "stop" | "ok" | "neutral"> = {
-  running: "brand",
-  awaiting_human: "warn",
-  failed: "stop",
-  completed: "ok",
-  idle: "neutral",
-};
-
-function stateLabel(project: HomeProject): string {
-  switch (project.state) {
-    case "running":
-      return t("Running");
-    case "awaiting_human":
-      return t("Waiting for you");
-    case "failed":
-      return t("Needs attention");
-    case "completed":
-      return t("Completed");
-    default:
-      return project.status === "saved" ? t("Ready to run") : t("Not started");
-  }
-}
-
-/** A project opens in its workspace; a project with runs opens on its latest. */
-export function projectHref(project: HomeProject): string {
-  return `/projects?project=${encodeURIComponent(project.project_id)}`;
-}
-
-export function outputHref(output: HomeOutput): string | null {
-  if (!output.project_id) return null;
-  const base = `/projects?project=${encodeURIComponent(output.project_id)}`;
-  return output.automation_id
-    ? `${base}&automation=${encodeURIComponent(output.automation_id)}&view=executions&run=${encodeURIComponent(output.run_id)}`
-    : base;
-}
-
-/**
- * The home page is the only top-level browsing surface after #111: projects are
- * the sole first-class thing, so this leads with each project's state (what is
- * running, what is waiting on a person) and carries the discovery job the four
- * deleted global catalogues used to do — one search across project names and
- * the outputs projects produced, so a report whose project you have forgotten
- * still leads back to it.
- */
 export function Home() {
-  const [search, setSearch] = useState("");
-  const { data, error, loading } = useAsync<HomeOverview>(() => api.home(search), [search]);
-  const totals = data?.totals;
-  const projects = data?.projects ?? [];
-  const recent = data?.recent ?? [];
-
   return (
-    <Page
-      title={t("Your projects")}
-      subtitle={t("Everything lives inside a project — see what each is doing and what it has produced.")}
-    >
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
-          <Metric label={t("Projects")} value={String(totals?.projects ?? "—")} />
-          <Metric label={t("Running")} value={String(totals?.running ?? "—")} />
-          <Metric label={t("Waiting")} value={String(totals?.awaiting_human ?? "—")} />
-          <Metric label={t("Needs attention")} value={String(totals?.failed ?? "—")} />
-          <Metric label={t("Completed")} value={String(totals?.completed ?? "—")} />
-        </div>
-        <Link to="/projects" className="btn-primary">
-          {t("New project")} →
-        </Link>
-      </div>
-
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder={t("Search projects and outputs…")}
-        className="field mb-4 w-full max-w-md text-sm"
-      />
-
-      {loading && <Spinner label={t("Loading…")} />}
-      {error && <p className="text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
-
-      {!loading && !error && (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">{t("Projects")}</h3>
-            {projects.length === 0 ? (
-              search
-                ? <Empty title={t("No projects match your search")} hint={t("Try a different name, or clear the search.")} />
-                : <Empty title={t("No projects yet")} hint={t("Create a project and its data, runs and reports will appear here.")} />
-            ) : (
-              <div className="space-y-2">
-                {projects.map((project) => (
-                  <Link
-                    key={project.project_id}
-                    to={projectHref(project)}
-                    className="card flex items-center gap-3 px-4 py-3 hover:border-brand-500"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <h4 className="flex items-center gap-2 text-sm font-semibold text-ink">
-                        <span className="truncate">{project.name}</span>
-                        <VisibilityMark visibility={project.visibility} />
-                      </h4>
-                      <p className="mt-0.5 text-xs text-ink-mute">
-                        {project.execution_count > 0
-                          ? t("{count} runs", { count: project.execution_count })
-                          : t("No runs yet")}
-                        {!project.source_id && ` · ${t("No data attached")}`}
-                      </p>
-                    </div>
-                    <Badge tone={STATE_TONE[project.state]}>{stateLabel(project)}</Badge>
-                  </Link>
-                ))}
+    <div className="relative h-full overflow-y-auto bg-gradient-to-br from-brand-50/80 via-surface to-violet-50/70 px-6 py-10 sm:px-10">
+      <div className="pointer-events-none absolute right-[8%] top-[12%] h-44 w-44 rounded-full bg-brand-200/25 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-[10%] left-[8%] h-52 w-52 rounded-full bg-violet-200/25 blur-3xl" />
+      <main className="relative mx-auto flex min-h-full max-w-4xl items-center justify-center">
+        <section className="w-full rounded-3xl border border-white/70 bg-surface/85 px-7 py-10 shadow-pop backdrop-blur sm:px-12 sm:py-14">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700">Agentic DS</p>
+          <h1 className="mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+            {t("Welcome to Agentic DS")}
+          </h1>
+          <p className="mt-4 max-w-2xl text-lg text-ink sm:text-xl">
+            {t("Your data-science work starts inside a project.")}
+          </p>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-mute sm:text-base">
+            {t("Keep data, automations, models, and reports together. Open Projects to create or continue your work.")}
+          </p>
+          <Link to="/projects" className="btn-primary mt-8 inline-flex items-center gap-2 !px-5 !py-3 text-sm">
+            {t("Open Projects")} <span aria-hidden="true">→</span>
+          </Link>
+          <div className="mt-10 grid gap-3 border-t border-line-soft pt-6 sm:grid-cols-3">
+            {["Local by design", "Measured before modeled", "Decisions stay reviewable"].map((label) => (
+              <div key={label} className="flex items-center gap-2 text-xs font-medium text-ink-mute">
+                <span className="h-2 w-2 rounded-full bg-brand-400" aria-hidden="true" />
+                {t(label)}
               </div>
-            )}
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">{t("Recently produced")}</h3>
-            {recent.length === 0 ? (
-              search
-                ? <Empty title={t("No outputs match your search")} />
-                : <Empty title={t("Nothing produced yet")} hint={t("Models and reports appear here as your projects finish runs.")} />
-            ) : (
-              <div className="space-y-2">
-                {recent.map((output) => {
-                  const href = outputHref(output);
-                  const body = (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <Badge tone={output.kind === "model" ? "brand" : "ok"}>
-                          {output.kind === "model" ? t("Model") : t("Report")}
-                        </Badge>
-                        <span className="min-w-0 flex-1 truncate text-sm text-ink">{output.label}</span>
-                      </div>
-                      <p className="mt-1 truncate text-xs text-ink-mute">
-                        {output.project_name ? t("in {project}", { project: output.project_name }) : t("No project")}
-                      </p>
-                    </>
-                  );
-                  return href ? (
-                    <Link key={output.artifact_id} to={href} className="card block px-4 py-3 hover:border-brand-500">{body}</Link>
-                  ) : (
-                    <article key={output.artifact_id} className="card px-4 py-3">{body}</article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </div>
-      )}
-    </Page>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }
