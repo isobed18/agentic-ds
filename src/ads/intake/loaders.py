@@ -15,12 +15,14 @@ from __future__ import annotations
 import csv
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from openpyxl import load_workbook
 
 from ads.contracts.datacard import LoadIssue
 
@@ -446,6 +448,67 @@ def load_parquet(path: str | Path, *, name: str | None = None) -> LoadedTable:
     )
 
 
+def _formula_columns(path: Path, sheet_name: str, headers: Sequence[object]) -> set[str]:
+    """Header names on this sheet whose cells hold formulas rather than values.
+
+    A workbook is read with `data_only=True`, which is right -- formula text is
+    not data. But a writer that never cached the results leaves those cells
+    empty, `_drop_empty` finds an all-null column, and the run reports "all-null"
+    about a column the author sees full of numbers. The message sends them to
+    the column instead of to how the file was written (#288).
+
+    Only called when a column was actually dropped, so an ordinary workbook pays
+    nothing for it.
+    """
+    try:
+        book = load_workbook(path, read_only=True, data_only=False)
+    except Exception:  # A message is not worth failing a load that worked.
+        return set()
+    try:
+        if sheet_name not in book.sheetnames:
+            return set()
+        sheet = book[sheet_name]
+        by_index: dict[int, bool] = {}
+        for row in sheet.iter_rows(values_only=True):
+            for index, value in enumerate(row):
+                if isinstance(value, str) and value.startswith("="):
+                    by_index[index] = True
+        return {
+            str(headers[index]) for index in by_index if 0 <= index < len(headers)
+        }
+    finally:
+        book.close()
+
+
+def _explain_dropped_formulas(
+    issues: list[LoadIssue], *, path: Path, sheet_name: str, headers: Sequence[object]
+) -> list[LoadIssue]:
+    """Correct an `empty_columns_dropped` message that is not actually true."""
+    dropped = [issue for issue in issues if issue.code == "empty_columns_dropped"]
+    if not dropped:
+        return issues
+    formulas = _formula_columns(path, sheet_name, headers)
+    if not formulas:
+        return issues
+    corrected: list[LoadIssue] = []
+    for issue in issues:
+        if issue.code != "empty_columns_dropped":
+            corrected.append(issue)
+            continue
+        corrected.append(
+            LoadIssue(
+                severity="warn",
+                code="formula_columns_without_results",
+                detail=(
+                    f"Dropped {sorted(formulas)}: the cells hold formulas and the file was "
+                    "saved without their results, so there are no values to read. Open and "
+                    "re-save the workbook in Excel, or export it as values."
+                ),
+            )
+        )
+    return corrected
+
+
 def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[LoadedTable]:
     """Load every sheet of a workbook as a separate table.
 
@@ -488,7 +551,11 @@ def load_excel(path: str | Path, *, name_prefix: str | None = None) -> list[Load
         frame = raw.iloc[header_row + 1 :].copy()
         frame.columns = raw.iloc[header_row]
         frame, norm_issues = normalize_columns(frame)
+        header_names = list(raw.iloc[header_row])
         frame, empty_issues = _drop_empty(frame)
+        empty_issues = _explain_dropped_formulas(
+            empty_issues, path=path, sheet_name=str(sheet_name), headers=header_names
+        )
         # Excel gives everything back as object dtype; recover real types.
         frame = frame.infer_objects()
         for col in frame.columns:
