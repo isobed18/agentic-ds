@@ -21,6 +21,7 @@ import {
   type SourceProfile,
   type StagingWorkspace,
 } from "../lib/api";
+import { isRunActive } from "../lib/status";
 import { t } from "../lib/i18n";
 import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
 
@@ -108,7 +109,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   }, [automationId, sourceId, automation?.automation_id]);
 
   useEffect(() => {
-    if (!runId || !["queued", "staging", "running"].includes(runStatus ?? "")) return;
+    if (!runId || !isRunActive(runStatus)) return;
     const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); if (typeof progress.error === "string" && progress.error) setError(progress.error); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
     return () => window.clearInterval(timer);
   }, [runId, runStatus]);
@@ -252,7 +253,7 @@ function ExecutionHistory({ executions, busy, selectedRunId, onPause, onRetry, o
     if (urlMatch && appliedRun.current !== selectedRunId) { setSelected(urlMatch); appliedRun.current = selectedRunId; return; }
     if (!selected || !executions.some((item) => item.run_id === selected.run_id)) setSelected(preferredExecution(executions, selectedRunId));
   }, [executions, selectedRunId, selected]);
-  const active = selected && ["queued", "staging", "running", "resuming"].includes(selected.status);
+  const active = selected && isRunActive(selected.status);
   const retryable = selected && ["failed", "interrupted", "aborted", "awaiting_human"].includes(selected.status);
   return <div className="h-full overflow-y-auto bg-surface-sunken p-6"><div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-[1fr_1.4fr]"><section><h2 className="text-sm font-semibold text-ink">{t("Execution history")}</h2><div className="mt-3 space-y-2">{executions.map((item, index) => <button key={item.run_id} type="button" onClick={() => setSelected(item)} className={cx("flex w-full items-center gap-3 rounded-xl border bg-surface px-4 py-3 text-left", selected?.run_id === item.run_id ? "border-brand-400 ring-2 ring-brand-100" : "border-line")}><span className="text-xs font-semibold text-ink">#{executions.length - index}</span><Badge tone={item.status === "completed" ? "ok" : item.status === "failed" ? "stop" : "brand"}>{t(item.status)}</Badge><span className="ml-auto text-[10px] text-ink-faint">{item.last_activity ? new Date(item.last_activity).toLocaleString() : "—"}</span></button>)}{!executions.length && <Empty title={t("Never executed")} hint={t("Accepted workflow runs will appear here without changing the saved editor graph.")} />}</div></section>{selected && <section className="rounded-xl border border-line bg-surface p-5 shadow-card"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Selected execution")}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><ExecutionFact label={t("Status")} value={t(selected.status)} /><ExecutionFact label={t("Artifacts")} value={selected.artifact_count ?? 0} /><ExecutionFact label={t("Completed stages")} value={selected.stages?.length ?? 0} /><ExecutionFact label={t("Last activity")} value={selected.last_activity ? new Date(selected.last_activity).toLocaleString() : "—"} /></div><div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">{active && <button type="button" className="btn-ghost text-xs" disabled={busy} onClick={() => onPause(selected.run_id)}>{t("Pause after current stage")}</button>}{retryable && <button type="button" className="btn-primary text-xs" disabled={busy} onClick={() => onRetry(selected.run_id)}>{t(selected.status === "awaiting_human" ? "Retry current component" : "Retry run")}</button>}{!active && <button type="button" className="btn-ghost text-xs text-stop-700" disabled={busy} onClick={() => onDelete(selected.run_id)}>{t("Delete execution")}</button>}</div><p className="mt-4 text-xs text-ink-mute">{t("Select a completed node in the Editor to inspect its readable artifacts and evidence.")}</p></section>}</div></div>;
 }

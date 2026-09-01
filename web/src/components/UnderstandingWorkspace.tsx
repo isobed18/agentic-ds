@@ -8,6 +8,7 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { activeLanguage, localizedList, t } from "../lib/i18n";
+import { isRunActive } from "../lib/status";
 import { NodeStatusHeader, StatusMark } from "./NodeStatus";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
@@ -51,7 +52,7 @@ function useRunProgress(runId: string | null): RunProgressSnapshot | null {
     const refresh = () => { void api.runProgress(runId).then((next) => {
       if (cancelled) return;
       setProgress(next);
-      if (["queued", "staging", "running"].includes(String(next.status ?? ""))) {
+      if (isRunActive(String(next.status ?? ""))) {
         timer = window.setTimeout(refresh, 1400);
       }
     }).catch(() => {
