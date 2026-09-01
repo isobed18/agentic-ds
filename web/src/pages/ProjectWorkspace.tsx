@@ -166,7 +166,7 @@ export function ProjectWorkspace({
           <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} title={name} className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold text-ink outline-none" />
         </label>
         <nav aria-label={t("Project sections")} className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">
-          {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3 py-1.5 text-xs font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}
+          {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3.5 py-2 text-sm font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}
         </nav>
         <div className="ml-auto"><LanguagePicker /></div>
       </header>
