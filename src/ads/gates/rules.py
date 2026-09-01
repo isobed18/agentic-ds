@@ -74,6 +74,11 @@ class RuleOutcome:
     reason_code: str
     message: str
     instructions: tuple[str, ...] = ()
+    #: Kararin ilgilendigi kolonlar, DUZYAZI degil veri olarak. Sizinti
+    #: kapisinda supheli kolonlar sunucu tarafinda zaten hesaplanmisti ama
+    #: insana yalnizca cumlenin icinde gidiyordu; arayuzun onlardan kutucuk
+    #: yapabilmesi icin ayrica tasinmalari gerekiyor (#262).
+    columns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,12 +152,24 @@ def _leakage(ctx: RuleContext) -> RuleOutcome | None:
         if correlation is not None
         else "Blocking leakage"
     )
+    # Insana cikarken de duzeltmeyi HAZIR ver. Retry dali bunu zaten dogru
+    # uretiyordu; insana cikan dal uretmiyordu, yani kisi `drop_feature: g1`
+    # sozdizimini bilmek zorundaydi ve hicbir yerde yazmiyordu. Dogal dille
+    # yazilan bir not `_DROP_FEATURE` desenine uymadigi icin sessizce
+    # yok sayiliyordu (#262).
+    correction_columns = unresolved or columns
     return RuleOutcome(
         verdict=GateVerdict.ESCALATE,
         reason_code="leakage_unresolved",
         message=(
             f"{measured} persists after {ctx.history.attempts} attempts. Human review required."
         ),
+        instructions=tuple(
+            f"drop_feature: {column}  # "
+            + ("target leakage" if column in correlation_columns else "blocking leakage")
+            for column in correction_columns
+        ),
+        columns=tuple(correction_columns),
     )
 
 

@@ -240,6 +240,12 @@ class HumanPrompt(FrozenModel):
     reason_codes: list[str] = Field(default_factory=list)
     options: list[DecisionOption] = Field(default_factory=list)
     allows_free_text: bool = True
+    #: Kararin ilgilendigi kolonlar ve onlar icin HAZIR duzeltme satirlari.
+    #: Serbest metin kutusu bir makine sozdizimi bekliyordu ve bunu hicbir
+    #: yerde soylemiyordu; arayuzun yazdirmak yerine SECTIRMESI icin veri
+    #: burada (#262).
+    subject_columns: list[str] = Field(default_factory=list)
+    suggested_corrections: list[str] = Field(default_factory=list)
     artifacts_to_review: list[str] = Field(default_factory=list)
     default_option: str | None = None
     timeout_behavior: str = Field(default="wait", pattern="^(wait|use_default|abort)$")

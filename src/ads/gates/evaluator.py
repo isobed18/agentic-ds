@@ -223,8 +223,15 @@ def build_human_prompt(
             f"Stage {stage.id!r} stopped because a problem was detected. Your decision is needed."
         )
 
+    # Kurallarin verdigi yapisal veriyi insana da tasi; cumlenin icinde
+    # birakmak, arayuzu duzyazi ayristirmaya mecbur ederdi.
+    subject_columns = sorted({column for outcome in outcomes for column in outcome.columns})
+    suggested = [line for outcome in outcomes for line in outcome.instructions]
+
     return HumanPrompt(
         stage_id=stage.id,
+        subject_columns=subject_columns,
+        suggested_corrections=suggested,
         question=question,
         question_kind=(
             "no_output" if produced_nothing else "checkpoint" if policy_only else "problem"

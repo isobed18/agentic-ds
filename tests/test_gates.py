@@ -863,3 +863,56 @@ class TestSeparatorIsNotFailure:
         )
         assert decision.verdict is GateVerdict.ESCALATE
         assert decision.reason_code == "retry_budget_exhausted"
+
+
+class TestLeakageEscalationCarriesTheFix:
+    """The leakage gate knows exactly which columns to drop. It kept that to itself.
+
+    `leakage_audit_stage` is deterministic, not LLM-driven, and the only thing
+    a retry understands is `drop_feature: <column>` (`stages.py:86`). A human
+    typing "drop G1 and G2" into the note box does not match that pattern and
+    is discarded in silence -- and nothing in the product says the syntax
+    exists (#262).
+    """
+
+    def _leakage_signals(self) -> QualitySignals:
+        return QualitySignals(
+            max_target_correlation=0.98,
+            target_relationship_suspect_columns=["g2"],
+            structural_leakage_suspect_columns=["g1"],
+        )
+
+    def test_escalation_names_the_columns_as_data_not_prose(self) -> None:
+        decision = _decide(
+            stage=_stage(id="leakage_audit", max_attempts=1),
+            signals=self._leakage_signals(),
+            profile=CHECKPOINTED,
+            history=StageHistory(attempts=3),
+        )
+
+        prompt = decision.human_prompt
+        assert prompt is not None
+        assert prompt.subject_columns == ["g1", "g2"], (
+            "the UI must not have to parse the sentence to build a control"
+        )
+
+    def test_escalation_carries_ready_made_correction_lines(self) -> None:
+        """In the machine syntax a retry actually reads, not natural language."""
+        decision = _decide(
+            stage=_stage(id="leakage_audit", max_attempts=1),
+            signals=self._leakage_signals(),
+            profile=CHECKPOINTED,
+            history=StageHistory(attempts=3),
+        )
+
+        lines = decision.human_prompt.suggested_corrections
+        assert lines, "the fix is mechanical and already known; do not make a person type it"
+        for column in ("g1", "g2"):
+            assert any(line.startswith(f"drop_feature: {column}") for line in lines), column
+
+    def test_an_ordinary_escalation_carries_no_columns(self) -> None:
+        """The fields are for decisions that are ABOUT columns, not every stop."""
+        decision = _decide(stage=_stage(id="evaluation"), profile=CHECKPOINTED)
+
+        assert decision.human_prompt.subject_columns == []
+        assert decision.human_prompt.suggested_corrections == []
