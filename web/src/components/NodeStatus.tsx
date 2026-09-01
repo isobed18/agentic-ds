@@ -28,7 +28,10 @@ export function StatusMark({ status }: { status?: string | null }) {
       {tone === "complete" ? "✓"
         : tone === "attention" ? "!"
           : tone === "running"
-            ? <><span>●</span><span className="absolute inset-0 animate-ping rounded-full bg-brand-300 opacity-40 motion-reduce:animate-none" /></>
+            ? <>
+                <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />
+                <span className="absolute inset-0 animate-ping rounded-full bg-brand-300 opacity-40 motion-reduce:animate-none" />
+              </>
             : "○"}
     </span>
   );
