@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type RunSummary } from "../lib/api";
 import { reasonLabel } from "../lib/status";
+import { projectOfAutomation, runHref } from "./runDeepLink";
 import { cx } from "./ui";
 
 const SEEN_KEY = "ads.notifications.seen";
@@ -23,6 +24,7 @@ const POLL_MS = 8000;
 interface Item {
   id: string;
   runId: string;
+  automationId?: string | null;
   tone: "stop" | "warn" | "ok";
   title: string;
   detail: string;
@@ -39,6 +41,7 @@ function itemsFrom(runs: RunSummary[]): Item[] {
         // new notification rather than a silent overwrite.
         id: `${run.run_id}:ask:${run.pending_question.stage_id}:${run.pending_question.attempt}`,
         runId: run.run_id,
+        automationId: run.automation_id,
         tone: "stop",
         title: t("Waiting for you"),
         detail: `${label} — ${reasonLabel(run.pending_question.reason_code)}`,
@@ -48,6 +51,7 @@ function itemsFrom(runs: RunSummary[]): Item[] {
       items.push({
         id: `${run.run_id}:done`,
         runId: run.run_id,
+        automationId: run.automation_id,
         tone: "ok",
         title: t("Run finished"),
         detail: label,
@@ -57,6 +61,7 @@ function itemsFrom(runs: RunSummary[]): Item[] {
       items.push({
         id: `${run.run_id}:failed`,
         runId: run.run_id,
+        automationId: run.automation_id,
         tone: "warn",
         title: t("Run stopped with an error"),
         detail: label,
@@ -114,6 +119,20 @@ export function Notifications() {
     localStorage.setItem(SEEN_KEY, JSON.stringify([...next]));
   }
 
+  /**
+   * Resolve the owning project, then go to the run inside it.
+   *
+   * The lookup is on click rather than on every poll: the answer is only
+   * needed once someone acts on a notification, and /api/projects is
+   * viewer-filtered, so an automation whose project this account may not see
+   * resolves to nothing and the link degrades instead of 404ing.
+   */
+  async function openRun(item: Item) {
+    setOpen(false);
+    const projects = item.automationId ? await api.projects().catch(() => []) : [];
+    navigate(runHref(projectOfAutomation(projects, item.automationId), item.automationId, item.runId));
+  }
+
   return (
     <div className="relative" ref={panel}>
       <button
@@ -152,7 +171,7 @@ export function Notifications() {
               {items.map((i) => (
                 <li key={i.id}>
                   <button
-                    onClick={() => { setOpen(false); navigate(`/projects?view=runs&run=${i.runId}`); }}
+                    onClick={() => void openRun(i)}
                     className="flex w-full items-start gap-3 border-b border-line-soft px-4 py-3 text-left last:border-b-0 hover:bg-surface-sunken"
                   >
                     <span
