@@ -77,7 +77,12 @@ describe("the project-first journey (#157, #165)", () => {
     // The guided run used to pass only the run mode, so a chosen target never
     // reached the pipeline. GuidedPipeline's onRun now hands back the column,
     // and runAcceptedWorkflow forwards it to startStaged as target_column.
-    expect(AUTOMATION_SOURCE).toContain("onRun={(runMode, target) => void runAcceptedWorkflow(runMode, target)}");
+    expect(AUTOMATION_SOURCE).toContain("onRun={(runMode, target, problemKind) => void runAcceptedWorkflow(runMode, target, problemKind)}");
     expect(AUTOMATION_SOURCE).toContain("targetColumn ? { target_column: targetColumn } : {}");
+  });
+
+  it("forwards a quick-picked problem kind as problem_selection, skipping the planner (#241)", () => {
+    expect(AUTOMATION_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
+    expect(AUTOMATION_SOURCE).toContain("problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}");
   });
 });

@@ -74,6 +74,8 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
     // run stops at every gate.
     expect(GUIDED_SOURCE).toContain("setApproveEachStage(event.target.checked)");
     // #244/#198: the run mode now travels alongside the chosen target column.
-    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)');
+    // #241: and the chosen problem kind, so a duplicate of this same invariant
+    // in GuidedPipeline.test.ts and here both name the three-argument call.
+    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
   });
 });

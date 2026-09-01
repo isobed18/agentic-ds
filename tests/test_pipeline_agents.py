@@ -17,7 +17,7 @@ from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import BUILTIN_PROFILES, GateVerdict
 from ads.contracts.integration import IntegrationPlan
-from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
+from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition, TaskType
 from ads.contracts.validation import ValidationStrategy
 from ads.gates import GatePolicy
 from ads.llm import LLMResponse, ModelProfile
@@ -30,6 +30,7 @@ from ads.pipeline import (
     build_pipeline_rubrics,
     configure_full_pipeline_state,
 )
+from ads.pipeline.stages import QUICK_PROBLEM_KEY
 from ads.store import ArtifactStore
 
 
@@ -388,6 +389,94 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
     assert problem.excluded_columns == ["total_comp_ytd"]
     assert strategy.strategy.value == "temporal"
     assert final.markdown == state.blackboard[FINAL_MARKDOWN_KEY]
+
+
+def test_quick_problem_selection_confirms_a_target_without_calling_the_llm(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """#241: a person can name the problem directly from a quick-pick selector,
+    and problem_discovery must confirm it without ever asking the LLM."""
+    llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-predict")
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+    }
+
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="problem_discovery",
+    )
+
+    assert len(llm.calls) == len(_schema_actions()) + 1, "problem_discovery must not call the LLM"
+    candidates = state.require(ArtifactType.PROBLEM_CANDIDATES, ProblemCandidateSet)
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    assert len(candidates.candidates) == 1
+    assert problem.confirmed_by == "human"
+    assert problem.target_column == "annual_comp"
+    assert problem.task_type is TaskType.REGRESSION
+    assert problem.source_candidate_id == candidates.candidates[0].candidate_id
+
+
+def test_quick_problem_selection_flags_anomalies_with_no_target(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-anomalies")
+    state.blackboard[QUICK_PROBLEM_KEY] = {"kind": "flag_anomalies", "target_column": None}
+
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="problem_discovery",
+    )
+
+    assert len(llm.calls) == len(_schema_actions()) + 1
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    assert problem.task_type is TaskType.ANOMALY_DETECTION
+    assert problem.target_column is None
+    assert problem.confirmed_by == "human"
+
+
+def test_a_rejected_quick_pick_falls_back_to_the_full_agent_conversation(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """A retry (a non-None correction) means the gate rejected the quick-picked
+    framing, so reproposing the identical deterministic candidate would not be
+    a rework -- the full agent path must run instead (#241)."""
+    setup_llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(setup_llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-retry")
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+    }
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="integration",
+    )
+
+    from ads.pipeline.agent_stages import make_problem_discovery_stage
+
+    retry_llm = FakeLLM([_problem_response()])
+    stage = make_problem_discovery_stage(retry_llm)
+
+    stage(state, correction=["Use a different framing than the quick pick."])
+
+    assert len(retry_llm.calls) == 1, "a rejected quick pick must fall back to the agent"
 
 
 @pytest.mark.parametrize("failure_type", [ConnectionError, ValueError])

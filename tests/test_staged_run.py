@@ -20,7 +20,12 @@ from ads.api.service import ControlPlane, _RunPauseRequested, create_app
 from ads.contracts.base import ArtifactType
 from ads.llm import LLMResponse, ModelProfile
 from ads.orchestration.runner import RunOutcome, RunStatus
-from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
+from ads.pipeline.stages import (
+    CANDIDATE_LIMIT_KEY,
+    QUICK_PROBLEM_KEY,
+    STAGE_DIRECTIVES_KEY,
+    VALIDATION_FOLDS_KEY,
+)
 from ads.store import ArtifactStore
 
 
@@ -638,6 +643,76 @@ class TestContinuingKeepsTheWork:
         run_id = _stage(client)
 
         refused = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "yolo"})
+
+        assert refused.status_code == 400
+
+
+class TestQuickProblemSelection:
+    """#241: a quick-pick selection reaches the run state, skipping the planner
+    conversation. What problem_discovery does with it is covered in
+    tests/test_pipeline_agents.py; here only the shape check and the wiring
+    into `state.blackboard` are in scope."""
+
+    def test_a_valid_selection_reaches_the_run_state(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = _stage(client)
+
+        started = client.post(
+            f"/api/runs/{run_id}/start",
+            json={"problem_selection": {"kind": "predict_column", "target_column": "tutar"}},
+        )
+        assert started.status_code == 200, started.text
+        _settle(client, run_id, target="completed")
+
+        state = recorder.calls[1]["state"]
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "predict_column",
+            "target_column": "tutar",
+        }
+
+    def test_flag_anomalies_needs_no_target_column(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = _stage(client)
+
+        started = client.post(
+            f"/api/runs/{run_id}/start",
+            json={"problem_selection": {"kind": "flag_anomalies"}},
+        )
+        assert started.status_code == 200, started.text
+        _settle(client, run_id, target="completed")
+
+        state = recorder.calls[1]["state"]
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "flag_anomalies",
+            "target_column": None,
+        }
+
+    def test_a_non_object_selection_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": "predict_column"}
+        )
+
+        assert refused.status_code == 400
+
+    def test_an_unknown_kind_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": {"kind": "cluster_rows"}}
+        )
+
+        assert refused.status_code == 400
+
+    def test_predict_column_without_a_target_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": {"kind": "predict_column"}}
+        )
 
         assert refused.status_code == 400
 
