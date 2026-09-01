@@ -958,7 +958,7 @@ const TR: Record<string, string> = {
   "Not started yet": "Henüz başlamadı",
   "This stage runs once the plan is accepted.": "Bu aşama, plan kabul edildikten sonra çalışır.",
   "Accepted ML plan": "Kabul edilen ML planı",
-  "Base ML pipeline": "Temel ML hattı",
+  "Base ML pipeline": "Temel ML boru hattı",
   "What will run": "Ne çalışacak",
   "Stage details": "Aşama ayrıntıları",
   "The Planner is preparing a proposal…": "Planlayıcı bir öneri hazırlıyor…",
