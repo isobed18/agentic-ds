@@ -79,6 +79,10 @@ const TR: Record<string, string> = {
   "A required check did not pass": "Zorunlu bir kontrol geçmedi",
   "This step is high risk": "Bu adım yüksek riskli",
   "Nothing to flag": "İşaretlenecek bir şey yok",
+  "The agent's own review raised errors": "Agent'ın kendi incelemesi hatalar buldu",
+  "A column may perfectly determine the target": "Bir sütun hedefi neredeyse birebir belirliyor olabilir",
+  "Output kept failing validation": "Çıktı doğrulamayı tekrar tekrar geçemedi",
+  "Your profile requires confirmation at every stage": "Profiliniz her adımda onay istiyor",
 
   // pipeline stages
   "intake": "veri alma",
@@ -574,6 +578,7 @@ const TR: Record<string, string> = {
   "Answer sent": "Cevap gönderildi",
   "Recorded. The run is resuming — this card clears on the next refresh.":
     "Kaydedildi. Koşu devam ediyor — bu kart bir sonraki yenilemede kapanacak.",
+  "Why this stopped:": "Neden durdu:",
   "Attempts": "Denemeler",
   "Attempt {count}": "{count}. deneme",
   "Decision history": "Karar geçmişi",
