@@ -246,10 +246,12 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}
         {accepted && !canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
       </div>
-      <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
-        <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
-        <button type="button" className="btn-ghost text-xs" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
-        <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
+      <div className="flex items-center gap-2">
+        <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
+        <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
+          <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
+          <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
+        </div>
       </div>
     </div>
 
