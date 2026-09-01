@@ -25,6 +25,12 @@ describe("the project-first journey (#157, #165)", () => {
     expect(PROJECT_SOURCE.indexOf("{progress &&")).toBeLessThan(PROJECT_SOURCE.indexOf('t("Upload new files")'));
   });
 
+  it("offers the bundled PDF benchmark as ready project data (#302)", () => {
+    expect(PROJECT_SOURCE).toContain("api.installPdfDemo()");
+    expect(PROJECT_SOURCE).toContain('t("Use PDF demo")');
+    expect(PROJECT_SOURCE).toContain("api.addProjectSource(projectId, demo.source_id)");
+  });
+
   it("lists many automations and creates them through their parent", () => {
     expect(PROJECT_SOURCE).toContain("api.createProjectAutomation(projectId");
     expect(PROJECT_SOURCE).toContain("automations.map");

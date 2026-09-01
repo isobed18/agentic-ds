@@ -2047,7 +2047,7 @@ class ControlPlane:
         """Persist a human-edited component graph as a new immutable snapshot."""
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status not in {"staging", "staged"}:
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         latest_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
         if latest_ref is None:
             raise ValueError("the staging workspace is not ready")
@@ -3748,6 +3748,62 @@ class ControlPlane:
             "files": files,
         }
 
+    def install_pdf_demo(self, *, owner: str | None = None) -> dict[str, Any]:
+        """Materialize the bundled PDF + CSV oracle as one reusable source.
+
+        The bytes are packaged with the application, so this is offline. An
+        owner gets one copy: repeated clicks verify and reuse it instead of
+        producing duplicate data sources.
+        """
+        from ads.testing.pdf_demo import PDF_DEMO_FILES, pdf_demo_fixture_dir  # noqa: PLC0415
+
+        if self.upload_root is None:
+            raise ValueError("uploads are not configured")
+        fixture = pdf_demo_fixture_dir()
+        expected = {name: (fixture / name).read_bytes() for name in PDF_DEMO_FILES}
+        ownership = self._ownership()
+        for source in self.data_sources(viewer=owner):
+            source_id = str(source.get("source_id", ""))
+            if not source_id.startswith("upload:") or ownership.owner_of(source_id) != owner:
+                continue
+            if sorted(source.get("files", [])) != sorted(expected):
+                continue
+            try:
+                directory = self.source_path(source_id)
+            except KeyError:
+                continue
+            matches = all(
+                (directory / name).read_bytes() == content
+                for name, content in expected.items()
+            )
+            if matches:
+                return {**source, "reused": True}
+
+        token = uuid.uuid4().hex[:12]
+        target_dir = self.upload_root / token
+        for name in expected:
+            _check_upload_path_fits(target_dir / name)
+        target_dir.mkdir(parents=True, exist_ok=False)
+        source_id = f"upload:{token}"
+        ownership.record(source_id, owner=owner)
+        try:
+            for name, content in expected.items():
+                (target_dir / name).write_bytes(content)
+        except Exception:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            ownership.forget(source_id)
+            raise
+        files = sorted(expected)
+        return {
+            "source_id": source_id,
+            "label": "PDF extraction demo",
+            "files": files,
+            "owner": owner,
+            "visibility": ownership.visibility_of(source_id),
+            "mine": bool(owner),
+            "reused": False,
+        }
+
     def remove_upload_file(
         self, source_id: str, filename: str, *, owner: str | None = None
     ) -> dict[str, Any]:
@@ -4560,7 +4616,7 @@ class ControlPlane:
         """
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status not in {"staging", "staged"}:
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         if "run_seed" in configuration and _coerce_run_seed(configuration["run_seed"]) != int(
             runtime.configuration["run_seed"]
         ):
@@ -4580,7 +4636,7 @@ class ControlPlane:
         """
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status != "staged":
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         if runtime.resume is None:
             raise ValueError(
                 "this staged run did not survive a restart and cannot be continued; "
@@ -4822,12 +4878,27 @@ class ControlPlane:
                 runtime.updated_at = _now()
                 if name == "stage_started":
                     runtime.current_stage = payload.get("stage")
-                if (
-                    name == "gate_decided"
-                    and payload.get("verdict") == "auto_proceed"
-                    and runtime.pause_requested
-                ):
-                    should_pause = True
+                if name == "gate_decided" and runtime.pause_requested:
+                    verdict = payload.get("verdict")
+                    if verdict == "auto_proceed":
+                        should_pause = True
+                    elif verdict in {"escalate", "abort"}:
+                        # The run is stopping here on its own -- for a human
+                        # answer or an abort, not because of the pause -- but a
+                        # stop all the same. Clear the request so it doesn't
+                        # linger and hijack a *later*, unrelated resume (#282):
+                        # left set, it would silently re-pause the run the next
+                        # time it advances, e.g. right after the human answers
+                        # the gate it escalated to.
+                        runtime.pause_requested = False
+                        runtime.events.append(
+                            {
+                                "event": "pause_request_resolved",
+                                "at": _now(),
+                                "stage": payload.get("stage"),
+                                "reason": verdict,
+                            }
+                        )
             self._persist_runtime(runtime)
             if should_pause:
                 raise _RunPauseRequested()
@@ -6567,6 +6638,34 @@ def _run_error_text(exc: BaseException) -> dict[str, str]:
     return {"en": ham, "tr": ham}
 
 
+def _cannot_stage_error(runtime: _RuntimeRun | None) -> ValueError:
+    """Say why a staged-run action can't proceed, in words the reader can act on.
+
+    Both `/staged` (PATCH) and `/start` (POST) used to raise the same bare
+    ``ValueError("this run is not staged")`` whatever the actual reason was --
+    a run that had finished, failed, aborted, or was waiting on a human answer
+    all landed on the same sentence, untranslated, in the reader's face (#282,
+    same class of issue as #263/#265). The status is already known here, so
+    say what happened instead of repeating the field name back at them.
+    """
+    if runtime is None:
+        return ValueError(i18n.t("This run no longer exists; choose the dataset again."))
+    status = runtime.status
+    if status == "awaiting_human":
+        return ValueError(
+            i18n.t("This run is waiting for your answer to a question, not for a restart.")
+        )
+    if status == "completed":
+        return ValueError(i18n.t("This run already finished and cannot be resumed."))
+    if status == "aborted":
+        return ValueError(i18n.t("This run was aborted and cannot be resumed."))
+    if status == "failed":
+        return ValueError(i18n.t("This run failed and cannot be resumed; start a new run."))
+    if status in {"running", "resuming"}:
+        return ValueError(i18n.t("This run is already in progress."))
+    return ValueError(i18n.t("This run is not staged."))
+
+
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
     """The escalation a run is stopped on RIGHT NOW, ready for the wire.
 
@@ -7084,6 +7183,13 @@ def create_app(
                 owner=_viewer(request),
             )
         except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/demo-data/pdf")
+    def install_pdf_demo(request: Request) -> dict[str, Any]:
+        try:
+            return plane.install_pdf_demo(owner=_viewer(request))
+        except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.delete("/api/data-sources/{source_id}/files/{filename}")

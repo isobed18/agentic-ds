@@ -1,0 +1,175 @@
+%PDF-1.4
+%“Œ‹ž ReportLab Generated PDF document (opensource)
+1 0 obj
+<<
+/F1 2 0 R /F2 3 0 R /F3 4 0 R /F4 5 0 R
+>>
+endobj
+2 0 obj
+<<
+/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
+>>
+endobj
+3 0 obj
+<<
+/BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding /Name /F2 /Subtype /Type1 /Type /Font
+>>
+endobj
+4 0 obj
+<<
+/BaseFont /Courier-Bold /Encoding /WinAnsiEncoding /Name /F3 /Subtype /Type1 /Type /Font
+>>
+endobj
+5 0 obj
+<<
+/BaseFont /Courier /Encoding /WinAnsiEncoding /Name /F4 /Subtype /Type1 /Type /Font
+>>
+endobj
+6 0 obj
+<<
+/Contents 10 0 R /MediaBox [ 0 0 595.2756 841.8898 ] /Parent 9 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
+endobj
+7 0 obj
+<<
+/PageMode /UseNone /Pages 9 0 R /Type /Catalog
+>>
+endobj
+8 0 obj
+<<
+/Author (Agentic DS) /CreationDate (D:20000101000000+00'00') /Creator (anonymous) /Keywords () /ModDate (D:20000101000000+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+  /Subject (Offline table extraction benchmark) /Title (Agentic DS PDF Extraction Demo) /Trapped /False
+>>
+endobj
+9 0 obj
+<<
+/Count 1 /Kids [ 6 0 R ] /Type /Pages
+>>
+endobj
+10 0 obj
+<<
+/Length 2940
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+.078431 .129412 .239216 rg
+n 0 723.8898 595.2756 118 re f*
+.576471 .772549 .992157 rg
+BT /F2 10 Tf 12 TL ET
+BT 1 0 0 1 48 798.8898 Tm (AGENTIC DS / LOCAL DEMO) Tj T* ET
+1 1 1 rg
+BT /F2 24 Tf 28.8 TL ET
+BT 1 0 0 1 48 765.8898 Tm (Quarterly order summary) Tj T* ET
+BT /F1 10 Tf 12 TL ET
+BT 1 0 0 1 48 743.8898 Tm (A compact, deterministic table for offline PDF extraction checks) Tj T* ET
+.937255 .964706 1 rg
+n
+56 656.8898 m
+539 656.8898 l
+543.4224 656.8898 547 660.4674 547 664.8898 c
+547 690.8898 l
+547 695.3122 543.4224 698.8898 539 698.8898 c
+56 698.8898 l
+51.5776 698.8898 48 695.3122 48 690.8898 c
+48 664.8898 l
+48 660.4674 51.5776 656.8898 56 656.8898 c
+h
+f*
+.145098 .388235 .921569 rg
+BT /F2 10 Tf 12 TL ET
+BT 1 0 0 1 62 681.8898 Tm (6 orders) Tj T* ET
+BT 1 0 0 1 190 681.8898 Tm (4 columns) Tj T* ET
+BT 1 0 0 1 330 681.8898 Tm (TRY 94,340.00 revenue) Tj T* ET
+.078431 .129412 .239216 rg
+BT /F2 13 Tf 15.6 TL ET
+BT 1 0 0 1 48 619.8898 Tm (Orders by region) Tj T* ET
+.392157 .454902 .545098 rg
+BT /F1 9 Tf 10.8 TL ET
+BT 1 0 0 1 48 603.8898 Tm (The pipe-delimited grid is intentionally machine-readable and visually inspectable.) Tj T* ET
+.796078 .835294 .882353 RG
+.7 w
+.078431 .129412 .239216 rg
+n 48 549.8898 499 31 re B*
+1 1 1 rg
+BT /F3 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 561.8898 Tm (order_id | region   | units | revenue_try) Tj T* ET
+1 1 1 rg
+n 48 518.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 530.8898 Tm (-------- | -------- | ----- | -----------) Tj T* ET
+.972549 .980392 .988235 rg
+n 48 487.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 499.8898 Tm (TR-1001  | Istanbul |    12 |    18450.00) Tj T* ET
+1 1 1 rg
+n 48 456.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 468.8898 Tm (TR-1002  | Ankara   |     8 |    12720.00) Tj T* ET
+.972549 .980392 .988235 rg
+n 48 425.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 437.8898 Tm (TR-1003  | Izmir    |    15 |    23100.00) Tj T* ET
+1 1 1 rg
+n 48 394.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 406.8898 Tm (TR-1004  | Bursa    |     6 |     9180.00) Tj T* ET
+.972549 .980392 .988235 rg
+n 48 363.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 375.8898 Tm (TR-1005  | Antalya  |    11 |    16940.00) Tj T* ET
+1 1 1 rg
+n 48 332.8898 499 31 re B*
+.078431 .129412 .239216 rg
+BT /F4 9.5 Tf 11.4 TL ET
+BT 1 0 0 1 62 344.8898 Tm (TR-1006  | Adana    |     9 |    13950.00) Tj T* ET
+.392157 .454902 .545098 rg
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 48 52 Tm (Fixture version: pdf-extraction-v0 | Ground truth: quarterly_orders.csv) Tj T* ET
+.145098 .388235 .921569 rg
+n
+539 55 m
+539 57.20914 537.2091 59 535 59 c
+532.7909 59 531 57.20914 531 55 c
+531 52.79086 532.7909 51 535 51 c
+537.2091 51 539 52.79086 539 55 c
+f*
+ 
+endstream
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000061 00000 n 
+0000000122 00000 n 
+0000000229 00000 n 
+0000000341 00000 n 
+0000000451 00000 n 
+0000000556 00000 n 
+0000000760 00000 n 
+0000000828 00000 n 
+0000001135 00000 n 
+0000001194 00000 n 
+trailer
+<<
+/ID 
+[<ac2b5cb7a2666ed469d7839f43f587d6><ac2b5cb7a2666ed469d7839f43f587d6>]
+% ReportLab generated PDF document -- digest (opensource)
+
+/Info 8 0 R
+/Root 7 0 R
+/Size 11
+>>
+startxref
+4186
+%%EOF

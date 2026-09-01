@@ -197,6 +197,24 @@ def _destructive_tool(ctx: RuleContext) -> RuleOutcome | None:
     )
 
 
+def _missing_required_artifacts(ctx: RuleContext) -> RuleOutcome | None:
+    missing = ctx.signals.missing_required_artifacts
+    if not missing:
+        return None
+    retrying = ctx.history.attempts < ctx.stage.max_attempts
+    return RuleOutcome(
+        verdict=GateVerdict.RETRY if retrying else GateVerdict.ESCALATE,
+        reason_code="missing_required_artifact",
+        message=(
+            "The next stage cannot start because this run has no required artifact(s): "
+            f"{missing}."
+        ),
+        instructions=tuple(
+            f"Produce the required {artifact_type} artifact." for artifact_type in missing
+        ),
+    )
+
+
 def _retry_budget(ctx: RuleContext) -> RuleOutcome | None:
     if ctx.history.attempts < ctx.stage.max_attempts:
         return None
@@ -548,6 +566,12 @@ RULES: tuple[Rule, ...] = (
     Rule("pii_egress_requested", Tier.HARD, _pii_egress, "PII would enter model context."),
     Rule("destructive_operation", Tier.HARD, _destructive_tool, "Source-mutating tool requested."),
     Rule("leakage_detected", Tier.HARD, _leakage, "Feature leaks the target."),
+    Rule(
+        "missing_required_artifact",
+        Tier.HARD,
+        _missing_required_artifacts,
+        "A required downstream artifact is absent.",
+    ),
     Rule("repeated_identical_failure", Tier.HARD, _stuck_loop, "Retry loop is not converging."),
     Rule("retry_budget_exhausted", Tier.HARD, _retry_budget, "Attempts exhausted."),
     # Tier 2 — declared stage risk.
