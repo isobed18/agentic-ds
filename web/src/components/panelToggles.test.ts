@@ -14,7 +14,6 @@ import { describe, expect, it } from "vitest";
 
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
 import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
-import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 
 /** The openers named in #188, each with the state its panel reads. */
 const OPENERS = [
@@ -22,7 +21,6 @@ const OPENERS = [
   { source: GUIDED_SOURCE, where: "GuidedPipeline: Chat with Planner", label: 'Chat with Planner' },
   { source: BUILDER_SOURCE, where: "PipelineBuilder: Add component", label: 'Add component' },
   { source: BUILDER_SOURCE, where: "PipelineBuilder: Planner", label: 'Planner' },
-  { source: UNDERSTANDING_SOURCE, where: "UnderstandingWorkspace: Chat with Planner", label: 'Chat with Planner' },
 ];
 
 /** The whole <button> element whose visible label is `label`. */
@@ -44,8 +42,9 @@ describe("side-panel openers toggle (#188)", () => {
   it("every opener flips the state it reads", () => {
     for (const { source, where, label } of OPENERS) {
       const button = opener(source, label);
-      // Either the boolean flip or the "same value closes it" form.
-      expect(button, where).toMatch(/\(\w+\) => !\w+|current === "summary" \? null : "summary"/);
+      // Either the boolean flip or the "same value closes it" form, whether that
+    // value is a literal or the panel this phase's opener targets (#214).
+      expect(button, where).toMatch(/\(\w+\) => !\w+|current === (\w+|"summary") \? null : (?:\1)/);
     }
   });
 
@@ -59,6 +58,5 @@ describe("side-panel openers toggle (#188)", () => {
     // The panels' own dismissal is what still worked; it must keep working.
     expect(GUIDED_SOURCE).toContain("setPlannerOpen(false)");
     expect(BUILDER_SOURCE).toContain("setPlannerOpen(false)");
-    expect(UNDERSTANDING_SOURCE).toContain("setPlannerOpen(false)");
   });
 });

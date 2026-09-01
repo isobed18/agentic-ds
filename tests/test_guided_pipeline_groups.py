@@ -23,7 +23,7 @@ import pytest
 from ads.pipeline.workflow import build_full_spec_definition
 
 GUIDED_PIPELINE = (
-    Path(__file__).resolve().parents[1] / "web" / "src" / "components" / "GuidedPipeline.tsx"
+    Path(__file__).resolve().parents[1] / "web" / "src" / "components" / "mlPipelineGroups.ts"
 )
 
 
@@ -33,6 +33,10 @@ def _declared_groups() -> dict[str, list[str]]:
     Parsed from source rather than duplicated here on purpose: a copy in the
     test would keep passing after the component drifted, which is exactly the
     bug being guarded.
+
+    The table moved out of ``GuidedPipeline.tsx`` into its own module with #214,
+    when the understanding canvas and the accepted pipeline became one graph and
+    both halves needed to read it.
     """
     source = GUIDED_PIPELINE.read_text(encoding="utf-8")
     block = re.search(r"const GROUPS[^=]*=\s*\[(.*?)\n\];", source, re.S)

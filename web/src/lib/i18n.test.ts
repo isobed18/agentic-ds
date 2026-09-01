@@ -18,7 +18,7 @@ import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import STAGING_ROUTING_SOURCE from "../components/stagingRoutingState.ts?raw";
 import UNDERSTANDING_WORKSPACE_SOURCE from "../components/UnderstandingWorkspace.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
-import { GROUPS } from "../components/GuidedPipeline";
+import { GROUPS } from "../components/mlPipelineGroups";
 import { LANGUAGES, localizedList, t } from "./i18n";
 
 function catalogueKeys(): string[] {
