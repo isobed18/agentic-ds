@@ -756,6 +756,29 @@ class TestRetryBudgetRequiresAFailure:
         )
         assert decision.verdict is GateVerdict.ESCALATE
 
+    def test_missing_required_artifact_is_unbypassable_in_full_auto(self) -> None:
+        retry = _decide(
+            stage=_stage(max_attempts=2),
+            signals=QualitySignals(missing_required_artifacts=["integration_plan"]),
+            history=StageHistory(attempts=1),
+            profile=FULL_AUTO,
+        )
+        assert retry.verdict is GateVerdict.RETRY
+        assert retry.reason_code == "missing_required_artifact"
+
+        stopped = _decide(
+            stage=_stage(max_attempts=2),
+            signals=QualitySignals(missing_required_artifacts=["integration_plan"]),
+            history=StageHistory(attempts=2),
+            profile=FULL_AUTO,
+            artifact_ids=["audit-only"],
+            missing_required_artifacts=["integration_plan"],
+        )
+        assert stopped.verdict is GateVerdict.ESCALATE
+        assert "approve" not in {
+            option.option_id for option in stopped.human_prompt.options
+        }
+
     def test_tolerated_validation_failures_are_not_a_failure(self) -> None:
         """Failure is whatever the rules say it is, including their tolerances."""
         decision = _decide(
