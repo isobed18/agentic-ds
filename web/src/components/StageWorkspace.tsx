@@ -33,6 +33,7 @@ import { NeedsAttention, type AttentionItem } from "./NeedsAttention";
 import { SchemaMap } from "./SchemaMap";
 import { IntakeStage } from "./IntakeStage";
 import { stageName } from "./PipelineRail";
+import { checkText } from "./stageFailure";
 import { Badge, DataTable, Disclosure, Empty, Metric, Spinner, cx, toneFor } from "./ui";
 
 /** Long floats are measurements, not identifiers — show them at human precision. */
@@ -611,20 +612,3 @@ function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
     </Disclosure>
   );
 }
-
-/**
- * A check id is a code, so it is translated as one. The recorded evidence is
- * the fallback for a check this build has never seen -- better an English
- * sentence than a bare identifier.
- */
-function checkText(checkId: string, evidence?: string | null): string {
-  return CHECK_TEXT[checkId] ?? evidence ?? checkId;
-}
-
-const CHECK_TEXT: Record<string, string> = {
-  "schema.base_grain_declared": "The plan declared no base grain.",
-  "schema.fan_out_aggregated":
-    "The plan did not pass the relationship and fan-out validators.",
-  "schema.plan_trial_passed":
-    "The plan failed a trial execution against the real tables.",
-};
