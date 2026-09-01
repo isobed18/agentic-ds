@@ -2403,6 +2403,24 @@ class ControlPlane:
             )
         return explanations
 
+    def _document_tables_await_review(self, run_id: str) -> bool:
+        """Whether extracted table candidates are still waiting on a human (#316).
+
+        A recorded review settles the question whichever way it went -- rejecting
+        every candidate is a completed decision, not a pending one -- so this
+        asks whether one exists, not whether anything was promoted.
+        """
+        reference = self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        if reference is None:
+            return False
+        try:
+            extraction = self.store.load(reference.artifact_id, DocumentExtraction)
+        except Exception:
+            return False
+        if not any(document.tables for document in extraction.documents):
+            return False
+        return self.store.latest(run_id, ArtifactType.DOCUMENT_TABLE_REVIEW) is None
+
     def _persist_staging_workspace(
         self,
         runtime: _RuntimeRun,
@@ -2590,15 +2608,11 @@ class ControlPlane:
                 plan_configuration.pop("validation_strategy", None)
             if plan_configuration.get("task_type") not in {item.value for item in TaskType}:
                 plan_configuration.pop("task_type", None)
-            pipeline_recommendation = str(
-                planner_result.get("pipeline_recommendation") or "create_pipeline"
+            pipeline_recommendation = _resolved_pipeline_recommendation(
+                planner_result.get("pipeline_recommendation"),
+                plan,
+                self._document_tables_await_review(runtime.run_id),
             )
-            if pipeline_recommendation not in {
-                "create_pipeline",
-                "defer_pipeline",
-                "no_pipeline",
-            }:
-                pipeline_recommendation = "defer_pipeline"
             if pipeline_recommendation == "create_pipeline":
                 for artifact_id in schema_ids:
                     try:
@@ -6787,6 +6801,33 @@ def _cannot_stage_error(runtime: _RuntimeRun | None) -> ValueError:
     if status in {"running", "resuming"}:
         return ValueError(i18n.t("This run is already in progress."))
     return ValueError(i18n.t("This run is not staged."))
+
+
+def _resolved_pipeline_recommendation(
+    requested: Any,
+    previous: RuntimeConfigurationPlan | None,
+    tables_await_review: bool,
+) -> str:
+    """What one planner turn is allowed to say about running a pipeline (#316).
+
+    This used to be ``str(requested or "create_pipeline")``, so *any* chat turn
+    published a runnable plan and unlocked the ML controls -- a question about
+    the raw files, or a reply whose own text told the reader to review the
+    extracted PDF tables first. Two rules replace that default:
+
+    A turn that names no recommendation has made no decision, so the workspace
+    keeps the one it already carries and a first turn defers. And promoting an
+    extracted table is a human decision the product refuses to make silently, so
+    a plan that would start ML while candidates sit unreviewed is proposing to
+    skip it, and defers instead however confident the planner was.
+    """
+    valid = {"create_pipeline", "defer_pipeline", "no_pipeline"}
+    recommendation = str(requested or "")
+    if recommendation not in valid:
+        recommendation = previous.pipeline_recommendation if previous else "defer_pipeline"
+    if recommendation == "create_pipeline" and tables_await_review:
+        return "defer_pipeline"
+    return recommendation
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
