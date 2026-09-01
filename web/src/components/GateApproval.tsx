@@ -257,7 +257,7 @@ export function ApprovalCard({
           className="field mt-2.5 text-xs"
         />
       )}
-      {error && <p className="mt-2 text-xs text-stop-700">{error}</p>}
+      {error && <p className="mt-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
     </section>
   );
 }

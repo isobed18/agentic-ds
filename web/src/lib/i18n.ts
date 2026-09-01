@@ -1317,6 +1317,13 @@ const TR: Record<string, string> = {
   // complete rather than flagging them again on every pass.
   "Agentic Data Science": "Agentic Data Science",
   "Artifact {number}": "Artifact {number}",
+
+  // #265: the red error banner shows whatever a caught exception's message
+  // was, which for background stage-worker failures is recorded server-side
+  // with no active request language (see i18n.ts module docstring) and so is
+  // always English. This prefix at least labels the banner in the reader's
+  // language even though the detail after it can still be English.
+  "Something went wrong: {detail}": "Bir hata oluştu: {detail}",
 };
 
 const CATALOGUE: Record<Language, Record<string, string>> = { tr: TR, en: {} };

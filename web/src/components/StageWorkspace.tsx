@@ -123,7 +123,7 @@ export function StageWorkspace({
       </header>
 
       {loading && !detail && <Spinner label={t("Loading stage…")} />}
-      {error && <p className="card border-stop-500/30 bg-stop-50 px-4 py-3 text-sm text-stop-700">{error}</p>}
+      {error && <p className="card border-stop-500/30 bg-stop-50 px-4 py-3 text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
       {needsHuman && detail?.human_view?.state_label && !openGate && (
         <p className="card mb-4 border-l-4 border-l-warn-500 px-4 py-3 text-sm text-ink-soft">

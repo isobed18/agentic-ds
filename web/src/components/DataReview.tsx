@@ -41,7 +41,7 @@ export function DataReview({ sourceId }: { sourceId: string }) {
   }, [sourceId]);
 
   if (error) {
-    return <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{error}</p>;
+    return <p className="rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>;
   }
   if (!profile) return <Spinner label={t("Reading the data…")} />;
 

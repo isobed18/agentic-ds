@@ -69,7 +69,7 @@ export function Settings() {
   return (
     <Page title={t("Settings")} subtitle={t("Enforced guarantees. These are properties of the system, not preferences.")}>
       {loading && <Spinner label={t("Loading…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
+      {error && <p className="text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="space-y-3">
         {data && Object.entries(data).map(([group, values]) => (
           <Disclosure key={group} title={group.replace(/_/g, " ")} defaultOpen>
@@ -166,7 +166,7 @@ export function Home() {
       />
 
       {loading && <Spinner label={t("Loading…")} />}
-      {error && <p className="text-sm text-stop-700">{error}</p>}
+      {error && <p className="text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
       {!loading && !error && (
         <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

@@ -212,7 +212,7 @@ export function Explore({ onStart }: { onStart: (runId: string) => void }) {
       </p>
 
       {error && (
-        <p className="mb-4 rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{error}</p>
+        <p className="mb-4 rounded-lg bg-stop-50 px-3 py-2 text-sm text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>
       )}
 
       {sources.length > 0 && (
@@ -687,7 +687,7 @@ function AgentBriefing({ sourceId }: { sourceId: string }) {
         )}
       </div>
       {busy && <div className="mt-3"><Spinner label={t("Local planner is reading the measured summaries…")} /></div>}
-      {error && <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+      {error && <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {briefing && (
         <div className="mt-3 rounded-lg border border-brand-100 bg-brand-50 px-3.5 py-3">
           <p className="whitespace-pre-wrap text-xs leading-6 text-ink-soft">{briefing}</p>

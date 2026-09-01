@@ -171,7 +171,7 @@ export function IntakeStage({
           </div>
 
           {error && (
-            <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>
+            <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>
           )}
 
           <div className="mt-4 flex items-center gap-2 border-t border-line-soft pt-3">

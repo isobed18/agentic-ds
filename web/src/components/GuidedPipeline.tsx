@@ -275,7 +275,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {/* Whatever failed -- a stage inspection, an artifact preview opened from a
         staging node -- says so over the canvas rather than inside whichever of
         the two panels happens to be docked. */}
-    {error && <p data-no-pan className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{error}</p>}
+    {error && <p data-no-pan className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
     {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
   </>}>
     {/* Once the plan is accepted the plan node opens the summary of what will
