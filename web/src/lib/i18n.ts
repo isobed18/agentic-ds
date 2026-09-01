@@ -472,6 +472,7 @@ const TR: Record<string, string> = {
   "Ask about this data": "Bu veri hakkında sorun",
   "Recommended pipeline overrides": "Önerilen boru hattı ayarları",
   "The planner's pipeline change was not applied": "Planlayıcının boru hattı değişikliği uygulanmadı",
+  "Dismiss": "Kapat",
   "recommended, not applied": "öneri, uygulanmadı",
   "review / applied where possible": "inceleyin / mümkünse uygulandı",
   "Column": "Sütun",

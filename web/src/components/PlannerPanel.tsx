@@ -208,7 +208,18 @@ export function PlannerPanel({
 
         {graphEditRejected && (
           <section className="mb-4 rounded-lg border border-warn-300 bg-warn-50 px-3 py-2.5" role="alert">
-            <p className="mb-1 text-[11px] font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
+            <div className="mb-1 flex items-start gap-2">
+              <p className="flex-1 text-[11px] font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
+              <button
+                onClick={() => setGraphEditRejected(null)}
+                className="rounded p-0.5 text-warn-800/70 hover:bg-warn-100 hover:text-warn-800"
+                title={t("Dismiss")}
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="m5 5 10 10M15 5 5 15" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
             <p className="text-[10px] leading-relaxed text-warn-800">{graphEditRejected}</p>
           </section>
         )}
