@@ -4944,6 +4944,8 @@ class ControlPlane:
             # the recommendation), so discarding it must remove their index
             # entries as well or the run remains visible in the library.
             self.store.delete_run(run_id)
+            assert self.automation_store is not None
+            self.automation_store.detach_execution(run_id)
 
     def rerun_with_same_seed(self, run_id: str) -> dict[str, Any]:
         """Create a fresh staged run that replays the recorded sampler seed.
@@ -6664,7 +6666,14 @@ class ControlPlane:
             snapshot_deleted = snapshot.is_file()
             if snapshot_deleted:
                 snapshot.unlink()
-        return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
+            assert self.automation_store is not None
+            automations = self.automation_store.detach_execution(run_id)
+        return {
+            "run_id": run_id,
+            **deleted,
+            "snapshot": int(snapshot_deleted),
+            "automations": automations,
+        }
 
     def delete_model(self, artifact_id: str) -> dict[str, Any]:
         """Delete one trained-model artifact. The run it came from is untouched."""
