@@ -42,6 +42,32 @@ describe("planner access in the guided pipeline (#97)", () => {
   });
 });
 
+describe("what a finished run offers (#285)", () => {
+  it("does not push the reader to the Runs tab when the pipeline completes", () => {
+    // The completion state already shows what the run produced. A button
+    // offering to navigate somewhere else added a step and no information.
+    expect(SOURCE).not.toContain("onOpenExecutions");
+    expect(SOURCE).not.toContain('onClick={onOpenExecutions}');
+    expect(PAGE_SOURCE).not.toContain("onOpenExecutions");
+  });
+
+  it("keeps the report group's node title, which is not the removed button", () => {
+    // The issue guessed the "Review results" string and pipeline group might
+    // become dead with the button. Neither does: the string is the title of
+    // the report group's node on the canvas, rendered through t(group.title),
+    // and the catalogue entry is what translates it.
+    expect(GROUPS_SOURCE).toContain('title: "Review results"');
+    expect(CATALOGUE).toContain('"Review results": "Sonuçları incele"');
+  });
+
+  it("still reports a finished run's status where the control used to be", () => {
+    // `complete` is not dead either -- it is what suppresses the status badge
+    // while a run is live and lets it show once the run has ended.
+    expect(SOURCE).toContain("const complete = accepted && activeStatus === \"completed\"");
+    expect(SOURCE).toContain("!complete && <StatusBadge");
+  });
+});
+
 describe("the run control (#197)", () => {
   it("docks the control top-centre instead of floating at the bottom edge", () => {
     // Bottom-middle placement was easy to miss, so the whole workspace read as
