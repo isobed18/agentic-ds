@@ -13,7 +13,12 @@ from pathlib import Path
 import pytest
 
 from ads.api import ControlPlane
-from ads.contracts.base import ArtifactType
+from ads.contracts.base import (
+    DIAGNOSTIC_ARTIFACT_TYPES,
+    ArtifactType,
+    is_diagnostic_artifact,
+)
+from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.gates import (
     DecisionOption,
     GateDecision,
@@ -151,6 +156,44 @@ class TestArtifactAccess:
         entry = plane.artifacts("run1")[0]
         assert entry["name"] == "validation"
         assert entry["summary"]["strategy"] == "random"
+
+    def test_diagnostic_artifacts_are_flagged_and_results_are_not(
+        self, plane: ControlPlane, store: ArtifactStore
+    ) -> None:
+        """#305: the default view keeps results and hides engineering records.
+
+        Every stage attempt emits an agent audit and a measurement bundle, so a
+        person's data, model, and report were buried under diagnostics. The list
+        marks each artifact so a client can hide the diagnostics without having
+        to re-derive the closed diagnostic set the backend already owns.
+        """
+        store.put(
+            ValidationStrategy(strategy=SplitStrategy.RANDOM, rationale="iid"),
+            run_id="run1",
+            name="validation",
+        )
+        store.put(MeasurementBundle(scope="eda"), run_id="run1", name="measurements")
+
+        by_type = {entry["type"]: entry["diagnostic"] for entry in plane.artifacts("run1")}
+        assert by_type["validation_strategy"] is False
+        assert by_type["measurement_bundle"] is True
+
+    def test_classification_covers_the_named_engineering_kinds(self) -> None:
+        """The owner named agent audits, measurement bundles, internal trials and
+        attempt diagnostics; pin them so a later rename cannot quietly drop one
+        back into the default view, and confirm a plain result stays visible."""
+        for kind in (
+            ArtifactType.AGENT_AUDIT,
+            ArtifactType.MEASUREMENT_BUNDLE,
+            ArtifactType.INTEGRATION_TRIAL,
+            ArtifactType.NODE_ATTEMPT,
+        ):
+            assert kind in DIAGNOSTIC_ARTIFACT_TYPES
+            assert is_diagnostic_artifact(kind)
+            assert is_diagnostic_artifact(kind.value)
+        assert not is_diagnostic_artifact(ArtifactType.FINAL_REPORT)
+        assert not is_diagnostic_artifact(ArtifactType.TRAINED_MODEL)
+        assert not is_diagnostic_artifact("not_a_real_type")
 
     def test_payload_is_fetched_explicitly(self, plane: ControlPlane, store: ArtifactStore) -> None:
         ref = store.put(

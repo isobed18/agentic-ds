@@ -56,7 +56,7 @@ from ads.automation import (
     instantiate_component,
 )
 from ads.contracts.automation_definition import AutomationInputFile
-from ads.contracts.base import ArtifactType
+from ads.contracts.base import ArtifactType, is_diagnostic_artifact
 from ads.contracts.documents import (
     DocumentExtraction,
     DocumentExtractionSummary,
@@ -5525,6 +5525,16 @@ class ControlPlane:
     _IN_FLIGHT = frozenset({"queued", "running", "staging"})
 
     def progress(self, run_id: str) -> dict[str, Any]:
+        # #305: every progress source carries artifact ids per stage attempt but
+        # not their kinds, so the default view cannot tell a result from an agent
+        # audit. Attach the diagnostic id set here, once, rather than in each
+        # branch -- a copy so an in-memory runtime snapshot is not mutated.
+        return {
+            **self._progress_snapshot(run_id),
+            "diagnostic_artifact_ids": self._diagnostic_artifact_ids(run_id),
+        }
+
+    def _progress_snapshot(self, run_id: str) -> dict[str, Any]:
         runtime = self._runtime_runs.get(run_id)
         if runtime is not None:
             return self._runtime_snapshot(runtime)
@@ -5646,11 +5656,29 @@ class ControlPlane:
                 "stage": ref.stage_exec_id,
                 "created_at": ref.created_at,
                 "summary": ref.summary,
+                # #305: marks the engineering/provenance artifacts the default
+                # view hides, so a client never has to re-derive the closed
+                # diagnostic set the backend already owns.
+                "diagnostic": is_diagnostic_artifact(ref.artifact_type),
                 "presentation": self._artifact_presentation(
                     ref.artifact_type.value, ref.name, ref.summary
                 ),
             }
             for ref in self.store.list(run_id)
+        ]
+
+    def _diagnostic_artifact_ids(self, run_id: str) -> list[str]:
+        """Ids of this run's diagnostic artifacts, for the default-view filter.
+
+        Read from the persisted index rather than the progress snapshot: the
+        snapshot carries artifact ids per stage attempt but not their kinds, and
+        the kind is the only thing that decides whether an artifact is a person's
+        result or an engineering record (#305).
+        """
+        return [
+            ref.artifact_id
+            for ref in self.store.list(run_id)
+            if is_diagnostic_artifact(ref.artifact_type)
         ]
 
     @staticmethod

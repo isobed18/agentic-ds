@@ -654,6 +654,8 @@ export interface RunProgressSnapshot {
   events?: Array<Record<string, unknown>>;
   attempts?: Array<Record<string, unknown>>;
   pause_requested?: boolean;
+  /** #305: ids of this run's diagnostic artifacts, hidden from the default view. */
+  diagnostic_artifact_ids?: string[];
   [key: string]: unknown;
 }
 
