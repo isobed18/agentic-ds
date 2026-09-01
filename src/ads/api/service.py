@@ -6212,6 +6212,22 @@ class ControlPlane:
             raise KeyError("model_blob_missing")
         return blob_path.read_bytes(), filename
 
+    @staticmethod
+    def _document_table_sample(
+        rows: list[Any], *, max_rows: int = 6, max_columns: int = 10, cell_limit: int = 80
+    ) -> list[list[str]]:
+        """A small, bounded, stringified corner of a candidate table (#303).
+
+        Caps rows and columns so a mis-detected table with thousands of cells
+        cannot bloat the preview, and stringifies every cell so the review UI
+        renders a table it can trust rather than guessing at mixed JSON types.
+        """
+        sample: list[list[str]] = []
+        for row in rows[:max_rows]:
+            cells = row[:max_columns] if isinstance(row, list) else [row]
+            sample.append(["" if cell is None else str(cell)[:cell_limit] for cell in cells])
+        return sample
+
     def artifact_preview(self, artifact_id: str) -> dict[str, Any]:
         """Return a graph-inspector preview without exposing rows or document passages."""
         payload = self.artifact_payload(artifact_id)
@@ -6235,6 +6251,14 @@ class ControlPlane:
                         "title": item.get("title"),
                         "columns": item.get("columns", []),
                         "row_count": len(item.get("rows", [])),
+                        # #303: a person cannot accept or reject a table they
+                        # cannot see. The columns give the headers; a bounded
+                        # sample of rows gives the shape and enough content to
+                        # tell a real table from a mis-detected one, without
+                        # streaming an arbitrarily large extraction to the UI.
+                        # These rows are text a local engine already read off a
+                        # PDF the person uploaded -- not host-measured PII.
+                        "sample_rows": self._document_table_sample(item.get("rows", [])),
                         "review_status": item.get("review_status"),
                     }
                     for item in document.get("tables", [])
