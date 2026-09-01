@@ -19,7 +19,7 @@ with no LLM, no I/O and no run state.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
 
 from ads.contracts.gates import (
@@ -74,6 +74,16 @@ class RuleOutcome:
     reason_code: str
     message: str
     instructions: tuple[str, ...] = ()
+    #: Columns a human could choose to drop, when this outcome is a leakage
+    #: finding (#262). Lets the escalation offer checkboxes built from the
+    #: same data the automatic retry already uses, instead of asking a human
+    #: to hand-type the exact `drop_feature: <column>` machine syntax.
+    correction_columns: tuple[str, ...] = ()
+    #: Subset of `correction_columns` that are target-correlation suspects
+    #: rather than structural ones -- the same distinction the auto-retry
+    #: instruction comment already draws (`# target leakage` vs
+    #: `# blocking leakage`, below).
+    target_leakage_columns: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -147,9 +157,12 @@ def _leakage(ctx: RuleContext) -> RuleOutcome | None:
         if correlation is not None
         else "Blocking leakage"
     )
+    escalation_columns = unresolved or columns
     return RuleOutcome(
         verdict=GateVerdict.ESCALATE,
         reason_code="leakage_unresolved",
+        correction_columns=tuple(escalation_columns),
+        target_leakage_columns=frozenset(correlation_columns) & set(escalation_columns),
         message=(
             f"{measured} persists after {ctx.history.attempts} attempts. Human review required."
         ),

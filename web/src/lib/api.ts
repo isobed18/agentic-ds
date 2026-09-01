@@ -122,6 +122,11 @@ export interface HumanPrompt {
   context_summary: string;
   context_note?: string;
   reason_codes?: string[];
+  /** #262: suspect columns behind a leakage escalation, empty otherwise. */
+  leakage_suspect_columns?: string[];
+  /** Subset of leakage_suspect_columns that are target-correlation suspects
+   *  rather than structural ones (labelling only; both still get offered). */
+  leakage_target_columns?: string[];
   options: { option_id: string; label: string; consequence: string; downstream_effect?: string | null; recommended?: boolean }[];
   allows_free_text?: boolean;
 }

@@ -238,6 +238,18 @@ class HumanPrompt(FrozenModel):
     # The reason code(s) behind the stop, in the same closed vocabulary as
     # GateDecision.reason_code.
     reason_codes: list[str] = Field(default_factory=list)
+    # #262: the exact suspect columns behind a leakage escalation, already
+    # computed by the rule that fired. Lets the card offer checkboxes built
+    # from the same data the automatic retry already uses, instead of a human
+    # having to hand-type the `drop_feature: <column>` machine syntax that
+    # `leakage_audit_stage` alone understands. Empty for every non-leakage
+    # escalation. `leakage_target_columns` is the subset that are
+    # target-correlation suspects rather than structural ones -- the client
+    # needs this to label each checkbox the same way the auto-retry
+    # instruction comment already does ("target leakage" vs "blocking
+    # leakage").
+    leakage_suspect_columns: list[str] = Field(default_factory=list)
+    leakage_target_columns: list[str] = Field(default_factory=list)
     options: list[DecisionOption] = Field(default_factory=list)
     allows_free_text: bool = True
     artifacts_to_review: list[str] = Field(default_factory=list)

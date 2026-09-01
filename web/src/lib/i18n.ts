@@ -1259,6 +1259,9 @@ const TR: Record<string, string> = {
   "Relationship map": "İlişki haritası",
   "Optional instructions to attach to a rework…":
     "Yeniden çalışmaya eklenecek isteğe bağlı talimatlar…",
+  "Columns to drop": "Çıkarılacak sütunlar",
+  "target leakage": "hedef sızıntısı",
+  "blocking leakage": "engelleyici sızıntı",
 
   // Schema map
   "Base entity": "Temel varlık",

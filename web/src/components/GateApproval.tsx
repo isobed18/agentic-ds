@@ -96,16 +96,41 @@ export function ApprovalCard({
    */
   const [sent, setSent] = useState(false);
   const prompt = decision.human_prompt!;
+  const suspectColumns = prompt.leakage_suspect_columns ?? [];
+  const targetColumns = new Set(prompt.leakage_target_columns ?? []);
+  // #262: default-checked to match what the automatic retry would have
+  // dropped -- the human is confirming a mechanical fix, not starting from
+  // a blank slate.
+  const [dropColumns, setDropColumns] = useState<Set<string>>(() => new Set(suspectColumns));
+
+  function toggleDropColumn(column: string) {
+    setDropColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(column)) next.delete(column);
+      else next.add(column);
+      return next;
+    });
+  }
 
   async function answer(optionId: string) {
     if (sent || busy) return;
     setBusy(optionId);
     setError(null);
     try {
+      // #262: a checked leakage suspect becomes the exact `drop_feature:
+      // <column>` syntax `leakage_audit_stage` understands -- the same format
+      // the automatic retry already generates -- rather than relying on a
+      // human to type it, or an LLM to interpret free text that the
+      // deterministic stage cannot read. The free-text note, if any, still
+      // rides along as an extra instruction.
+      const columnInstructions = suspectColumns
+        .filter((column) => dropColumns.has(column))
+        .map((column) => `drop_feature: ${column}  # ${targetColumns.has(column) ? "target leakage" : "blocking leakage"}`);
+      const instructions = note ? [...columnInstructions, note] : columnInstructions;
       await api.answer(runId, {
         stage_id: decision.stage_id,
         decision: optionId,
-        instructions: note ? [note] : [],
+        instructions,
       });
       setNote("");
       setSent(true);
@@ -166,6 +191,30 @@ export function ApprovalCard({
         prompt.context_summary && (
           <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-mute">{prompt.context_summary}</p>
         )
+      )}
+
+      {suspectColumns.length > 0 && (
+        <div className="mt-3 rounded-lg border border-line bg-surface-sunken px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-ink">{t("Columns to drop")}</p>
+          <ul className="mt-1.5 space-y-1">
+            {suspectColumns.map((column) => (
+              <li key={column}>
+                <label className="flex items-center gap-2 text-xs text-ink-mute">
+                  <input
+                    type="checkbox"
+                    checked={dropColumns.has(column)}
+                    disabled={sent || busy !== null}
+                    onChange={() => toggleDropColumn(column)}
+                  />
+                  <span className="font-mono text-ink">{column}</span>
+                  <span className="text-[10px] text-ink-faint">
+                    {targetColumns.has(column) ? t("target leakage") : t("blocking leakage")}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
