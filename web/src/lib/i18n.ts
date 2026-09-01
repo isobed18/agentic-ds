@@ -280,6 +280,7 @@ const TR: Record<string, string> = {
   "Language": "Dil",
   "Notifications": "Bildirimler",
   "Nothing to report.": "Bildirilecek bir şey yok.",
+  "Clear all": "Tümünü temizle",
   "Waiting for you": "Sizi bekliyor",
   "Run finished": "Koşu tamamlandı",
   "Run stopped with an error": "Koşu hatayla durdu",
