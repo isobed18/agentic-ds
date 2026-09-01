@@ -30,3 +30,18 @@ describe("planner reports a refused graph edit instead of dropping it (#246)", (
     expect(CATALOGUE).toContain("Planlayıcının boru hattı değişikliği uygulanmadı");
   });
 });
+
+/**
+ * #260: once shown, the card had no way to close it -- `graphEditRejected` is
+ * only cleared when the run changes or the next planner message overwrites
+ * it, so it stayed pinned in the chat until one of those happened on its own.
+ */
+describe("the refused-graph-edit card can be dismissed (#260)", () => {
+  it("has a close control that clears graphEditRejected", () => {
+    expect(PANEL_SOURCE).toContain("onClick={() => setGraphEditRejected(null)}");
+  });
+
+  it("carries a Turkish entry for the dismiss control", () => {
+    expect(CATALOGUE).toContain('"Dismiss": "Kapat"');
+  });
+});
