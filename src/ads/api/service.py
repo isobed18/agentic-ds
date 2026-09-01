@@ -3503,12 +3503,33 @@ class ControlPlane:
                 )
         return sources
 
+    def require_source_view(self, source_id: str, *, viewer: str | None) -> None:
+        """Hide a private source from callers that do not own or share it.
+
+        Unowned built-in sources retain their historical shared behaviour. A
+        denied source answers like an unknown id so the endpoint does not also
+        disclose that another account's private source exists.
+        """
+        ownership = self._ownership()
+        if not may_view(
+            viewer=viewer,
+            owner=ownership.owner_of(source_id),
+            visibility=ownership.visibility_of(source_id),
+            teams=self._teams(),
+        ):
+            raise KeyError(source_id)
+
     #: Cap on `page_size` so a caller cannot ask the server to profile an
     #: unbounded slice in one request and undo the reason pagination exists.
     _DATASET_PAGE_MAX = 100
 
     def dataset_catalog(
-        self, *, search: str | None = None, page: int = 1, page_size: int = 25
+        self,
+        *,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        viewer: str | None = None,
     ) -> dict[str, Any]:
         """Paginated, searchable row-free summaries backing /datasets.
 
@@ -3521,7 +3542,7 @@ class ControlPlane:
         """
         page_size = max(1, min(page_size, self._DATASET_PAGE_MAX))
         page = max(1, page)
-        sources = self.data_sources()
+        sources = self.data_sources(viewer=viewer)
         needle = (search or "").strip().casefold()
         if needle:
             sources = [
@@ -7236,17 +7257,26 @@ def create_app(
 
     @app.get("/api/catalog/datasets")
     def dataset_catalog(
-        search: str | None = None, page: int = 1, page_size: int = 25
+        request: Request,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
     ) -> dict[str, Any]:
-        return plane.dataset_catalog(search=search, page=page, page_size=page_size)
+        return plane.dataset_catalog(
+            search=search,
+            page=page,
+            page_size=page_size,
+            viewer=_viewer(request),
+        )
 
     @app.get("/api/hardening")
     def hardening_status() -> dict[str, Any]:
         return plane.hardening_status()
 
     @app.get("/api/data-sources/{source_id}/profile")
-    def source_profile(source_id: str) -> dict[str, Any]:
+    def source_profile(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.source_profile(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None
@@ -7394,8 +7424,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/data-sources/{source_id}/pipeline-blueprint")
-    def default_staging_pipeline(source_id: str) -> dict[str, Any]:
+    def default_staging_pipeline(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.default_staging_pipeline(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None
