@@ -308,7 +308,6 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-surface/95 text-ink-soft shadow-card backdrop-blur transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
       </div>
       <div className="flex items-center gap-2">
-        <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
           {/* #305: only offered when there is something to reveal, so the normal
@@ -317,6 +316,18 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
         </div>
       </div>
+    </div>
+
+    {/* #284: the Planner opener is a persistent entry point, not one of the run
+        controls, so it gets the opposite edge to itself instead of a slot in
+        the top toolbar. `fixed` is safe here for the same reason the toolbar
+        above is: `overlay` is rendered outside CanvasSurface's scaled content,
+        and a fixed element inside a transformed ancestor is positioned against
+        that ancestor -- which is exactly how this button used to slide across
+        the screen as the graph zoomed (#60). It clears the zoom bar, which
+        keeps to the bottom-right. */}
+    <div data-no-pan className="fixed bottom-6 left-1/2 z-10 -translate-x-1/2">
+      <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
     </div>
 
     {/* One panel for the whole graph. A staging node opens the staging
