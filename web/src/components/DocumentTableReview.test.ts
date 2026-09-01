@@ -54,3 +54,18 @@ describe("the extracted-table review (#303)", () => {
     expect(CATALOGUE).toContain('"Decide on every table first ({count} left).":');
   });
 });
+
+describe("bulk candidate selection (#317)", () => {
+  it("accepts every candidate at once and clears the bulk choice when repeated", () => {
+    expect(SOURCE).toContain("const allAccepted = candidates.length > 0 && candidates.every");
+    expect(SOURCE).toContain("function toggleAllAccepted()");
+    expect(SOURCE).toContain('next.set(candidate.candidateId, "accepted")');
+    expect(SOURCE).toContain("next.delete(candidate.candidateId)");
+    expect(SOURCE).toContain('allAccepted ? t("Unselect all") : t("Select all")');
+  });
+
+  it("keeps both bulk-action labels translated", () => {
+    expect(CATALOGUE).toContain('"Select all": "Tümünü seç"');
+    expect(CATALOGUE).toContain('"Unselect all": "Tümünün seçimini kaldır"');
+  });
+});
