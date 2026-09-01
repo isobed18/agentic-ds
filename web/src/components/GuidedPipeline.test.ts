@@ -20,14 +20,41 @@ describe("planner access in the guided pipeline (#97)", () => {
     expect(SOURCE).toContain("runId={runId}");
   });
 
-  it("exposes a toggle in the run toolbar that opens the panel", () => {
-    // Reachable from the fixed run-control toolbar, gated on its own open state
-    // so it does not permanently occupy the canvas.
+  it("exposes a toggle that opens the panel", () => {
+    // Gated on its own open state so it does not permanently occupy the canvas.
     // #188: this test always called the control a toggle, but the handler it
     // pinned only ever opened the panel. Now it flips, so the assertion says so.
     expect(SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
     expect(SOURCE).toContain('t("Chat with Planner")');
     expect(SOURCE).toContain("plannerOpen &&");
+  });
+
+  it("anchors the opener to the bottom centre, away from the run controls (#284)", () => {
+    // It is a persistent entry point rather than one of the run controls, so it
+    // gets the opposite edge to itself instead of a slot in the top toolbar.
+    expect(SOURCE).toContain('<div data-no-pan className="fixed bottom-6 left-1/2 z-10 -translate-x-1/2">');
+    // Exactly one opener, and it is not left behind in the toolbar row it used
+    // to share with "Review plan".
+    expect(SOURCE.match(/t\("Chat with Planner"\)/g) ?? []).toHaveLength(1);
+    const toolbar = SOURCE.slice(
+      SOURCE.indexOf('fixed top-[70px] left-1/2'),
+      SOURCE.indexOf('t("Advanced editor · Experimental")'),
+    );
+    expect(toolbar).not.toContain("Chat with Planner");
+  });
+
+  it("keeps the opener outside the canvas transform so it cannot drift (#60)", () => {
+    // A `position: fixed` element inside a transformed ancestor is positioned
+    // against that ancestor, which is how this exact button once slid across
+    // the screen as the graph zoomed. CanvasSurface renders `overlay` outside
+    // its scaled content; the opener has to stay in that half.
+    const overlayStart = SOURCE.indexOf("<CanvasSurface docked=");
+    const overlayEnd = SOURCE.indexOf("<RoutingGraph routing=");
+    const opener = SOURCE.indexOf('fixed bottom-6 left-1/2');
+    expect(overlayStart).toBeGreaterThan(-1);
+    expect(opener).toBeGreaterThan(overlayStart);
+    expect(opener).toBeLessThan(overlayEnd);
+    expect(UNDERSTANDING_SOURCE).toContain("{overlay}");
   });
 
   it("gives every ML planner mount the source and data-first prompts (#190)", () => {
@@ -234,12 +261,21 @@ describe("live progress on the canvas (#194)", () => {
     expect(SOURCE).toContain('t("Press Run above to start")');
   });
 
-  it("animates the arrows into and out of the running stage", () => {
+  it("animates the arrow into the running stage, and only that one (#313)", () => {
     // The arrow into the first ML group was hardcoded inert. #214 deleted the
     // "Data understood" tile it used to leave; it leaves "Proposed plan" now.
+    //
+    // #313: this test used to pin the inter-group rule
+    // `status === "running" || … || groupStatuses[index + 1] === "running"`,
+    // which lit the arrow behind a running group as well as the one in front
+    // of it -- the defect itself, asserted. One rule now decides every arrow,
+    // and `pipelineArrows.test.ts` holds the behaviour.
     expect(SOURCE).not.toContain("<Arrow active={false} complete />");
-    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete={accepted}');
-    expect(SOURCE).toContain('groupStatuses[index + 1] === "running"');
+    expect(SOURCE).toContain('import { activeArrows } from "./pipelineArrows"');
+    expect(SOURCE).toContain("const arrowActive = activeArrows(groupStatuses)");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[0]} complete={accepted}");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[index + 1]}");
+    expect(SOURCE).not.toContain('groupStatuses[index + 1] === "running"');
   });
 
   it("translates the new waiting strings", () => {
@@ -345,7 +381,7 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
     // The staging run is already "staged" while the plan is unaccepted, so
     // every run control has to be gated on the decision, not on the status.
     expect(SOURCE).toContain("const canStart = accepted && activeStatus ===");
-    expect(SOURCE).toContain('const active = accepted && ["running", "resuming"]');
+    expect(SOURCE).toContain("const active = accepted && isRunActive(activeStatus)");
     expect(SOURCE).toContain('const failed = accepted && ["failed", "interrupted", "aborted"]');
     expect(SOURCE).toContain('const complete = accepted && activeStatus === "completed"');
   });

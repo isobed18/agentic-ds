@@ -10,6 +10,7 @@ import {
 } from "../components/UnderstandingWorkspace";
 import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
+import { runErrorText } from "../components/stageFailure";
 import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -22,24 +23,8 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { isRunActive } from "../lib/status";
-import { activeLanguage, t } from "../lib/i18n";
+import { t } from "../lib/i18n";
 import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
-
-/**
- * A run error is either plain text (older records, and errors we do not
- * recognise) or a bilingual object. Reading both is what let the message be
- * translated at all -- the red banner was English-only because this field was
- * a raw Python string (#263, #265).
- */
-function runErrorText(value: unknown): string | null {
-  if (typeof value === "string") return value || null;
-  if (value && typeof value === "object") {
-    const pair = value as { en?: string; tr?: string };
-    const chosen = activeLanguage() === "tr" ? (pair.tr ?? pair.en) : pair.en;
-    return chosen || null;
-  }
-  return null;
-}
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
