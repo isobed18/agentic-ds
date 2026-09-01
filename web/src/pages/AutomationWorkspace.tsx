@@ -4,6 +4,7 @@ import { PipelineBuilder } from "../components/PipelineBuilder";
 import { GuidedPipeline } from "../components/GuidedPipeline";
 import { ApprovalCard } from "../components/GateApproval";
 import { LanguagePicker } from "../components/Shell";
+import { Notifications } from "../components/Notifications";
 import {
   SourceSummary,
   UnderstandingProgress,
@@ -264,7 +265,11 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}
-        <div className="ml-auto"><LanguagePicker /></div>
+        {/* #286: the shared top bar is suppressed for every page inside a
+            project, so this contextual header is the only place notifications
+            can live here. Composed in rather than duplicated: it is the same
+            component the shell renders everywhere else. */}
+        <div className="ml-auto flex items-center gap-1"><LanguagePicker /><Notifications /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {/* A stage gate that escalated to a human: shown here, above the run, so
