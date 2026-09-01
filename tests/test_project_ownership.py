@@ -273,6 +273,39 @@ def test_the_routes_pass_the_viewer_through(plane: ControlPlane) -> None:
     assert client.get(f"/api/projects/{project_id}").status_code == 200
 
 
+def test_private_source_catalog_profile_and_blueprint_hide_from_other_accounts(
+    plane: ControlPlane,
+) -> None:
+    """#331: project routes were isolated, but the global dataset catalog and
+    direct source endpoints still exposed another owner's private schema."""
+    uploaded = plane.upload(
+        "private-customers.csv",
+        b"customer_id,secret_segment\n1,private\n",
+        owner=OWNER,
+    )
+    source_id = uploaded["source_id"]
+    plane._ownership().set_visibility(source_id, "private")  # noqa: SLF001
+    who: list[str | None] = [STRANGER]
+    client = _client(plane, who)
+
+    hidden_catalog = client.get("/api/catalog/datasets")
+    hidden_profile = client.get(f"/api/data-sources/{source_id}/profile")
+    hidden_blueprint = client.get(f"/api/data-sources/{source_id}/pipeline-blueprint")
+
+    assert hidden_catalog.status_code == 200
+    assert hidden_catalog.json()["items"] == []
+    assert hidden_profile.status_code == 404
+    assert hidden_blueprint.status_code == 404
+    assert "secret_segment" not in hidden_profile.text
+
+    who[0] = OWNER
+    assert [item["source_id"] for item in client.get("/api/catalog/datasets").json()["items"]] == [
+        source_id
+    ]
+    assert client.get(f"/api/data-sources/{source_id}/profile").status_code == 200
+    assert client.get(f"/api/data-sources/{source_id}/pipeline-blueprint").status_code == 200
+
+
 def test_a_hidden_project_answers_404_rather_than_403(plane: ControlPlane) -> None:
     """A 403 confirms the id exists, which is the one thing a project nobody
     may see must not reveal."""
