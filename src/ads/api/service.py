@@ -6319,7 +6319,29 @@ class ControlPlane:
             "artifact_type": indexed.value if indexed is not None else "artifact",
             "fields": scalar,
             "collection_sizes": collections,
+            # #304: opening the EDA (or another measured) artifact directly, not
+            # only its stage, should still show the distributions, missingness,
+            # correlation heatmap and relationship charts the backend measured.
+            "panels": self._preview_panels(indexed, payload),
         }
+
+    @staticmethod
+    def _preview_panels(
+        artifact_type: ArtifactType | None, payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Analysis charts for the artifacts that measure something (#304).
+
+        The same builders the stage inspector uses, so the artifact dialog and
+        the stage view cannot disagree about what EDA looks like.
+        """
+        builders = {
+            ArtifactType.EDA_REPORT: eda_panels,
+            ArtifactType.VALIDATION_STRATEGY: validation_panels,
+            ArtifactType.LEAKAGE_REPORT: leakage_panels,
+            ArtifactType.EVALUATION_REPORT: evaluation_panels,
+        }
+        builder = builders.get(artifact_type) if artifact_type is not None else None
+        return builder(payload) if builder is not None else []
 
     # ---------------------------------------------------------------- gates
 
@@ -6412,6 +6434,14 @@ class ControlPlane:
                 ]
             )
         latest_story = (primary_outputs or artifacts)[0]["story"] if artifacts else None
+        # #304: EDA and the other measured stages build their analysis charts --
+        # distributions, missingness, a correlation heatmap, target
+        # relationships -- into each output artifact's story, but the guided
+        # stage inspector renders outputs as buttons and only ever showed the
+        # multi-source panels above. Hoist the primary output's panels so the
+        # inspector has the same visual summary the design has always specified.
+        if not stage_panels and latest_story:
+            stage_panels = latest_story.get("panels", [])
         stage_status = self._stage_status(
             attempts[-1] if attempts else None,
             progress.get("current_stage"),

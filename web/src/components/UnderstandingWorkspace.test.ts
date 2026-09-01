@@ -279,6 +279,18 @@ describe("understanding node status placement", () => {
     expect(markup).toContain("cursor-nwse-resize");
   });
 
+  it("draws the measured analysis charts when an artifact carries panels (#304)", () => {
+    // Opening the EDA artifact showed text and scalars; the distributions,
+    // missingness and correlation heatmap the backend measured are rendered
+    // here through the same AnalysisStrip the stage inspector uses.
+    expect(WORKSPACE_SOURCE).toContain('import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip"');
+    expect(WORKSPACE_SOURCE).toContain("const panels = (preview.panels ?? []) as AnalysisPanel[]");
+    expect(WORKSPACE_SOURCE).toContain("panels.length > 0 && <div className=\"mt-4\"><AnalysisStrip panels={panels} />");
+    // An all-charts artifact must not be judged empty and hidden behind the
+    // "Artifact recorded" fallback.
+    expect(WORKSPACE_SOURCE).toContain("preview.findings?.length || panels.length || hasArtifactMetadata(preview)");
+  });
+
   it("clips long content inside a resized node card (#160)", () => {
     // Resizing narrower used to let the title and secondary text paint outside
     // the rounded card and over adjacent edges.
