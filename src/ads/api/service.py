@@ -126,6 +126,7 @@ from ads.llm.budget import (
 )
 from ads.orchestration import (
     EdgeCondition,
+    MissingArtifactError,
     RunOutcome,
     RunState,
     RunStatus,
@@ -620,7 +621,9 @@ class _RuntimeRun:
     current_stage: str | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     outcome: Any | None = None
-    error: str | None = None
+    #: Ya duz metin (eski kayitlar, ve tanimadigimiz hatalar) ya da iki dilli
+    #: {"en":..,"tr":..}. Okuyan taraf ikisini de kaldirmali (#263, #265).
+    error: str | dict[str, str] | None = None
     #: Continues a staged run from where it stopped. Held rather than rebuilt
     #: so the second half executes against the same state and the artifacts
     #: intake and schema discovery already produced are not recomputed.
@@ -4234,7 +4237,7 @@ class ControlPlane:
                 except Exception as exc:  # noqa: BLE001 - durable staging failure
                     with self._lock:
                         runtime.status = "failed"
-                        runtime.error = f"{type(exc).__name__}: {exc}"
+                        runtime.error = _run_error_text(exc)
                         runtime.current_stage = None
                         runtime.events.append(
                             {
@@ -4366,7 +4369,7 @@ class ControlPlane:
                 except Exception as exc:  # noqa: BLE001 - durable staging failure
                     with self._lock:
                         runtime.status = "failed"
-                        runtime.error = f"{type(exc).__name__}: {exc}"
+                        runtime.error = _run_error_text(exc)
                         runtime.current_stage = None
                         runtime.events.append(
                             {
@@ -4526,7 +4529,7 @@ class ControlPlane:
             except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
                 with self._lock:
                     runtime.status = "failed"
-                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.error = _run_error_text(exc)
                     runtime.current_stage = None
                     runtime.events.append(
                         {
@@ -4751,7 +4754,7 @@ class ControlPlane:
             except Exception as exc:  # noqa: BLE001 - recorded in durable UI state
                 with self._lock:
                     runtime.status = "failed"
-                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.error = _run_error_text(exc)
                     runtime.updated_at = _now()
             finally:
                 if isinstance(llm, OllamaClient):
@@ -5039,7 +5042,7 @@ class ControlPlane:
             except Exception as exc:  # noqa: BLE001 - preserve failure in durable UI state
                 with self._lock:
                     runtime.status = "failed"
-                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.error = _run_error_text(exc)
                     runtime.updated_at = _now()
             finally:
                 if isinstance(llm, OllamaClient):
@@ -5261,7 +5264,7 @@ class ControlPlane:
             except Exception as exc:  # noqa: BLE001 - present resume failures in the UI
                 with self._lock:
                     runtime.status = "failed"
-                    runtime.error = f"{type(exc).__name__}: {exc}"
+                    runtime.error = _run_error_text(exc)
                     runtime.updated_at = _now()
             finally:
                 if isinstance(llm, OllamaClient):
@@ -6504,6 +6507,39 @@ class ControlPlane:
             raise ValueError(f"artifact {artifact_id!r} is not a final report")
         removed = self.store.delete_artifact(artifact_id)
         return {"artifact_id": artifact_id, **removed}
+
+
+def _run_error_text(exc: BaseException) -> dict[str, str]:
+    """Bir kosum hatasini insanin okuyabilecegi hale getir, iki dilde.
+
+    Ekrana `MissingArtifactError: run 'run-446ef0b8' has no 'integration_plan'
+    artifact; an upstream stage did not produce it` diye dusuyordu (#263):
+    Python sinif adi, run id'si ve tek dil. Kullanicinin yapabilecegi bir sey
+    yok, hatta ne oldugunu bile anlamiyor.
+
+    Bilinen turler ceviriliyor; BILINMEYEN her sey eski haliyle geciyor. Bu
+    bilerek: tanimadigimiz bir hatayi guzel bir cumleye cevirmek, teshis icin
+    gereken tek bilgiyi silmek olurdu. Kirmizi bandin hic Turkcelesmemesi de
+    (#265) buradan geliyordu -- alan artik iki dilli.
+    """
+    ad = type(exc).__name__
+    if isinstance(exc, MissingArtifactError):
+        eksik = re.search(r"has no '([^']+)' artifact", str(exc))
+        tur = eksik.group(1) if eksik else "?"
+        return {
+            "en": (
+                f"A stage before this one did not produce {tur!r}, which the next stage "
+                "requires, so the run cannot continue from here. Send the stage that "
+                "produces it back for rework, or start a new run."
+            ),
+            "tr": (
+                f"Bundan onceki bir asama {tur!r} uretmedi; sonraki asama onu zorunlu "
+                "olarak istiyor, bu yuzden kosum buradan devam edemiyor. Onu ureten "
+                "asamayi yeniden calistir ya da yeni bir kosum baslat."
+            ),
+        }
+    ham = f"{ad}: {exc}"
+    return {"en": ham, "tr": ham}
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:

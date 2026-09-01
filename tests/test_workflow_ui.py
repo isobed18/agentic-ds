@@ -316,7 +316,8 @@ def test_document_failure_stops_staging_and_skips_planner(tmp_path: Path, monkey
     progress = plane.progress(staged["run_id"])
     workspace = plane.staging_workspace(staged["run_id"])
     assert progress["status"] == "failed"
-    assert "DocumentExtractionError" in progress["error"]
+    # `error` is bilingual now, so the run message can be shown in Turkish (#263).
+    assert "DocumentExtractionError" in progress["error"]["en"]
     assert any(event["event"] == "document_understanding_failed" for event in progress["events"])
     assert not any(event["event"] == "staging_analysis_ready" for event in progress["events"])
     assert planner.calls == []
@@ -371,7 +372,7 @@ def test_planner_failure_cannot_mark_document_staging_ready(tmp_path: Path, monk
     workspace = plane.staging_workspace(staged["run_id"])
     assert progress["status"] == "failed"
     assert progress["current_stage"] is None
-    assert "Planner could not create" in progress["error"]
+    assert "Planner could not create" in progress["error"]["en"]
     assert "staging_analysis_failed" in {event["event"] for event in progress["events"]}
     assert "staging_analysis_ready" not in {event["event"] for event in progress["events"]}
     assert workspace["recommended_plan"] is None

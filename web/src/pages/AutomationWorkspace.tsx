@@ -22,8 +22,24 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { isRunActive } from "../lib/status";
-import { t } from "../lib/i18n";
+import { activeLanguage, t } from "../lib/i18n";
 import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
+
+/**
+ * A run error is either plain text (older records, and errors we do not
+ * recognise) or a bilingual object. Reading both is what let the message be
+ * translated at all -- the red banner was English-only because this field was
+ * a raw Python string (#263, #265).
+ */
+function runErrorText(value: unknown): string | null {
+  if (typeof value === "string") return value || null;
+  if (value && typeof value === "object") {
+    const pair = value as { en?: string; tr?: string };
+    const chosen = activeLanguage() === "tr" ? (pair.tr ?? pair.en) : pair.en;
+    return chosen || null;
+  }
+  return null;
+}
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
@@ -101,7 +117,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       if (!previous) { setRunId(null); setRunStatus(null); setWorkspace(null); setBlueprint(automation.pipeline_blueprint ?? null); return; }
       setRunId(previous.run_id); setRunStatus(previous.status);
       const progress = await api.runProgress(previous.run_id).catch(() => null);
-      if (!cancelled && typeof progress?.error === "string" && progress.error) setError(progress.error);
+      if (!cancelled) { const message = runErrorText(progress?.error); if (message) setError(message); }
       const saved = await api.stagingWorkspace(previous.run_id).catch(() => null);
       if (!cancelled && saved) applyWorkspace(saved);
     }).catch((caught) => setError(messageOf(caught))).finally(() => { if (!cancelled) setBusy(false); });
@@ -110,7 +126,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
 
   useEffect(() => {
     if (!runId || !isRunActive(runStatus)) return;
-    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); if (typeof progress.error === "string" && progress.error) setError(progress.error); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
+    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); const message = runErrorText(progress.error); if (message) setError(message); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
     return () => window.clearInterval(timer);
   }, [runId, runStatus]);
 
