@@ -1241,6 +1241,7 @@ const TR: Record<string, string> = {
   "Re-run these files as a new data project": "Bu dosyaları yeni bir veri projesi olarak yeniden çalıştır",
   "{name} (copy)": "{name} (kopya)",
   "Retry from Intake": "Veri almadan yeniden dene",
+  "Re-run this automation": "Bu otomasyonu yeniden çalıştır",
   "Review plan": "Planı incele",
   "Review results": "Sonuçları incele",
   "Inspection": "İnceleme",
