@@ -16,6 +16,7 @@ import { ArtifactNodes } from "./ArtifactNodes";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
+import { activeArrows } from "./pipelineArrows";
 import { PlannerPanel } from "./PlannerPanel";
 import { stageName } from "./PipelineRail";
 import { checkText, runErrorText, stageFailure, type StageFailure } from "./stageFailure";
@@ -253,8 +254,12 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // The ML half of the row, hanging off the "Proposed plan" node rather than
   // off a "Data understood" tile that stood in for the graph this canvas used
   // to discard. The first arrow is a real edge out of the plan (#214).
+  // #313: an arrow pulses for the group it points *into*, and nothing else.
+  // The inter-group arrows used to light for the group behind them as well, so
+  // a running group animated both its incoming and its outgoing edge.
+  const arrowActive = activeArrows(groupStatuses);
   const mlPipeline = <>
-    <Arrow active={groupStatuses[0] === "running"} complete={accepted} dimmed={!accepted} />
+    <Arrow active={arrowActive[0]} complete={accepted} dimmed={!accepted} />
     {groups.map((group, index) => {
       const status = groupStatuses[index];
       const groupArtifactIds = group.stages.flatMap((stage) => visibleArtifactIdsByStage.get(stage) ?? []);
@@ -265,7 +270,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       const waiting = canStart && (currentStage ? group.stages.includes(currentStage) : index === 0);
       const activeNode = group.nodes.find((node) => isActive(node.status));
       const footer = status === "running" ? elapsedLabel(activeNode?.elapsed_seconds) ?? t("Working…") : undefined;
-      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={status === "running" || status === "retry" || groupStatuses[index + 1] === "running"} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
+      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
     })}
   </>;
 
