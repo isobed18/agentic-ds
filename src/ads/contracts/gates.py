@@ -179,6 +179,7 @@ class QualitySignals(FrozenModel):
 
     # Process
     validation_failures: int = Field(default=0, ge=0)
+    missing_required_artifacts: list[str] = Field(default_factory=list)
     tool_errors: int = Field(default=0, ge=0)
     pii_columns_in_context: int = Field(default=0, ge=0)
     requested_tool_tier: PermissionTier | None = None
@@ -224,7 +225,13 @@ class HumanPrompt(FrozenModel):
     # Ingilizce uretiliyor ve kart onu ham basiyordu; arayuz Turkcelestirmek
     # icin cumleyi degil TURU bilmek zorunda (#192). Varsayilan, alani
     # gondermeyen eski cagiranlar icin.
-    question_kind: str = Field(default="problem", pattern="^(problem|checkpoint|no_output)$")
+    question_kind: str = Field(
+        default="problem", pattern="^(problem|checkpoint|no_output|missing_output)$"
+    )
+    # Required inputs the next stage cannot resolve after this attempt. These
+    # are artifact type identifiers, not prose: the client shows them unchanged
+    # while translating the explanation around them (#263).
+    missing_artifact_types: list[str] = Field(default_factory=list)
     # Free English prose built server-side with no active language, kept
     # verbatim (boilerplate + per-rule detail, joined) for audit records and
     # existing callers. `context_note` and `reason_codes` below are additive:

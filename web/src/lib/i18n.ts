@@ -58,6 +58,8 @@ const TR: Record<string, string> = {
   // gate verdicts and reasons
   "The planner did not respond. Please try again.":
     "Planner yanıt vermedi. Lütfen tekrar deneyin.",
+  "Stage {stage} did not produce output required by the next stage ({outputs}). Send it back for rework, or stop the run.":
+    "{stage} aşaması sonraki aşamanın gerektirdiği çıktıyı üretmedi ({outputs}). Yeniden çalışması için geri gönderin veya koşuyu durdurun.",
   "Continued": "Devam etti",
   "Sent back": "Geri gönderildi",
   "Asked you": "Size soruldu",
@@ -66,6 +68,7 @@ const TR: Record<string, string> = {
   "A feature may leak the answer": "Bir öznitelik cevabı sızdırıyor olabilir",
   "Leakage still present after rework": "Düzeltmeden sonra da sızıntı sürüyor",
   "Agent challenged the leakage finding": "Agent sızıntı bulgusuna itiraz etti",
+  "A required stage output is missing": "Gerekli bir aşama çıktısı eksik",
   "No attempts left": "Deneme hakkı kalmadı",
   "The same failure repeated": "Aynı hata tekrarlandı",
   "Personal data would leave the machine": "Kişisel veri makineden çıkacaktı",

@@ -294,6 +294,54 @@ class TestResumeAfterHuman:
         resume_workflow(spec, registry, state, decision="approve", policy=GatePolicy.load())
         assert len(state.attempts) > before
 
+    def test_partial_output_cannot_be_approved_when_next_stage_input_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """An audit artifact is not a substitute for the contract the graph requires.
+
+        A failed agent stage can still emit its audit record. The old prompt saw
+        one artifact and offered Approve even when the next stage's declared
+        input (the integration plan in #263) was absent, so accepting the option
+        could only end in MissingArtifactError.
+        """
+        spec = linear_spec(
+            "partial-output",
+            "1",
+            [
+                _stage_def(
+                    "schema_discovery",
+                    produces=(ArtifactType.INTEGRATION_PLAN,),
+                ),
+                _stage_def(
+                    "integration",
+                    consumes=(ArtifactType.INTEGRATION_PLAN,),
+                ),
+            ],
+            retry_stages=["schema_discovery"],
+        )
+        registry = ComponentRegistry()
+        registry.register(
+            "schema_discovery_component",
+            lambda state, correction: StageResult(
+                artifacts=[_artifact("audit-only partial output")],
+            ),
+        )
+        registry.register("integration_component", lambda state, correction: StageResult())
+        state = RunState(
+            run_id="run-partial",
+            store=ArtifactStore(tmp_path / "partial"),
+            profile=FULL_AUTO,
+        )
+
+        outcome = run_workflow(spec, registry, state, policy=GatePolicy.load())
+
+        assert outcome.status == RunStatus.AWAITING_HUMAN
+        prompt = outcome.pending_question.human_prompt
+        assert prompt is not None
+        assert "approve" not in {option.option_id for option in prompt.options}
+        assert prompt.question_kind == "missing_output"
+        assert prompt.missing_artifact_types == ["integration_plan"]
+
     def test_resuming_a_run_that_is_not_waiting_is_an_error(self, state: RunState) -> None:
         spec = linear_spec("w", "1", [_stage_def("a")])
         registry = ComponentRegistry()

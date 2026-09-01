@@ -38,6 +38,7 @@ _REASON_LABELS = {
     "leakage_detected": "A feature may leak the answer",
     "leakage_unresolved": "Leakage still present after rework",
     "leakage_challenge_needs_confirmation": "Agent challenged the leakage finding",
+    "missing_required_artifact": "A required stage output is missing",
     "retry_budget_exhausted": "No attempts left",
     "repeated_identical_failure": "The same failure repeated",
     "pii_egress_requested": "Personal data would leave the machine",

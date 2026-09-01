@@ -117,6 +117,13 @@ describe("the gate decision card in Turkish (#192)", () => {
   it("renders the question from question_kind, and falls back to the raw text", () => {
     expect(render({ question_kind: "checkpoint" })).toContain("zorunlu bir kontrol noktası");
     expect(render({ question_kind: "problem" })).toContain("bir sorun saptandığı için durdu");
+    const missing = render({
+      question_kind: "missing_output",
+      stage_id: "schema_discovery",
+      missing_artifact_types: ["integration_plan"],
+    });
+    expect(missing).toContain("sonraki aşamanın gerektirdiği çıktıyı üretmedi");
+    expect(missing).toContain("integration_plan");
     // An older server that does not send the field at all still shows its question.
     expect(render({ question: "ESKI_SUNUCU_SORUSU" })).toContain("ESKI_SUNUCU_SORUSU");
   });
