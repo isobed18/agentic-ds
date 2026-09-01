@@ -1,5 +1,6 @@
 import type { ArtifactPreview } from "../lib/api";
 import { activeLanguage, t, type Language } from "../lib/i18n";
+import { countUnit } from "./collectionUnit";
 
 type FieldValue = string | number | boolean;
 
@@ -83,7 +84,7 @@ export function ArtifactMetadata({ preview }: { preview: ArtifactPreview }) {
             {collections.map(([key, count]) => (
               <div key={key} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
                 <dt className="truncate text-xs font-medium text-ink-soft">{fieldLabel(key)}</dt>
-                <dd className="shrink-0 text-[10px] font-semibold tabular-nums text-brand-700">{t("{count} items", { count })}</dd>
+                <dd className="shrink-0 text-[10px] font-semibold tabular-nums text-brand-700">{t(countUnit(key), { count })}</dd>
               </div>
             ))}
           </dl>
