@@ -629,6 +629,7 @@ const TR: Record<string, string> = {
   "Send to the agent": "Agent'a gönder",
   "Applies the next time this stage runs.": "Bu aşama bir sonraki çalıştığında uygulanır.",
   "Personal data": "Kişisel veri",
+  "Review personal data": "Kişisel verileri gözden geçir",
   "Check what was marked personal": "Kişisel işaretlenenleri gözden geçirin",
   "Columns marked personal are kept out of the model. The classifier is a heuristic and gets both directions wrong — correct it here before the run builds on it.":
     "Kişisel işaretlenen sütunlar modele girmez. Sınıflandırıcı bir sezgiseldir ve iki yönde de yanılır — koşu bunun üstüne inşa etmeden önce buradan düzeltin.",

@@ -17,6 +17,7 @@ import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
 import { PlannerPanel } from "./PlannerPanel";
+import { SensitivityOverride } from "./SensitivityOverride";
 import { stageName } from "./PipelineRail";
 import { ResizableNode } from "./ResizableNode";
 import { buildStagingRoutingState } from "./stagingRoutingState";
@@ -213,9 +214,14 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // "Review plan" opens the proposal while the plan is still one, and the
   // accepted summary once it is accepted: one control across both phases.
   const planPanel = accepted ? "summary" : "proposal";
+  const sensitivitySelected = selected === "sensitivity";
   const mlSelected = selected && ML_SELECTIONS.includes(selected) ? selected : null;
-  const stagingSelected = selected && !mlSelected ? selected as Exclude<CanvasSelection, null> : null;
+  const stagingSelected = selected && !mlSelected && !sensitivitySelected ? selected as Exclude<CanvasSelection, null> : null;
   const selectedGroup = groups.find((group) => group.id === mlSelected);
+  const personalColumns = profile.tables.reduce(
+    (count, table) => count + table.columns.filter((column) => column.sensitivity === "pii").length,
+    0,
+  );
 
   async function inspectGroup(groupId: string) {
     setSelected(groupId); setDetail(null); setError(null);
@@ -311,6 +317,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
+          {!accepted && profile.tables.length > 0 && <button type="button" className="btn-ghost inline-flex items-center gap-1.5 text-xs" aria-expanded={sensitivitySelected} onClick={() => setSelected((current) => (current === "sensitivity" ? null : "sensitivity"))}>{t("Review personal data")}{personalColumns > 0 && <Badge tone="warn">{personalColumns}</Badge>}</button>}
           {/* #305: only offered when there is something to reveal, so the normal
               run has no developer affordance cluttering its toolbar at all. */}
           {diagnosticCount > 0 && <button type="button" className="btn-ghost text-xs" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics((open) => !open)}>{showDiagnostics ? t("Hide diagnostics") : t("Show diagnostics ({count})", { count: diagnosticCount })}</button>}
@@ -323,6 +330,9 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
     {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
+    {sensitivitySelected && <Inspector eyebrow={t("Staging")} title={t("Personal data")} onClose={() => setSelected(null)}>
+      <SensitivityOverride runId={runId} tables={profile.tables} />
+    </Inspector>}
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
         ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />

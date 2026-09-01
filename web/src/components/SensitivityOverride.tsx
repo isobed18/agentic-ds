@@ -22,9 +22,13 @@ export function SensitivityOverride({
 }: {
   runId: string;
   tables: ProfiledTable[];
-  onApplied?: (applied: Record<string, string>) => void;
+  onApplied?: (applied: Record<string, Choice>) => void;
 }) {
   const [changes, setChanges] = useState<Record<string, Choice>>({});
+  // The source profile prop is an immutable staging snapshot. Keep successful
+  // human corrections as the local baseline so the selected button and the
+  // success message agree immediately with what the backend will use next.
+  const [applied, setApplied] = useState<Record<string, Choice>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -34,8 +38,12 @@ export function SensitivityOverride({
   );
   if (!columns.length) return null;
 
+  function baseline(name: string, machine: string): Choice {
+    return applied[name] ?? (machine === "pii" ? "pii" : "internal");
+  }
+
   function current(name: string, machine: string): Choice {
-    return changes[name] ?? (machine === "pii" ? "pii" : "internal");
+    return changes[name] ?? baseline(name, machine);
   }
 
   function set(name: string, value: Choice) {
@@ -49,6 +57,8 @@ export function SensitivityOverride({
     setError(null);
     try {
       const result = await api.overrideSensitivity(runId, changes);
+      setApplied((previous) => ({ ...previous, ...result.applied }));
+      setChanges({});
       setSaved(true);
       onApplied?.(result.applied);
     } catch (e) {
@@ -60,7 +70,7 @@ export function SensitivityOverride({
 
   const pending = Object.entries(changes).filter(
     ([name, value]) =>
-      value !== (columns.find((c) => c.name === name)?.sensitivity === "pii" ? "pii" : "internal"),
+      value !== baseline(name, columns.find((c) => c.name === name)?.sensitivity ?? "internal"),
   ).length;
 
   return (
