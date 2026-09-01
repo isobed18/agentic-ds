@@ -286,6 +286,8 @@ const TR: Record<string, string> = {
   "Waiting for you": "Sizi bekliyor",
   "Run finished": "Koşu tamamlandı",
   "Run stopped with an error": "Koşu hatayla durdu",
+  "Model generated": "Model üretildi",
+  "Report generated": "Rapor üretildi",
 
   // data screen
   "Data understanding": "Veriyi anlama",
