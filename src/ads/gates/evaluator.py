@@ -48,6 +48,7 @@ def evaluate_gate(
     critique: CritiqueResult | None = None,
     policy: GatePolicy | None = None,
     artifact_ids: list[str] | None = None,
+    missing_required_artifacts: list[str] | None = None,
     context_summary: str = "",
 ) -> GateDecision:
     """Decide what happens after a stage completes.
@@ -112,6 +113,7 @@ def evaluate_gate(
             stage=stage,
             outcomes=[outcome for _, _, outcome in fired],
             artifact_ids=artifact_ids or [],
+            missing_required_artifacts=missing_required_artifacts or [],
             context_summary=context_summary or headline.message,
         )
 
@@ -140,6 +142,7 @@ def build_human_prompt(
     stage: StageSpec,
     outcomes: list[RuleOutcome],
     artifact_ids: list[str],
+    missing_required_artifacts: list[str] | None = None,
     context_summary: str,
 ) -> HumanPrompt:
     """Turn an escalation into a typed question with pre-computed options.
@@ -174,8 +177,9 @@ def build_human_prompt(
     # sey uretmemis demek; kismi cikti bu kontrolden gecer, cunku hangi
     # artifactin zorunlu oldugunu bilen yer burasi degil.
     produced_nothing = not artifact_ids
+    missing_required_artifacts = list(missing_required_artifacts or [])
     options = []
-    if not produced_nothing:
+    if not produced_nothing and not missing_required_artifacts:
         options.append(
             DecisionOption(
                 option_id="approve",
@@ -211,7 +215,13 @@ def build_human_prompt(
             ),
         )
 
-    if produced_nothing:
+    if missing_required_artifacts:
+        question = (
+            f"Stage {stage.id!r} did not produce output required by the next stage "
+            f"({', '.join(missing_required_artifacts)}). Send it back for rework, or stop "
+            "the run."
+        )
+    elif produced_nothing:
         question = (
             f"Stage {stage.id!r} produced nothing, so there is no output to approve. "
             "Send it back for rework, or stop the run."
@@ -230,8 +240,15 @@ def build_human_prompt(
         stage_id=stage.id,
         question=question,
         question_kind=(
-            "no_output" if produced_nothing else "checkpoint" if policy_only else "problem"
+            "missing_output"
+            if missing_required_artifacts
+            else "no_output"
+            if produced_nothing
+            else "checkpoint"
+            if policy_only
+            else "problem"
         ),
+        missing_artifact_types=missing_required_artifacts,
         context_summary=f"{context_summary}\n\nWhy this stopped:\n{reasons}"[:1500],
         context_note=context_summary[:500],
         reason_codes=reason_codes,

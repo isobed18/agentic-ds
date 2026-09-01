@@ -3747,6 +3747,62 @@ class ControlPlane:
             "files": files,
         }
 
+    def install_pdf_demo(self, *, owner: str | None = None) -> dict[str, Any]:
+        """Materialize the bundled PDF + CSV oracle as one reusable source.
+
+        The bytes are packaged with the application, so this is offline. An
+        owner gets one copy: repeated clicks verify and reuse it instead of
+        producing duplicate data sources.
+        """
+        from ads.testing.pdf_demo import PDF_DEMO_FILES, pdf_demo_fixture_dir  # noqa: PLC0415
+
+        if self.upload_root is None:
+            raise ValueError("uploads are not configured")
+        fixture = pdf_demo_fixture_dir()
+        expected = {name: (fixture / name).read_bytes() for name in PDF_DEMO_FILES}
+        ownership = self._ownership()
+        for source in self.data_sources(viewer=owner):
+            source_id = str(source.get("source_id", ""))
+            if not source_id.startswith("upload:") or ownership.owner_of(source_id) != owner:
+                continue
+            if sorted(source.get("files", [])) != sorted(expected):
+                continue
+            try:
+                directory = self.source_path(source_id)
+            except KeyError:
+                continue
+            matches = all(
+                (directory / name).read_bytes() == content
+                for name, content in expected.items()
+            )
+            if matches:
+                return {**source, "reused": True}
+
+        token = uuid.uuid4().hex[:12]
+        target_dir = self.upload_root / token
+        for name in expected:
+            _check_upload_path_fits(target_dir / name)
+        target_dir.mkdir(parents=True, exist_ok=False)
+        source_id = f"upload:{token}"
+        ownership.record(source_id, owner=owner)
+        try:
+            for name, content in expected.items():
+                (target_dir / name).write_bytes(content)
+        except Exception:
+            shutil.rmtree(target_dir, ignore_errors=True)
+            ownership.forget(source_id)
+            raise
+        files = sorted(expected)
+        return {
+            "source_id": source_id,
+            "label": "PDF extraction demo",
+            "files": files,
+            "owner": owner,
+            "visibility": ownership.visibility_of(source_id),
+            "mine": bool(owner),
+            "reused": False,
+        }
+
     def remove_upload_file(
         self, source_id: str, filename: str, *, owner: str | None = None
     ) -> dict[str, Any]:
@@ -7102,6 +7158,13 @@ def create_app(
                 owner=_viewer(request),
             )
         except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/demo-data/pdf")
+    def install_pdf_demo(request: Request) -> dict[str, Any]:
+        try:
+            return plane.install_pdf_demo(owner=_viewer(request))
+        except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.delete("/api/data-sources/{source_id}/files/{filename}")

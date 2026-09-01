@@ -58,6 +58,8 @@ const TR: Record<string, string> = {
   // gate verdicts and reasons
   "The planner did not respond. Please try again.":
     "Planner yanıt vermedi. Lütfen tekrar deneyin.",
+  "Stage {stage} did not produce output required by the next stage ({outputs}). Send it back for rework, or stop the run.":
+    "{stage} aşaması sonraki aşamanın gerektirdiği çıktıyı üretmedi ({outputs}). Yeniden çalışması için geri gönderin veya koşuyu durdurun.",
   "Continued": "Devam etti",
   "Sent back": "Geri gönderildi",
   "Asked you": "Size soruldu",
@@ -66,6 +68,7 @@ const TR: Record<string, string> = {
   "A feature may leak the answer": "Bir öznitelik cevabı sızdırıyor olabilir",
   "Leakage still present after rework": "Düzeltmeden sonra da sızıntı sürüyor",
   "Agent challenged the leakage finding": "Agent sızıntı bulgusuna itiraz etti",
+  "A required stage output is missing": "Gerekli bir aşama çıktısı eksik",
   "No attempts left": "Deneme hakkı kalmadı",
   "The same failure repeated": "Aynı hata tekrarlandı",
   "Personal data would leave the machine": "Kişisel veri makineden çıkacaktı",
@@ -1049,6 +1052,15 @@ const TR: Record<string, string> = {
   // Project-first home (#111): projects are the only top-level concept, so the
   // home page reports their state and carries the browsing job the deleted
   // global catalogues used to do.
+  "Welcome to Agentic DS": "Agentic DS'e hoş geldiniz",
+  "Your data-science work starts inside a project.":
+    "Veri bilimi çalışmalarınız bir projenin içinde başlar.",
+  "Keep data, automations, models, and reports together. Open Projects to create or continue your work.":
+    "Veriyi, otomasyonları, modelleri ve raporları bir arada tutun. Çalışmanızı oluşturmak veya sürdürmek için Projeler'i açın.",
+  "Open Projects": "Projeleri aç",
+  "Local by design": "Tasarımı gereği yerel",
+  "Measured before modeled": "Modellemeden önce ölçülür",
+  "Decisions stay reviewable": "Kararlar incelenebilir kalır",
   "Your projects": "Projeleriniz",
   "Everything lives inside a project — see what each is doing and what it has produced.":
     "Her şey bir projenin içinde yaşar — her birinin ne yaptığını ve ne ürettiğini görün.",
@@ -1126,6 +1138,10 @@ const TR: Record<string, string> = {
   "Add data before or after automations. Existing automation snapshots do not change.":
     "Otomasyonlardan önce veya sonra veri ekleyin. Mevcut otomasyon anlık görüntüleri değişmez.",
   "Upload new files": "Yeni dosyalar yükle",
+  "Ready local dataset": "Hazır yerel veri seti",
+  "Use PDF demo": "PDF demosunu kullan",
+  "Adding PDF demo…": "PDF demosu ekleniyor…",
+  "A PDF table plus matching CSV truth.": "Bir PDF tablosu ve eşleşen CSV doğrusu.",
   "Choose previously uploaded data": "Daha önce yüklenen veriyi seç",
   "Add to project": "Projeye ekle",
   "No data in this project": "Bu projede veri yok",

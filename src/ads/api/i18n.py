@@ -1067,6 +1067,7 @@ _TR.update(
         "Leakage still present after rework": "Düzeltmeden sonra da sızıntı sürüyor",
         "Agent challenged the leakage finding": "Agent sızıntı bulgusuna itiraz etti",
         "No attempts left": "Deneme hakkı kalmadı",
+        "A required stage output is missing": "Gerekli bir aşama çıktısı eksik",
         "The same failure repeated": "Aynı hata tekrarlandı",
         "Personal data would leave the machine": "Kişisel veri makineden çıkacaktı",
         "A step would modify the source data": "Bir adım kaynak veriyi değiştirecekti",

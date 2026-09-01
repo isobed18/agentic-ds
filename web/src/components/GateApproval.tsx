@@ -60,7 +60,7 @@ function optionText(option: { option_id: string; label: string; consequence: str
   }
 }
 
-function questionText(prompt: { question: string; question_kind?: string; stage_id: string }): string {
+function questionText(prompt: { question: string; question_kind?: string; stage_id: string; missing_artifact_types?: string[] }): string {
   if (prompt.question_kind === "checkpoint") {
     return t(
       "Stage {stage} is a required checkpoint. Review the output and choose how to proceed.",
@@ -71,6 +71,12 @@ function questionText(prompt: { question: string; question_kind?: string; stage_
     return t(
       "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.",
       { stage: prompt.stage_id },
+    );
+  }
+  if (prompt.question_kind === "missing_output") {
+    return t(
+      "Stage {stage} did not produce output required by the next stage ({outputs}). Send it back for rework, or stop the run.",
+      { stage: prompt.stage_id, outputs: (prompt.missing_artifact_types ?? []).join(", ") },
     );
   }
   if (prompt.question_kind === "problem") {

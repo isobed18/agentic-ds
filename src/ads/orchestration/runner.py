@@ -216,6 +216,21 @@ def run_workflow(
         for index, artifact in enumerate(result.artifacts):
             ref = state.put(artifact, stage_id=current, name=result.names.get(index))
             attempt.artifact_ids.append(ref.artifact_id)
+        # A stage may emit a useful audit record while failing to emit the
+        # contract the graph actually needs. Counting artifacts was therefore
+        # insufficient: the human could be offered Approve even though the
+        # proceed edge could only fail with MissingArtifactError (#263).
+        proceed_to = spec.next_stage(current, EdgeCondition.ON_PROCEED)
+        missing_required_artifacts: list[str] = []
+        if proceed_to is not None:
+            for artifact_type in spec.stage(proceed_to).consumes:
+                if state.store.latest(state.run_id, artifact_type) is None:
+                    missing_required_artifacts.append(artifact_type.value)
+        gate_signals = result.signals
+        if missing_required_artifacts:
+            gate_signals = result.signals.model_copy(
+                update={"missing_required_artifacts": missing_required_artifacts}
+            )
         # The Orchestrator judges the stage against a rubric the stage does not
         # own. A stage-supplied critique is kept only when no rubric exists —
         # otherwise the judged would also be the judge.
@@ -243,7 +258,7 @@ def run_workflow(
 
         decision = evaluate_gate(
             stage=stage_spec,
-            signals=result.signals,
+            signals=gate_signals,
             profile=state.profile,
             history=StageHistory(
                 attempts=attempt.attempt,
@@ -252,6 +267,7 @@ def run_workflow(
             critique=attempt.critique,
             policy=policy,
             artifact_ids=attempt.artifact_ids,
+            missing_required_artifacts=missing_required_artifacts,
             context_summary=definition.description,
         )
         attempt.decision = decision

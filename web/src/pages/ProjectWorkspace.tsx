@@ -331,6 +331,22 @@ function ProjectData({ projectId, data, onChanged }: { projectId: string; data: 
     finally { setUploading(false); }
   }
 
+  async function usePdfDemo() {
+    if (uploading) return;
+    setUploading(true); setError(null);
+    try {
+      const demo = await api.installPdfDemo();
+      if (!data.some((source) => source.source_id === demo.source_id)) {
+        await api.addProjectSource(projectId, demo.source_id);
+      }
+      onChanged();
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const attached = new Set(data.map((source) => source.source_id));
   const available = sources.filter((source) => !attached.has(source.source_id));
   return (
@@ -340,6 +356,7 @@ function ProjectData({ projectId, data, onChanged }: { projectId: string; data: 
       {progress && <div className="mt-5 rounded-xl border border-brand-200 bg-brand-50 p-4"><div className="flex justify-between gap-3 text-xs"><span className="truncate">{t("Uploading {name}", { name: progress.name })}{progress.total > 1 ? ` (${progress.index + 1}/${progress.total})` : ""}</span><span>{Math.round(progress.fraction * 100)}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.round(progress.fraction * 100)}%` }} /></div><button type="button" className="mt-2 text-xs text-stop-700" onClick={() => controller.current?.abort()}>{t("Cancel")}</button></div>}
       <div className="mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-line bg-surface p-4">
         <div><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Upload new files")}</p><button type="button" className="btn-primary" disabled={uploading} onClick={() => input.current?.click()}>+ {uploading ? t("Uploading…") : t("Upload files")}</button></div>
+        <div className="border-l border-line-soft pl-3"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Ready local dataset")}</p><button type="button" className="btn-ghost" disabled={uploading} title={t("A PDF table plus matching CSV truth.")} onClick={() => void usePdfDemo()}>{uploading ? t("Adding PDF demo…") : t("Use PDF demo")}</button></div>
         <span className="pb-2 text-xs text-ink-faint">{t("or")}</span>
         <label className="min-w-[260px] flex-1"><span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Choose previously uploaded data")}</span><select className="field w-full text-sm" value={selectedSource} disabled={uploading} onChange={(event) => setSelectedSource(event.target.value)}><option value="">{t("Choose uploaded data")}</option>{available.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select></label>
         <button type="button" className="btn-ghost" disabled={!selectedSource || uploading} onClick={() => void addExisting()}>{t("Add to project")}</button>
