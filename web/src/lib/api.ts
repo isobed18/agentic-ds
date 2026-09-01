@@ -1061,6 +1061,16 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+  deleteModel: (artifactId: string) =>
+    request<{ artifact_id: string; index_entries: number }>(
+      `/api/models/${encodeURIComponent(artifactId)}`,
+      { method: "DELETE" },
+    ),
+  deleteReport: (artifactId: string) =>
+    request<{ artifact_id: string; index_entries: number }>(
+      `/api/reports/${encodeURIComponent(artifactId)}`,
+      { method: "DELETE" },
+    ),
 
   /**
    * Choosing a dataset starts a run immediately and stops it after intake and

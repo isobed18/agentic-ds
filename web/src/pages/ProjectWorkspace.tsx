@@ -6,10 +6,12 @@ import {
   type AutomationDefinition,
   type AutomationInputFile,
   type DataSource,
+  type ModelSummary,
   type ProjectContents,
   type ProjectDataSource,
   type ProjectDefinition,
   type ProjectVisibility,
+  type ReportSummary,
 } from "../lib/api";
 import { t } from "../lib/i18n";
 
@@ -174,8 +176,8 @@ export function ProjectWorkspace({
           {view === "overview" && <ProjectOverview data={data} automations={automations} contents={contents} project={project} onView={onView} onVisibility={setProject} />}
           {view === "data" && <ProjectData projectId={projectId} data={data} onChanged={() => void refresh()} />}
           {view === "automations" && <ProjectAutomations projectId={projectId} automations={automations} onChanged={() => void refresh()} onOpen={onOpenAutomation} />}
-          {view === "models" && <ProjectModels contents={contents} />}
-          {view === "reports" && <ProjectReports contents={contents} />}
+          {view === "models" && <ProjectModels contents={contents} onChanged={() => void refresh()} />}
+          {view === "reports" && <ProjectReports contents={contents} onChanged={() => void refresh()} />}
         </div>
       </main>
     </div>
@@ -433,16 +435,57 @@ export function AutomationDeleteDialog({ automation, busy, onCancel, onConfirm }
   );
 }
 
-function ProjectModels({ contents }: { contents: ProjectContents | null }) {
+function ProjectModels({ contents, onChanged }: { contents: ProjectContents | null; onChanged: () => void }) {
   const models = contents?.models ?? [];
+  const [deleting, setDeleting] = useState<ModelSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteModel(deleting.artifact_id); setDeleting(null); onChanged(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Models from every automation in this project will appear here.")} />;
-  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p><div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card p-4"><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-3 inline-flex !py-1 text-xs" download>{t("Download model")}</a>}</article>)}</div></section>;
+  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{error}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card relative p-4 pr-12"><button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-3 inline-flex !py-1 text-xs" download>{t("Download model")}</a>}</article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
 }
 
-function ProjectReports({ contents }: { contents: ProjectContents | null }) {
+function ProjectReports({ contents, onChanged }: { contents: ProjectContents | null; onChanged: () => void }) {
   const reports = contents?.reports ?? [];
+  const [deleting, setDeleting] = useState<ReportSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function confirmDelete() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true); setError(null);
+    try { await api.deleteReport(deleting.artifact_id); setDeleting(null); onChanged(); }
+    catch (caught) { setError(messageOf(caught)); }
+    finally { setDeleteBusy(false); }
+  }
   if (!reports.length) return <Empty title={t("No reports yet")} hint={t("Reports from every automation in this project will appear here.")} />;
-  return <section><h1 className="text-xl font-semibold text-ink">{t("Project reports")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every report is labelled with the automation that produced it.")}</p><div className="mt-5 space-y-2">{reports.map((report) => <article key={report.artifact_id} className="card flex items-center gap-3 p-4"><div className="min-w-0 flex-1"><Badge tone="ok">{t("From {automation}", { automation: report.automation_name })}</Badge><h2 className="mt-2 truncate text-sm font-medium text-ink">{String(report.title ?? report.preview ?? t("Evaluation report"))}</h2></div><a href={`/api/reports/${report.artifact_id}/download`} className="btn-ghost text-xs" download>{t("Download")}</a></article>)}</div></section>;
+  return <section><h1 className="text-xl font-semibold text-ink">{t("Project reports")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every report is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{error}</p>}<div className="mt-5 space-y-2">{reports.map((report) => <article key={report.artifact_id} className="card flex items-center gap-3 p-4"><div className="min-w-0 flex-1"><Badge tone="ok">{t("From {automation}", { automation: report.automation_name })}</Badge><h2 className="mt-2 truncate text-sm font-medium text-ink">{String(report.title ?? report.preview ?? t("Evaluation report"))}</h2></div><a href={`/api/reports/${report.artifact_id}/download`} className="btn-ghost text-xs" download>{t("Download")}</a><button type="button" aria-label={t("Delete report")} title={t("Delete report")} onClick={() => setDeleting(report)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button></article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete this report?")} confirmLabel={t("Delete report")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
+}
+
+/**
+ * A model or report is a byproduct of a run, not a top-level record with its
+ * own name -- there's nothing more specific to warn about than "this output",
+ * unlike the automation/project dialogs which name what else is affected.
+ */
+function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
+      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
+        <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button type="button" className="btn-ghost" disabled={busy} onClick={onCancel}>{t("Cancel")}</button>
+          <button type="button" className="rounded-lg bg-stop-600 px-4 py-2 text-sm font-semibold text-white hover:bg-stop-700 disabled:opacity-50" disabled={busy} onClick={onConfirm}>{busy ? t("Deleting…") : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function AutomationInputSelector({ projectId, automation, onSelected, onProjectData }: { projectId: string; automation: AutomationDefinition; onSelected: (saved: AutomationDefinition) => void; onProjectData: () => void }) {

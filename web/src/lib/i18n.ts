@@ -752,6 +752,14 @@ const TR: Record<string, string> = {
     "Bu işlem otomasyonu, akış grafiğini ve veri seçimini siler.",
   "Its execution history and the project data are kept.":
     "Çalıştırma geçmişi ve proje verileri korunur.",
+
+  // #258: models and reports get the same trash-can delete pattern as
+  // automations and runs.
+  "Delete model": "Modeli sil",
+  "Delete report": "Raporu sil",
+  "Delete this report?": "Bu rapor silinsin mi?",
+  "The run that produced it keeps its history; only this saved output is removed.":
+    "Bunu üreten çalıştırmanın geçmişi korunur; yalnızca bu kayıtlı çıktı silinir.",
   "This removes the project and its {count} automations.":
     "Bu işlem projeyi ve {count} otomasyonunu siler.",
   "The uploaded data and every run's history are kept.":
