@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
+import { Notifications } from "../components/Notifications";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -168,7 +169,11 @@ export function ProjectWorkspace({
         <nav aria-label={t("Project sections")} className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">
           {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3.5 py-2 text-sm font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}
         </nav>
-        <div className="ml-auto"><LanguagePicker /></div>
+        {/* #286: the shared top bar is suppressed for every page inside a
+            project, so this contextual header is the only place notifications
+            can live here. Composed in rather than duplicated: it is the same
+            component the shell renders everywhere else. */}
+        <div className="ml-auto flex items-center gap-1"><LanguagePicker /><Notifications /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
