@@ -33,7 +33,11 @@ export const isAttention = (s?: string | null) => s === "blocked" || s === "fail
  * state was introduced to end.
  */
 export const isRunActive = (s?: string | null) =>
-  s === "queued" || s === "running" || s === "resuming" || s === "staging";
+  s === "queued" ||
+  s === "running" ||
+  s === "resuming" ||
+  s === "staging" ||
+  s === "branches_running";
 
 /** Human-facing label. The backend vocabulary is precise but not prose. */
 export const statusLabel = (s?: string | null) =>
@@ -44,6 +48,7 @@ export const statusLabel = (s?: string | null) =>
     staged: "ready to run",
     running: "running",
     resuming: "resuming",
+    branches_running: "running branches",
     retry: "retrying",
     blocked: "needs approval",
     failed: "failed",
@@ -78,6 +83,7 @@ const STATUS_TONES: Record<string, StatusTone> = {
   staging: "running",
   running: "running",
   resuming: "running",
+  branches_running: "running",
   retry: "running",
   blocked: "attention",
   failed: "attention",
@@ -107,6 +113,7 @@ const BADGE_LABELS: Record<string, string> = {
   staged: "Ready to run",
   running: "Processing",
   resuming: "Resuming",
+  branches_running: "Running branches",
   retry: "Retrying",
   blocked: "Needs approval",
   failed: "Failed",
