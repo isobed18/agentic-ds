@@ -63,9 +63,15 @@ class _Recorder:
 class _PlannerLLM:
     """One local-model call that already contains English and Turkish output."""
 
-    def __init__(self, *, fail_first: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_first: bool = False,
+        reply: str = "The source is ready for a bounded test run.",
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.fail_first = fail_first
+        self.reply = reply
 
     def generate_structured(
         self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
@@ -86,7 +92,7 @@ class _PlannerLLM:
             model=profile.name,
             latency_s=0.01,
             parsed={
-                "reply": "The source is ready for a bounded test run.",
+                "reply": self.reply,
                 "reply_tr": "Kaynak, sınırlı bir test koşusuna hazır.",
                 "reports": [
                     {
@@ -330,6 +336,28 @@ class TestStagingRunsTheFirstStages:
         assert document["settings"]["engine"] == "text_layer"
         assert document["configured_by"] == "planner"
         assert "Artifacts remain bilingual" in planner.calls[0]["system"]
+
+    def test_only_the_initial_planner_message_uses_the_request_language(
+        self, client: TestClient
+    ) -> None:
+        planner = _PlannerLLM(reply="Kaynak, sınırlı bir test koşusuna hazır.")
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+
+        staged = client.post(
+            "/api/runs/staged",
+            json={"source_id": "demo"},
+            headers={"Accept-Language": "tr-TR"},
+        )
+        assert staged.status_code == 200, staged.text
+        run_id = staged.json()["run_id"]
+        _settle(client, run_id)
+        workspace = client.get(f"/api/runs/{run_id}/staging").json()
+
+        assert "Write reply only in Turkish" in planner.calls[0]["system"]
+        assert workspace["chat_history"][-1]["content"] == {
+            "en": "Kaynak, sınırlı bir test koşusuna hazır.",
+            "tr": "Kaynak, sınırlı bir test koşusuna hazır.",
+        }
 
     def test_malformed_planner_output_is_retried_once(self, client: TestClient) -> None:
         planner = _PlannerLLM(fail_first=True)
