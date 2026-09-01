@@ -180,6 +180,17 @@ describe("diagnostics are hidden from the default artifact chips (#305)", () => 
   });
 });
 
+describe("EDA analysis charts reach the guided stage inspector (#304)", () => {
+  it("renders the stage's analysis panels, not only artifact buttons", () => {
+    // The measured charts arrive on detail.panels; the inspector showed a list
+    // of "Open artifact" buttons and never drew them.
+    expect(SOURCE).toContain('import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip"');
+    expect(SOURCE).toContain("const panels = (detail.panels ?? []) as AnalysisPanel[]");
+    expect(SOURCE).toContain("panels.length > 0 && <div");
+    expect(SOURCE).toContain("<AnalysisStrip panels={panels} />");
+  });
+});
+
 describe("live progress on the canvas (#194)", () => {
   it("drives the current stage from the run's own signal, not only reported nodes", () => {
     // A live run whose current stage had not yet reported a workflow node used
