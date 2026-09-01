@@ -23,9 +23,11 @@ from ads.intake import (
     detect_primary_keys,
     detect_relationships,
     load_csv,
+    load_directory,
     load_excel,
     normalize_columns,
     profile_table,
+    profile_tables,
     relationships_digest,
 )
 from ads.intake.keys import KeyDetectionOptions, measure_relationship, name_affinity
@@ -265,6 +267,63 @@ class TestLoaders:
         assert len(name) == len("işlem")
         assert not any(unicodedata.combining(ch) for ch in name)
         _quote(name)
+
+    def test_identifiers_keep_their_leading_zeros(self, tmp_path: Path) -> None:
+        """`007` is not the number seven; the zeros are what make it an identifier.
+
+        Pandas reads it as 7 whatever the quoting, and by the time the frame
+        exists the text is gone, so nothing downstream can tell (#281).
+        """
+        path = tmp_path / "uyeler.csv"
+        path.write_text("uye_no,tutar\n007,10\n008,20\n0123,30\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert list(table.frame["uye_no"]) == ["007", "008", "0123"]
+        assert "leading_zeros_preserved" in {i.code for i in table.issues}, (
+            "keeping them is still a decision about the data, so it is reported"
+        )
+
+    def test_the_join_to_a_text_keyed_source_survives(self, tmp_path: Path) -> None:
+        """The damaging half: the join vanished, silently.
+
+        Parquet carries its types in the schema, so the same key stayed text
+        there while the CSV became an integer. detect_relationships then
+        reported two obviously-joined tables as unrelated -- the same outcome
+        the `_slugify` docstring records for movieId, by a different route.
+        """
+        source = tmp_path / "kaynak"
+        source.mkdir()
+        pd.DataFrame({"uye_no": ["007", "008", "0123"], "ad": ["a", "b", "c"]}).to_parquet(
+            source / "uyeler.parquet"
+        )
+        (source / "odemeler.csv").write_text(
+            "uye_no,tutar\n007,10\n008,20\n0123,30\n", encoding="utf-8"
+        )
+
+        tables = load_directory(source)
+        relationships = detect_relationships(
+            profile_tables(tables), {t.name: t.frame for t in tables}
+        )
+
+        assert len(relationships) == 1, "three rows match; the join is not optional"
+        assert relationships[0].overlap_rate == 1.0
+
+    def test_an_ordinary_number_column_stays_a_number(self, tmp_path: Path) -> None:
+        """Guards the fix against reading every integer column as text.
+
+        A blunt `dtype=str` would pass the two tests above and turn every
+        measurement in the product into a string.
+        """
+        path = tmp_path / "olcumler.csv"
+        # `0` alone is a real zero, not a padded identifier, and must not trip it.
+        path.write_text("adet,tutar\n7,100\n0,250\n12,0\n", encoding="utf-8")
+
+        table = load_csv(path)
+
+        assert pd.api.types.is_integer_dtype(table.frame["adet"])
+        assert pd.api.types.is_integer_dtype(table.frame["tutar"])
+        assert "leading_zeros_preserved" not in {i.code for i in table.issues}
 
     def test_empty_sheet_reported_not_crashed(self, tmp_path: Path) -> None:
         path = tmp_path / "book.xlsx"
