@@ -1311,6 +1311,9 @@ const TR: Record<string, string> = {
 
   // Advanced / Experimental graph editor
   "Advanced editor · Experimental": "Gelişmiş düzenleyici · Deneysel",
+  // #305: the diagnostics affordance on the run toolbar.
+  "Show diagnostics ({count})": "Tanılamayı göster ({count})",
+  "Hide diagnostics": "Tanılamayı gizle",
   "Workflow": "İş akışı",
   "Accepted data science workflow": "Kabul edilen veri bilimi iş akışı",
   "Preparing workflow…": "İş akışı hazırlanıyor…",

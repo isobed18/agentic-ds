@@ -149,6 +149,37 @@ describe("quick problem selector (#241)", () => {
   });
 });
 
+describe("diagnostics are hidden from the default artifact chips (#305)", () => {
+  it("reads the backend's diagnostic id set rather than re-deriving the kinds", () => {
+    // The stage attempts carry artifact ids, not kinds, so only the backend can
+    // say which are engineering records. The chip filter reads that set.
+    expect(SOURCE).toContain("progress?.diagnostic_artifact_ids");
+    expect(SOURCE).toContain("const diagnosticIds = useMemo");
+  });
+
+  it("filters diagnostics out of the chips unless the toggle is on", () => {
+    expect(SOURCE).toContain("const [showDiagnostics, setShowDiagnostics] = useState(false)");
+    expect(SOURCE).toContain("if (showDiagnostics) return artifactIdsByStage;");
+    expect(SOURCE).toContain("ids.filter((id) => !diagnosticIds.has(id))");
+    // Both chip render sites read the filtered map, so neither the canvas nodes
+    // nor the stage inspector can leak a diagnostic back into the default view.
+    expect(SOURCE).not.toContain("artifactIds={artifactIdsByStage.get(node.id)");
+    expect(SOURCE).toContain("visibleArtifactIdsByStage.get(node.id)");
+    expect(SOURCE).toContain("visibleArtifactIdsByStage.get(stage)");
+  });
+
+  it("offers the toggle only when there is a diagnostic to reveal", () => {
+    expect(SOURCE).toContain("diagnosticCount > 0 &&");
+    expect(SOURCE).toContain('t("Hide diagnostics")');
+    expect(SOURCE).toContain('t("Show diagnostics ({count})", { count: diagnosticCount })');
+  });
+
+  it("translates the diagnostics toggle", () => {
+    expect(CATALOGUE).toContain('"Hide diagnostics": "Tanılamayı gizle"');
+    expect(CATALOGUE).toContain('"Show diagnostics ({count})": "Tanılamayı göster ({count})"');
+  });
+});
+
 describe("live progress on the canvas (#194)", () => {
   it("drives the current stage from the run's own signal, not only reported nodes", () => {
     // A live run whose current stage had not yet reported a workflow node used

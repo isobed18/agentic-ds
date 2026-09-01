@@ -165,6 +165,23 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     }
     return map;
   }, [attempts]);
+  // #305: every stage attempt emits an agent audit and a measurement bundle, so
+  // the raw artifact chips were mostly engineering records a person has to read
+  // past to find their data, model, or report. Hide the diagnostic ids by
+  // default; the toolbar toggle brings them back for anyone who wants them.
+  const diagnosticIds = useMemo(() => new Set(progress?.diagnostic_artifact_ids ?? []), [progress]);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const diagnosticCount = useMemo(() => {
+    let seen = 0;
+    for (const ids of artifactIdsByStage.values()) seen += ids.filter((id) => diagnosticIds.has(id)).length;
+    return seen;
+  }, [artifactIdsByStage, diagnosticIds]);
+  const visibleArtifactIdsByStage = useMemo(() => {
+    if (showDiagnostics) return artifactIdsByStage;
+    const map = new Map<string, string[]>();
+    for (const [stage, ids] of artifactIdsByStage) map.set(stage, ids.filter((id) => !diagnosticIds.has(id)));
+    return map;
+  }, [artifactIdsByStage, diagnosticIds, showDiagnostics]);
   const nodesById = useMemo(() => new Map((workflow?.nodes ?? []).map((node) => [node.id, node])), [workflow]);
   const groups = GROUPS.map((group) => ({ ...group, nodes: group.stages.map((stage) => nodesById.get(stage)).filter(Boolean) as WorkflowNode[] }));
   // The staging half of the graph is built from the same run progress this
@@ -226,7 +243,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     <Arrow active={groupStatuses[0] === "running"} complete={accepted} dimmed={!accepted} />
     {groups.map((group, index) => {
       const status = groupStatuses[index];
-      const groupArtifactIds = group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []);
+      const groupArtifactIds = group.stages.flatMap((stage) => visibleArtifactIdsByStage.get(stage) ?? []);
       // #194: an accepted-but-unstarted pipeline showed every group as
       // "pending" -- identical to a running pipeline's unreached stages. Mark
       // the group the run will start with as "waiting to start" so it points
@@ -293,6 +310,9 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
+          {/* #305: only offered when there is something to reveal, so the normal
+              run has no developer affordance cluttering its toolbar at all. */}
+          {diagnosticCount > 0 && <button type="button" className="btn-ghost text-xs" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics((open) => !open)}>{showDiagnostics ? t("Hide diagnostics") : t("Show diagnostics ({count})", { count: diagnosticCount })}</button>}
           <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
         </div>
       </div>
@@ -306,7 +326,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       {mlSelected === "summary"
         ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
         : selectedGroup?.nodes.length
-          ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
+          ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
           : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
     </Inspector>}
 
