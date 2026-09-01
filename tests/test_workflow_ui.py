@@ -872,9 +872,7 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     one_page = (WEB_SRC / "pages" / "AutomationWorkspace.tsx").read_text(encoding="utf-8")
     project_page = (WEB_SRC / "pages" / "ProjectWorkspace.tsx").read_text(encoding="utf-8")
     builder = (WEB_SRC / "components" / "PipelineBuilder.tsx").read_text(encoding="utf-8")
-    understanding = (WEB_SRC / "components" / "UnderstandingWorkspace.tsx").read_text(
-        encoding="utf-8"
-    )
+    guided = (WEB_SRC / "components" / "GuidedPipeline.tsx").read_text(encoding="utf-8")
     assert '{ to: "/explore", label: "Your data"' not in shell
     # #111 makes projects the only top-level concept: the sidebar is Home,
     # Projects and Settings, and the removed catalogues (including /explore's old
@@ -886,16 +884,19 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert "<AutomationWorkspace" in automation
     # #157 splits project-owned upload from the child automation. Understanding,
     # proposal, and the accepted workflow remain progressive inside that child.
+    # #214 merged the proposal canvas into the accepted one: `GuidedPipeline`
+    # renders both states, so the proposal no longer has a component of its own.
     for feature in (
         "<GuidedPipeline",
         "<PipelineBuilder",
-        "<UnderstandingAndProposal",
+        "<UnderstandingProgress",
         "acceptPlan",
     ):
         assert feature in one_page
+    assert "<UnderstandingAndProposal" not in one_page
     assert "api.upload" in project_page
     assert "<AutomationInputSelector" in one_page
-    assert "<PlannerPanel" in understanding
+    assert "<PlannerPanel" in guided
     assert "<PlannerPanel" in builder
     for control in ("pause_after", "gate_handler", "max_retries", "ArtifactPreview"):
         assert control in builder

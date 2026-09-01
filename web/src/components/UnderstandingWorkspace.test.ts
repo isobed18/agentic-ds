@@ -121,13 +121,20 @@ describe("the understanding inspector layout", () => {
     expect(markup).toContain("justify-center");
   });
 
-  it("lets the guided pipeline canvas grow with its row too (#203)", () => {
-    // Same shape, one component over: `PanCanvas` centres its children inside a
-    // block-level container that stops at the viewport or its 1700px floor, so
-    // the first node there is exposed to the identical failure once the row
-    // grows. Read from source because PanCanvas is not exported.
-    const panCanvas = GUIDED_SOURCE.slice(GUIDED_SOURCE.indexOf("function PanCanvas"));
-    expect(panCanvas).toContain("w-max min-w-[1700px]");
+  it("draws the accepted pipeline on the same canvas, not a second one (#203/#214)", () => {
+    // There used to be a second canvas here -- `PanCanvas` -- centring its
+    // children inside a block-level container that stopped at the viewport, so
+    // the first node was exposed to the identical clipping once the row grew.
+    // It also had no zoom, and #214 concatenates the two rows into one roughly
+    // twice as wide. Both halves now share `CanvasSurface`, which sizes its box
+    // to the graph and zooms, so there is one fix rather than two to keep.
+    expect(GUIDED_SOURCE).not.toContain("function PanCanvas");
+    expect(GUIDED_SOURCE).toContain("<CanvasSurface");
+    expect(GUIDED_SOURCE).toContain("<RoutingGraph");
+    // And there is no second canvas left behind here to drift from it: the
+    // proposal is a state of the merged canvas, not a screen of its own.
+    expect(WORKSPACE_SOURCE).not.toContain("export function UnderstandingAndProposal");
+    expect(WORKSPACE_SOURCE).toContain("export function RoutingGraph");
   });
 
   it("gives the planner and inspector separate dock columns", () => {
@@ -157,10 +164,10 @@ describe("the understanding inspector layout", () => {
     const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
     expect(planner).toEqual(expect.arrayContaining(["h-full", "w-full"]));
     expect(planner).not.toEqual(expect.arrayContaining(["absolute", "fixed"]));
-    const proposalScreen = WORKSPACE_SOURCE.slice(
-      WORKSPACE_SOURCE.indexOf("export function UnderstandingAndProposal"),
-      WORKSPACE_SOURCE.indexOf("/** The fixed ML pipeline"),
-    );
+    // #214 moved the screen that docks both of these -- the proposal -- onto
+    // the merged canvas, which keeps the planner docked in its own column for
+    // the run as well as for staging.
+    const proposalScreen = GUIDED_SOURCE.slice(GUIDED_SOURCE.indexOf("export function GuidedPipeline"));
     expect(proposalScreen).toContain("plannerDocked={plannerOpen}");
     expect(proposalScreen).toContain("{plannerOpen && <DockedPanel><PlannerPanel");
   });

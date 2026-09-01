@@ -9,7 +9,6 @@ import {
 } from "../lib/api";
 import { activeLanguage, localizedList, t } from "../lib/i18n";
 import { NodeStatusHeader, StatusMark } from "./NodeStatus";
-import { PlannerPanel } from "./PlannerPanel";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
   buildStagingRoutingState,
@@ -20,7 +19,7 @@ import {
   type StagingRoutingState,
 } from "./stagingRoutingState";
 import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
-import { GROUPS } from "./GuidedPipeline";
+import { GROUPS } from "./mlPipelineGroups";
 import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_STEP, CANVAS_MIN_STEP, clampStep, isZoomGesture, scaledBox, zoomForStep, zoomPercent } from "./canvasZoom";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { visibleFileChips } from "./branchNodeChips";
@@ -30,7 +29,14 @@ import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
 import { ResizableNode } from "./ResizableNode";
 import { DocumentTableReview } from "./DocumentTableReview";
 
-type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
+/** What the "Proposed plan" node is showing.
+ *
+ * `accepted` exists because the node stays on the canvas once the plan is
+ * accepted (#214) -- before that the whole screen was replaced, so the node
+ * never had to describe a plan it had already handed on. */
+export type ProposalStatus = "pending" | "ready" | "accepted" | "blocked";
+
+export type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
 
 function local(value: LocalizedText): string {
   return activeLanguage() === "tr" ? value.tr : value.en;
@@ -99,34 +105,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
   );
 }
 
-export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, onWorkspaceUpdated, onAccept, onAdvanced, busy }: { profile: SourceProfile; workspace: StagingWorkspace; sourceId: string; runId: string; onWorkspaceUpdated: (workspace: StagingWorkspace) => void; onAccept: () => void; onAdvanced: () => void; busy: boolean }) {
-  const progress = useRunProgress(runId);
-  const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace), [profile, progress, workspace]);
-  const [selection, setSelection] = useState<CanvasSelection>("synthesis");
-  const [plannerOpen, setPlannerOpen] = useState(false);
-  const [preview, setPreview] = useState<ArtifactPreview | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-
-  async function openArtifact(artifactId: string) {
-    setPreviewError(null);
-    try { setPreview(await api.artifactPreview(artifactId)); }
-    catch (caught) { setPreviewError(caught instanceof Error ? caught.message : String(caught)); }
-  }
-
-  return (
-    <CanvasSurface docked={selection !== null} plannerDocked={plannerOpen} overlay={<>
-      <button type="button" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)} className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl bg-brand-600 px-5 py-2.5 text-xs font-semibold text-white shadow-pop">{t("Chat with Planner")}</button>
-      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={openArtifact} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
-      {previewError && <p className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{previewError}</p>}
-      {plannerOpen && <DockedPanel><PlannerPanel runId={runId} sourceId={sourceId} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={onWorkspaceUpdated} starterPrompts={[t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")]} /></DockedPanel>}
-      {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
-    </>}>
-      <RoutingGraph routing={routing} workspace={workspace} onSelect={setSelection} proposal="ready" onOpenArtifact={(id) => void openArtifact(id)} />
-    </CanvasSurface>
-  );
-}
-
-/** The fixed ML pipeline, shown faded while it is still being proposed.
+/** The fixed ML pipeline, outlined while there is not yet a plan to attach.
  *
  * Staging used to end at a single "Proposed plan" node and then jump to the
  * editing canvas, which made the pipeline look like something being authored --
@@ -135,21 +114,24 @@ export function UnderstandingAndProposal({ profile, workspace, sourceId, runId, 
  * this is what will run, staging is deciding what feeds it, and nothing is
  * waiting on you to draw it.
  *
- * The shape comes from GuidedPipeline's GROUPS rather than a list of its own,
- * so the preview cannot drift from what actually executes.
+ * Once the planner has proposed something, the graph carries the real ML nodes
+ * instead of this outline and accepting the plan lights them up in place
+ * (#214). This is only the placeholder for the stretch before that, so it has
+ * no "ready" state of its own any more.
+ *
+ * The shape comes from the shared GROUPS spine rather than a list of its own,
+ * so the outline cannot drift from what actually executes.
  */
-function ProposedPipelinePreview({ proposal }: { proposal: "pending" | "ready" | "blocked" }) {
-  if (proposal === "blocked") return null;
-  const pending = proposal === "pending";
+function ProposedPipelinePreview() {
   return (
     <div
       aria-label={t("Fixed ML pipeline")}
-      aria-busy={pending}
-      className={cx("flex w-[210px] shrink-0 flex-col gap-2 rounded-2xl border border-dashed p-3 transition-opacity", pending ? "border-line bg-surface/40 opacity-60" : "border-brand-200 bg-brand-50/40 opacity-90")}
+      aria-busy="true"
+      className="flex w-[210px] shrink-0 flex-col gap-2 rounded-2xl border border-dashed border-line bg-surface/40 p-3 opacity-60"
     >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-        {pending && <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-brand-400 border-t-transparent" aria-hidden="true" />}
-        {pending ? t("Preparing the plan…") : t("Fixed ML pipeline")}
+        <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-brand-400 border-t-transparent motion-reduce:animate-none" aria-hidden="true" />
+        {t("Preparing the plan…")}
       </p>
       <ol className="flex flex-col gap-1">
         {GROUPS.map((group, index) => (
@@ -160,15 +142,23 @@ function ProposedPipelinePreview({ proposal }: { proposal: "pending" | "ready" |
         ))}
       </ol>
       <p className="text-[9px] leading-relaxed text-ink-faint">
-        {pending
-          ? t("This pipeline is fixed. Staging is deciding which data feeds it.")
-          : t("Runs as shown once you accept the plan.")}
+        {t("This pipeline is fixed. Staging is deciding which data feeds it.")}
       </p>
     </div>
   );
 }
 
-function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact }: { routing: StagingRoutingState; workspace: StagingWorkspace | null; onSelect: (selection: CanvasSelection) => void; proposal: "pending" | "ready" | "blocked"; onOpenArtifact: (id: string) => void }) {
+/** The staging half of the automation graph: files -> intake -> branches ->
+ *  synthesis -> proposed plan.
+ *
+ * `trailing` is what the plan node leads into. Before a plan exists that is a
+ * faded outline of the fixed ML pipeline; once one does, the caller passes the
+ * real ML nodes, so accepting the plan lights them up in place instead of
+ * swapping the canvas for a different screen (#214). Either way it is the same
+ * flex row, so the edge out of "Proposed plan" is a real edge rather than a
+ * boundary between two components.
+ */
+export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact, trailing }: { routing: StagingRoutingState; workspace: StagingWorkspace | null; onSelect: (selection: CanvasSelection) => void; proposal: ProposalStatus; onOpenArtifact: (id: string) => void; trailing?: React.ReactNode }) {
   const branches = [
     routing.structured.length ? { id: "structured" as const, title: t("Structured data"), files: routing.files.filter((file) => file.route === "structured"), steps: routing.structured } : null,
     routing.documents.length ? { id: "documents" as const, title: t("Documents"), files: routing.files.filter((file) => file.route === "documents"), steps: routing.documents } : null,
@@ -195,14 +185,13 @@ function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact }
       </div>
       <MergeConnector branches={branches.length} status={routing.synthesis} />
       <PhaseNode title={t("Synthesize")} subtitle={t("Bring findings together")} status={routing.synthesis} onClick={() => onSelect("synthesis")} artifactIds={reportIds} onOpenArtifact={onOpenArtifact} compact />
-      <GraphEdge status={proposal === "ready" ? "complete" : proposal === "blocked" ? "failed" : "pending"} />
-      <button type="button" onClick={() => onSelect("proposal")} className={cx("w-[190px] rounded-2xl border-2 p-4 text-left shadow-card transition hover:-translate-y-0.5", proposal === "ready" ? "border-brand-300 bg-brand-50/80 hover:border-brand-500" : proposal === "blocked" ? "border-stop-300 bg-stop-50" : "border-dashed border-line bg-surface/80")}>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t("Proposed")}</p>
+      <GraphEdge status={proposal === "ready" || proposal === "accepted" ? "complete" : proposal === "blocked" ? "failed" : "pending"} />
+      <button type="button" onClick={() => onSelect("proposal")} className={cx("w-[190px] rounded-2xl border-2 p-4 text-left shadow-card transition hover:-translate-y-0.5", proposal === "accepted" ? "border-ok-300 bg-ok-50/70 hover:border-ok-400" : proposal === "ready" ? "border-brand-300 bg-brand-50/80 hover:border-brand-500" : proposal === "blocked" ? "border-stop-300 bg-stop-50" : "border-dashed border-line bg-surface/80")}>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{t(proposal === "accepted" ? "Accepted" : "Proposed")}</p>
         <p className="mt-2 text-sm font-semibold text-ink">{t("Proposed plan")}</p>
-        <p className="mt-1 text-[10px] text-ink-mute">{proposal === "ready" ? t("Ready for review") : proposal === "blocked" ? t("Blocked — no plan was created") : t("Created after synthesis")}</p>
+        <p className="mt-1 text-[10px] text-ink-mute">{proposal === "accepted" ? t("The pipeline below runs this plan") : proposal === "ready" ? t("Ready for review") : proposal === "blocked" ? t("Blocked — no plan was created") : t("Created after synthesis")}</p>
       </button>
-      {proposal !== "blocked" && <GraphEdge status={proposal === "ready" ? "complete" : "pending"} />}
-      <ProposedPipelinePreview proposal={proposal} />
+      {trailing ?? (proposal !== "blocked" && <><GraphEdge status="pending" /><ProposedPipelinePreview /></>)}
     </div>
   );
 }
@@ -218,7 +207,7 @@ export function BranchNode({ title, files, steps, artifactIds, onClick, onOpenAr
   </button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
 }
 
-function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null }) {
+export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null }) {
   const titles: Record<Exclude<CanvasSelection, null>, string> = {
     source: t("Uploaded files"), discovery: t("Intake and source routing"), structured: t("Structured data"), documents: t("Understand documents"), synthesis: t("Cross-source synthesis"), proposal: t("Proposed plan"),
   };
@@ -228,7 +217,7 @@ function RoutingInspector({ selection, profile, workspace, routing, onClose, onO
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
     {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
-    {selection === "proposal" && (workspace && onAccept && onAdvanced ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
+    {selection === "proposal" && (workspace && onAdvanced ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
   </Inspector>;
 }
 
@@ -372,7 +361,10 @@ export function SourceOverview({ profile, onRemoveFile, onAddFiles, busy = false
   return <div><div className="grid grid-cols-2 gap-2"><Metric label={t("PDF documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Document pages")} value={counts.pages} /><Metric label={t("Structured rows")} value={counts.rows.toLocaleString()} /></div><div className="mt-5 flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Files provided")}</p>{onAddFiles && <button type="button" className="btn-ghost !py-1 text-xs" disabled={busy} onClick={onAddFiles}>+ {t("Add files")}</button>}</div><SourceFiles profile={profile} onRemove={onRemoveFile} busy={busy} /></div>;
 }
 
-function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept: () => void; onAdvanced: () => void; onOpenPlanner?: () => void; busy: boolean }) {
+/** `onAccept` is optional: the merged canvas puts Accept in the one run
+ *  toolbar, where it becomes Run the moment the plan is accepted, so this panel
+ *  reviews the plan without offering a second, competing primary button. */
+function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced: () => void; onOpenPlanner?: () => void; busy: boolean }) {
   const plan = workspace.recommended_plan;
   if (!plan) return <Spinner label={t("The Planner is preparing a proposal…")} />;
   const recommendation = plan.pipeline_recommendation ?? "create_pipeline";
@@ -387,7 +379,7 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const documentFiles = (profile.source_files ?? []).filter((file) => file.route === "documents").map((file) => file.name);
   const baseTable = String(plan.configuration.base_table ?? profile.tables[0]?.name ?? "—");
   const scope = plan.checkpoint_stages.length ? t("Runs with {count} planned review checkpoints.", { count: plan.checkpoint_stages.length }) : t("Runs through the final report; hard safety gates still apply.");
-  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4"><button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button><button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
+  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}<button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-[10px] font-normal text-ink-mute">{t(step.detail)}</span>}</span></li>)}</ol>; }

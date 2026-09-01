@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import SOURCE from "./GuidedPipeline.tsx?raw";
+import GROUPS_SOURCE from "./mlPipelineGroups.ts?raw";
 import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
 import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
 import CATALOGUE from "../lib/i18n.ts?raw";
+import PAGE_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
+import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 
 describe("planner access in the guided pipeline (#97)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {
@@ -74,7 +77,7 @@ describe("the run control (#197)", () => {
     // The poll had parked itself and stale progress outranked the fresh prop, so
     // the button only changed after a remount. Re-arm on runStatus, and trust a
     // non-staged polled status over the pre-click "staged".
-    expect(SOURCE).toContain("}, [runId, runStatus]);");
+    expect(SOURCE).toContain("}, [runId, runStatus, accepted]);");
     expect(SOURCE).toContain('polledStatus && polledStatus !== "staged" ? polledStatus : String(runStatus');
   });
 });
@@ -122,9 +125,10 @@ describe("live progress on the canvas (#194)", () => {
   });
 
   it("animates the arrows into and out of the running stage", () => {
-    // The arrow after "Data understood" was hardcoded inert.
+    // The arrow into the first ML group was hardcoded inert. #214 deleted the
+    // "Data understood" tile it used to leave; it leaves "Proposed plan" now.
     expect(SOURCE).not.toContain("<Arrow active={false} complete />");
-    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete />');
+    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete={accepted}');
     expect(SOURCE).toContain('groupStatuses[index + 1] === "running"');
   });
 
@@ -139,9 +143,9 @@ describe("guided pipeline node descriptions (#168)", () => {
   it("uses one explanatory sentence per group instead of joining bare stage names", () => {
     // Joining `node.label` values produced fragments such as "integration" and
     // "problem discovery" that repeated the title without explaining the work.
-    const groupsSource = SOURCE.slice(
-      SOURCE.indexOf("export const GROUPS"),
-      SOURCE.indexOf("function local"),
+    const groupsSource = GROUPS_SOURCE.slice(
+      GROUPS_SOURCE.indexOf("export const GROUPS"),
+      GROUPS_SOURCE.indexOf("/** Every panel selection"),
     );
     const descriptions = [...groupsSource.matchAll(/description: "([^"]+)"/g)].map(
       (match) => match[1],
@@ -151,5 +155,109 @@ describe("guided pipeline node descriptions (#168)", () => {
     expect(descriptions.every((description) => description.endsWith("."))).toBe(true);
     expect(SOURCE).toContain("subtitle={t(group.description)}");
     expect(SOURCE).not.toContain("group.nodes.map((node) => t(node.label");
+  });
+});
+
+/**
+ * One continuous graph, for the whole life of the run (#214).
+ *
+ * Accepting the plan used to replace the canvas. `automationView` flipped from
+ * "proposal" to "guided_pipeline", and those two values rendered mutually
+ * exclusive components in the same slot -- different canvas, different graph,
+ * different selection model, different toolbar. Everything built up during
+ * understanding (uploaded files, intake, the routing branches, synthesis, the
+ * proposal) vanished the moment the ML pipeline appeared, and the pipeline
+ * opened on a "Data understood" tile that was nothing but a stand-in for the
+ * seven nodes it had just discarded.
+ */
+describe("the understanding graph and the ML pipeline are one canvas (#214)", () => {
+  it("hangs the ML nodes off the real graph instead of a stand-in tile", () => {
+    // The tile is the whole bug in one node: seven nodes and every branch
+    // collapsed into "Intake, routing, and synthesis complete".
+    expect(SOURCE).not.toContain('t("Data understood")');
+    expect(SOURCE).not.toContain('t("Intake, routing, and synthesis complete")');
+    // The staging graph is drawn by the component that owns it, and the ML
+    // nodes are its trailing row -- the same flex row, so the edge out of
+    // "Proposed plan" is a real edge and not a boundary between screens.
+    expect(SOURCE).toContain("<RoutingGraph");
+    expect(SOURCE).toContain("trailing={mlPipeline}");
+    expect(UNDERSTANDING_SOURCE).toContain("trailing?: React.ReactNode");
+  });
+
+  it("keeps one canvas, and it is the one that zooms", () => {
+    // `PanCanvas` had no zoom, and the merged row is roughly twice as wide as
+    // either half. `CanvasSurface` has zoom and sizes its box to the graph
+    // (#203), which is the dependency this issue named.
+    expect(SOURCE).toContain("<CanvasSurface");
+    expect(SOURCE).not.toContain("function PanCanvas");
+  });
+
+  it("keeps one selection, reaching one docked panel from either half", () => {
+    // A click on Intake and a click on "Train and evaluate" go through the
+    // same piece of state; staging ids and ML ids are disjoint, so which panel
+    // opens is decided by which set the selection belongs to.
+    expect(SOURCE).toContain("const mlSelected = selected && ML_SELECTIONS.includes(selected)");
+    expect(SOURCE).toContain("const stagingSelected = selected && !mlSelected");
+    expect(SOURCE).toContain("<RoutingInspector selection={stagingSelected}");
+    expect(SOURCE).toContain("{mlSelected && <Inspector");
+    // Both dock into the column the canvas surrenders, rather than one of them
+    // being fixed over it (#40).
+    expect(SOURCE).toContain("docked={selected !== null}");
+  });
+
+  it("keeps one toolbar: Accept before acceptance, Run after", () => {
+    const toolbar = SOURCE.slice(
+      SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]'),
+      SOURCE.indexOf("\n    </div>", SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]')),
+    );
+    expect(toolbar).toContain('{!accepted && <button');
+    expect(toolbar).toContain('t("Accept and add base pipeline")');
+    expect(toolbar).toContain("{canStart && <button");
+    // And the proposal panel no longer offers a second, competing accept.
+    expect(UNDERSTANDING_SOURCE).toContain("{onAccept && <button");
+  });
+
+  it("does not offer to run a pipeline whose plan is still a proposal", () => {
+    // The staging run is already "staged" while the plan is unaccepted, so
+    // every run control has to be gated on the decision, not on the status.
+    expect(SOURCE).toContain("const canStart = accepted && activeStatus ===");
+    expect(SOURCE).toContain('const active = accepted && ["running", "resuming"]');
+    expect(SOURCE).toContain('const failed = accepted && ["failed", "interrupted", "aborted"]');
+    expect(SOURCE).toContain('const complete = accepted && activeStatus === "completed"');
+  });
+
+  it("stops the plan node calling itself a proposal once it is accepted", () => {
+    // The node used to leave the screen at that moment, so it never had to
+    // describe a plan it had already handed on. It stays now, so it does.
+    expect(SOURCE).toContain('accepted ? "accepted" : "ready"');
+    expect(SOURCE).toContain('selection === "proposal" && accepted ? "summary" : selection');
+    expect(UNDERSTANDING_SOURCE).toContain('export type ProposalStatus');
+    expect(UNDERSTANDING_SOURCE).toContain('t("The pipeline below runs this plan")');
+    expect(CATALOGUE).toContain('"The pipeline below runs this plan":');
+  });
+
+  it("fades the ML nodes rather than hiding them until the plan is accepted", () => {
+    expect(SOURCE).toContain("dimmed={!accepted}");
+    expect(SOURCE).toContain('dimmed && "opacity-60"');
+  });
+
+  it("renders one component for both lifecycle states", () => {
+    // `automationView` keeps both states -- they still decide what the toolbar
+    // offers and whether the ML nodes are live -- but they stop deciding which
+    // component renders, which is what threw the graph away.
+    expect(PAGE_SOURCE).toContain('{(lifecycle === "proposal" || lifecycle === "guided_pipeline")');
+    expect(PAGE_SOURCE).toContain('accepted={lifecycle === "guided_pipeline"}');
+    expect(PAGE_SOURCE).not.toContain("<UnderstandingAndProposal");
+  });
+
+  it("translates the strings the merged panel adds", () => {
+    for (const key of ["Not started yet", "This stage runs once the plan is accepted."]) {
+      expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
+    }
+    // These four reached t() through a ternary, so the literal scanner never
+    // saw them and they shipped in English until this panel was merged (#38).
+    for (const key of ["Accepted ML plan", "Base ML pipeline", "What will run", "Stage details"]) {
+      expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
+    }
   });
 });
