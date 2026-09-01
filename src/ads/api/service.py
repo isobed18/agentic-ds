@@ -2404,6 +2404,24 @@ class ControlPlane:
             )
         return explanations
 
+    def _document_tables_await_review(self, run_id: str) -> bool:
+        """Whether extracted table candidates are still waiting on a human (#316).
+
+        A recorded review settles the question whichever way it went -- rejecting
+        every candidate is a completed decision, not a pending one -- so this
+        asks whether one exists, not whether anything was promoted.
+        """
+        reference = self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        if reference is None:
+            return False
+        try:
+            extraction = self.store.load(reference.artifact_id, DocumentExtraction)
+        except Exception:
+            return False
+        if not any(document.tables for document in extraction.documents):
+            return False
+        return self.store.latest(run_id, ArtifactType.DOCUMENT_TABLE_REVIEW) is None
+
     def _persist_staging_workspace(
         self,
         runtime: _RuntimeRun,
@@ -2591,15 +2609,11 @@ class ControlPlane:
                 plan_configuration.pop("validation_strategy", None)
             if plan_configuration.get("task_type") not in {item.value for item in TaskType}:
                 plan_configuration.pop("task_type", None)
-            pipeline_recommendation = str(
-                planner_result.get("pipeline_recommendation") or "create_pipeline"
+            pipeline_recommendation = _resolved_pipeline_recommendation(
+                planner_result.get("pipeline_recommendation"),
+                plan,
+                self._document_tables_await_review(runtime.run_id),
             )
-            if pipeline_recommendation not in {
-                "create_pipeline",
-                "defer_pipeline",
-                "no_pipeline",
-            }:
-                pipeline_recommendation = "defer_pipeline"
             if pipeline_recommendation == "create_pipeline":
                 for artifact_id in schema_ids:
                     try:
@@ -3060,10 +3074,17 @@ class ControlPlane:
             },
             default=str,
         )
+        reply_language = i18n.normalise(str(runtime.configuration.get("language") or ""))
+        reply_instruction = (
+            "Write reply only in Turkish."
+            if reply_language == "tr"
+            else "Write reply only in English."
+        )
         system = (
             "Create the automatic pre-pipeline data-understanding synthesis. Return two or three "
-            "short bilingual report artifacts and a bounded runtime rationale. Use English "
-            "for reply. Artifacts remain bilingual: use English and Turkish in artifact fields. "
+            "short bilingual report artifacts and a bounded runtime rationale. "
+            f"{reply_instruction} Artifacts remain bilingual: use English and Turkish in "
+            "artifact fields. "
             "Explain each modality "
             "and cross-source relationships. Measured/extracted evidence must be verbally "
             "distinct from interpretation. Cite document evidence with file name and page. "
@@ -3504,12 +3525,33 @@ class ControlPlane:
                 )
         return sources
 
+    def require_source_view(self, source_id: str, *, viewer: str | None) -> None:
+        """Hide a private source from callers that do not own or share it.
+
+        Unowned built-in sources retain their historical shared behaviour. A
+        denied source answers like an unknown id so the endpoint does not also
+        disclose that another account's private source exists.
+        """
+        ownership = self._ownership()
+        if not may_view(
+            viewer=viewer,
+            owner=ownership.owner_of(source_id),
+            visibility=ownership.visibility_of(source_id),
+            teams=self._teams(),
+        ):
+            raise KeyError(source_id)
+
     #: Cap on `page_size` so a caller cannot ask the server to profile an
     #: unbounded slice in one request and undo the reason pagination exists.
     _DATASET_PAGE_MAX = 100
 
     def dataset_catalog(
-        self, *, search: str | None = None, page: int = 1, page_size: int = 25
+        self,
+        *,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        viewer: str | None = None,
     ) -> dict[str, Any]:
         """Paginated, searchable row-free summaries backing /datasets.
 
@@ -3522,7 +3564,7 @@ class ControlPlane:
         """
         page_size = max(1, min(page_size, self._DATASET_PAGE_MAX))
         page = max(1, page)
-        sources = self.data_sources()
+        sources = self.data_sources(viewer=viewer)
         needle = (search or "").strip().casefold()
         if needle:
             sources = [
@@ -4245,6 +4287,10 @@ class ControlPlane:
         so nothing measured here is measured twice.
         """
         requested_configuration = dict(configuration or {})
+        # The automatic Planner greeting is authored once, before any chat
+        # exists. Capture the request language before work moves to a background
+        # thread; later chat replies follow the user's message and stay verbatim.
+        requested_configuration["language"] = i18n.current()
         supplied_run_seed = requested_configuration.get("run_seed")
         run_seed = (
             _coerce_run_seed(supplied_run_seed)
@@ -4945,6 +4991,8 @@ class ControlPlane:
             # the recommendation), so discarding it must remove their index
             # entries as well or the run remains visible in the library.
             self.store.delete_run(run_id)
+            assert self.automation_store is not None
+            self.automation_store.detach_execution(run_id)
 
     def rerun_with_same_seed(self, run_id: str) -> dict[str, Any]:
         """Create a fresh staged run that replays the recorded sampler seed.
@@ -6665,7 +6713,14 @@ class ControlPlane:
             snapshot_deleted = snapshot.is_file()
             if snapshot_deleted:
                 snapshot.unlink()
-        return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
+            assert self.automation_store is not None
+            automations = self.automation_store.detach_execution(run_id)
+        return {
+            "run_id": run_id,
+            **deleted,
+            "snapshot": int(snapshot_deleted),
+            "automations": automations,
+        }
 
     def delete_model(self, artifact_id: str) -> dict[str, Any]:
         """Delete one trained-model artifact. The run it came from is untouched."""
@@ -6786,6 +6841,33 @@ def _promotion_message(exc: CandidateNotPromotable) -> str:
         "so it cannot become data.",
         table=table,
     )
+
+
+def _resolved_pipeline_recommendation(
+    requested: Any,
+    previous: RuntimeConfigurationPlan | None,
+    tables_await_review: bool,
+) -> str:
+    """What one planner turn is allowed to say about running a pipeline (#316).
+
+    This used to be ``str(requested or "create_pipeline")``, so *any* chat turn
+    published a runnable plan and unlocked the ML controls -- a question about
+    the raw files, or a reply whose own text told the reader to review the
+    extracted PDF tables first. Two rules replace that default:
+
+    A turn that names no recommendation has made no decision, so the workspace
+    keeps the one it already carries and a first turn defers. And promoting an
+    extracted table is a human decision the product refuses to make silently, so
+    a plan that would start ML while candidates sit unreviewed is proposing to
+    skip it, and defers instead however confident the planner was.
+    """
+    valid = {"create_pipeline", "defer_pipeline", "no_pipeline"}
+    recommendation = str(requested or "")
+    if recommendation not in valid:
+        recommendation = previous.pipeline_recommendation if previous else "defer_pipeline"
+    if recommendation == "create_pipeline" and tables_await_review:
+        return "defer_pipeline"
+    return recommendation
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
@@ -7276,17 +7358,26 @@ def create_app(
 
     @app.get("/api/catalog/datasets")
     def dataset_catalog(
-        search: str | None = None, page: int = 1, page_size: int = 25
+        request: Request,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
     ) -> dict[str, Any]:
-        return plane.dataset_catalog(search=search, page=page, page_size=page_size)
+        return plane.dataset_catalog(
+            search=search,
+            page=page,
+            page_size=page_size,
+            viewer=_viewer(request),
+        )
 
     @app.get("/api/hardening")
     def hardening_status() -> dict[str, Any]:
         return plane.hardening_status()
 
     @app.get("/api/data-sources/{source_id}/profile")
-    def source_profile(source_id: str) -> dict[str, Any]:
+    def source_profile(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.source_profile(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None
@@ -7434,8 +7525,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/data-sources/{source_id}/pipeline-blueprint")
-    def default_staging_pipeline(source_id: str) -> dict[str, Any]:
+    def default_staging_pipeline(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.default_staging_pipeline(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None

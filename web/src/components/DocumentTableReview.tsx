@@ -80,6 +80,21 @@ export function DocumentTableReview({
     });
   }
 
+  const allAccepted = candidates.length > 0 && candidates.every(
+    (candidate) => decisions.get(candidate.candidateId) === "accepted",
+  );
+
+  function toggleAllAccepted() {
+    setDecisions((current) => {
+      const next = new Map(current);
+      for (const candidate of candidates) {
+        if (allAccepted) next.delete(candidate.candidateId);
+        else next.set(candidate.candidateId, "accepted");
+      }
+      return next;
+    });
+  }
+
   const acceptedCount = useMemo(
     () => [...decisions.values()].filter((decision) => decision === "accepted").length,
     [decisions],
@@ -134,13 +149,19 @@ export function DocumentTableReview({
             {!preview && !error && <p className="mt-5 text-xs text-ink-mute">{t("Loading…")}</p>}
             {preview && !candidates.length && <p className="mt-5 rounded-lg bg-surface-sunken px-3 py-3 text-xs text-ink-mute">{t("This extraction produced no table candidates.")}</p>}
             {candidates.length > 0 && (
-              <ul className="mt-5 space-y-4">
-                {candidates.map((candidate) => {
-                  const decision = decisions.get(candidate.candidateId);
-                  const empty = candidate.rowCount === 0;
-                  const border = decision === "accepted" ? "border-ok-300" : decision === "rejected" ? "border-stop-200" : "border-line";
-                  return (
-                    <li key={candidate.candidateId} className={`rounded-xl border ${border} bg-surface`}>
+              <>
+                <div className="mt-5 flex justify-end">
+                  <button type="button" className="btn-ghost text-xs" aria-pressed={allAccepted} onClick={toggleAllAccepted}>
+                    {allAccepted ? t("Unselect all") : t("Select all")}
+                  </button>
+                </div>
+                <ul className="mt-3 space-y-4">
+                  {candidates.map((candidate) => {
+                    const decision = decisions.get(candidate.candidateId);
+                    const empty = candidate.rowCount === 0;
+                    const border = decision === "accepted" ? "border-ok-300" : decision === "rejected" ? "border-stop-200" : "border-line";
+                    return (
+                      <li key={candidate.candidateId} className={`rounded-xl border ${border} bg-surface`}>
                       <div className="flex items-start gap-3 border-b border-line px-4 py-3">
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-ink">{candidate.title}</span>
@@ -180,10 +201,11 @@ export function DocumentTableReview({
                           <p className="mt-2 text-[10px] text-ink-faint">{t("Showing the first {shown} of {total} rows.", { shown: candidate.sampleRows.length, total: candidate.rowCount })}</p>
                         )}
                       </div>
-                    </li>
-                  );
-                })}
-              </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
             )}
             {candidates.length > 0 && (
               <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">

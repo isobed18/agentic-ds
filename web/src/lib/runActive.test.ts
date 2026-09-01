@@ -24,7 +24,7 @@ describe("isRunActive", () => {
   });
 
   it("covers every status a run passes through while still working", () => {
-    for (const status of ["queued", "staging", "running", "resuming"]) {
+    for (const status of ["queued", "staging", "running", "resuming", "branches_running"]) {
       expect(isRunActive(status), status).toBe(true);
     }
   });
@@ -48,5 +48,7 @@ describe("the polling call sites", () => {
       expect(source.includes('"staging", "running"'), `${name} still inlines the list`).toBe(false);
       expect(source.includes("isRunActive"), `${name} does not use the helper`).toBe(true);
     }
+    expect(GUIDED).toContain("const active = accepted && isRunActive(activeStatus)");
+    expect(GUIDED).not.toContain('["running", "resuming"].includes(activeStatus)');
   });
 });
