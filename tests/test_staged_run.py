@@ -150,6 +150,26 @@ class _PlannerWithTarget(_PlannerLLM):
         )
 
 
+class _InteractiveOverrideLLM:
+    """One chat turn that proposes, but must not apply, an EDA checkpoint."""
+
+    def generate_structured(
+        self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
+    ) -> LLMResponse:
+        return LLMResponse(
+            text="",
+            model=profile.name,
+            latency_s=0.01,
+            parsed={
+                "reply": "I propose pausing after EDA for your review.",
+                "configuration_patch": {"target_column": "tutar"},
+                "checkpoint_stages": ["eda"],
+                "stage_directives": {"eda": ["Include missingness plots."]},
+                "max_retries_by_stage": {"eda": 2},
+            },
+        )
+
+
 class _UnexplainedThenExplainedLLM:
     """Returns a verdict with no reason first, then a real reason on the re-roll."""
 
@@ -220,6 +240,90 @@ def _settle(client: TestClient, run_id: str, target: str = "staged") -> None:
     err = getattr(run, "error", None)
     status = run.status
     raise AssertionError(f"run stayed {status!r} (error: {err!r}), expected {target!r}")
+
+
+class TestPlannerOverrideConfirmation:
+    def test_chat_stages_an_override_until_the_human_applies_it(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        before = client.get(f"/api/runs/{run_id}/staging").json()
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+
+        reply = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        )
+
+        assert reply.status_code == 200, reply.text
+        proposal = reply.json()["override_proposal"]
+        staged = client.get(f"/api/runs/{run_id}/staging").json()
+        assert staged["pending_override"]["proposal_id"] == proposal["proposal_id"]
+        assert staged["recommended_plan"] == before["recommended_plan"]
+        assert client.plane.stage_directives(run_id) == {}  # type: ignore[attr-defined]
+
+        applied = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{proposal['proposal_id']}/apply"
+        )
+
+        assert applied.status_code == 200, applied.text
+        workspace = applied.json()
+        assert workspace["pending_override"] is None
+        assert "eda" in workspace["recommended_plan"]["checkpoint_stages"]
+        assert workspace["recommended_plan"]["configuration"]["target_column"] == "tutar"
+        assert workspace["recommended_plan"]["max_retries_by_stage"]["eda"] == 2
+        assert client.plane.stage_directives(run_id)["eda"] == [  # type: ignore[attr-defined]
+            "Include missingness plots."
+        ]
+
+    def test_cancel_discards_the_pending_override_without_changing_the_plan(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        before = client.get(f"/api/runs/{run_id}/staging").json()["recommended_plan"]
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+        proposal = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        ).json()["override_proposal"]
+
+        discarded = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{proposal['proposal_id']}/discard"
+        )
+
+        assert discarded.status_code == 200, discarded.text
+        assert discarded.json()["pending_override"] is None
+        assert discarded.json()["recommended_plan"] == before
+
+    def test_applying_to_an_accepted_plan_keeps_it_accepted(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+        first = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        ).json()["override_proposal"]
+        proposed = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{first['proposal_id']}/apply"
+        ).json()
+        accepted = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": proposed["artifact_id"]},
+        )
+        assert accepted.status_code == 200, accepted.text
+
+        second = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Keep that EDA checkpoint."},
+        ).json()["override_proposal"]
+        applied = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{second['proposal_id']}/apply"
+        )
+
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["recommended_plan"]["status"] == "accepted"
+        assert applied.json()["recommended_plan"]["accepted"] is True
 
 
 class TestStagingRunsTheFirstStages:

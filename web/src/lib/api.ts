@@ -784,6 +784,7 @@ export interface StagingWorkspace {
     accepted_at?: string | null;
     accepted_by?: "human" | null;
   } | null;
+  pending_override?: PlannerOverrideProposal | null;
   chat_history: {
     role: "user" | "planner";
     content: LocalizedText;
@@ -791,6 +792,24 @@ export interface StagingWorkspace {
   }[];
   planner_model?: string | null;
   planner_error?: string | null;
+}
+
+export interface PlannerOverrideProposal {
+  proposal_id: string;
+  configuration_patch: Record<string, unknown>;
+  stage_directives: Record<string, string[]>;
+  checkpoint_stages: string[];
+  auto_proceed_stages: string[];
+  max_retries_by_stage: Record<string, number>;
+  pipeline_blueprint?: PipelineBlueprint | null;
+}
+
+export interface PlannerChatResponse {
+  reply?: string;
+  message?: string;
+  graph_edit_rejected?: string;
+  override_proposal?: PlannerOverrideProposal;
+  problem_recommendations?: unknown[];
 }
 
 /**
@@ -1341,6 +1360,14 @@ export const api = {
   directives: (runId: string) =>
     request<{ directives: Record<string, string[]> }>(`/api/runs/${runId}/directives`),
 
-  plannerChat: (body: unknown) => request<{ reply?: string; message?: string; [k: string]: unknown }>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }, 120_000),
+  plannerChat: (body: unknown) => request<PlannerChatResponse>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }, 120_000),
+  applyPlannerOverride: (runId: string, proposalId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/planner-overrides/${proposalId}/apply`, {
+      method: "POST",
+    }),
+  discardPlannerOverride: (runId: string, proposalId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/planner-overrides/${proposalId}/discard`, {
+      method: "POST",
+    }),
   artifact: (id: string) => request<Record<string, unknown>>(`/api/artifacts/${id}`),
 };
