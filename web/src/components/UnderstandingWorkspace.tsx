@@ -97,7 +97,7 @@ export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles
 // #362: `onRetry` went with the yellow banner -- it was that banner's only
 // caller, and a run stopped at a gate is answered on the ApprovalCard (which
 // offers "Stop the run" among its options) rather than restarted from here.
-export function UnderstandingProgress({ profile, runId, workspace }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null }) {
+export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUpdated }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
@@ -128,7 +128,7 @@ export function UnderstandingProgress({ profile, runId, workspace }: { profile: 
         actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")}
         onInspect={() => (canReviewTables ? setReviewing(true) : setSelection("synthesis"))} />}
       {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
-      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
+      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
       <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} activeArtifactId={preview?.artifact_id ?? null} />
@@ -302,7 +302,7 @@ export function BranchNode({ title, files, steps, artifactIds, activeArtifactId,
   </button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
 }
 
-export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null }) {
+export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId, onWorkspaceUpdated }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
   const titles: Record<Exclude<CanvasSelection, null>, string> = {
     source: t("Uploaded files"), discovery: t("Intake and source routing"), structured: t("Structured data"), documents: t("Understand documents"), synthesis: t("Cross-source synthesis"), proposal: t("Proposed plan"),
   };
@@ -310,7 +310,7 @@ export function RoutingInspector({ selection, profile, workspace, routing, onClo
     {selection === "source" && <SourceOverview profile={profile} />}
     {selection === "discovery" && <RoutingDetails files={routing.files} />}
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
-    {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} />}
+    {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
     {/* #385: gated on the plan existing, not on the caller happening to offer
         an advanced editor. "Plan not ready yet" now means what it says --
@@ -438,12 +438,32 @@ function StructuredDetails({ profile, workspace, routing }: { profile: SourcePro
   return <div className="space-y-5"><ProgressList steps={routing.structured} /><EvidenceSection title={t("Measured source facts")} tone="measured"><RoutingDetails files={files} /><div className="mt-3 grid grid-cols-2 gap-2"><Metric label={t("Tables")} value={profile.tables.length} /><Metric label={t("Structured rows")} value={profile.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString()} /></div></EvidenceSection>{workspace && <EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection>}</div>;
 }
 
-function DocumentDetails({ workspace, routing, onOpenArtifact, runId }: { workspace: StagingWorkspace | null; routing: StagingRoutingState; onOpenArtifact: (id: string) => void; runId?: string | null }) {
+function DocumentDetails({ workspace, routing, onOpenArtifact, runId, onWorkspaceUpdated }: { workspace: StagingWorkspace | null; routing: StagingRoutingState; onOpenArtifact: (id: string) => void; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
   const extraction = workspace?.document_extractions?.at(-1);
   const [reviewing, setReviewing] = useState(false);
   const processedPages = routing.documentFiles.filter((file) => file.status === "ready").reduce((sum, file) => sum + (file.pageCount ?? 0), 0);
-  return <div className="space-y-5"><ProgressList steps={routing.documents} /><section className="rounded-xl border border-line p-4"><div className="grid grid-cols-2 gap-2"><Detail label={t("Selected engine")} value={`${routing.engine}${routing.engineVersion ? ` ${routing.engineVersion}` : ""}`} /><Detail label={t("OCR mode")} value={routing.ocrMode} /><Detail label={t("Processed pages")} value={processedPages} /><Detail label={t("Duration")} value={extraction ? formatDuration(extraction.duration_seconds) : t("In progress")} /><Detail label={t("Table candidates")} value={extraction?.table_candidates ?? 0} /><Detail label={t("Figure candidates")} value={extraction?.figure_candidates ?? 0} /></div></section><section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Per-file status")}</p><div className="mt-2 space-y-2">{routing.documentFiles.map((file) => <div key={file.sourceFile} className="rounded-lg border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.sourceFile}</span><Badge tone={file.status === "ready" ? "ok" : file.status === "failed" ? "stop" : "brand"}>{t(file.status === "queued" ? "Waiting" : file.status === "running" ? "Processing" : file.status === "ready" ? "Complete" : "Failed")}</Badge></div>{file.status === "ready" && <p className="mt-2 text-[10px] text-ink-mute">{t("{pages} pages · {tables} tables · {figures} figures", { pages: file.pageCount ?? 0, tables: file.tableCandidates ?? 0, figures: file.figureCandidates ?? 0 })}{file.durationSeconds !== undefined ? ` · ${formatDuration(file.durationSeconds)}` : ""}</p>}{file.warnings.map((warning) => <p key={warning.en} className="mt-2 text-[10px] text-warn-700">{local(warning)}</p>)}</div>)}</div></section>{(extraction?.table_candidates ?? 0) > 0 && <div className="rounded-xl border border-warn-200 bg-warn-50 px-3 py-3"><p className="text-xs font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{t("Review and promote each extracted table before it can enter training data.")}</p>{runId && extraction?.artifact_id && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: extraction.table_candidates })}</button>}</div>}
-    {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={() => undefined} />}{localizedList(extraction?.warnings ?? [], extraction?.warnings_tr).map((warning) => <p key={warning} className="rounded-lg bg-warn-50 px-3 py-2 text-[10px] text-warn-700">{warning}</p>)}{extraction?.artifact_id && <button type="button" className="btn-primary w-full text-xs" onClick={() => onOpenArtifact(extraction.artifact_id!)}>{t("Open produced artifacts")}</button>}</div>;
+  // #389: `table_candidates` counts what the extractor found on an immutable
+  // artifact, so it never drops when a candidate is promoted. Gating the yellow
+  // box on it meant the box, its warning, and its button survived every
+  // promotion unchanged -- the screen kept asking for a decision that had
+  // already been made. The same subtraction GuidedPipeline has done since #361.
+  const promoted = workspace?.promoted_document_tables ?? [];
+  const extractedCandidates = workspace?.document_extractions?.reduce((sum, item) => sum + item.table_candidates, 0) ?? 0;
+  const candidateTables = Math.max(0, extractedCandidates - promoted.length);
+  const promotedIds = useMemo(() => promoted.map((table) => table.candidate_id), [promoted]);
+  // Promoting rewrites the workspace behind this panel, so re-read it rather
+  // than leaving every count describing the state before the promotion.
+  function reloadWorkspace() {
+    if (!runId || !onWorkspaceUpdated) return;
+    void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined);
+  }
+  return <div className="space-y-5"><ProgressList steps={routing.documents} /><section className="rounded-xl border border-line p-4"><div className="grid grid-cols-2 gap-2"><Detail label={t("Selected engine")} value={`${routing.engine}${routing.engineVersion ? ` ${routing.engineVersion}` : ""}`} /><Detail label={t("OCR mode")} value={routing.ocrMode} /><Detail label={t("Processed pages")} value={processedPages} /><Detail label={t("Duration")} value={extraction ? formatDuration(extraction.duration_seconds) : t("In progress")} /><Detail label={t("Table candidates")} value={extraction?.table_candidates ?? 0} /><Detail label={t("Figure candidates")} value={extraction?.figure_candidates ?? 0} /></div></section><section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Per-file status")}</p><div className="mt-2 space-y-2">{routing.documentFiles.map((file) => <div key={file.sourceFile} className="rounded-lg border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.sourceFile}</span><Badge tone={file.status === "ready" ? "ok" : file.status === "failed" ? "stop" : "brand"}>{t(file.status === "queued" ? "Waiting" : file.status === "running" ? "Processing" : file.status === "ready" ? "Complete" : "Failed")}</Badge></div>{file.status === "ready" && <p className="mt-2 text-[10px] text-ink-mute">{t("{pages} pages · {tables} tables · {figures} figures", { pages: file.pageCount ?? 0, tables: file.tableCandidates ?? 0, figures: file.figureCandidates ?? 0 })}{file.durationSeconds !== undefined ? ` · ${formatDuration(file.durationSeconds)}` : ""}</p>}{file.warnings.map((warning) => <p key={warning.en} className="mt-2 text-[10px] text-warn-700">{local(warning)}</p>)}</div>)}</div></section>{candidateTables > 0 && <div className="rounded-xl border border-warn-200 bg-warn-50 px-3 py-3"><p className="text-xs font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{t("Review and promote each extracted table before it can enter training data.")}</p>{runId && extraction?.artifact_id && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: candidateTables })}</button>}</div>}
+    {/* #389: standing evidence that the promotion happened. The green "N
+        tables promoted" panel inside the dialog disappears with the dialog,
+        and until this existed the workspace behind it was byte-for-byte
+        unchanged -- which reads as a confirmation that did not take. */}
+    {promoted.length > 0 && <section className="rounded-xl border border-ok-200 bg-ok-50/60 px-3 py-3"><p className="text-xs font-semibold text-ok-700">{t("{count} tables promoted into data", { count: promoted.length })}</p><p className="mt-1 text-[10px] text-ink-mute">{t("They now behave like any other uploaded table.")}</p><ul className="mt-2 space-y-1">{promoted.map((table) => <li key={table.candidate_id} className="truncate text-[10px] text-ink-mute" title={table.source_file}>{table.page_number ? t("{file} · page {page}", { file: table.source_file, page: table.page_number }) : table.source_file}{" · "}{t("{rows} rows × {columns} columns", { rows: table.row_count, columns: table.column_count })}</li>)}</ul></section>}
+    {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} promotedCandidateIds={promotedIds} onClose={() => setReviewing(false)} onPromoted={reloadWorkspace} />}{localizedList(extraction?.warnings ?? [], extraction?.warnings_tr).map((warning) => <p key={warning} className="rounded-lg bg-warn-50 px-3 py-2 text-[10px] text-warn-700">{warning}</p>)}{extraction?.artifact_id && <button type="button" className="btn-primary w-full text-xs" onClick={() => onOpenArtifact(extraction.artifact_id!)}>{t("Open produced artifacts")}</button>}</div>;
 }
 
 function UnderstandingResults({ profile, workspace, onOpenArtifact }: { profile: SourceProfile; workspace: StagingWorkspace; onOpenArtifact: (artifactId: string) => void }) {
@@ -451,12 +471,20 @@ function UnderstandingResults({ profile, workspace, onOpenArtifact }: { profile:
   const extraction = workspace.document_extractions?.at(-1);
   const reportIds = useMemo(() => (workspace.component_outputs ?? []).filter((output) => output.data_type === "reports").flatMap((output) => output.artifact_ids), [workspace.component_outputs]);
   const insights = workspace.reports.flatMap((report) => report.findings).slice(0, 3);
+  // #389: the same subtraction the Documents panel does. Warning that tables
+  // are "waiting to be reviewed" after they were reviewed and promoted is how
+  // this screen kept insisting a promotion had not happened.
+  const remainingCandidates = Math.max(
+    0,
+    (workspace.document_extractions?.reduce((sum, item) => sum + item.table_candidates, 0) ?? 0)
+      - (workspace.promoted_document_tables?.length ?? 0),
+  );
   const warnings = [
     ...localizedList(extraction?.warnings ?? [], extraction?.warnings_tr),
-    ...((extraction?.table_candidates ?? 0) > 0 ? [t("Extracted tables are candidates and cannot enter ML until reviewed.")] : []),
+    ...(remainingCandidates > 0 ? [t("Extracted tables are candidates and cannot enter ML until reviewed.")] : []),
   ];
   return <div className="space-y-5">
-    <div className="grid grid-cols-2 gap-2"><Metric label={t("Documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Candidate document tables")} value={extraction?.table_candidates ?? 0} /><Metric label={t("Measured relationships")} value={workspace.relationship_explanations.length} /></div>
+    <div className="grid grid-cols-2 gap-2"><Metric label={t("Documents")} value={counts.pdfs} /><Metric label={t("Structured files")} value={counts.structured} /><Metric label={t("Candidate document tables")} value={remainingCandidates} /><Metric label={t("Measured relationships")} value={workspace.relationship_explanations.length} /></div>
     <section className="space-y-2" aria-label={t("Understanding summary")}>
       {insights.map((insight) => <SignalLine key={insight.en} symbol="✦" tone="insight" text={local(insight)} />)}
       {warnings.map((warning) => <SignalLine key={warning} symbol="!" tone="warning" text={warning} />)}

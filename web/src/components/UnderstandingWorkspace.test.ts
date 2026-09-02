@@ -346,6 +346,42 @@ describe("understanding node status placement", () => {
   });
 });
 
+describe("promoted document tables in the Documents panel (#389)", () => {
+  it("counts down the candidates a promotion settled instead of the immutable total", () => {
+    // `table_candidates` is `len(item.tables)` on an immutable extraction
+    // artifact, so gating the yellow box on it meant the box, its warning, and
+    // its button survived every promotion unchanged. The same subtraction
+    // GuidedPipeline has done since #361.
+    expect(WORKSPACE_SOURCE).toContain("const promoted = workspace?.promoted_document_tables ?? []");
+    expect(WORKSPACE_SOURCE).toContain("const candidateTables = Math.max(0, extractedCandidates - promoted.length)");
+    expect(WORKSPACE_SOURCE).toContain("{candidateTables > 0 && <div className=\"rounded-xl border border-warn-200");
+    expect(WORKSPACE_SOURCE).toContain('t("Review {count} extracted tables", { count: candidateTables })');
+    // And nothing on this path still reads the raw candidate count.
+    expect(WORKSPACE_SOURCE).not.toContain("(extraction?.table_candidates ?? 0) > 0");
+  });
+
+  it("re-reads the workspace once tables are promoted", () => {
+    // `onPromoted={() => undefined}` meant not even the session that promoted
+    // saw its own result: the panel behind the dialog stayed byte-for-byte
+    // what it was before.
+    expect(WORKSPACE_SOURCE).toContain("void api.stagingWorkspace(runId).then(onWorkspaceUpdated)");
+    expect(WORKSPACE_SOURCE).toContain("onPromoted={reloadWorkspace}");
+    expect(WORKSPACE_SOURCE).not.toContain("onPromoted={() => undefined}");
+  });
+
+  it("seeds the dialog from what was already promoted", () => {
+    expect(WORKSPACE_SOURCE).toContain("promotedCandidateIds={promotedIds}");
+    expect(GUIDED_SOURCE).toContain("promotedCandidateIds={promoted.map((table) => table.candidate_id)}");
+  });
+
+  it("leaves standing evidence of the promotion in the panel", () => {
+    // The dialog's green panel goes away with the dialog. What was promoted
+    // stays on the workspace, so the panel can show it.
+    expect(WORKSPACE_SOURCE).toContain('t("{count} tables promoted into data", { count: promoted.length })');
+    expect(WORKSPACE_SOURCE).toContain("{promoted.map((table) =>");
+  });
+});
+
 describe("the outcome notice's action (#388)", () => {
   it("offers the extracted-tables dialog when there are candidates to choose", () => {
     // "Inspect understanding" selected the synthesis node, which is not the

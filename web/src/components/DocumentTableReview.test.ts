@@ -43,7 +43,10 @@ describe("the extracted-table review (#303)", () => {
     // is not checkable and the warning stays on the card.
     expect(SOURCE).toContain("const empty = candidate.rowCount === 0");
     expect(SOURCE).toContain('t("No data extracted — cannot be accepted")');
-    expect(SOURCE).toContain("disabled={empty}");
+    // #389 added the second reason a box is not checkable -- already promoted --
+    // so the two share one `locked`; an empty candidate is still one of them.
+    expect(SOURCE).toContain("const locked = empty || settled");
+    expect(SOURCE).toContain("disabled={locked}");
   });
 
   it("translates the review copy", () => {
@@ -105,7 +108,7 @@ describe("checkbox selection (#360)", () => {
   it("counts only promotable candidates towards 'all'", () => {
     // Otherwise one failed extraction (#310) puts "all checked" out of reach
     // and the header can never leave indeterminate.
-    expect(SOURCE).toContain("const selectable = useMemo(() => candidates.filter((candidate) => candidate.rowCount > 0)");
+    expect(SOURCE).toContain("candidates.filter((candidate) => candidate.rowCount > 0 && !alreadyPromoted.has(candidate.candidateId))");
     expect(SOURCE).toContain("new Set(selectable.map((candidate) => candidate.candidateId))");
   });
 
@@ -114,6 +117,21 @@ describe("checkbox selection (#360)", () => {
     expect(SOURCE).toContain("disabled={busy || acceptedCount === 0}");
     expect(SOURCE).not.toContain("allDecided");
     expect(CATALOGUE).not.toContain('"Decide on every table first');
+  });
+
+  it("brings an already-promoted candidate back checked and locked (#389)", () => {
+    // Reopening the dialog used to show a blank slate, which read as though
+    // the promotion had been used for nothing at all.
+    expect(SOURCE).toContain("const alreadyPromoted = useMemo(() => new Set(promotedCandidateIds ?? [])");
+    expect(SOURCE).toContain("const settled = alreadyPromoted.has(candidate.candidateId)");
+    expect(SOURCE).toContain("const checked = settled || accepted.has(candidate.candidateId)");
+    expect(CATALOGUE).toContain('"Already promoted": "Zaten veriye alındı"');
+  });
+
+  it("never re-submits a candidate a previous round promoted (#389)", () => {
+    // Promotion mints an immutable table asset per accepted candidate, so
+    // accepting one twice would put a duplicate table into the data.
+    expect(SOURCE).toContain("filter((candidate) => !alreadyPromoted.has(candidate.candidateId))");
   });
 
   it("keeps the selection copy translated", () => {
