@@ -22,6 +22,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { itemsFrom, type NotificationItem } from "./notificationItems";
 import { dismissAll, dismissOne, pruneDismissed, visibleItems } from "./notificationDismissal";
+import { projectOfAutomation, runHref } from "./runDeepLink";
 import { cx } from "./ui";
 
 const SEEN_KEY = "ads.notifications.seen";
@@ -96,6 +97,23 @@ export function Notifications() {
     localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
   }
 
+  /**
+   * Resolve the owning project, then go to the run inside it.
+   *
+   * Only a run-derived item needs this: an output row's `href` already names
+   * its project, straight from the home read model. The lookup is on click
+   * rather than on every poll -- the answer is only needed once someone acts
+   * on a notification, and /api/projects is viewer-filtered, so an automation
+   * whose project this account may not see resolves to nothing and the link
+   * degrades instead of 404ing.
+   */
+  async function openRun(item: NotificationItem) {
+    setOpen(false);
+    if (!item.runId) { navigate(item.href); return; }
+    const projects = item.automationId ? await api.projects().catch(() => []) : [];
+    navigate(runHref(projectOfAutomation(projects, item.automationId), item.automationId, item.runId));
+  }
+
   return (
     <div className="relative" ref={panel}>
       <button
@@ -148,7 +166,7 @@ export function Notifications() {
                   className="flex items-start border-b border-line-soft last:border-b-0 hover:bg-surface-sunken"
                 >
                   <button
-                    onClick={() => { setOpen(false); navigate(i.href); }}
+                    onClick={() => void openRun(i)}
                     className="flex min-w-0 flex-1 items-start gap-3 py-3 pl-4 text-left"
                   >
                     <span
