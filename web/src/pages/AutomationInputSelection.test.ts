@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { type AutomationInputFile } from "../lib/api";
 import { t } from "../lib/i18n";
 import SOURCE from "./ProjectWorkspace.tsx?raw";
-import { everyFileSelected } from "./ProjectWorkspace";
+import { defaultAutomationSelection, everyFileSelected } from "./ProjectWorkspace";
 
 const files: AutomationInputFile[] = [
   { source_id: "source-a", path: "orders.csv" },
@@ -72,5 +72,21 @@ describe("the toggle the picker renders", () => {
 
   it("leaves the primary action disabled after unselecting everything", () => {
     expect(SOURCE).toContain('disabled={!selected.size || busy} onClick={() => void save()}');
+  });
+});
+
+describe("the initial automation selection (#325)", () => {
+  it("selects every project file when the new automation has no saved input", () => {
+    expect(defaultAutomationSelection(files, new Set())).toEqual(keys(...files));
+  });
+
+  it("preserves an existing automation's saved subset", () => {
+    expect(defaultAutomationSelection(files, keys(files[1]))).toEqual(keys(files[1]));
+  });
+
+  it("applies the default after project files finish loading", () => {
+    expect(SOURCE).toContain(
+      "setSelected(defaultAutomationSelection(files, savedSelection))",
+    );
   });
 });
