@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar, Final
 
@@ -30,7 +31,17 @@ from ads.contracts.integration import (
 from ads.contracts.leakage import LeakageReport
 from ads.contracts.problem import ProblemDefinition
 from ads.contracts.reporting import DecisionAuthority, DecisionRecord, EvaluationReport
-from ads.contracts.training import TrainingReport
+from ads.contracts.rlfe import (
+    APPLICABLE as RLFE_APPLICABLE,
+)
+from ads.contracts.rlfe import (
+    NOT_APPLICABLE as RLFE_NOT_APPLICABLE,
+)
+from ads.contracts.rlfe import (
+    GeneratedFeature,
+    RlFeatureReport,
+)
+from ads.contracts.training import EnhancedTrainingReport, TrainingReport
 from ads.contracts.validation import (
     ValidationStrategy,
     ValidationTrial,
@@ -42,12 +53,13 @@ from ads.ds_toolkit import build_preprocessor
 from ads.eda import profile_for_eda
 from ads.intake import LoadedTable, load_directory, profile_table, profile_tables
 from ads.integration import execute_plan
+from ads.integrations.rlfe import RlfeClient, RlfeOutcome, build_enhanced_frame
 from ads.orchestration import RunState, StageResult
 from ads.reporting import build_evaluation_report, render_markdown
 from ads.sandbox import ExecutionBackend
 from ads.splitting import describe_split, make_splitter, split_holdout
 from ads.store import compute_artifact_id, register_artifact_type
-from ads.training import default_candidates, train_candidates
+from ads.training import TrainingError, default_candidates, train_candidates
 
 SOURCE_PATH_KEY: Final = "pipeline.source_path"
 INTEGRATION_PLAN_KEY: Final = "pipeline.integration_plan"
@@ -70,6 +82,10 @@ STAGE_DIRECTIVES_KEY: Final = "pipeline.stage_directives"
 #: rejected gate still falls back to the full agent conversation on retry,
 #: because reproposing the same deterministic framing would not be a rework.
 QUICK_PROBLEM_KEY: Final = "pipeline.quick_problem_selection"
+#: An :class:`ads.integrations.rlfe.RlfeClient`, injected so the suite can drive
+#: the whole external feature-search flow without a sidecar running. Unset means
+#: build a default client from ``ADS_RLFE_API_URL``.
+RLFE_CLIENT_KEY: Final = "pipeline.rlfe_client"
 
 LOADED_TABLES_KEY: Final = "pipeline.loaded_tables"
 SOURCE_FRAMES_KEY: Final = "pipeline.source_frames"
@@ -534,6 +550,223 @@ def feature_pipeline_stage(state: RunState, correction: list[str] | None = None)
     )
 
 
+def _rlfe_client(state: RunState) -> RlfeClient:
+    client = state.blackboard.get(RLFE_CLIENT_KEY)
+    if client is None:
+        return RlfeClient()
+    if not isinstance(client, RlfeClient):
+        raise TypeError(f"RunState.blackboard[{RLFE_CLIENT_KEY!r}] must be an RlfeClient.")
+    return client
+
+
+def _rlfe_stage_result(report: RlFeatureReport, frame: pd.DataFrame) -> StageResult:
+    # Deliberately no quality signal beyond the row count. This stage must never
+    # block a run: the external search is an enhancement, not evidence, and an
+    # unreachable sidecar is not a fact about the data worth stopping for.
+    return StageResult(
+        artifacts=[report],
+        names={0: "rl_feature_report"},
+        signals=QualitySignals(n_rows=len(frame)),
+    )
+
+
+def _report_from_outcome(
+    outcome: RlfeOutcome, *, target_column: str, skipped: Sequence[str] = ()
+) -> RlFeatureReport:
+    """Project the client's outcome onto the persisted contract."""
+    if outcome.status != RLFE_APPLICABLE or not outcome.selected_features:
+        # An "applicable" search that retained nothing has no recipe to persist,
+        # and the contract refuses one. Report it as what it effectively is.
+        return RlFeatureReport(
+            status=(
+                outcome.status if outcome.status != RLFE_APPLICABLE else RLFE_NOT_APPLICABLE
+            ),
+            reasons=(
+                list(outcome.reasons)
+                if outcome.reasons or outcome.status != RLFE_APPLICABLE
+                else ["NO_USABLE_FEATURES"]
+            ),
+            detail=outcome.detail,
+            target_column=target_column,
+            sent_row_count=outcome.sent_row_count,
+            sent_column_count=outcome.sent_column_count,
+        )
+    return RlFeatureReport(
+        status=RLFE_APPLICABLE,
+        target_column=target_column,
+        sent_row_count=outcome.sent_row_count,
+        sent_column_count=outcome.sent_column_count,
+        selected_features=list(outcome.selected_features),
+        removed_features=list(outcome.removed_features),
+        generated_features=[
+            GeneratedFeature(
+                name=item["name"],
+                operation=item["operation"],
+                inputs=list(item["inputs"]),
+                expression=item.get("expression", ""),
+            )
+            for item in outcome.generated_features
+            if item.get("name") and item.get("inputs")
+        ],
+        skipped_features=list(skipped),
+        api_baseline_score=outcome.baseline_score,
+        api_optimized_score=outcome.optimized_score,
+        api_score_improvement=outcome.score_improvement,
+        primary_metric=outcome.primary_metric,
+        primary_direction=outcome.primary_direction,
+        excluded_detected_columns=list(outcome.excluded_detected_columns),
+        search_termination_reason=outcome.termination_reason,
+    )
+
+
+def rl_feature_engineering_stage(
+    state: RunState, correction: list[str] | None = None
+) -> StageResult:
+    """Ask the external RL service for a better feature set, and record what it said.
+
+    Runs after splitting and sends **outer-train rows only**. The service scores
+    candidate feature sets with its own cross-validation, so giving it every row
+    would let the holdout choose the features and quietly make the enhanced
+    model's holdout score meaningless. Training rows only is what keeps the two
+    models comparable.
+
+    Only columns the FeatureSpec routes to a model leave this host, so anything
+    intake classified as personal, and anything the leakage audit dropped, is
+    excluded before the upload rather than trusted to the remote service.
+
+    Exactly one report is always produced, including on failure: training
+    declares this artifact among its inputs, so emitting nothing would stall the
+    run rather than degrade it.
+    """
+    del correction
+    frame = _frame(state, MODEL_FRAME_KEY)
+    problem = _current_problem(state)
+    target_column = problem.target_column
+    if target_column is None:
+        return _rlfe_stage_result(
+            RlFeatureReport(status=RLFE_NOT_APPLICABLE, reasons=["NO_TARGET"]), frame
+        )
+
+    spec = state.require(ArtifactType.FEATURE_SPEC, FeatureSpec)
+    manifest = state.require(ArtifactType.SPLIT_MANIFEST, SplitManifest)
+    # Datetime columns are omitted on purpose: the service discards them in its
+    # own candidate prefilter as UNSUPPORTED_INITIAL_FEATURE_TYPE, so sending
+    # them would be egress that buys nothing.
+    eligible = set(spec.numeric_columns) | set(spec.categorical_columns)
+    columns = [column for column in frame.columns if column == target_column or column in eligible]
+    positions = list(manifest.outer_train.positions)
+    if not eligible:
+        return _rlfe_stage_result(
+            RlFeatureReport(
+                status=RLFE_NOT_APPLICABLE,
+                reasons=["NO_USABLE_FEATURES"],
+                target_column=target_column,
+            ),
+            frame,
+        )
+    if not positions:
+        return _rlfe_stage_result(
+            RlFeatureReport(
+                status=RLFE_NOT_APPLICABLE,
+                reasons=["INSUFFICIENT_ROWS"],
+                target_column=target_column,
+            ),
+            frame,
+        )
+
+    outcome = _rlfe_client(state).enhance(
+        frame.iloc[positions].loc[:, columns], target_column=target_column
+    )
+    skipped: tuple[str, ...] = ()
+    if outcome.status == RLFE_APPLICABLE and outcome.generated_features:
+        # Replay the recipe once here so the report names what is actually
+        # rebuildable against our frame. Training replays it again to build the
+        # frame it fits; both go through the same helper so they cannot disagree.
+        _, skipped = build_enhanced_frame(
+            frame,
+            target_column=target_column,
+            selected_features=outcome.selected_features,
+            generated_features=list(outcome.generated_features),
+            impute_from=frame.index[positions],
+        )
+    return _rlfe_stage_result(
+        _report_from_outcome(outcome, target_column=target_column, skipped=skipped), frame
+    )
+
+
+def _train_enhanced_model(
+    state: RunState,
+    base_report: TrainingReport,
+    *,
+    frame: pd.DataFrame,
+    problem: ProblemDefinition,
+    strategy: ValidationStrategy,
+    candidates: Sequence[object],
+) -> EnhancedTrainingReport | None:
+    """Refit the candidate menu on RL-engineered features, or None if there are none.
+
+    Same rows, same index, same ValidationStrategy, so ``train_candidates``
+    re-derives the identical holdout partition and the two reports' holdout
+    scores mean the same thing.
+    """
+    rl = state.latest(ArtifactType.RL_FEATURE_REPORT, RlFeatureReport)
+    if rl is None or rl.status != RLFE_APPLICABLE or problem.target_column is None:
+        return None
+    manifest = state.require(ArtifactType.SPLIT_MANIFEST, SplitManifest)
+    enhanced, skipped = build_enhanced_frame(
+        frame,
+        target_column=problem.target_column,
+        selected_features=rl.selected_features,
+        generated_features=rl.recipe(),
+        impute_from=frame.index[list(manifest.outer_train.positions)],
+    )
+    generated = [
+        name
+        for name in rl.generated_feature_names
+        if name not in skipped and name in enhanced.columns
+    ]
+    if not generated:
+        # Feature *selection* alone, with nothing engineered, would refit the
+        # same menu on a subset of the same columns. That is a different model
+        # but not an "enhanced" one, and offering it as a second download would
+        # be noise.
+        return None
+    card = profile_table(
+        LoadedTable(
+            name="rl_enhanced_frame",
+            frame=enhanced,
+            source_uri="derived",
+            source_format="pandas",
+        )
+    )
+    try:
+        report = train_candidates(
+            enhanced,
+            strategy,
+            lambda: build_preprocessor(
+                card,
+                target_column=problem.target_column or "",
+                excluded_columns=set(),
+            ),
+            candidates,
+            target_column=problem.target_column,
+            task_type=problem.task_type,
+            primary_metric=problem.primary_metric,
+            store=state.store,
+            run_id=state.run_id,
+        )
+    except (TrainingError, ValueError):
+        # The primary model is already trained and valid. A failure to fit the
+        # enhanced variant costs the run nothing, so it must not fail the stage.
+        return None
+    return EnhancedTrainingReport(
+        **report.model_dump(exclude={"created_at"}),
+        base_model_artifact_id=compute_artifact_id(base_report),
+        rl_feature_report_id=compute_artifact_id(rl),
+        generated_feature_names=generated,
+    )
+
+
 def training_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
     """Fit the fixed candidate menu with fold-local preprocessing."""
     del correction
@@ -607,9 +840,27 @@ def training_stage(state: RunState, correction: list[str] | None = None) -> Stag
         store=state.store,
         run_id=state.run_id,
     )
+    artifacts: list[Artifact] = [report]
+    names = {0: "training_report"}
+    # Additive: the primary model above is unchanged, and every consistency check
+    # it depends on ran against the untouched model frame. The enhanced variant
+    # trains on a separate frame built from the recorded recipe and is emitted
+    # under its own artifact type, so nothing downstream resolves to it by
+    # accident.
+    enhanced = _train_enhanced_model(
+        state,
+        report,
+        frame=frame,
+        problem=problem,
+        strategy=strategy,
+        candidates=candidates,
+    )
+    if enhanced is not None:
+        names[len(artifacts)] = "rl_enhanced_training_report"
+        artifacts.append(enhanced)
     return StageResult(
-        artifacts=[report],
-        names={0: "training_report"},
+        artifacts=artifacts,
+        names=names,
         signals=report.to_quality_signals(),
     )
 
@@ -697,6 +948,7 @@ __all__ = [
     "FEATURE_SPEC_KEY",
     "FINAL_MARKDOWN_KEY",
     "RUN_LANGUAGE_KEY",
+    "RLFE_CLIENT_KEY",
     "INTEGRATION_GRAIN_PRESERVED_KEY",
     "FinalReport",
     "MODEL_FRAME_KEY",
@@ -712,6 +964,7 @@ __all__ = [
     "leakage_audit_stage",
     "profiling_stage",
     "reporting_stage",
+    "rl_feature_engineering_stage",
     "splitting_stage",
     "training_stage",
 ]
