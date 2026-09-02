@@ -561,6 +561,10 @@ const TR: Record<string, string> = {
   "Stage {stage} is a required checkpoint. Review the output and choose how to proceed.": "{stage} aşaması zorunlu bir kontrol noktası. Çıktıyı incele ve nasıl devam edeceğini seç.",
   "Stage {stage} stopped because a problem was detected. Your decision is needed.": "{stage} aşaması bir sorun saptandığı için durdu. Senin kararın gerekiyor.",
   "Measured from content": "İçerikten ölçüldü",
+  // #386: the Intake panel collapses each file's explanation by default, so
+  // the disclosure needs a name of its own.
+  "Show file details": "Dosya ayrıntılarını göster",
+  "Hide file details": "Dosya ayrıntılarını gizle",
   "Extension and measurement disagree": "Uzantı ile ölçüm çelişiyor",
   "Needs a decision": "Karar gerekiyor",
   "Structured tree": "Ağaç yapı",
@@ -1070,6 +1074,8 @@ const TR: Record<string, string> = {
   // name of the technique, and the reason there are two models on one card.
   "Download original": "Özgün modeli indir",
   "Download RL-enhanced": "RL ile geliştirilmiş modeli indir",
+  "Original model": "Özgün model",
+  "Original and RL-enhanced model comparison": "Özgün ve RL ile geliştirilmiş model karşılaştırması",
   "RL feature report": "RL öznitelik raporu",
   "RL-enhanced model": "RL ile geliştirilmiş model",
   "With {count} engineered feature(s)": "{count} üretilmiş öznitelik ile",

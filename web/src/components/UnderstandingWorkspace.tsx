@@ -13,6 +13,7 @@ import { NodeStatusHeader, StatusMark } from "./NodeStatus";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
   buildStagingRoutingState,
+  fileNeedsAttention,
   pageOfFiles,
   type ProgressStatus,
   type RoutedSourceFile,
@@ -296,7 +297,11 @@ export function RoutingInspector({ selection, profile, workspace, routing, onClo
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
     {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
-    {selection === "proposal" && (workspace && onAdvanced ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
+    {/* #385: gated on the plan existing, not on the caller happening to offer
+        an advanced editor. "Plan not ready yet" now means what it says --
+        synthesis has not produced a recommendation -- rather than standing in
+        for a decision the Planner has already made and explained. */}
+    {selection === "proposal" && (workspace?.recommended_plan ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
   </Inspector>;
 }
 
@@ -365,12 +370,51 @@ export function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
       </div>
       {pager}
     </div>
-    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div><FileInsight insight={file.insight} />{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
+    {shown.map((file) => <RoutedFileCard key={`${file.route}:${file.name}`} file={file} />)}
     {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
       {pager}
     </div>
+  </div>;
+}
+
+/** One routed file, explained on request rather than at all times (#386).
+ *
+ * Every card used to stack its insight, its routing reason, its table list and
+ * its measured-from-content block unconditionally, so a panel holding more than
+ * a couple of files was a wall of prose you scrolled past to find a file name.
+ * Collapsed, the card is the row a person is scanning for: format, name, route.
+ *
+ * The exception is a file carrying a measurement that disagrees with its
+ * extension, or one the measurement could not decide. Those are the reason
+ * someone opens this panel, so such a card starts expanded -- and if it is
+ * collapsed by hand, it still says why it mattered.
+ */
+function RoutedFileCard({ file }: { file: RoutedSourceFile }) {
+  const attention = fileNeedsAttention(file);
+  const [open, setOpen] = useState(attention);
+  const needsDecision = file.measuredDeterministic === false && file.needsDecisionBecause;
+  return <div className="rounded-xl border border-line bg-surface px-3 py-3">
+    <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <FileBadge format={file.format} />
+      <p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p>
+      <span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span>
+      {/* The name of the control, for anyone who cannot see the chevron. The
+          row's own content already names the file it belongs to. */}
+      <span className="sr-only">{open ? t("Hide file details") : t("Show file details")}</span>
+      <Chevron open={open} />
+    </button>
+    {!open && attention && <div className="mt-2 space-y-1">
+      {file.contradictsExtension === true && <p className="text-[10px] font-semibold leading-relaxed text-warn-800">{t("Extension and measurement disagree")}</p>}
+      {needsDecision && <p className="text-[10px] leading-relaxed text-warn-700">{t("Needs a decision")}: {file.needsDecisionBecause}</p>}
+    </div>}
+    {open && <>
+      <FileInsight insight={file.insight} />
+      {file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}
+      {file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}
+      <MeasuredType file={file} />
+    </>}
   </div>;
 }
 
@@ -446,14 +490,21 @@ export function SourceOverview({ profile, onRemoveFile, onAddFiles, busy = false
 
 /** `onAccept` is optional: the merged canvas puts Accept in the one run
  *  toolbar, where it becomes Run the moment the plan is accepted, so this panel
- *  reviews the plan without offering a second, competing primary button. */
-function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced: () => void; onOpenPlanner?: () => void; busy: boolean }) {
+ *  reviews the plan without offering a second, competing primary button.
+ *
+ *  #385: `onAdvanced` is optional for the same reason, and this is the whole
+ *  regression. It used to be required, so `RoutingInspector` gated the entire
+ *  panel on having one -- and the understanding canvas passes none of these
+ *  handlers, so a run the Planner had declined showed "Plan not ready yet"
+ *  beside a node reading "Blocked — no plan was created". The explanation is
+ *  what the panel is for; only the actions depend on having somewhere to go. */
+function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy: boolean }) {
   const plan = workspace.recommended_plan;
   if (!plan) return <Spinner label={t("The Planner is preparing a proposal…")} />;
   const recommendation = plan.pipeline_recommendation ?? "create_pipeline";
   if (recommendation !== "create_pipeline") {
     const denied = recommendation === "no_pipeline";
-    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}<button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.")}</p></div>;
+    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onOpenPlanner || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.")}</p></div>;
   }
   const steps = visibleWorkflowSteps(workspace, activeLanguage());
   const target = String(plan.configuration.target_column ?? "");
@@ -462,7 +513,7 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const documentFiles = (profile.source_files ?? []).filter((file) => file.route === "documents").map((file) => file.name);
   const baseTable = String(plan.configuration.base_table ?? profile.tables[0]?.name ?? "—");
   const scope = plan.checkpoint_stages.length ? t("Runs with {count} planned review checkpoints.", { count: plan.checkpoint_stages.length }) : t("Runs through the final report; hard safety gates still apply.");
-  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}<button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
+  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onAccept || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-[10px] font-normal text-ink-mute">{t(step.detail)}</span>}</span></li>)}</ol>; }

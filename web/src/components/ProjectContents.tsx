@@ -10,12 +10,11 @@ import { useState } from "react";
 import {
   api,
   type AutomationContents,
-  type EnhancedModelSummary,
   type ModelSummary,
   type ReportSummary,
 } from "../lib/api";
 import type { WorkspaceView } from "./automationWorkspaceState";
-import { Badge, Empty, Spinner } from "./ui";
+import { Badge, Empty, Spinner, cx } from "./ui";
 import { useOverlayDismiss } from "./overlayDismiss";
 import { t } from "../lib/i18n";
 
@@ -85,38 +84,36 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
                 </button>
               </div>
             </div>
-            <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
-              <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
-              <Pair label={t("CV mean")} value={num(model.cv_mean)} />
-              <Pair label={t("CV std")} value={num(model.cv_std)} />
-              <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
-            </dl>
-            {model.enhanced && <EnhancedRow enhanced={model.enhanced} metric={model.metric} />}
+            {model.enhanced ? <ModelComparison model={model} /> : (
+              <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
+                <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
+                <Pair label={t("CV mean")} value={num(model.cv_mean)} />
+                <Pair label={t("CV std")} value={num(model.cv_std)} />
+                <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
+              </dl>
+            )}
+            {model.enhanced && (
+              <dl className="mt-2 grid grid-cols-3 gap-2">
+                <Pair label={t("CV mean")} value={num(model.cv_mean)} />
+                <Pair label={t("CV std")} value={num(model.cv_std)} />
+                <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
+              </dl>
+            )}
             <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
               <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
                 run {model.run_id} · {model.candidate_count} candidates
               </p>
-              {/* #166: a completed run leaves a saved model that must be
-                  downloadable. Only a saved model has a joblib blob behind it.
-                  The RL-enhanced variant is a second download on this same card,
-                  not a card of its own: one run produced both. */}
+              {/* #166: a single-model run keeps its download in the footer.
+                  Paired runs put each download in its labelled comparison
+                  column, so the file cannot be mistaken for its counterpart. */}
               <div className="flex shrink-0 items-center gap-1.5">
-                {model.saved && (
+                {!model.enhanced && model.saved && (
                   <a
                     href={`/api/models/${model.artifact_id}/download`}
                     className="btn-ghost !py-1 text-xs"
                     download
                   >
                     {t("Download original")}
-                  </a>
-                )}
-                {model.enhanced?.saved && (
-                  <a
-                    href={`/api/models/${model.enhanced.artifact_id}/download`}
-                    className="btn-ghost !py-1 text-xs"
-                    download
-                  >
-                    {t("Download RL-enhanced")}
                   </a>
                 )}
               </div>
@@ -129,7 +126,7 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
   );
 }
 
-/** The RL-enhanced counterpart's score, on the same card as its base model.
+/** The original and RL-enhanced results, compared inside one run card.
  *
  * The delta arrives already oriented so positive means better, whichever way the
  * metric runs. It is toned on that sign rather than always reading as a win: an
@@ -137,25 +134,35 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
  * still offers it for download and a person choosing between the two needs to
  * see which one actually won.
  */
-export function EnhancedRow({ enhanced, metric }: { enhanced: EnhancedModelSummary; metric: string }) {
+export function ModelComparison({ model }: { model: ModelSummary }) {
+  const enhanced = model.enhanced;
+  if (!enhanced) return null;
   const delta = enhanced.score_delta;
   const better = typeof delta === "number" && delta > 0;
   return (
-    <div className="mt-2.5 border-t border-line-soft pt-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-[11px] font-medium text-ink-soft">
-          {t("With {count} engineered feature(s)", { count: enhanced.generated_feature_count })}
-        </p>
-        {typeof delta === "number" && (
-          <Badge tone={better ? "ok" : "warn"}>
-            {`${delta > 0 ? "+" : ""}${delta.toFixed(3)} ${metric}`}
-          </Badge>
-        )}
+    <section
+      aria-label={t("Original and RL-enhanced model comparison")}
+      className="mt-2.5 grid grid-cols-2 overflow-hidden rounded-xl border border-line"
+    >
+      <div data-model-variant="original" className="min-w-0 bg-surface-sunken p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-mute">{t("Original model")}</p>
+        <p className="mt-2 text-[10px] text-ink-faint">{t("Holdout {metric}", { metric: model.metric })}</p>
+        <p className="text-lg font-semibold tabular-nums text-ink">{num(model.holdout_score)}</p>
+        <p className="mt-1 truncate text-[10px] text-ink-faint" title={model.estimator}>{model.estimator}</p>
+        {model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-2 inline-flex !py-1 text-[10px]" download>{t("Download original")}</a>}
       </div>
-      <p className="mt-1 text-[10px] text-ink-faint">
-        {t("Holdout {metric}", { metric })}: {num(enhanced.holdout_score)} · {enhanced.estimator}
-      </p>
-    </div>
+      <div data-model-variant="rl-enhanced" className={cx("min-w-0 border-l border-line p-3", better ? "bg-ok-50/70" : "bg-warn-50/60")}>
+        <div className="flex items-start justify-between gap-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-mute">{t("RL-enhanced model")}</p>
+          {typeof delta === "number" && <Badge tone={better ? "ok" : "warn"}>{`${delta > 0 ? "+" : ""}${delta.toFixed(3)}`}</Badge>}
+        </div>
+        <p className="mt-2 text-[10px] text-ink-faint">{t("Holdout {metric}", { metric: model.metric })}</p>
+        <p className="text-lg font-semibold tabular-nums text-ink">{num(enhanced.holdout_score)}</p>
+        <p className="mt-1 truncate text-[10px] text-ink-faint" title={enhanced.estimator}>{enhanced.estimator}</p>
+        <p className="mt-1 text-[10px] text-ink-soft">{t("With {count} engineered feature(s)", { count: enhanced.generated_feature_count })}</p>
+        {enhanced.saved && <a href={`/api/models/${enhanced.artifact_id}/download`} className="btn-ghost mt-2 inline-flex !py-1 text-[10px]" download>{t("Download RL-enhanced")}</a>}
+      </div>
+    </section>
   );
 }
 
