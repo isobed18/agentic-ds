@@ -45,8 +45,9 @@ from ads.contracts.leakage import LeakageReport
 from ads.contracts.model_experiment import ModelExperiment
 from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
 from ads.contracts.reporting import EvaluationReport
+from ads.contracts.rlfe import RlFeatureReport
 from ads.contracts.staging import GraphPatch, StagingReportArtifact, StagingWorkspace
-from ads.contracts.training import TrainingReport
+from ads.contracts.training import EnhancedTrainingReport, TrainingReport
 from ads.contracts.validation import ValidationStrategy, ValidationTrial
 
 A = TypeVar("A", bound=Artifact)
@@ -109,6 +110,8 @@ _TYPE_REGISTRY: dict[ArtifactType, type[Artifact]] = {
     ArtifactType.FEATURE_SPEC: FeatureSpec,
     ArtifactType.FEATURE_EXPERIMENT: FeatureExperiment,
     ArtifactType.VALIDATION_TRIAL: ValidationTrial,
+    ArtifactType.RL_FEATURE_REPORT: RlFeatureReport,
+    ArtifactType.RL_ENHANCED_MODEL: EnhancedTrainingReport,
 }
 
 
@@ -334,6 +337,22 @@ class ArtifactStore:
 
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_ref(r) for r in rows]
+
+    def list_all(self, artifact_type: ArtifactType) -> list[ArtifactRef]:
+        """Every artifact of one type across every run, newest first.
+
+        Deliberately run-free, matching `delete_artifact` and the download
+        routes: from the outside a content-addressed artifact is one entity
+        regardless of which runs indexed it. An artifact indexed by two runs
+        appears once, because the id is what identifies it.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_type=? "
+                "GROUP BY artifact_id ORDER BY created_at DESC, rowid DESC",
+                (artifact_type.value,),
+            ).fetchall()
         return [self._row_to_ref(r) for r in rows]
 
     def latest(

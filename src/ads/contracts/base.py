@@ -38,6 +38,8 @@ class ArtifactType(StrEnum):
     EXPLORATORY_ANALYSIS = "exploratory_analysis"
     FEATURE_SPEC = "feature_spec"
     FEATURE_EXPERIMENT = "feature_experiment"
+    RL_FEATURE_REPORT = "rl_feature_report"
+    RL_ENHANCED_MODEL = "rl_enhanced_model"
     LEAKAGE_REPORT = "leakage_report"
     CANDIDATE_SET = "candidate_set"
     TRAINED_MODEL = "trained_model"
