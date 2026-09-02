@@ -7,13 +7,22 @@
  * legible: the Data view names the other projects bound to the same input.
  */
 import { useState } from "react";
-import { api, type AutomationContents, type ModelSummary, type ReportSummary } from "../lib/api";
+import {
+  api,
+  type AutomationContents,
+  type EnhancedModelSummary,
+  type ModelSummary,
+  type ReportSummary,
+} from "../lib/api";
 import type { WorkspaceView } from "./automationWorkspaceState";
 import { Badge, Empty, Spinner } from "./ui";
 import { t } from "../lib/i18n";
 
 const fmt = (n: number) => n.toLocaleString();
-const num = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : "—");
+// Widened to accept null: an enhanced model's holdout score is absent until it
+// has one, and `Number.isFinite(null)` is false but `null.toFixed` is a crash.
+const num = (n: number | null | undefined, d = 2) =>
+  typeof n === "number" && Number.isFinite(n) ? n.toFixed(d) : "—";
 
 export function ProjectContentsPanel({
   view,
@@ -81,27 +90,71 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
               <Pair label={t("CV std")} value={num(model.cv_std)} />
               <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
             </dl>
+            {model.enhanced && <EnhancedRow enhanced={model.enhanced} metric={model.metric} />}
             <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
               <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
                 run {model.run_id} · {model.candidate_count} candidates
               </p>
               {/* #166: a completed run leaves a saved model that must be
-                  downloadable. Only a saved model has a joblib blob behind it. */}
-              {model.saved && (
-                <a
-                  href={`/api/models/${model.artifact_id}/download`}
-                  className="btn-ghost !py-1 text-xs"
-                  download
-                >
-                  {t("Download model")}
-                </a>
-              )}
+                  downloadable. Only a saved model has a joblib blob behind it.
+                  The RL-enhanced variant is a second download on this same card,
+                  not a card of its own: one run produced both. */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {model.saved && (
+                  <a
+                    href={`/api/models/${model.artifact_id}/download`}
+                    className="btn-ghost !py-1 text-xs"
+                    download
+                  >
+                    {t("Download original")}
+                  </a>
+                )}
+                {model.enhanced?.saved && (
+                  <a
+                    href={`/api/models/${model.enhanced.artifact_id}/download`}
+                    className="btn-ghost !py-1 text-xs"
+                    download
+                  >
+                    {t("Download RL-enhanced")}
+                  </a>
+                )}
+              </div>
             </div>
           </article>
         ))}
       </div>
       {deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
     </>
+  );
+}
+
+/** The RL-enhanced counterpart's score, on the same card as its base model.
+ *
+ * The delta arrives already oriented so positive means better, whichever way the
+ * metric runs. It is toned on that sign rather than always reading as a win: an
+ * enhanced model that scored worse should look like it did, because the run
+ * still offers it for download and a person choosing between the two needs to
+ * see which one actually won.
+ */
+export function EnhancedRow({ enhanced, metric }: { enhanced: EnhancedModelSummary; metric: string }) {
+  const delta = enhanced.score_delta;
+  const better = typeof delta === "number" && delta > 0;
+  return (
+    <div className="mt-2.5 border-t border-line-soft pt-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-[11px] font-medium text-ink-soft">
+          {t("With {count} engineered feature(s)", { count: enhanced.generated_feature_count })}
+        </p>
+        {typeof delta === "number" && (
+          <Badge tone={better ? "ok" : "warn"}>
+            {`${delta > 0 ? "+" : ""}${delta.toFixed(3)} ${metric}`}
+          </Badge>
+        )}
+      </div>
+      <p className="mt-1 text-[10px] text-ink-faint">
+        {t("Holdout {metric}", { metric })}: {num(enhanced.holdout_score)} · {enhanced.estimator}
+      </p>
+    </div>
   );
 }
 

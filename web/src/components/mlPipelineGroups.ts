@@ -52,7 +52,10 @@ export const GROUPS: Array<{ id: string; title: string; description: string; sta
     id: "features",
     title: "Build and split",
     description: "Create model-ready features and divide the data without contaminating evaluation.",
-    stages: ["feature_pipeline", "splitting"],
+    // `rl_feature_engineering` runs after the split on purpose -- it sends
+    // training rows only, so the external search cannot see the holdout -- but
+    // it belongs to this group because what it produces is features.
+    stages: ["feature_pipeline", "splitting", "rl_feature_engineering"],
   },
   {
     id: "model",
