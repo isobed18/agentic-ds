@@ -7,14 +7,23 @@
 import type { HomeOutput, RunSummary } from "../lib/api";
 import { t } from "../lib/i18n";
 import { reasonLabel } from "../lib/status";
+import { runHref } from "./runDeepLink";
 
 export interface NotificationItem {
   id: string;
   tone: "stop" | "warn" | "ok";
   title: string;
   detail: string;
-  /** Where clicking the row goes. */
+  /** Where clicking the row goes before the owning project is resolved.
+   *
+   * Correct as-is for an output row -- `outputHref` already has the project
+   * from the home read model. For a run row it is only the degrade path
+   * (#292): the real destination needs `/api/projects`, which `runId` and
+   * `automationId` below exist to make possible on click, not on every poll.
+   */
   href: string;
+  runId?: string;
+  automationId?: string | null;
   at?: string;
 }
 
@@ -52,7 +61,9 @@ export function itemsFrom(runs: RunSummary[], outputs: HomeOutput[] = []): Notif
 
   for (const run of runs) {
     const label = run.label ?? run.dataset ?? run.run_id;
-    const href = `/projects?view=runs&run=${encodeURIComponent(run.run_id)}`;
+    // Unresolved until click time (#292); `runHref(null, …)` degrades to the
+    // project library rather than the broken run-only URL this used to be.
+    const href = runHref(null, run.automation_id, run.run_id);
     if (run.pending_question) {
       items.push({
         // Keyed by stage and attempt so a second question on the same run is a
@@ -62,6 +73,8 @@ export function itemsFrom(runs: RunSummary[], outputs: HomeOutput[] = []): Notif
         title: t("Waiting for you"),
         detail: `${label} — ${reasonLabel(run.pending_question.reason_code)}`,
         href,
+        runId: run.run_id,
+        automationId: run.automation_id,
         at: run.last_activity,
       });
     } else if (run.status === "completed") {
@@ -72,6 +85,8 @@ export function itemsFrom(runs: RunSummary[], outputs: HomeOutput[] = []): Notif
         title: t("Run finished"),
         detail: label,
         href,
+        runId: run.run_id,
+        automationId: run.automation_id,
         at: run.last_activity,
       });
     } else if (run.status === "failed") {
@@ -81,6 +96,8 @@ export function itemsFrom(runs: RunSummary[], outputs: HomeOutput[] = []): Notif
         title: t("Run stopped with an error"),
         detail: label,
         href,
+        runId: run.run_id,
+        automationId: run.automation_id,
         at: run.last_activity,
       });
     }
