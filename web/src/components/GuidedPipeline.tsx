@@ -12,14 +12,13 @@ import {
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
-import { Badge, Empty, Pause, Play, Reload, cx } from "./ui";
+import { Badge, Empty, Pause, Play, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { DocumentTableReview } from "./DocumentTableReview";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
 import { activeArrows } from "./pipelineArrows";
-import { PlannerPanel } from "./PlannerPanel";
 import { SensitivityOverride } from "./SensitivityOverride";
 import { stageName } from "./PipelineRail";
 import { checkText, runErrorText, stageFailure, type StageFailure } from "./stageFailure";
@@ -28,7 +27,6 @@ import { buildStagingRoutingState } from "./stagingRoutingState";
 import {
   ArtifactDialog,
   CanvasSurface,
-  DockedPanel,
   Inspector,
   RoutingGraph,
   RoutingInspector,
@@ -61,11 +59,10 @@ interface GuidedPipelineProps {
   ) => void;
   onPause: () => void;
   onRetry: () => void;
-  // #247: runs the current automation again from its recorded seed as a new
-  // execution, deliberately -- not framed as retrying a failure the way
-  // onRetry is, and reachable without leaving the workspace for Execution
-  // history.
-  onRerun: () => void;
+  // #378: the Planner opener and its panel live on the page now, so the canvas
+  // only needs to be able to *ask* for the Planner -- a staging node's
+  // "Ask the Planner to reconsider" still has to work from in here.
+  onOpenPlanner: () => void;
   onAdvanced: () => void;
 }
 
@@ -85,7 +82,7 @@ function local(value: { en: string; tr: string }): string {
  * on screen. One canvas (`CanvasSurface`, which has zoom; `PanCanvas` did not),
  * one selection, one docked panel, one toolbar.
  */
-export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onRerun, onAdvanced }: GuidedPipelineProps) {
+export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onOpenPlanner, onAdvanced }: GuidedPipelineProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<RunProgressSnapshot | null>(null);
   // One selection for both halves of the graph. Staging ids ("discovery",
@@ -99,11 +96,6 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const [approveEachStage, setApproveEachStage] = useState(false);
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
-  // #97: the "Chat with Planner" panel existed only in the staging/proposal
-  // view and vanished the moment a plan was accepted -- including when a stage
-  // gate escalates and asks for a human decision, exactly when consulting the
-  // planner matters most. It lives here now too, reachable from the run toolbar.
-  const [plannerOpen, setPlannerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #244/#198: the guided flow had no way to choose the ML target, and the run
   // passed none at all -- the free-text gate box was never read on approve. The
@@ -297,7 +289,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     })}
   </>;
 
-  return <CanvasSurface docked={selected !== null} plannerDocked={plannerOpen} overlay={<>
+  return <CanvasSurface docked={selected !== null} overlay={<>
     {/* #197/#248: the run control is a distinct primary button docked top-centre
         -- where the eye lands on the canvas -- carrying a stroked vector play or
         pause icon that matches the rest of the chrome and renders identically on
@@ -345,13 +337,13 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       </div>
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
-          {/* #247: runs the current automation again, deliberately -- as a new
-              execution recorded in Execution history, not as recovery from a
-              failure the way Retry above is framed. #364: it is a secondary
-              action, so it belongs in this quieter pill rather than floating
-              over the graph beside the primary run controls. The pill already
-              supplies the border, shadow and backdrop this button carried. */}
-          {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-soft transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
+          {/* #378: the re-run button used to sit here. It is an automation-level
+              action -- a new execution in Execution history -- not a fact about
+              the graph currently drawn, and gating it on `accepted && !active`
+              made it absent for the whole first half of an automation's life
+              and again whenever a run was in flight. It now lives beside the
+              automation's name, visible always and disabled when it cannot
+              run. */}
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
           {!accepted && profile.tables.length > 0 && <button type="button" className="btn-ghost inline-flex items-center gap-1.5 text-xs" aria-expanded={sensitivitySelected} onClick={() => setSelected((current) => (current === "sensitivity" ? null : "sensitivity"))}>{t("Review personal data")}{personalColumns > 0 && <Badge tone="warn">{personalColumns}</Badge>}</button>}
           {/* #305: only offered when there is something to reveal, so the normal
@@ -362,22 +354,18 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       </div>
     </div>
 
-    {/* #284: the Planner opener is a persistent entry point, not one of the run
-        controls, so it gets the opposite edge to itself instead of a slot in
-        the top toolbar. `fixed` is safe here for the same reason the toolbar
-        above is: `overlay` is rendered outside CanvasSurface's scaled content,
-        and a fixed element inside a transformed ancestor is positioned against
-        that ancestor -- which is exactly how this button used to slide across
-        the screen as the graph zoomed (#60). It clears the zoom bar, which
-        keeps to the bottom-right. */}
-    <div data-no-pan className="fixed bottom-6 left-1/2 z-10 -translate-x-1/2">
-      <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
-    </div>
+    {/* #378: the Planner opener used to be here, which meant it existed only
+        once this canvas was on screen -- so during input selection, source
+        routing and understanding there was no way to open the Planner at all,
+        which is exactly when a person has questions about their files. It is
+        rendered by AutomationWorkspace now, in one place for every lifecycle
+        state, and #284's reasoning about `fixed` holds there too since it is no
+        longer inside a transformed ancestor. */}
 
     {/* One panel for the whole graph. A staging node opens the staging
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
-    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
+    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
     {sensitivitySelected && <Inspector eyebrow={t("Staging")} title={t("Personal data")} onClose={() => setSelected(null)}>
       <SensitivityOverride runId={runId} tables={profile.tables} />
     </Inspector>}
@@ -400,11 +388,6 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           </div>}
     </Inspector>}
 
-    {/* #97: the planner is consultable while the pipeline runs and while a gate
-        waits on a human, not only during staging. It keeps the staging starter
-        prompts until the plan is accepted, because until then what the reader
-        is deciding is the plan, and it can still revise the one on screen. */}
-    {plannerOpen && <DockedPanel><PlannerPanel runId={runId} sourceId={profile.source_id} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={onWorkspaceUpdated} starterPrompts={accepted ? [t("What columns are in this data?"), t("Rank the best target columns and ML problems."), t("Which relationships matter for prediction?")] : [t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")]} /></DockedPanel>}
     {/* Whatever failed -- a stage inspection, an artifact preview opened from a
         staging node -- says so over the canvas rather than inside whichever of
         the two panels happens to be docked. */}

@@ -1,4 +1,4 @@
-import { createElement, Fragment } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -6,6 +6,7 @@ import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, Outc
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
+import AUTOMATION_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 import { t } from "../lib/i18n";
@@ -75,17 +76,13 @@ describe("the understanding inspector layout", () => {
     // content -- no scrollbar, no wheel movement, bottom unreachable.
     const markup = renderToStaticMarkup(createElement(CanvasSurface, {
       docked: true,
-      plannerDocked: true,
       children: createElement("div", null, "Canvas content"),
-      overlay: createElement(Fragment, null,
-        createElement(Inspector, {
-          title: "Uploaded files",
-          eyebrow: "Source",
-          onClose: () => undefined,
-          children: createElement("p", null, "A very long list of files"),
-        }),
-        createElement(DockedPanel, { children: createElement("p", null, "Planner content") }),
-      ),
+      overlay: createElement(Inspector, {
+        title: "Uploaded files",
+        eyebrow: "Source",
+        onClose: () => undefined,
+        children: createElement("p", null, "A very long list of files"),
+      }),
     }));
 
     // The row can never exceed the surface, whatever a panel contains.
@@ -94,7 +91,10 @@ describe("the understanding inspector layout", () => {
     // And each docked column may actually shrink to it: a grid item's automatic
     // minimum size is its content, so without this it overflows the clamped row.
     expect(classNameFor(markup, "aside").split(" ")).toContain("min-h-0");
-    const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
+    // #378: the planner is a page column now, and carries the same rule so it
+    // shrinks to its own clamped row rather than growing the page.
+    const planner = renderToStaticMarkup(createElement(DockedPanel, { children: createElement("p", null, "Planner content") }))
+      .match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
     expect(planner).toContain("min-h-0");
   });
 
@@ -140,38 +140,43 @@ describe("the understanding inspector layout", () => {
   });
 
   it("gives the planner and inspector separate dock columns", () => {
-    // The regression this exists for (#48). The planner used to be an
-    // absolute right-edge overlay above the inspector, so opening it swallowed
-    // the node details instead of sharing the workspace.
+    // The regression this exists for (#48). The planner used to be an absolute
+    // right-edge overlay above the inspector, so opening it swallowed the node
+    // details instead of sharing the workspace.
+    //
+    // #378 moved the planner out of the canvas entirely: it is a page-level
+    // column beside <main>, so it reaches every lifecycle state rather than
+    // only this canvas. #48 now holds by construction -- the two panels live in
+    // different grids and cannot overlay one another -- so what is left to pin
+    // here is that the inspector still docks rather than floating, and that the
+    // planner is a sibling of <main> rather than something drawn over it.
     const markup = renderToStaticMarkup(createElement(CanvasSurface, {
       docked: true,
-      plannerDocked: true,
       children: createElement("div", null, "Canvas content"),
-      overlay: createElement(Fragment, null,
-        createElement(Inspector, {
-          title: "Details",
-          eyebrow: "Staging",
-          onClose: () => undefined,
-          children: createElement("p", null, "Inspector content"),
-        }),
-        createElement(DockedPanel, {
-          children: createElement("p", null, "Planner content"),
-        }),
-      ),
+      overlay: createElement(Inspector, {
+        title: "Details",
+        eyebrow: "Staging",
+        onClose: () => undefined,
+        children: createElement("p", null, "Inspector content"),
+      }),
     }));
 
-    expect(markup).toContain(
-      "grid-template-columns:minmax(0, 1fr) minmax(0, min(27.5rem, 47vw)) minmax(0, min(24.375rem, 47vw))",
-    );
-    const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
-    expect(planner).toEqual(expect.arrayContaining(["h-full", "w-full"]));
-    expect(planner).not.toEqual(expect.arrayContaining(["absolute", "fixed"]));
-    // #214 moved the screen that docks both of these -- the proposal -- onto
-    // the merged canvas, which keeps the planner docked in its own column for
-    // the run as well as for staging.
-    const proposalScreen = GUIDED_SOURCE.slice(GUIDED_SOURCE.indexOf("export function GuidedPipeline"));
-    expect(proposalScreen).toContain("plannerDocked={plannerOpen}");
-    expect(proposalScreen).toContain("{plannerOpen && <DockedPanel><PlannerPanel");
+    expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(27.5rem, 94vw)");
+    expect(markup).toContain("Inspector content");
+
+    const panel = renderToStaticMarkup(createElement(DockedPanel, {
+      children: createElement("p", null, "Planner content"),
+    }));
+    const classes = panel.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
+    expect(classes).toEqual(expect.arrayContaining(["h-full", "w-full"]));
+    expect(classes).not.toEqual(expect.arrayContaining(["absolute", "fixed"]));
+
+    // The page puts it beside <main>, and the canvas no longer reserves a
+    // column it cannot fill.
+    expect(AUTOMATION_SOURCE).toContain("<DockedPanel><PlannerPanel");
+    expect(AUTOMATION_SOURCE).toContain('<main className="min-h-0 min-w-0 flex-1">');
+    expect(GUIDED_SOURCE).not.toContain("plannerDocked=");
+    expect(WORKSPACE_SOURCE).not.toContain("plannerDocked?:");
   });
 });
 

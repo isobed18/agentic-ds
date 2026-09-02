@@ -580,7 +580,7 @@ function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol class
  * inside the pan area is why dragging across a panel's text panned the graph
  * instead of selecting it (#56).
  */
-export function CanvasSurface({ children, overlay, docked = false, plannerDocked = false }: { children: React.ReactNode; overlay?: React.ReactNode; docked?: boolean; plannerDocked?: boolean }) {
+export function CanvasSurface({ children, overlay, docked = false }: { children: React.ReactNode; overlay?: React.ReactNode; docked?: boolean }) {
   const viewport = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const [contentBox, setContentBox] = useState({ width: CANVAS_BASE_WIDTH, height: CANVAS_BASE_HEIGHT });
@@ -683,10 +683,13 @@ export function CanvasSurface({ children, overlay, docked = false, plannerDocked
   // `min-h-0` on each docked column disables the grid item's automatic minimum
   // size, without which an item still refuses to shrink below its content.
   const gridTemplateRows = "minmax(0, 1fr)";
-  const gridTemplateColumns = docked && plannerDocked
-    ? "minmax(0, 1fr) minmax(0, min(27.5rem, 47vw)) minmax(0, min(24.375rem, 47vw))"
-    : docked ? "minmax(0, 1fr) min(27.5rem, 94vw)"
-      : plannerDocked ? "minmax(0, 1fr) min(24.375rem, 94vw)" : "minmax(0, 1fr)";
+  // #378: the Planner used to dock as a third column in here, which is why this
+  // had a `plannerDocked` case. It is a page-level column beside <main> now --
+  // reachable from every lifecycle state rather than only from this canvas --
+  // so the canvas only ever gives up width for its own inspector. #48 still
+  // holds by construction: the two panels are in different grids and cannot
+  // overlay one another.
+  const gridTemplateColumns = docked ? "minmax(0, 1fr) min(27.5rem, 94vw)" : "minmax(0, 1fr)";
   return <div className="relative grid h-full min-h-[30rem] overflow-hidden" style={{ gridTemplateColumns, gridTemplateRows }}>
     <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} onLostPointerCapture={lostPanCapture} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
       <div style={scaledBox(step, contentBox)}>
