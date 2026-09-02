@@ -1070,6 +1070,8 @@ const TR: Record<string, string> = {
   // name of the technique, and the reason there are two models on one card.
   "Download original": "Özgün modeli indir",
   "Download RL-enhanced": "RL ile geliştirilmiş modeli indir",
+  "RL feature report": "RL öznitelik raporu",
+  "RL-enhanced model": "RL ile geliştirilmiş model",
   "With {count} engineered feature(s)": "{count} üretilmiş öznitelik ile",
   "Holdout {metric}": "Ayrık küme {metric}",
   "Approve at every stage": "Her aşamada onayla",

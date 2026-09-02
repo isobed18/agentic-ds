@@ -45,6 +45,8 @@ const LABELS: Record<string, string> = {
   node_attempt: "Node attempt",
   critique: "Critique",
   gate_decision: "Gate decision",
+  rl_feature_report: "RL feature report",
+  rl_enhanced_model: "RL-enhanced model",
 };
 
 /** Every label an artifact type can render, for the catalogue test.
