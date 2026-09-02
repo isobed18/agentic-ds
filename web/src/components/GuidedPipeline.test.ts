@@ -69,6 +69,29 @@ describe("planner access in the guided pipeline (#97)", () => {
   });
 });
 
+describe("acting on extracted tables from the plan overview (#311)", () => {
+  it("offers the review dialog beside the note that says they are unpromoted", () => {
+    // The note told the reader the candidates "remain review-only until
+    // explicitly promoted" and gave them no way to promote one: the only
+    // Review button lived on the staging document panel, a canvas away.
+    expect(SOURCE).toContain('import { DocumentTableReview } from "./DocumentTableReview"');
+    expect(SOURCE).toContain('t("Review {count} extracted tables", { count: candidateTables })');
+    expect(SOURCE).toContain("candidateTables > 0 && extractionId");
+    expect(SOURCE).toContain("<DocumentTableReview runId={runId}");
+  });
+
+  it("re-reads the workspace after a promotion so the count is not stale", () => {
+    // Promoting turns candidates into real tables, so the candidate count and
+    // the ML inputs beside it both describe the state before the click.
+    expect(SOURCE).toContain("api.stagingWorkspace(runId).then(onWorkspaceUpdated)");
+  });
+
+  it("passes the plan overview what it needs to open the dialog", () => {
+    expect(SOURCE).toContain("<PlanSummary runId={runId}");
+    expect(SOURCE).toContain("workspace.document_extractions?.at(-1)?.artifact_id");
+  });
+});
+
 describe("what a finished run offers (#285)", () => {
   it("does not push the reader to the Runs tab when the pipeline completes", () => {
     // The completion state already shows what the run produced. A button
