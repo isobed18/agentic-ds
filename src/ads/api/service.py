@@ -3178,6 +3178,34 @@ class ControlPlane:
         if not usable:
             if isinstance(llm, OllamaClient):
                 llm.close()
+            # #365: this used to be a bare `return`. The caller then marked the
+            # run `staged` and emitted `staging_analysis_ready`, so the run
+            # reported success while carrying no plan -- and the canvas, which
+            # has only "pending" and "failed" for the proposal node, drew it as
+            # still working. The file was accepted, nothing went red, and the
+            # flow never advanced. Say what happened instead; the status is
+            # left alone, because the understanding that did run is real and a
+            # deployment with no planner configured is a configuration fact
+            # rather than a failed run.
+            with self._lock:
+                runtime.events.append(
+                    {
+                        "event": "staging_analysis_skipped",
+                        "at": _now(),
+                        "reason": {
+                            "en": (
+                                "No planner model is available, so no plan could be proposed "
+                                "for these files. Understanding itself completed."
+                            ),
+                            "tr": (
+                                "Kullanilabilir bir planlayici model yok, bu yuzden bu dosyalar "
+                                "icin plan onerilemedi. Veri anlama asamasi tamamlandi."
+                            ),
+                        },
+                    }
+                )
+                runtime.updated_at = _now()
+            self._persist_runtime(runtime)
             return
         profile = self.source_profile(runtime.source_id)
         safe_tables = [
