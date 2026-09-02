@@ -233,23 +233,55 @@ def _single_table_schema_result(
     Schema interpretation is necessary when sources must be related. For one
     table there is no relationship judgment to make, so spending several model
     turns asking for a join plan adds latency and can only invent structure.
+    """
+    if len(cards) != 1 or len(frames) != 1:
+        return None
+    return _no_join_schema_result(state=state, card=cards[0], cards=cards, frames=frames)
+
+
+def _largest_card(cards: list[DataCard], frames: dict[str, pd.DataFrame]) -> DataCard | None:
+    """The widest usable table, by rows then columns then name.
+
+    Deterministic all the way down, because this choice ends up in an artifact:
+    two runs over the same files must pick the same base table.
+    """
+    usable = [
+        card
+        for card in cards
+        if (frame := frames.get(card.table_name)) is not None and not frame.empty
+    ]
+    if not usable:
+        return None
+    return max(
+        usable,
+        key=lambda card: (len(frames[card.table_name]), len(card.columns), card.table_name),
+    )
+
+
+def _no_join_schema_result(
+    *,
+    state: RunState,
+    card: DataCard,
+    cards: list[DataCard],
+    frames: dict[str, pd.DataFrame],
+    extra_warnings: tuple[list[str], list[str]] | None = None,
+) -> StageResult | None:
+    """A verified no-join plan over ``card``, with a row identity if needed.
 
     A source key is preferred and verified against the full frame. When none is
     clean, the executor adds a reserved row identity to its in-memory copy. The
     resulting ABT profiles that column as an identifier, which keeps it out of
     targets and model features while preserving exact row lineage.
     """
-    if len(cards) != 1 or len(frames) != 1:
-        return None
-    card = cards[0]
     frame = frames.get(card.table_name)
     if frame is None or frame.empty:
         return None
 
     candidates = detect_primary_keys(card, frame)
     grain = list(candidates[0].columns) if candidates else []
-    warnings: list[str] = []
-    warnings_tr: list[str] = []
+    base_warnings, base_warnings_tr = extra_warnings or ([], [])
+    warnings: list[str] = list(base_warnings)
+    warnings_tr: list[str] = list(base_warnings_tr)
 
     def proposal_for(columns: list[str]) -> IntegrationPlanProposal:
         return IntegrationPlanProposal(
@@ -287,12 +319,14 @@ def _single_table_schema_result(
         frames[card.table_name] = prepared
         state.blackboard[SOURCE_FRAMES_KEY] = frames
         warnings = [
+            *base_warnings,
             "No clean source key exists. The executor added an executor-owned row identity "
-            f"({row_id}) for lineage; it is excluded from model features."
+            f"({row_id}) for lineage; it is excluded from model features.",
         ]
         warnings_tr = [
+            *base_warnings_tr,
             "Temiz bir kaynak anahtarı yok. Yürütücü, veri soyunu izlemek için yürütücüye ait "
-            f"bir satır kimliği ({row_id}) ekledi; bu alan model özelliklerinden çıkarılır."
+            f"bir satır kimliği ({row_id}) ekledi; bu alan model özelliklerinden çıkarılır.",
         ]
         proposal = proposal_for([row_id])
         trial = _trial_plan(state=state, cards=cards, frames=frames, proposal=proposal)
@@ -306,8 +340,12 @@ def _single_table_schema_result(
         names={0: "integration_plan", 1: "integration_trial"},
         signals=QualitySignals(validation_failures=0),
         digest=(
-            "Single-table input requires no relationship inference. "
-            f"{plan.summary()}; deterministic trial: {trial.summary()}"
+            (
+                "Single-table input requires no relationship inference. "
+                if len(cards) == 1
+                else f"No join could be established; continuing on {card.table_name} alone. "
+            )
+            + f"{plan.summary()}; deterministic trial: {trial.summary()}"
         ),
     )
 
@@ -415,6 +453,65 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 "; ".join(f"{failure.code}: {failure.detail}" for failure in failures)
                 or "The schema investigators returned no tested plan."
             )
+            # #381: this used to be the end of the road. The stage returned an
+            # audit and no integration_plan, and the next stage's declared input
+            # was missing, so the run stopped at the gate with "schema_discovery
+            # produced no integration_plan" and nothing to do but rework or stop
+            # -- for two files that each work perfectly well on their own.
+            #
+            # A single table already degrades to a verified no-join plan over a
+            # row identity. There is no reason several tables should not: falling
+            # back to the largest one and saying so leaves a person with a
+            # running pipeline and an explicit warning about what was left out,
+            # instead of a dead end. The warning is on the plan, so it reaches
+            # the review gate rather than only the logs.
+            #
+            # Only after the orchestrator has already sent this stage back once.
+            # The retry loop is the first and better answer -- a corrected
+            # attempt often does find the join -- and pre-empting it on the
+            # first failure would replace a recoverable investigation with a
+            # single-table plan nobody asked for. This is the floor under it,
+            # not a substitute for it.
+            base = _largest_card(cards, frames)
+            if base is not None and len(cards) > 1 and state.attempt_count("schema_discovery") > 1:
+                left_out = sorted(
+                    card.table_name for card in cards if card.table_name != base.table_name
+                )
+                fallback = _no_join_schema_result(
+                    state=state,
+                    card=base,
+                    cards=cards,
+                    frames=frames,
+                    extra_warnings=(
+                        [
+                            "No join between the uploaded tables could be established, so the "
+                            f"analysis continues on {base.table_name} alone. Left out: "
+                            f"{', '.join(left_out)}. Rework this stage if these tables should "
+                            "be related."
+                        ],
+                        [
+                            "Yüklenen tablolar arasında bir birleştirme kurulamadı; analiz "
+                            f"yalnızca {base.table_name} üzerinden sürüyor. Dışarıda kalan: "
+                            f"{', '.join(left_out)}. Bu tablolar ilişkilendirilmeliyse bu "
+                            "aşamayı yeniden çalıştırın."
+                        ],
+                    ),
+                )
+                if fallback is not None:
+                    return StageResult(
+                        artifacts=[*fallback.artifacts, audit],
+                        names={**fallback.names, len(fallback.artifacts): "agent_audit"},
+                        # No outstanding contract failure: the plan this stage
+                        # emits was built and trialled deterministically, the
+                        # same reasoning the recovered-member path above
+                        # applies. What the investigators failed to do is in the
+                        # audit, and what was left out is a warning on the plan
+                        # -- both of which reach the review gate. Counting the
+                        # failures here instead asks the gate to retry a stage
+                        # that has already produced a verified answer.
+                        signals=QualitySignals(validation_failures=0),
+                        digest=f"{detail[:1000]} | {fallback.digest}",
+                    )
             return StageResult(
                 artifacts=[audit],
                 names={0: "agent_audit"},
