@@ -6,13 +6,15 @@ import { ApprovalCard } from "../components/GateApproval";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
 import {
+  DockedPanel,
   SourceSummary,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
+import { PlannerPanel } from "../components/PlannerPanel";
 import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
 import { runErrorText } from "../components/stageFailure";
-import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { Badge, Empty, NAME_FIELD_WIDTH, Reload, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationContents,
@@ -239,6 +241,25 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     if (contents && !views.includes(activeView)) setActiveView("editor");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contents]);
+  // #97: the Planner is consultable while the pipeline runs and while a gate
+  // waits on a human, not only during staging.
+  // #378: the Planner opener and its panel used to live inside GuidedPipeline,
+  // which AutomationWorkspace only mounts for two of its five lifecycle states.
+  // So during input selection, source routing and understanding there was no
+  // way to open the Planner at all -- exactly when a person has questions about
+  // their files. PlannerPanel already copes: it accepts a null runId and
+  // re-titles itself "Ask about this data" when it has only a source.
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  // Until the plan is accepted, what the reader is deciding is the plan, so the
+  // staging prompts stand (#97).
+  const plannerPrompts = lifecycle === "guided_pipeline"
+    ? [t("What columns are in this data?"), t("Rank the best target columns and ML problems."), t("Which relationships matter for prediction?")]
+    : [t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")];
+  // Re-running needs a recorded execution to re-run, and cannot start a second
+  // one on top of a live run. Disabled rather than hidden, so the control stays
+  // in one predictable place and its state explains itself.
+  const canRerun = Boolean(runId) && !busy && !isRunActive(runStatus);
+
   const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ ...automationParams(projectId, automationId, origin), ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
 
   return (
@@ -246,6 +267,11 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       <header className="relative flex h-[3.625rem] shrink-0 items-center border-b border-line bg-surface px-4">
         <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams(projectReturnParams(projectId, origin))}>← {t("Project overview")}</button>
         <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} title={name} className={cx("truncate rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none", NAME_FIELD_WIDTH)} />
+        {/* #378: an automation-level action -- a new execution recorded in
+            Execution history (#247) -- so it belongs beside the automation's
+            name rather than in one canvas's toolbar pill, where it existed only
+            after the plan was accepted and vanished again during every run. */}
+        <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-soft transition hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void rerunAutomation()} disabled={!canRerun}><Reload /></button>
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}
@@ -260,7 +286,18 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
       {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard key={`${pendingQuestion.stage_id}:${pendingQuestion.attempt}`} runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind) => void runAcceptedWorkflow(runMode, target, problemKind)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onRerun={() => void rerunAutomation()} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      {/* #378: the Planner docks beside whatever the workspace is showing, for
+          every lifecycle state, rather than only beside the guided canvas. */}
+      <div className="flex min-h-0 flex-1">
+      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind) => void runAcceptedWorkflow(runMode, target, problemKind)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      {plannerOpen && <div className="min-h-0 w-[min(390px,94vw)] shrink-0"><DockedPanel><PlannerPanel runId={runId} sourceId={sourceId || profile?.source_id || null} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={applyWorkspace} starterPrompts={plannerPrompts} /></DockedPanel></div>}
+      </div>
+      {/* One opener, one place on screen, whatever the workspace is doing. The
+          other tabs are project-contents lists rather than this automation's
+          work, so it keeps to the editor. */}
+      {activeView === "editor" && <div className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
+        <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
+      </div>}
     </div>
   );
 }

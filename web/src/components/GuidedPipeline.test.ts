@@ -33,64 +33,75 @@ describe("staged sensitivity review (#330)", () => {
   });
 });
 
-describe("planner access in the guided pipeline (#97)", () => {
+describe("planner access across the automation (#97, #378)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {
     // The "Chat with Planner" entry point lived only in UnderstandingAndProposal
     // and was unmounted once a plan was accepted -- so once the pipeline was
     // running, and at the exact moment a gate escalated for human input, there
-    // was no way to consult the planner. The running view now imports and
-    // renders the same PlannerPanel the staging view uses.
-    expect(SOURCE).toContain('import { PlannerPanel } from "./PlannerPanel"');
-    expect(SOURCE).toContain("<PlannerPanel");
-    expect(SOURCE).toContain("runId={runId}");
+    // was no way to consult the planner. #378 moved the mount up again, from
+    // the guided canvas to the page, for the same reason one step earlier: the
+    // canvas itself only exists for two of five lifecycle states.
+    expect(PAGE_SOURCE).toContain('import { PlannerPanel } from "../components/PlannerPanel"');
+    expect(PAGE_SOURCE).toContain("<PlannerPanel");
+    expect(PAGE_SOURCE).toContain("runId={runId}");
+    // And it is not left behind on the canvas.
+    expect(SOURCE).not.toContain("<PlannerPanel");
   });
 
   it("exposes a toggle that opens the panel", () => {
-    // Gated on its own open state so it does not permanently occupy the canvas.
+    // Gated on its own open state so it does not permanently occupy the page.
     // #188: this test always called the control a toggle, but the handler it
     // pinned only ever opened the panel. Now it flips, so the assertion says so.
-    expect(SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
-    expect(SOURCE).toContain('t("Chat with Planner")');
-    expect(SOURCE).toContain("plannerOpen &&");
+    expect(PAGE_SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
+    expect(PAGE_SOURCE).toContain('t("Chat with Planner")');
+    expect(PAGE_SOURCE).toContain("plannerOpen &&");
   });
 
   it("anchors the opener to the bottom centre, away from the run controls (#284)", () => {
     // It is a persistent entry point rather than one of the run controls, so it
     // gets the opposite edge to itself instead of a slot in the top toolbar.
-    expect(SOURCE).toContain('<div data-no-pan className="fixed bottom-6 left-1/2 z-10 -translate-x-1/2">');
-    // Exactly one opener, and it is not left behind in the toolbar row it used
-    // to share with "Review plan".
-    expect(SOURCE.match(/t\("Chat with Planner"\)/g) ?? []).toHaveLength(1);
-    const toolbar = SOURCE.slice(
-      SOURCE.indexOf('fixed top-[4.375rem] left-1/2'),
-      SOURCE.indexOf('t("Advanced editor · Experimental")'),
-    );
-    expect(toolbar).not.toContain("Chat with Planner");
+    expect(PAGE_SOURCE).toContain('className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2"');
+    // Exactly one opener in the whole automation workspace.
+    expect(PAGE_SOURCE.match(/t\("Chat with Planner"\)/g) ?? []).toHaveLength(1);
+    expect(SOURCE).not.toContain("Chat with Planner");
   });
 
-  it("keeps the opener outside the canvas transform so it cannot drift (#60)", () => {
+  it("survives every lifecycle state, which is why it left the canvas (#378)", () => {
+    // The canvas is mounted for `proposal` and `guided_pipeline` only. The
+    // opener is rendered beside the whole lifecycle switch instead, so `empty`,
+    // `source` and `understanding` reach the Planner too -- and PlannerPanel
+    // already copes with a null runId.
+    const openerAt = PAGE_SOURCE.indexOf('t("Chat with Planner")');
+    const switchAt = PAGE_SOURCE.indexOf('lifecycle === "empty"');
+    expect(switchAt).toBeGreaterThan(-1);
+    expect(openerAt).toBeGreaterThan(switchAt);
+    expect(PANEL_SOURCE).toContain("runId = null");
+  });
+
+  it("keeps the opener outside any canvas transform so it cannot drift (#60)", () => {
     // A `position: fixed` element inside a transformed ancestor is positioned
     // against that ancestor, which is how this exact button once slid across
-    // the screen as the graph zoomed. CanvasSurface renders `overlay` outside
-    // its scaled content; the opener has to stay in that half.
-    const overlayStart = SOURCE.indexOf("<CanvasSurface docked=");
-    const overlayEnd = SOURCE.indexOf("<RoutingGraph routing=");
-    const opener = SOURCE.indexOf('fixed bottom-6 left-1/2');
-    expect(overlayStart).toBeGreaterThan(-1);
-    expect(opener).toBeGreaterThan(overlayStart);
-    expect(opener).toBeLessThan(overlayEnd);
+    // the screen as the graph zoomed. On the page it has no transformed
+    // ancestor at all, and CanvasSurface still renders `overlay` outside its
+    // scaled content for everything that stayed behind.
+    expect(SOURCE).not.toContain("fixed bottom-6 left-1/2");
     expect(UNDERSTANDING_SOURCE).toContain("{overlay}");
   });
 
   it("gives every ML planner mount the source and data-first prompts (#190)", () => {
-    expect(SOURCE).toContain("sourceId={profile.source_id}");
-    expect(SOURCE).toContain('t("What columns are in this data?")');
-    expect(SOURCE).toContain('t("Rank the best target columns and ML problems.")');
-    expect(SOURCE).not.toContain('t("What is this gate asking?")');
+    expect(PAGE_SOURCE).toContain("sourceId={sourceId || profile?.source_id || null}");
+    expect(PAGE_SOURCE).toContain('t("What columns are in this data?")');
+    expect(PAGE_SOURCE).toContain('t("Rank the best target columns and ML problems.")');
+    expect(PAGE_SOURCE).not.toContain('t("What is this gate asking?")');
     expect(BUILDER_SOURCE).toContain("sourceId?: string | null");
     expect(BUILDER_SOURCE).toContain("<PlannerPanel runId={runId} sourceId={sourceId}");
     expect(PANEL_SOURCE).toContain("problem_recommendations");
     expect(PANEL_SOURCE).toContain('t("Ranked ML opportunities")');
+  });
+
+  it("keeps the staging prompts until the plan is accepted", () => {
+    expect(PAGE_SOURCE).toContain('lifecycle === "guided_pipeline"');
+    expect(PAGE_SOURCE).toContain('t("Stop after EDA so I can inspect it.")');
   });
 });
 
@@ -165,7 +176,7 @@ describe("the run control (#197)", () => {
     // uses the same stroked 20x20 chrome as everything else, and the primary
     // control is its own row above a separate, quieter secondary bar rather than
     // one chip among five.
-    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, Reload, cx } from "./ui"');
+    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, cx } from "./ui"');
     expect(SOURCE).toContain("><Play />");
     expect(SOURCE).toContain("><Pause />");
     expect(SOURCE).not.toContain('<span aria-hidden="true">▶</span>');
@@ -183,14 +194,30 @@ describe("the run control (#197)", () => {
   });
 });
 
-describe("re-run control (#247)", () => {
-  it("exposes a vector reload icon that fires onRerun, not a text glyph or a route through Execution history", () => {
-    expect(SOURCE).toContain("onRerun: () => void;");
-    expect(SOURCE).toContain("onClick={onRerun}");
-    expect(SOURCE).toContain("><Reload /></button>");
+describe("re-run control (#247, #378)", () => {
+  it("exposes a vector reload icon that re-runs, not a text glyph or a route through Execution history", () => {
+    expect(PAGE_SOURCE).toContain("><Reload /></button>");
+    expect(PAGE_SOURCE).toContain("onClick={() => void rerunAutomation()}");
     expect(PAGE_SOURCE).toContain("async function rerunAutomation()");
     expect(PAGE_SOURCE).toContain("const staged = await api.rerun(runId);");
-    expect(PAGE_SOURCE).toContain("onRerun={() => void rerunAutomation()}");
+    // #378: it is an automation-level action, so it left the canvas entirely
+    // rather than being handed down as a prop.
+    expect(SOURCE).not.toContain("onRerun");
+    expect(SOURCE).not.toContain("<Reload />");
+  });
+
+  it("sits beside the automation name and is disabled, never hidden (#378)", () => {
+    // Gated on `accepted && !active` it was absent for the whole first half of
+    // an automation's life and again during every run. One predictable spot,
+    // with its own state explaining itself.
+    const nameField = PAGE_SOURCE.indexOf('aria-label={t("Automation name")}');
+    const rerun = PAGE_SOURCE.indexOf('aria-label={t("Re-run this automation")}');
+    const tabs = PAGE_SOURCE.indexOf('absolute left-1/2 flex -translate-x-1/2 rounded-lg');
+    expect(nameField).toBeGreaterThan(-1);
+    expect(rerun).toBeGreaterThan(nameField);
+    expect(rerun).toBeLessThan(tabs);
+    expect(PAGE_SOURCE).toContain("const canRerun = Boolean(runId) && !busy && !isRunActive(runStatus)");
+    expect(PAGE_SOURCE).toContain("disabled={!canRerun}");
   });
 });
 
