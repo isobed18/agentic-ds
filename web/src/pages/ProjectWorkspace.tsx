@@ -516,12 +516,29 @@ function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }
 
 export function AutomationInputSelector({ projectId, automation, onSelected, onProjectData }: { projectId: string; automation: AutomationDefinition; onSelected: (saved: AutomationDefinition) => void; onProjectData: () => void }) {
   const [data, setData] = useState<ProjectDataSource[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set((automation.selected_files ?? []).map((item) => keyOf(item))));
+  const savedSelection = new Set((automation.selected_files ?? []).map((item) => keyOf(item)));
+  const [selected, setSelected] = useState<Set<string>>(savedSelection);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void api.projectData(projectId).then(setData).catch((caught) => setError(messageOf(caught))).finally(() => setBusy(false)); }, [projectId]);
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true); setError(null);
+    void api.projectData(projectId).then((sources) => {
+      if (cancelled) return;
+      const files = automationInputFiles(sources);
+      setData(sources);
+      // A new automation has no saved subset yet. Starting with every project
+      // file checked makes its primary action immediately usable, while an
+      // existing saved subset remains authoritative (#325).
+      setSelected(defaultAutomationSelection(files, savedSelection));
+    }).catch((caught) => { if (!cancelled) setError(messageOf(caught)); }).finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+    // The IDs are the complete identity of the selector. A refreshed
+    // automation object must not reset choices the person is currently making.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, automation.automation_id]);
   if (busy) return <div className="grid h-full place-items-center"><Spinner label={t("Loading project data…")} /></div>;
-  const files = data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label })));
+  const files = automationInputFiles(data);
   const allSelected = everyFileSelected(files, selected);
   async function save() {
     const selections = files.filter((item) => selected.has(keyOf(item))).map(({ source_id, path }) => ({ source_id, path }));
@@ -537,6 +554,17 @@ export function AutomationInputSelector({ projectId, automation, onSelected, onP
 const PROJECT_VIEWS: ProjectView[] = ["overview", "data", "automations", "models", "reports"];
 function projectViewLabel(view: ProjectView): string { switch (view) { case "data": return t("Data"); case "automations": return t("Automations"); case "models": return t("Models"); case "reports": return t("Reports"); default: return t("Overview"); } }
 function keyOf(file: AutomationInputFile): string { return `${file.source_id}\u0000${file.path}`; }
+type SelectableAutomationInputFile = AutomationInputFile & { label: string };
+function automationInputFiles(data: ProjectDataSource[]): SelectableAutomationInputFile[] { return data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label }))); }
+
+/** Choose the first meaningful input state after project files load.
+ *
+ * A persisted subset is a deliberate choice and wins. With no saved choice,
+ * this is a new automation, so every available project file is selected.
+ */
+export function defaultAutomationSelection(files: AutomationInputFile[], saved: Set<string>): Set<string> {
+  return saved.size ? new Set(saved) : new Set(files.map(keyOf));
+}
 
 /**
  * #184: the select-all toggle's label is derived, not stored. A separate "all
