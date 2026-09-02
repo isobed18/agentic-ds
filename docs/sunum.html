@@ -1,0 +1,484 @@
+<!doctype html>
+<!--
+  Agentic DS — mimari sunumu.
+
+  Tek dosyalık, bağımlılıksız bir slayt gösterisi. Tarayıcıda açmak yeterli;
+  derleme adımı yoktur. Şema tek bir SVG üzerinde durur ve slaytlar kamerayı
+  o şemanın üstünde gezdirir.
+
+  Gezinme:  ← →  slayt · 0 başa dön · S metni gizle · ?s=12 doğrudan slayta git
+  Düzenleme: aşağıdaki NODES / EDGES / SLIDES dizileri.
+-->
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic DS · Hat Turu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body,h1,h2,h3,p,ul,li,dl,dt,dd{margin:0;padding:0}
+
+  /* Tek görünüm: beyaz zemin. Projeksiyonda ve baskıda aynı çıkması için
+     koyu tema bilinçli olarak yok. Renk ve ölçü değerleri yalnızca burada
+     tanımlanır; bileşenlerin içine doğrudan renk yazılmaz. */
+  :root{
+    --ground:#FFFFFF; --ink:#16181A; --muted:#55595E; --faint:#8B9096;
+    --rule:#C4C8CC; --hair:#E3E6E9; --fill:#F2F4F6;
+  }
+  html,body{height:100%}
+  body{background:var(--ground);color:var(--ink);overflow:hidden;
+       font-family:"Source Sans 3",-apple-system,"Segoe UI",Arial,sans-serif;
+       -webkit-font-smoothing:antialiased}
+
+  #stage{position:fixed;top:0;right:0;bottom:0;left:35rem;
+         border-left:1px solid var(--hair)}
+  @media (max-width:1100px){#stage{left:26rem}}
+  svg{width:100%;height:100%;display:block}
+  #cam{transition:transform 640ms ease-in-out}
+  @media (prefers-reduced-motion:reduce){#cam{transition:none}}
+
+  /* Tam sayfa görünüm: şema yerine okunacak metin (kaynak ve bölüm sayfaları) */
+  #page{position:fixed;inset:0;display:none;overflow-y:auto;background:var(--ground)}
+  #page.on{display:block}
+  .sheet{max-width:54rem;margin:0 auto;min-height:100vh;padding:5rem 2.5rem 6rem;
+         display:flex;flex-direction:column;justify-content:center;gap:1.35rem}
+
+  #card{position:fixed;left:0;top:0;bottom:0;width:35rem;
+        padding:5.5rem 3rem 6rem;overflow-y:auto;
+        display:flex;flex-direction:column;gap:.7rem;justify-content:center}
+  @media (max-width:1100px){#card{width:26rem;padding:5rem 2rem}}
+  #card[hidden],#page[hidden]{display:none}
+
+  .eyebrow{font-size:.75rem;letter-spacing:.09em;color:var(--faint);text-transform:uppercase}
+  h2{font-size:1.4rem;font-weight:700;line-height:1.22;text-wrap:balance;letter-spacing:-.01em}
+  .sheet h2{font-size:1.75rem}
+  .txt{font-size:1.02rem;line-height:1.7;color:var(--muted)}
+  .sheet .txt{max-width:66ch}
+  .txt strong{color:var(--ink);font-weight:600}
+  code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em;color:var(--ink)}
+
+  blockquote{border-left:2px solid var(--rule);padding:.2rem 0 .2rem 1.35rem;
+             color:var(--ink);font-size:1.08rem;line-height:1.62}
+  .cite{font-size:.86rem;color:var(--faint);padding-left:1.35rem;margin-top:-.55rem}
+  .cite a{color:var(--muted)}
+  dl.take{display:grid;grid-template-columns:9rem 1fr;gap:.85rem 1.4rem;
+          font-size:1rem;line-height:1.62;
+          border-top:1px solid var(--hair);padding-top:1.35rem;margin-top:.5rem}
+  #p-body{display:flex;flex-direction:column;gap:1.1rem}
+  .ln{display:block}
+  .ln+.ln{margin-top:.4rem}
+  dl.take dt{color:var(--faint);white-space:nowrap}
+  dl.take dd{margin:0;color:var(--muted)}
+  dl.take dd strong{color:var(--ink);font-weight:600}
+
+  #bar{position:fixed;left:3rem;bottom:2.5rem;display:flex;align-items:center;gap:1.1rem;
+       font-size:.85rem;color:var(--faint)}
+  button{font:inherit;color:var(--muted);background:none;border:none;
+         padding:.2rem .45rem;cursor:pointer;line-height:1}
+  button:hover{color:var(--ink)}
+  button:focus-visible{outline:1px solid var(--rule);outline-offset:3px}
+  #hint{position:fixed;left:3rem;top:2.2rem;font-size:.78rem;color:var(--faint)}
+</style>
+</head>
+<body>
+<p id="hint">← →  gezin · 0 başa dön · S metni gizle</p>
+
+<div id="stage">
+  <svg id="svg" viewBox="40 -60 2340 2140" preserveAspectRatio="xMidYMid meet" aria-label="Hat mimarisi">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0 0 L10 5 L0 10 z" fill="var(--rule)"/>
+      </marker>
+    </defs>
+    <g id="cam"></g>
+  </svg>
+</div>
+
+<div id="page"><div class="sheet">
+  <p class="eyebrow" id="p-eb"></p>
+  <h2 id="p-ttl"></h2>
+  <div id="p-body"></div>
+</div></div>
+
+<div id="card">
+  <p class="eyebrow" id="eb"></p>
+  <h2 id="ttl"></h2>
+  <div class="txt" id="body"></div>
+</div>
+
+<div id="bar">
+  <span id="cnt">1 / 1</span>
+  <button id="prev" type="button">Geri</button>
+  <button id="next" type="button">İleri</button>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+ * İçerik. Şema ve slaytlar aşağıdaki üç diziden üretilir; SVG koordinatları
+ * elle yazılmaz.
+ *
+ *   NODES   şemadaki kutular
+ *   EDGES   kutular arasındaki oklar, [kaynak, hedef] çiftleri
+ *   SLIDES  gezinti sırası
+ *             n     odaklanılacak kutunun anahtarı; null ise genel görünüm
+ *             page  true ise şema gizlenir, tam sayfa metin gösterilir
+ *             e     üst satır (bölüm ya da aşama adı)
+ *             t     başlık
+ *             b     gövde, HTML kabul eder
+ *
+ * Bir aşamanın metnini değiştirmek tek satırdır. Yeni kutu eklemek için
+ * NODES'a bir giriş, EDGES'e bir çift ve SLIDES'a bir kayıt yeterlidir.
+ * --------------------------------------------------------------------------- */
+const W = 300, H = 128;
+const NODES = {
+  // [ x, y, aşama no, terim, açıklama, tür, iç modüller? ]
+  //   tür: 0 deterministik · 1 agent · 2 insan kararı ya da dallanma
+  //   iç modüller: uzaktan okunmaz, kutuya yakınlaşınca okunur
+  kaynak:      [ 120,  120, "T0",  "Source",              "türü bilinmeyen karışık dosyalar", 0],
+  kesif:       [ 560,  120, "T0",  "File Detection",      "türü içerikten ölçer · yerel",     0,
+                 ["1 · Format — Magika, içerikten",
+                  "2 · Şekil — tablo / log / ağaç / düzyazı",
+                  "3 · Kanıt — kodlama, ayraç, sayı biçimi",
+                  "4 · Yargı — çözülemeyeni insana çıkarır"]],
+
+  tablo:       [1060,    0, "",    "Tabular",       "csv · tsv · txt · xlsx · xlsm · parquet", 2],
+  belge:       [1060,  190, "",    "Document",      "pdf · docx · pptx · odt · rtf · epub",    2],
+  agac:        [1060,  380, "",    "Tree",          "json · jsonl · xml · yaml · toml · ini",  2],
+  kapsayici:   [1060,  570, "",    "Container",     "zip · tar · gzip · 7z · rar",             2],
+  islenemez:   [1060,  760, "",    "Unprocessable", "boş ya da okunamayan",                    2],
+  yargi:       [1060,  950, "",    "Adjudication",  "uyuşmazlık ya da bilinmeyen tür",         2],
+
+  cikarma:     [1500,  190, "",    "Extraction",    "yerel motorlar",                          0,
+                 ["Metin katmanı var → metin çıkarıcı",
+                  "Yok → taranmış sayılır, görüntü yolu",
+                  "Docling · Unstructured · Marker",
+                  "png · jpeg · tiff · webp de buradan"]],
+  inceleme:    [1940,  190, "",    "Human Review",  "aday tablolar onaylanır",                 2],
+
+  intake:      [ 120, 1180, "T1",  "Intake",              "yükler ve profiller",              0,
+                 ["Loader — CSV · Excel · Parquet",
+                  "Profiler — tablo başına DataCard",
+                  "Anahtar tespiti — aday anahtarlar",
+                  "İlişki — örtüşme ve kardinalite"]],
+  schema:      [ 560, 1180, "T2",  "Schema Discovery",    "tablolar arası ilişkiyi önerir",   1],
+  integration: [1060, 1180, "T3",  "Integration",         "onaylı planı DuckDB'de çalıştırır",0],
+  problem:     [1500, 1180, "T4",  "Problem Discovery",   "hedef ve problem türünü belirler", 1],
+  validation:  [1940, 1180, "T5",  "Validation Strategy", "doğrulama kurgusunu seçer",        1],
+
+  eda:         [ 120, 1530, "T6",  "EDA",                 "keşifsel veri analizi",            0],
+  leakage:     [ 560, 1530, "T7",  "Leakage Audit",       "yedi bağımsız yöntem",             0,
+                 ["Hedefle korelasyon eşiği",
+                  "Yapısal sızıntı",
+                  "Kimlik ve zaman kaynaklı sızıntı",
+                  "Düzeltme — drop_feature: kolon"]],
+  feature:     [1060, 1530, "T8",  "Feature Pipeline",    "ön işleme tabanı",                 0],
+  splitting:   [1500, 1530, "T9",  "Splitting",           "eğitim ve test ayrımı",            0],
+  gate:        [1940, 1530, "",    "Gate Policy",         "her aşamanın sonunda çalışır",     0,
+                 ["1 · hard — sızıntı, PII, yıkıcı araç",
+                  "2 · risk — aşamanın risk sınıfı",
+                  "3 · signal — ölçülen eşikler",
+                  "4 · profile — kullanıcı tercihi"]],
+
+  training:    [ 120, 1880, "T10", "Training",            "sabit aday menüsü",                0,
+                 ["Aday menüsü — sabit, aranmaz",
+                  "Ön işleme fold içinde ayrı fit",
+                  "RANDOM_SEED sabit"]],
+  evaluation:  [ 560, 1880, "T11", "Evaluation",          "kanıtı bir araya getirir",         0],
+  report:      [1060, 1880, "T12", "Report",              "nihai çıktı ve seed kaydı",        0],
+};
+
+const EDGES = [
+  ["kaynak","kesif"],
+  ["kesif","tablo"], ["kesif","belge"], ["kesif","agac"],
+  ["kesif","kapsayici"], ["kesif","islenemez"], ["kesif","yargi"],
+  ["belge","cikarma"], ["cikarma","inceleme"],
+  ["tablo","intake"], ["inceleme","intake"], ["agac","intake"],
+  ["intake","schema"], ["schema","integration"], ["integration","problem"],
+  ["problem","validation"], ["validation","eda"], ["eda","leakage"],
+  ["leakage","feature"], ["feature","splitting"], ["splitting","training"],
+  ["training","evaluation"], ["evaluation","report"],
+];
+
+const SLIDES = [
+ {n:null, e:"", t:"Agentic Data Science",
+  b:"Bilinmeyen veriden denetlenebilir makine öğrenmesine.<br><br>Bir kuruma <em>“şu klasördeki verilerle bir şey yapın”</em> dendiğinde işin büyük kısmı modelleme değildir. Dosyaların ne olduğu, hangisinin güvenilir olduğu, hangi bilginin tahmin anında aslında elde bulunmayacağı — asıl iş budur, ve hatası pahalıdır.<br><br>Bu sistem o kısmı görünür ve <strong>denetlenebilir</strong> kılıyor: ölçülebilen ölçülüyor, ölçülemeyen insana soruluyor, ve hangisinin hangisi olduğu her zaman kayıtlı.<br><br>Hattın üstünde gezeceğiz. Giriş <strong>altı ayrı akışa</strong> dallanıyor: tablo, belge, ağaç, arşiv, işlenemez ve karar gerektiren. Bir CSV ile bir PDF aynı yoldan gitmiyor."},
+
+ {page:true, e:"", t:"Architecture",
+  b:`<div class="txt">Mimarinin tezi tek cümlede: <strong>dört ayrı otorite</strong>, ve hiçbiri
+     diğerinin işini yapmıyor. Bir sistemin denetlenebilir olması buradan geliyor.</div>
+     <dl class="take">
+       <dt>1 · Executors</dt><dd><strong>Deterministik yürütücüler</strong> ölçer, ayrıştırır, çıkarır, birleştirir, böler, eğitir, değerlendirir. Buralarda model yok.</dd>
+       <dt>2 · Agents</dt><dd><strong>Ajanlar</strong> sınırlı kanıtı yorumlar ve öneri üretir: rapor, problem, yapılandırma, graf düzenlemesi. Ölçüm üretmezler.</dd>
+       <dt>3 · Guards</dt><dd><strong>Tipli sözleşmeler, graf doğrulama, deterministik kapılar, inceleme sınırları ve sandbox</strong> neyin çalışmasına izin verileceğine karar verir.</dd>
+       <dt>4 · Interface</dt><dd><strong>Arayüz</strong> kalıcı kanıtı, planları ve artifact'leri yansıtır. Tarayıcı durumu bir yürütme otoritesi <em>değildir</em>.</dd>
+     </dl>`},
+
+ {page:true, e:"", t:"Local-first",
+  b:`<div class="txt">Sistem <strong>yerelde çalışacak şekilde</strong> kuruldu. Savunma sanayi
+     bağlamında bu bir tercih değil, ön koşul.</div>
+     <dl class="take">
+       <dt>Tür tespiti</dt><dd>Magika yerel bir model olarak çalışır. Ağ bağlantısı denenmez — soketler kapatılarak doğrulandı: <strong>sıfır bağlantı denemesi</strong>.</dd>
+       <dt>Belge çıkarımı</dt><dd><strong>Docling</strong>, Unstructured, Marker ve MinerU; hepsi yerel motorlar. OCR modelleri pakete gömülü gelir, çalışma anında indirme yapmaz.</dd>
+       <dt>Veri işleme</dt><dd>DuckDB, pandas, scikit-learn — tamamı süreç içinde. Veri makineden çıkmaz.</dd>
+       <dt>Dil modeli</dt><dd>Varsayılan <strong>Ollama</strong>, tamamen self-hosted. Özel kurulumda Claude CLI seçilebilir; o durumda çıkarım uzaktadır ve bu <em>açıkça belirtilir</em> — mimari raporun değişmez kurallarından biri.</dd>
+     </dl>`},
+
+ {n:"kaynak", e:"T0 · Source", t:"Elimizde ne olduğunu bilmiyoruz",
+  b:"Bir klasör geliyor: Excel, CSV, PDF ve uzantısı olmayan bir dosya. İçerikleri bilinmiyor.<br><br>Uzantı bir iddiadır, ölçüm değil. <code>.csv</code> adı verilmiş bir PDF de gelir, uzantısız geçerli bir tablo da. İkisini de gördük."},
+
+ {n:"kesif", e:"T0 · File Detection", t:"Türü içerikten ölçüyoruz",
+  b:"Dört katman, hiçbirinde dil modeli yok: format tespiti, yapısal şekil, kanıt, ve çözülemeyeni insana çıkaran yargı katmanı.<br><br>Karma partide <strong>25/25</strong> doğru, <strong>%88</strong> otomatik çözülüyor, dosya başına <strong>7 ms</strong>. Sayı regresyon testine bağlı: bir katman bozulursa test kırılır."},
+
+ {n:"tablo", e:"Flow · Tabular", t:"Tablo olarak ölçülenler",
+  b:"CSV, TSV, TXT, Excel ve Parquet doğrudan tablo şeridine girer ve <strong>T1</strong>'den itibaren hattın tamamını dolaşır.<br><br>Yolda ölçülenler: ayraç, kodlama, başlık satırı, boş kolonlar, aday anahtarlar, tablolar arası ilişkiler. Dağınıklık düzeltilirken gizlenmez — çıkarılan başlık satırı, düşen kolon, korunan baştaki sıfır, hepsi kayda geçer."},
+
+ {n:"belge", e:"Flow · Document", t:"Belge olarak ölçülenler",
+  b:"PDF, DOCX, PPTX, ODT, RTF ve EPUB belge şeridine girer ve <strong>tablo şeridiyle aynı yoldan gitmez</strong>.<br><br>Bir belgeden okunan sayı, bir tablodan okunan sayıyla aynı güvende değildir. O yüzden buradan çıkan içerik doğrudan eğitim verisi olmaz."},
+
+ {n:"cikarma", e:"Flow · Extraction", t:"Çıkarım motoru ölçüme göre seçilir",
+  b:"Önce metin katmanı var mı ölçülür. Varsa doğrudan metin çıkarıcıya gider; yoksa taranmış sayılır ve görüntü yoluna alınır — PNG, JPEG, TIFF, WEBP de aynı yoldan geçer.<br><br>Motorların hepsi yerel: <strong>Docling</strong>, Unstructured, Marker, MinerU.<br><br>Taranmış belgede Türkçe sınırı işaretlenir: model sözlüğünde Türkçe harf yoksa metin sessizce bozulur ve bu güven skoruyla yakalanamaz. Ölçülen örnek: <code>Iğdır → ngoa</code>, güven 0,828."},
+
+ {n:"inceleme", e:"Flow · Human Review", t:"İnsan onaylamadan eğitim verisi olmaz",
+  b:"Belgelerden çıkan tablolar <strong>aday</strong> olarak durur. Bir insan tek tek inceleyip terfi ettirmedikçe makine öğrenmesine giremez.<br><br>Bu, mimarinin değişmez kurallarından biri: <em>“incelenmemiş PDF tabloları ya da figürleri eğitim verisi olmasın.”</em>"},
+
+ {n:"agac", e:"Flow · Tree", t:"Ağaç yapılar ayrı bir şerit",
+  b:"JSON, JSONL, XML, YAML, TOML ve INI bir tablo değil, <strong>iç içe bir yapı</strong>dır. Tablo gibi okumaya çalışmak, yapının kendisini kaybetmek demektir.<br><br>Kendi şeridi var ve düzleştirme kararı ayrı verilir."},
+
+ {n:"kapsayici", e:"Flow · Container", t:"Arşivler açılıp yeniden yönlendirilir",
+  b:"ZIP, TAR, GZIP, 7Z ve RAR bir içerik değil, <strong>kapsayıcı</strong>dır. Açılabildiği ölçüde bu bir olgu sorusudur, tahmin değil.<br><br>İçindeki her bileşen baştan yönlendirilir: bir arşivin içinden çıkan CSV tablo şeridine, PDF belge şeridine gider."},
+
+ {n:"islenemez", e:"Flow · Unprocessable", t:"İşlenemez de bir karardır",
+  b:"Boş ya da okunamayan dosya sessizce elenmez; <strong>işlenemez</strong> olarak işaretlenir ve sayısı görünür kalır.<br><br>Mimarinin kuralı açık: <em>“kısmi hataları yüzeye çıkar; hiçbir kaynak sessizce kaybolmasın.”</em>"},
+
+ {n:"yargi", e:"Flow · Adjudication", t:"Karar verilemezse uydurulmaz",
+  b:"Uzantı ile ölçüm çelişiyorsa ya da tür hiç çözülemiyorsa dosya insana çıkar. Serbest metin sorulmaz; kapalı uçlu seçenek sunulur.<br><br>Bilinmeyen bir şeyi tahmin etmekle, bilinen bir sınırlamayı bildirmek aynı şey değildir."},
+
+ {n:"intake", e:"T1 · Intake", t:"Agent ham satırı hiç görmez",
+  b:"20.000 satırlık tablo <strong>600 token</strong> civarında bir özete iner: şema, istatistik, aday anahtarlar.<br><br>Bu tek başına üç sorunu çözer: maliyet, aritmetik hatası ve kişisel verinin modele gitmesi. Hassas sınıflandırılmış kolon örnek değer de vermez, en sık değerlerini de."},
+
+ {n:"schema", e:"T2 · Schema Discovery", t:"Agent yargı üretir, ölçüm değil",
+  b:"Agent bir plan önerisi üretir; ölçülmüş kanıtı sistem ekler. Modele kendisine verilen sayıları geri yazdırmanın faydası yoktur, zararı vardır.<br><br>Ölçümle desteklenmeyen bir birleştirme reddedilir. Model bir ilişkiyi iddia ederek var edemez."},
+
+ {n:"integration", e:"T3 · Integration", t:"Grain doğrulanır, varsayılmaz",
+  b:"Onaylı plan çalıştırılır ve sonucun grain'i — bir satırın neyi temsil ettiği — ölçülerek doğrulanır. Beklenmeyen bir çoğalma buradan sessizce geçemez."},
+
+ {n:"problem", e:"T4 · Problem Discovery", t:"Hangi soru sorulabilir",
+  b:"Verinin hangi makine öğrenmesi problemini desteklediği çıkarılır ve adaylar sıralanır. Hedef kolon seçimi buraya bağlanır.<br><br>Bu aşama çıktı üretemezse hat durur ve o noktada onaylama seçeneği kullanıcıya gösterilmez: üretilmemiş bir çıktıyı onaylamak mümkün değildir."},
+
+ {n:"validation", e:"T5 · Validation Strategy", t:"Doğrulama kurgusu önce kurulur",
+  b:"Bölmenin nasıl yapılacağı modelden önce kararlaştırılır. Sonuca bakıp kurguyu değiştirmek, sonucu kendi lehine seçmektir."},
+
+ {n:"eda", e:"T6 · Exploratory Data Analysis", t:"EDA da deterministik",
+  b:"Keşifsel veri analizi — dağılım, korelasyon, aykırı değer — ölçülerek yapılır. Burada model yok: profilleme ve istatistik bir hesabın işidir, bir dilin değil."},
+
+ {n:"leakage", e:"T7 · Leakage Audit", t:"Sızıntı yedi bağımsız yöntemle aranır",
+  b:"Tahmin anında aslında bilinemeyecek bir bilginin modele sızması, bir projeyi sessizce çürüten şeydir. Bir sonraki slaytta bunun literatürdeki ölçüsü var.<br><br>Denetim deterministiktir, düzeltmesi mekaniktir. Kapı insana çıktığında düzeltmeyi hazır verir; kimseye gizli bir sözdizimi yazdırmaz."},
+
+ {page:true, e:"Related Work · 1", t:"Sızıntı, bir uç durum değil; yaygın bir başarısızlık biçimi",
+  b:`<blockquote>“We show that data leakage is indeed a widespread problem and has led to severe
+     reproducibility failures. Specifically, through a survey of literature in research communities
+     that adopted ML methods, we find <strong>17 fields</strong> where errors have been found,
+     collectively affecting <strong>329 papers</strong> and in some cases leading to wildly
+     overoptimistic conclusions. Based on our survey, we present a fine-grained taxonomy of
+     <strong>8 types of leakage</strong> that range from textbook errors to open research problems.”</blockquote>
+     <p class="cite">Sayash Kapoor, Arvind Narayanan · <em>Leakage and the Reproducibility Crisis in
+     ML-based Science</em> · <a href="https://arxiv.org/abs/2207.07048">arXiv:2207.07048</a></p>
+     <dl class="take">
+       <dt>Finding</dt><dd>Sızıntı dikkatsizlikten değil, yöntemin kendisinden kaynaklanıyor ve 17 ayrı alanda 329 yayını etkilemiş. Yazarlar bunun için sekiz türlü bir sınıflandırma öneriyor.</dd>
+       <dt>Design impact</dt><dd><strong>T7</strong> tek bir kontrol değil, <strong>yedi bağımsız aile</strong> olarak kurgulandı. Tek bir korelasyon eşiği, sekiz türlü bir problemi yakalayamaz.</dd>
+       <dt>Consequence</dt><dd>Sızıntı bulgusu <strong>sert kısıt</strong> katmanında. Kullanıcı tam otomatik moda geçse bile hat durur; otonomi tercihi bunu kapatamaz.</dd>
+     </dl>`},
+
+ {page:true, e:"Related Work · 2", t:"Sızıntı elle değil, statik olarak yakalanmalı",
+  b:`<blockquote>“Leakage between training and test data can lead to overestimating the model's
+     accuracy during offline evaluations, possibly leading to deployment of low-quality models in
+     production. Such leakage can happen easily by mistake or by following poor practices, but may
+     be <strong>tedious and challenging to detect manually</strong>. … Our evaluation shows that our
+     analysis accurately detects data leakage and that such leakage is <strong>pervasive among over
+     100,000 analyzed public notebooks</strong>.”</blockquote>
+     <p class="cite">Chenyang Yang, Rachel A. Brower-Sinning, Grace A. Lewis, Christian Kästner ·
+     <em>Data Leakage in Notebooks: Static Detection and Better Processes</em> ·
+     <a href="https://arxiv.org/abs/2209.03345">arXiv:2209.03345</a></p>
+     <dl class="take">
+       <dt>Finding</dt><dd>Yüz binden fazla halka açık notebook taranmış ve sızıntı yaygın bulunmuş. Elle tespit yorucu ve güvenilmez; statik analiz işe yarıyor.</dd>
+       <dt>Design impact</dt><dd>Sızıntı denetimini <strong>bir agent'a sormuyoruz</strong>. Deterministik bir denetim olarak kurduk; ölçüm bir modelin görüşüne bırakılmayacak kadar kritik.</dd>
+       <dt>Consequence</dt><dd>Düzeltme de mekanik: <code>drop_feature: kolon</code>. Kapı insana çıktığında bu satırları hazır sunar, kullanıcıdan sözdizimi ezberlemesini beklemez.</dd>
+     </dl>`},
+
+ {n:"feature", e:"T8 · Feature Pipeline", t:"Ön işleme tabanı, sızdırmadan",
+  b:"Zorunlu ön işleme burada tanımlanır ama tüm veri üzerinde fit edilmez. Ölçekleyiciyi baştan fit etmek, test kümesini eğitime sızdırmanın en yaygın yoludur — yukarıdaki çalışmaların ikisi de bunu sayıyor."},
+
+ {n:"splitting", e:"T9 · Splitting", t:"Bölme ölçülür",
+  b:"Bölme kurulur ve kullanılabilirliği — sınıf dengesi, fold boyutları, zaman sırası — kapının okuyabileceği ölçümler olarak dışarı verilir."},
+
+ {n:"training", e:"T10 · Training", t:"Sabit aday menüsü",
+  b:"Aday modeller sabit bir listeden gelir; ön işleme her fold içinde ayrı fit edilir. Seed sabittir, aynı veri aynı modeli verir."},
+
+ {n:"evaluation", e:"T11 · Evaluation", t:"Kanıt bir araya getirilir",
+  b:"Model metriği tek başına bir cevap değildir. Bölmenin, sızıntı denetiminin ve kapı kararlarının kanıtı aynı yerde toplanır; sonuç ancak birlikte savunulabilir."},
+
+ {n:"report", e:"T12 · Report", t:"Koşum tekrar üretilebilir kapanır",
+  b:"Kapı geçmişi tazelenir ve rapor üretilir. Koşumun seed'i kayıtlıdır: aynı veri aynı sonuca varır ve sonradan denetlenebilir.<br><br>Tamamlanan koşum, kaydedilen metriği temiz bir ortamda birebir yeniden üreten bağımsız bir betik de üretir."},
+
+ {n:null, e:"", t:"Gate Policy",
+  b:"Kararı model vermez. Her aşamanın sonunda 18 kural dört katmanda sırayla çalışır: <strong>sert kısıt · risk · sinyal · tercih</strong>. Sonucu en yüksek katman belirler.<br><br>Tam otomatik ayar bile sızıntı ve kişisel veri için durur; kullanıcı tercihi en zayıf girdidir. Bu karar saf bir fonksiyondur ve <strong>model onu göremez</strong>."},
+
+ {page:true, e:"Related Work · 3", t:"Ajanın ne kadar iyi olduğu ölçülebilir bir sorudur",
+  b:`<blockquote>“We introduce MLE-bench, a benchmark for measuring how well AI agents perform at
+     machine learning engineering. To this end, we curate <strong>75 ML engineering-related
+     competitions from Kaggle</strong> … We establish human baselines for each competition using
+     Kaggle's publicly available leaderboards. … finding that the best-performing setup — OpenAI's
+     o1-preview with AIDE scaffolding — achieves at least the level of a Kaggle bronze medal in
+     <strong>16.9% of competitions</strong>.”</blockquote>
+     <p class="cite">Jun Shern Chan, Neil Chowdhury, Oliver Jaffe ve ark. · <em>MLE-bench: Evaluating
+     Machine Learning Agents on Machine Learning Engineering</em> ·
+     <a href="https://arxiv.org/abs/2410.07095">arXiv:2410.07095</a></p>
+     <dl class="take">
+       <dt>Finding</dt><dd>Ajan yeterliliği insan referansına karşı ölçülebiliyor, ve en iyi kurulum bile yarışmaların yalnızca %16,9'unda bronz seviyesine ulaşıyor.</dd>
+       <dt>Design impact</dt><dd>Bugün <strong>“çalışıyor mu”</strong> biliniyor, <strong>“ne kadar iyi”</strong> bilinmiyor. Bir model değiştirdiğimizde sonucun iyileşip iyileşmediğini söyleyecek bir ölçümümüz yok.</dd>
+       <dt>Roadmap</dt><dd>Kapalı uçlu bir değerlendirme takımı kurmak. Bu sayı olmadan model seçimi bir tercih; olduğunda bir karar.</dd>
+     </dl>`},
+
+ {page:true, e:"", t:"Future Work",
+  b:`<div class="txt">Aşağıdakiler mimari raporun kendi <em>“current gaps and next engineering
+     priorities”</em> listesinden alındı; uydurulmuş bir istek listesi değil. Karşılarında o yönü
+     işaret eden çalışmalar duruyor.</div>
+     <dl class="take">
+       <dt>Per-stage evaluation</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> hattın çalıştığını biliyoruz; her aşamanın <em>ne kadar iyi</em> çalıştığını bilmiyoruz.</span>
+       <span class="ln"><strong>Adım —</strong> aşama başına, insan referanslı, kapalı uçlu bir değerlendirme takımı.</span>
+       <span class="ln"><strong>Dayanak —</strong> ScienceAgentBench'in çağrısı birebir bu: <em>“we call for rigorous assessment of agents on individual tasks in a scientific workflow before making bold claims on end-to-end automation.”</em> Mimarimiz zaten 12 ayrı aşama. <span class="cite" style="padding:0">Chen ve ark. · <a href="https://arxiv.org/abs/2410.05080">arXiv:2410.05080</a></span></span></dd>
+
+       <dt>Model ensemble</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> aday menüsü sabit, tek kazanan seçiliyor.</span>
+       <span class="ln"><strong>Adım —</strong> çok katmanlı yığınlama; deterministik kalarak.</span>
+       <span class="ln"><strong>Dayanak —</strong> AutoGluon-Tabular: <em>“our multi-layer combination of many models offers better use of allocated training time than seeking out the best.”</em> <span class="cite" style="padding:0">Erickson ve ark. · <a href="https://arxiv.org/abs/2003.06505">arXiv:2003.06505</a></span></span></dd>
+
+       <dt>Content-aware routing</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> raporun 1. maddesi: bir düzyazı <code>.txt</code> artık kaynağı düşürmüyor ama hâlâ önce CSV okuyucusuna veriliyor.</span>
+       <span class="ln"><strong>Adım —</strong> keşif katmanının yargısını yükleme ve okuma kararına bağlamak.</span>
+       <span class="ln"><strong>Kazanım —</strong> yarı yapılı kaynaklar doğru şeride, ilk denemede gider.</span></dd>
+
+       <dt>Document lane UI</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> raporun 3. maddesi: PDF aday inceleme ve terfi arayüzü tamamlanmadı; onaylanan tablolar ML girdisi önerisine geri bağlanmıyor.</span>
+       <span class="ln"><strong>Adım —</strong> rehberli akışa bağlamak.</span>
+       <span class="ln"><strong>Kazanım —</strong> rapor ve tablo bir arada gelen kaynaklar uçtan uca işlenebilir.</span></dd>
+
+       <dt>Leakage coverage</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> yedi aile ölçülüyor; ağırlık hedefle ilişki ve yapısal sızıntıda.</span>
+       <span class="ln"><strong>Adım —</strong> zamana dayalı ve grup sızıntısı.</span>
+       <span class="ln"><strong>Dayanak —</strong> Kapoor &amp; Narayanan'ın sekiz türlü sınıflandırması; kapsamadıklarımız orada adlandırılmış.</span></dd>
+
+       <dt>Multi-tenant</dt>
+       <dd><span class="ln"><strong>Eksik —</strong> raporun 10. maddesi: tek hesaplı tünel kimlik doğrulaması.</span>
+       <span class="ln"><strong>Adım —</strong> gerçek çok kullanıcılı dağıtımdan önce değiştirilmesi gerekiyor.</span>
+       <span class="ln"><strong>Kazanım —</strong> kurum içi yaygın kullanım mümkün olur.</span></dd>
+     </dl>`},
+
+ {page:true, e:"", t:"Use Case",
+  b:`<div class="txt">Bir birim üç dosya ile geliyor: bir <strong>Excel</strong> (aylık şube ölçümleri),
+     bir <strong>PDF</strong> (yıllık faaliyet raporu) ve <strong>uzantısız</strong> bir dışa aktarım.
+     Kimse içeriklerini bilmiyor. Soru şu: “bu verilerden bir tahmin modeli çıkar mı?”</div>
+     <dl class="take">
+       <dt>Adım 1</dt><dd><strong>Tür ölçülür.</strong> Excel çalışma kitabı olarak açılır, sayfaları sayılır. PDF'in metin katmanı var mı bakılır. Uzantısız dosya içeriğinden CSV olarak tanınır ve <strong>reddedilmez</strong>.</dd>
+       <dt>Adım 2</dt><dd><strong>Şeritler ayrılır.</strong> Excel ve CSV tablo şeridine girer. PDF belge şeridine gider; oradan çıkan tablolar <strong>aday</strong> olarak kalır.</dd>
+       <dt>Adım 3</dt><dd><strong>Profil ve ilişki.</strong> Her tablo DataCard'a iner. Şube kodu üzerinden iki tablonun birleştiği <em>ölçülerek</em> bulunur — isim benzerliğiyle değil.</dd>
+       <dt>Adım 4</dt><dd><strong>Problem tanımlanır.</strong> Hedef kolon seçilir, problem türü belirlenir; doğrulama kurgusu modelden önce sabitlenir.</dd>
+       <dt>Adım 5</dt><dd><strong>Sızıntı denetimi durur.</strong> Bir kolon hedefle eşiğin üstünde ilişkili çıkar. Bu <strong>hard</strong> katmanda bir bulgudur: kullanıcı tam otomatik moda geçmiş olsa bile hat durur ve düzeltme hazır sunulur.</dd>
+       <dt>Adım 6</dt><dd><strong>Model ve rapor.</strong> Aday menüsü eğitilir, kanıt bir araya getirilir, rapor koşumun seed'iyle birlikte kapanır — sonuç sonradan yeniden üretilebilir.</dd>
+       <dt>Sonuç</dt><dd>PDF'ten okunan hiçbir sayı, bir insan onaylamadan modele girmedi. Duran her yerde <strong>neden durduğu</strong> yazılı.</dd>
+     </dl>`},
+
+ {n:null, e:"", t:"Current State",
+  b:"Nerede duruyoruz: 12 aşamalı hat uçtan uca çalışıyor — bilinmeyen bir klasörden başlayıp eğitilmiş bir modele ve gerekçeli bir rapora ulaşıyor. <strong>1237 test</strong> geçiyor.<br><br>Ürünün varsayılan yüzü <strong>rehberli bir yolculuk</strong>: proje aç, dosya at, anlaşılanı gör, planı kabul et, koştur. Serbest graf editörü <em>Advanced / Experimental</em> olarak duruyor; ana yol o değil.<br><br>Proje geliştirme aşamasında ve mimari rapor eksikleri numaralandırarak sayıyor. Kurulu olan asıl şey <strong>disiplin</strong>: her değişikliğin gerekçesi bir ölçüm, her kararın arkasında bir kayıt. Bir sonraki özellik bunun üstüne gelir."},
+];
+/* ------------------------------------------------------------------------- */
+
+const NS = "http://www.w3.org/2000/svg";
+const cam = document.getElementById("cam");
+const el = (tag, a, txt) => {
+  const n = document.createElementNS(NS, tag);
+  for (const k in a) n.setAttribute(k, a[k]);
+  if (txt != null) n.textContent = txt;
+  return n;
+};
+
+const boxH = id => H + (NODES[id][6] ? NODES[id][6].length*30 + 22 : 0);
+// Sağdan sola dönen oklar kutuların içinden geçmesin diye kendi yatay
+// şeritlerini kullanır. Anahtar "kaynak>hedef", değer şeridin y'si.
+const LANE = {"tablo>intake":1090, "inceleme>intake":1120, "agac>intake":1060};
+for (const [from,to] of EDGES){
+  const [px,py] = NODES[from], [qx,qy] = NODES[to];
+  const ph = boxH(from), qh = boxH(to);
+  let d;
+  if (py === qy){
+    d = `M${px+W} ${py+H/2} L${qx-13} ${qy+H/2}`;
+  } else if (qx > px){
+    d = `M${px+W} ${py+H/2} L${px+W+60} ${py+H/2} L${px+W+60} ${qy+H/2} L${qx-13} ${qy+H/2}`;
+  } else {
+    const lane = LANE[from+">"+to] ?? (py+H+70);
+    d = `M${px+W/2} ${py+ph} L${px+W/2} ${lane} L${qx+W/2} ${lane} L${qx+W/2} ${qy-13}`;
+  }
+  cam.appendChild(el("path", {d, fill:"none", stroke:"var(--rule)", "stroke-width":2, "marker-end":"url(#a)"}));
+}
+for (const id in NODES){
+  const [x,y,T,ad,alt,kind,inner] = NODES[id];
+  cam.appendChild(el("rect", {x, y, width:W, height:boxH(id), rx:2,
+    fill: kind ? "var(--fill)" : "var(--ground)",
+    stroke:"var(--rule)", "stroke-width": kind===2 ? 2.5 : 2,
+    "stroke-dasharray": kind===2 ? "7 4" : "none"}));
+  if (T) cam.appendChild(el("text", {x:x+22, y:y+34, "font-size":17, fill:"var(--faint)"}, T));
+  cam.appendChild(el("text", {x:x+22, y: T ? y+72 : y+58, "font-size":24, "font-weight":600, fill:"var(--ink)"}, ad));
+  cam.appendChild(el("text", {x:x+22, y: T ? y+101 : y+88, "font-size":16, fill:"var(--muted)"}, alt));
+  // İç modüller yalnızca yakınlaşınca okunacak boyutta çizilir.
+  if (inner){
+    cam.appendChild(el("line", {x1:x+22, y1:y+H-4, x2:x+W-22, y2:y+H-4,
+      stroke:"var(--hair)", "stroke-width":1}));
+    inner.forEach((satir, k) => cam.appendChild(el("text",
+      {x:x+22, y:y+H+24+k*30, "font-size":15, fill:"var(--muted)"}, satir)));
+  }
+}
+
+const VB = {x:40, y:-60, w:2340, h:2140};
+let i = Math.max(0, Math.min(SLIDES.length-1,
+  (parseInt(new URLSearchParams(location.search).get("s"), 10) || 1) - 1));
+const page = document.getElementById("page"), card = document.getElementById("card");
+function render(){
+  const s = SLIDES[i];
+  if (s.page){
+    page.classList.add("on"); card.hidden = true;
+    document.getElementById("p-eb").textContent = s.e;
+    document.getElementById("p-ttl").textContent = s.t;
+    document.getElementById("p-body").innerHTML = s.b;
+    page.scrollTop = 0;
+  } else {
+    page.classList.remove("on"); card.hidden = false;
+    if (s.n){
+      const [x,y] = NODES[s.n], k = 2.3;
+      cam.setAttribute("transform", `translate(${VB.x+VB.w/2-(x+W/2)*k} ${VB.y+VB.h/2-(y+H/2)*k}) scale(${k})`);
+    } else {
+      cam.setAttribute("transform", "translate(0 0) scale(1)");
+    }
+    document.getElementById("eb").textContent = s.e;
+    document.getElementById("ttl").textContent = s.t;
+    document.getElementById("body").innerHTML = s.b;
+  }
+  document.getElementById("cnt").textContent = `${i+1} / ${SLIDES.length}`;
+}
+const go = d => { i = Math.max(0, Math.min(SLIDES.length-1, i+d)); render(); };
+document.getElementById("next").onclick = () => go(1);
+document.getElementById("prev").onclick = () => go(-1);
+addEventListener("keydown", e => {
+  if (e.key==="ArrowRight"||e.key===" "||e.key==="PageDown"){ e.preventDefault(); go(1); }
+  else if (e.key==="ArrowLeft"||e.key==="PageUp"){ e.preventDefault(); go(-1); }
+  else if (e.key==="0"||e.key==="Home"){ i=0; render(); }
+  else if (e.key.toLowerCase()==="s"){ card.hidden = !card.hidden; }
+});
+document.getElementById("svg").addEventListener("click", () => go(1));
+render();
+</script>
+</body>
+</html>
