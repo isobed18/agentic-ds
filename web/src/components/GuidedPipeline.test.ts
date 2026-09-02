@@ -7,6 +7,31 @@ import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
 import CATALOGUE from "../lib/i18n.ts?raw";
 import PAGE_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
+import SENSITIVITY_SOURCE from "./SensitivityOverride.tsx?raw";
+
+describe("staged sensitivity review (#330)", () => {
+  it("puts the existing PII override in the active guided workspace before plan acceptance", () => {
+    // The control already existed in the retired /workflows screen, which made
+    // its backend endpoint look complete while the product's real
+    // AutomationWorkspace path never mounted it. Keep the assertion on the
+    // active guided component so moving it back to a dead route fails here.
+    expect(SOURCE).toContain('import { SensitivityOverride } from "./SensitivityOverride"');
+    expect(SOURCE).toContain('t("Review personal data")');
+    expect(SOURCE).toContain("{sensitivitySelected && <Inspector");
+    expect(SOURCE).toContain("<SensitivityOverride runId={runId} tables={profile.tables}");
+    expect(SOURCE).toContain("!accepted && profile.tables.length > 0");
+  });
+
+  it("keeps an applied override visibly saved instead of snapping back to the machine value", () => {
+    // Before #330, clearing `changes` after a successful request would make the
+    // selected button fall back to the unchanged source profile. The saved
+    // baseline makes the immediate success feedback truthful while the backend
+    // classification is already updated for the pipeline.
+    expect(SENSITIVITY_SOURCE).toContain("const [applied, setApplied]");
+    expect(SENSITIVITY_SOURCE).toContain("setApplied((previous) => ({ ...previous, ...result.applied }))");
+    expect(SENSITIVITY_SOURCE).toContain("setChanges({})");
+  });
+});
 
 describe("planner access in the guided pipeline (#97)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {

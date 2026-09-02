@@ -1274,7 +1274,7 @@ export const api = {
   hardening: () => request<Hardening>("/api/hardening"),
   /** Move a column between pii and internal before the classification is used. */
   overrideSensitivity: (runId: string, columns: Record<string, "pii" | "internal">) =>
-    request<{ applied: Record<string, string> }>(`/api/runs/${runId}/sensitivity`, {
+    request<{ applied: Record<string, "pii" | "internal"> }>(`/api/runs/${runId}/sensitivity`, {
       method: "POST",
       body: JSON.stringify({ columns }),
     }),
