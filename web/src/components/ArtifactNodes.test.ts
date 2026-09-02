@@ -42,6 +42,15 @@ describe("the artifacts opener under a node", () => {
     expect(markup).not.toContain("<ol");
   });
 
+  it("shows a title this session already fetched without a second Loading pass", () => {
+    // #368: a source pin, because the titles only exist inside the opened list
+    // and opening it needs an effect this renderer does not run. The property
+    // is that the title comes from a *synchronous* read of the session cache:
+    // awaiting the cached promise instead would still render "Loading…" for a
+    // frame on every return to the section, which is the symptom.
+    expect(SOURCE).toContain("previews[id] ?? api.cachedArtifactPreview(id)");
+  });
+
   it("renders nothing for a node that produced no artifacts", () => {
     expect(
       renderToStaticMarkup(createElement(ArtifactNodes, { ids: [], onOpen: () => undefined })),

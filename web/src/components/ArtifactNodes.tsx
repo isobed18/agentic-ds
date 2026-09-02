@@ -45,6 +45,17 @@ export function useSequentialReveal(ids: string[], intervalMs = 420): string[] {
  * time when a modal opens. Surfacing the title next to the node means fetching
  * them up front — but only on expand, and only once each, so a collapsed node
  * costs nothing and a poll that re-reports the same ids does not re-fetch.
+ *
+ * #368: "once each" was only true for as long as this component stayed mounted.
+ * `ProjectWorkspace` renders each section as `{view === "data" && <…/>}`, so
+ * switching tabs unmounts the subtree and takes both `requested` and `previews`
+ * with it. Returning re-fetched every expanded artifact. The dedupe now lives
+ * in the module-level cache in `api.ts`, which outlives the unmount; the ref
+ * here still stops this instance from stacking duplicate in-flight calls within
+ * a single render pass. Reading the cache synchronously at render is what
+ * removes the second symptom — a title already fetched this session renders on
+ * the first frame back rather than passing through "Loading…" again while the
+ * cached promise resolves.
  */
 function useArtifactTitles(ids: string[], enabled: boolean): Record<string, string> {
   const [previews, setPreviews] = useState<Record<string, ArtifactPreview>>({});
@@ -76,11 +87,12 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
   const language = activeLanguage();
   const titles: Record<string, string> = {};
   for (const id of ids) {
-    const preview = previews[id];
+    const preview = previews[id] ?? api.cachedArtifactPreview(id);
     titles[id] = preview ? artifactTitle(preview, language, t) : t("Loading…");
   }
   return titles;
 }
+
 
 /** The artifacts a stage produced, behind a single "Artifacts (N)" opener.
  *

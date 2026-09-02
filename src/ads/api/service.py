@@ -7981,11 +7981,23 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown artifact") from None
 
     @app.get("/api/artifacts/{artifact_id}/preview")
-    def artifact_preview(artifact_id: str) -> dict[str, Any]:
+    def artifact_preview(artifact_id: str, response: Response) -> dict[str, Any]:
         try:
-            return plane.artifact_preview(artifact_id)
+            payload = plane.artifact_preview(artifact_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown artifact") from None
+        # #368: an artifact is immutable by contract -- a stage produces a new
+        # one rather than mutating an existing one, which is what makes fork,
+        # time-travel and audit cheap -- so this body cannot change for a given
+        # id. Saying so lets the browser answer a repeat itself, including
+        # across a full reload, which no in-memory client cache can cover.
+        # `private` because a preview belongs to the signed-in reader's run and
+        # must not sit in a shared proxy. The prose is composed per language,
+        # which `?lang=` puts in the cache key; `Vary` covers a caller that
+        # leaves it off and relies on Accept-Language instead.
+        response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+        response.headers["Vary"] = "Accept-Language"
+        return payload
 
     @app.get("/api/models/{artifact_id}/download")
     def download_model(artifact_id: str) -> Response:
