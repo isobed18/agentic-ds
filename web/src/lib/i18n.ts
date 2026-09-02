@@ -840,6 +840,8 @@ const TR: Record<string, string> = {
   "Check at least one table to promote.":
     "Veriye almak için en az bir tabloyu işaretleyin.",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
+  // #361: how a promoted table is named in the ML inputs list.
+  "{file} · page {page}": "{file} · sayfa {page}",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
   "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
