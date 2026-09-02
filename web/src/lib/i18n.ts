@@ -1256,6 +1256,16 @@ const TR: Record<string, string> = {
   "Planner synthesis failed": "Planlayıcı sentezi başarısız oldu",
   "Blocked — no plan was created": "Engellendi — plan oluşturulmadı",
   "Inspect failure": "Hatayı incele",
+  // #365: understanding that ends with nothing to accept says so, instead of
+  // leaving the proposal node pending forever with no message anywhere.
+  "Understanding finished without a plan": "Veri anlama, plan üretmeden tamamlandı",
+  "No ML pipeline is proposed for this source": "Bu kaynak için ML hattı önerilmiyor",
+  "A review is needed before a plan can be proposed":
+    "Plan önerilebilmesi için önce bir inceleme gerekiyor",
+  "The run reached the end of understanding and produced no proposal, and it recorded no reason. Nothing further will happen on its own.":
+    "Çalışma, veri anlama aşamasının sonuna ulaştı ve hiçbir öneri üretmedi; bir sebep de kaydetmedi. Kendiliğinden başka bir şey olmayacak.",
+  "Files understood: {files}": "Anlaşılan dosyalar: {files}",
+  "Inspect understanding": "Veri anlayışını incele",
 
   // Guided pipeline
   "Data understood": "Veri anlaşıldı",
