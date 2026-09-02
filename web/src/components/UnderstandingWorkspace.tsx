@@ -17,6 +17,7 @@ import {
   type ProgressStatus,
   type RoutedSourceFile,
   type RoutingSubstep,
+  type StagingOutcome,
   type StagingRoutingState,
 } from "./stagingRoutingState";
 import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
@@ -30,6 +31,7 @@ import { artifactTitle } from "./artifactTitle";
 import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
 import { ResizableNode } from "./ResizableNode";
 import { DocumentTableReview } from "./DocumentTableReview";
+import { FileInsight } from "./FileInsight";
 
 /** What the "Proposed plan" node is showing.
  *
@@ -98,11 +100,76 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
       {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
+      {!routing.error && !routing.attention && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
-      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
+      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
     </CanvasSurface>
+  );
+}
+
+/**
+ * Understanding finished and there is no plan to accept -- say so (#365).
+ *
+ * This is the whole reported bug: a file was accepted, nothing went red, and
+ * the flow never reached the suggested-plan node. The proposal node has only
+ * "pending" and "blocked", and every way of ending without a proposal rendered
+ * as pending, so a run that had already stopped was indistinguishable from one
+ * still working. People waited, reloaded, and started again.
+ *
+ * The two decision cases are not faults and are not dressed as ones: the
+ * planner is asked to weigh `defer_pipeline` and `no_pipeline`, and it records
+ * its reason in `decision_summary` -- which nothing rendered until now. The
+ * third case is the one we cannot explain from here, so it says only what is
+ * true: understanding finished, no plan came out of it, and these are the files
+ * it was working on.
+ */
+function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome; files: string[]; onInspect: () => void }) {
+  const declined = outcome.kind === "declined";
+  const unexplained = outcome.kind === "no_plan";
+  const tone = unexplained
+    ? { border: "border-stop-300", bg: "bg-stop-50", head: "text-stop-700", body: "text-stop-700" }
+    : declined
+      ? { border: "border-line", bg: "bg-surface", head: "text-ink", body: "text-ink-mute" }
+      : { border: "border-warn-300", bg: "bg-warn-50", head: "text-warn-800", body: "text-warn-700" };
+  const title = unexplained
+    ? t("Understanding finished without a plan")
+    : declined
+      ? t("No ML pipeline is proposed for this source")
+      : t("A review is needed before a plan can be proposed");
+  return (
+    <div role="alert" className={cx("fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border px-4 py-3 shadow-pop", tone.border, tone.bg)}>
+      <div className="flex items-start gap-3">
+        <StatusMark status={unexplained ? "failed" : "blocked"} />
+        <div className="min-w-0 flex-1">
+          <p className={cx("text-xs font-semibold", tone.head)}>{title}</p>
+          {outcome.summary && <p className={cx("mt-1 break-words text-[11px] leading-relaxed", tone.body)}>{local(outcome.summary)}</p>}
+          {unexplained && !outcome.summary && (
+            <p className={cx("mt-1 break-words text-[11px] leading-relaxed", tone.body)}>
+              {t("The run reached the end of understanding and produced no proposal, and it recorded no reason. Nothing further will happen on its own.")}
+            </p>
+          )}
+          {outcome.rationale.length > 0 && (
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+              {outcome.rationale.slice(0, 4).map((reason) => (
+                <li key={reason.en} className={cx("break-words text-[11px] leading-relaxed", tone.body)}>{local(reason)}</li>
+              ))}
+            </ul>
+          )}
+          {/* Naming the files is the point: the reported stall was per-file,
+              and a message that does not say which file leaves the same
+              guessing behind. */}
+          {files.length > 0 && (
+            <p className="mt-1.5 break-words text-[10px] leading-relaxed text-ink-faint">
+              {t("Files understood: {files}", { files: files.slice(0, 8).join(", ") })}
+              {files.length > 8 && ` +${files.length - 8}`}
+            </p>
+          )}
+        </div>
+        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{t("Inspect understanding")}</button>
+      </div>
+    </div>
   );
 }
 
@@ -287,7 +354,7 @@ export function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
       </div>
       {pager}
     </div>
-    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div>{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
+    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div><FileInsight insight={file.insight} />{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
     {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
@@ -544,7 +611,10 @@ export function Inspector({ title, eyebrow, onClose, children }: { title: string
     and its × scrolled out of reach on a long panel (#75). */}<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5"><div className="mt-5">{children}</div></div></aside>; }
 export function DockedPanel({ children }: { children: React.ReactNode }) { return <div data-docked-panel className="z-30 flex h-full min-h-0 min-w-0 w-full overflow-hidden border-l border-line bg-surface shadow-2xl [&>aside]:!w-full">{children}</div>; }
 function EvidenceSection({ title, tone, children }: { title: string; tone: "measured" | "interpretation"; children: React.ReactNode }) { return <section className={cx("rounded-xl border p-4", tone === "measured" ? "border-sky-200 bg-sky-50/40" : "border-violet-200 bg-violet-50/40")}><p className={cx("text-[10px] font-semibold uppercase tracking-[0.12em]", tone === "measured" ? "text-sky-700" : "text-violet-700")}>{title}</p><div className="mt-3">{children}</div></section>; }
-function SourceFiles({ profile, compact = false, onRemove, busy = false }: { profile: SourceProfile; compact?: boolean; onRemove?: (name: string) => void; busy?: boolean }) { const files = buildStagingRoutingState(profile, null, null).files; return <div className={compact ? "mt-2 space-y-1.5" : "mt-3 space-y-2"}>{files.map((file) => <div key={`${file.route}:${file.name}`} className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3 py-2"><FileBadge format={file.format} /><span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{file.name}</span><span className="text-[10px] text-ink-mute">{t(file.route === "structured" ? "Structured" : file.route === "documents" ? "Document" : "Needs review")}</span>{onRemove && <button type="button" aria-label={t("Remove file")} title={t("Remove file")} disabled={busy} onClick={() => onRemove(file.name)} className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-stop-50 hover:text-stop-700 disabled:opacity-40">×</button>}</div>)}</div>; }
+function SourceFiles({ profile, compact = false, onRemove, busy = false }: { profile: SourceProfile; compact?: boolean; onRemove?: (name: string) => void; busy?: boolean }) {
+  const files = buildStagingRoutingState(profile, null, null).files;
+  return <div className={compact ? "mt-2 space-y-1.5" : "mt-3 space-y-2"}>{files.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-lg border border-line bg-surface px-3 py-2"><div className="flex items-center gap-3"><FileBadge format={file.format} /><span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{file.name}</span><span className="text-[10px] text-ink-mute">{t(file.route === "structured" ? "Structured" : file.route === "documents" ? "Document" : "Needs review")}</span>{onRemove && <button type="button" aria-label={t("Remove file")} title={t("Remove file")} disabled={busy} onClick={() => onRemove(file.name)} className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-faint hover:bg-stop-50 hover:text-stop-700 disabled:opacity-40">×</button>}</div><FileInsight insight={file.insight} /></div>)}</div>;
+}
 function FileBadge({ format }: { format: string }) { return <span className="rounded bg-surface-sunken px-2 py-0.5 text-[9px] font-semibold uppercase text-ink-mute">{format}</span>; }
 function Metric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg border border-line bg-surface px-3 py-2"><p className="text-lg font-semibold text-ink">{value}</p><p className="mt-0.5 text-[10px] text-ink-mute">{label}</p></div>; }
 function Detail({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-[9px] uppercase tracking-wide text-ink-faint">{label}</p><p className="mt-1 truncate text-xs font-semibold text-ink">{value}</p></div>; }

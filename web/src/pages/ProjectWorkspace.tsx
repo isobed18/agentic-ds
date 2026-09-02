@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
+import { FileInsight } from "../components/FileInsight";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
   api,
@@ -368,7 +369,7 @@ function ProjectData({ projectId, data, onChanged }: { projectId: string; data: 
       </div>
       {error && <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="mt-5 grid gap-3 md:grid-cols-2">
-        {data.map((source) => <article key={source.source_id} className="card p-5"><div className="flex items-start justify-between gap-3"><h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={source.label}>{source.label}</h2><Metric label={t("Files")} value={String(source.files.length)} /></div><ul className="mt-4 space-y-2">{source.files.map((file) => <li key={file} className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink"><span aria-hidden="true">▤</span><span className="min-w-0 truncate">{file}</span></li>)}</ul></article>)}
+        {data.map((source) => <article key={source.source_id} className="card p-5"><div className="flex items-start justify-between gap-3"><h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={source.label}>{source.label}</h2><Metric label={t("Files")} value={String(source.files.length)} /></div><ul className="mt-4 space-y-2">{source.files.map((file) => { const summary = source.file_summaries?.find((item) => item.name === file); return <li key={file} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink"><div className="flex items-center gap-2"><span aria-hidden="true">▤</span><span className="min-w-0 truncate">{file}</span></div><FileInsight insight={summary?.insight} /></li>; })}</ul></article>)}
         {!data.length && <div className="md:col-span-2"><Empty title={t("No data in this project")} hint={t("Upload files or choose data you uploaded before.")} /></div>}
       </div>
     </section>
