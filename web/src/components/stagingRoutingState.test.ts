@@ -193,7 +193,10 @@ describe("staging source routing", () => {
     ]);
     expect(state.synthesis).toBe("failed");
     expect(state.proposal).toBe("failed");
-    expect(state.attention).toContain("No stable row grain");
+    // #362: the escalation's own prose is deliberately *not* re-derived here.
+    // The red ApprovalCard renders it once, with the action buttons that can
+    // answer it; the canvas only reports that the stage is blocked.
+    expect(state).not.toHaveProperty("attention");
   });
 });
 
