@@ -291,7 +291,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       // "the service was unreachable" is otherwise invisible until they open
       // the panel.
       const note = group.nodes.find((node) => node.note)?.note ?? undefined;
-      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} note={note} artifactIds={groupArtifactIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
+      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} footer={footer} note={note} artifactIds={groupArtifactIds} activeArtifactId={preview?.artifact_id ?? null} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
     })}
   </>;
 
@@ -411,7 +411,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   </>}>
     {/* Once the plan is accepted the plan node opens the summary of what will
         run, not the proposal it no longer is. */}
-    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} trailing={mlPipeline} />
+    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} activeArtifactId={preview?.artifact_id ?? null} trailing={mlPipeline} />
   </CanvasSurface>;
 }
 
@@ -467,7 +467,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
 
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file, index) => <Badge key={`${file}-${index}`} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
 
-function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, footer, note, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, footer, note, artifactIds, activeArtifactId, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; activeArtifactId?: string | null; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   // #194: a group waiting to be started reads distinctly -- a dashed brand ring
   // and its own "Waiting to start" badge -- instead of the neutral "pending"
   // it shares with stages a running pipeline simply has not reached. A running
@@ -475,7 +475,7 @@ function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, 
   // #214: `dimmed` is the pre-acceptance state. The node is on the canvas and
   // still opens its panel -- it is the pipeline that will run -- but it reads
   // as not-yet-live so the row says "this is next", not "this is happening".
-  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-[10px] font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-[10px] font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} onOpen={onOpenArtifact} /></ResizableNode>;
+  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-[10px] leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-[10px] font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-[10px] font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 // The head tracks the line: once #196 made `bg-ok-300` a real class, a
