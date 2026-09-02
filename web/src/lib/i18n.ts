@@ -835,16 +835,16 @@ const TR: Record<string, string> = {
   "Accepted tables become training data and are treated exactly like an uploaded file. Anything left unaccepted stays out.": "Kabul edilen tablolar eğitim verisi olur ve yüklenmiş bir dosyayla tamamen aynı şekilde işlenir. Kabul edilmeyen her şey dışarıda kalır.",
   "Promote {count} accepted": "{count} kabul edileni veriye al",
   "Promoting…": "Veriye alınıyor…",
-  "Recorded as a decision either way.": "Her iki durumda da karar olarak kaydedilir.",
-  // #303: per-candidate table review with an explicit accept/reject.
-  "Accept": "Kabul et",
-  "Reject": "Reddet",
-  "Accept or reject this table": "Bu tabloyu kabul et veya reddet",
+  // #360: the review is a checkbox list -- checked accepts, unchecked rejects.
+  "Accept all {count} tables": "{count} tablonun tümünü kabul et",
+  "Unchecked tables are recorded as rejected.":
+    "İşaretlenmemiş tablolar reddedilmiş olarak kaydedilir.",
+  "Check at least one table to promote.":
+    "Veriye almak için en az bir tabloyu işaretleyin.",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
   "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
-  "Decide on every table first ({count} left).": "Önce her tabloya karar verin ({count} kaldı).",
   "Stays out": "Dışarıda kalır",
   "{count} tables promoted": "{count} tablo veriye alındı",
   "Nothing was accepted, so nothing entered the pipeline.": "Hiçbir şey kabul edilmedi, bu yüzden hatta hiçbir şey girmedi.",
