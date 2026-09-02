@@ -53,6 +53,30 @@ describe("the extracted-table review (#303)", () => {
 });
 
 /**
+ * A failed extraction is not a decision waiting to be made (#359).
+ *
+ * A candidate the extractor produced neither rows nor a preview sample for is
+ * dropped from the list entirely, rather than shown disabled (#310 still
+ * covers the narrower case of a candidate with a preview sample but no
+ * reported row count).
+ */
+describe("candidates that failed extraction (#359)", () => {
+  it("drops candidates the extractor produced no rows for", () => {
+    // `row_count` is the length of the extracted rows, so zero is a failure
+    // rather than a small table.
+    expect(SOURCE).toContain(
+      ".filter((candidate) => candidate.rowCount > 0 || candidate.sampleRows.length > 0)",
+    );
+  });
+
+  it("still shows a candidate whose preview carried rows but no count", () => {
+    // The filter accepts either signal, so a preview that sampled rows without
+    // reporting a count is not thrown away with the genuine failures.
+    expect(SOURCE).toContain("candidate.sampleRows.length > 0)");
+  });
+});
+
+/**
  * One checkbox per candidate, replacing the Accept/Reject pair (#360, over #317).
  *
  * The pair carried three states -- accepted, rejected, undecided -- while
