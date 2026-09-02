@@ -4,6 +4,7 @@ import { api, type ArtifactPreview } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
 import { keepRevealed, nextToReveal, revealDelay } from "./artifactReveal";
 import { artifactTitle } from "./artifactTitle";
+import { cx } from "./ui";
 
 /** Reveal ids one at a time, in the order they first appeared.
  *
@@ -92,21 +93,16 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
  * opening it (#66). The count still ticks up one per poll (`useSequentialReveal`),
  * which is the live-progress signal the old round nodes existed to give.
  */
-export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: string) => void }) {
+export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void }) {
   const shown = useSequentialReveal(ids);
   const [open, setOpen] = useState(false);
   const titles = useArtifactTitles(shown, open);
   if (!ids.length) return null;
   return (
-    // The column's top is pinned to the node's bottom edge and carries no
-    // height-proportional transform, so the list below can only grow downward.
-    // A translate percentage resolves against the element's *own* height, so
-    // while the column wrapped both the pill and the list, every height change
-    // was split between its two ends: the list grew down by half and the pill
-    // rose by half. Opening the list moved the control out from under the
-    // cursor that clicked it, and each artifact `useSequentialReveal` appends
-    // during a run lifted it again until it overlapped its node (#162).
-    <div className="absolute left-1/2 top-full z-10 flex w-full -translate-x-1/2 flex-col items-center">
+    // This column stays in normal flow. An absolute `top-full` list contributed
+    // no height to the node, so a vertically stacked branch remained under it
+    // and was covered as the collection expanded (#327).
+    <div className="relative z-10 flex w-full flex-col items-center">
       {/* The straddle from #66 moves onto the pill, whose own height never
           changes, so it is a fixed offset rather than a share of the column. */}
       <div className="-translate-y-1/2">
@@ -121,7 +117,9 @@ export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: str
       </div>
       {open && (
         <ol className="pointer-events-auto mt-2 flex w-full min-w-0 flex-col gap-2" aria-label={t("Artifacts")}>
-          {shown.map((id, index) => (
+          {shown.map((id, index) => {
+            const active = id === activeId;
+            return (
             <li key={id} className="flex min-w-0 items-center gap-2">
               {/* The numbered circle straddles the dashed line down the list,
                   the way the opener straddles the node edge above it. */}
@@ -138,12 +136,14 @@ export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: str
                 type="button"
                 onClick={() => onOpen(id)}
                 title={titles[id]}
-                className="artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[10px] text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                aria-current={active ? "true" : undefined}
+                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[10px] text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", active && "ring-2 ring-brand-400")}
               >
                 {titles[id]}
               </button>
             </li>
-          ))}
+            );
+          })}
           {shown.length < ids.length && (
             <li aria-hidden="true" className="flex items-center gap-2">
               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-dashed border-line">

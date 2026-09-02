@@ -315,6 +315,29 @@ class RuntimeConfigurationPlan(FrozenModel):
     accepted_by: Literal["human"] | None = None
 
 
+class PlannerOverrideProposal(FrozenModel):
+    """Validated Planner changes that still require one explicit human click."""
+
+    proposal_id: str = Field(default_factory=lambda: f"override-{uuid4().hex[:12]}")
+    configuration_patch: dict[str, Any] = Field(default_factory=dict)
+    stage_directives: dict[str, list[str]] = Field(default_factory=dict)
+    checkpoint_stages: list[str] = Field(default_factory=list)
+    auto_proceed_stages: list[str] = Field(default_factory=list)
+    max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
+    pipeline_blueprint: PipelineBlueprint | None = None
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(
+            self.configuration_patch
+            or self.stage_directives
+            or self.checkpoint_stages
+            or self.auto_proceed_stages
+            or self.max_retries_by_stage
+            or self.pipeline_blueprint is not None
+        )
+
+
 class PromotedDocumentTable(FrozenModel):
     """One extracted PDF table a person accepted and promoted into the run.
 
@@ -356,6 +379,7 @@ class StagingWorkspace(Artifact):
     #: review dialog still has to offer.
     promoted_document_tables: list[PromotedDocumentTable] = Field(default_factory=list)
     recommended_plan: RuntimeConfigurationPlan | None = None
+    pending_override: PlannerOverrideProposal | None = None
     chat_history: list[StagingMessage] = Field(default_factory=list)
     planner_model: str | None = None
     planner_error: str | None = None
@@ -392,6 +416,7 @@ __all__ = [
     "PipelineNodeLayout",
     "PipelineLayout",
     "PipelineOutputReference",
+    "PlannerOverrideProposal",
     "PipelinePort",
     "PromotedDocumentTable",
     "RelationshipExplanation",
