@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
+// Shared with the automation-scoped models tab so the two views cannot disagree
+// about how an enhanced model reads.
+import { EnhancedRow } from "../components/ProjectContents";
 import { FileInsight } from "../components/FileInsight";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
 import {
@@ -471,7 +474,7 @@ function ProjectModels({ contents, onChanged }: { contents: ProjectContents | nu
     finally { setDeleteBusy(false); }
   }
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Models from every automation in this project will appear here.")} />;
-  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card relative p-4 pr-12"><button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-3 inline-flex !py-1 text-xs" download>{t("Download model")}</a>}</article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
+  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card relative p-4 pr-12"><button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.enhanced && <EnhancedRow enhanced={model.enhanced} metric={model.metric} />}<div className="mt-3 flex flex-wrap items-center gap-1.5">{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download original")}</a>}{model.enhanced?.saved && <a href={`/api/models/${model.enhanced.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download RL-enhanced")}</a>}</div></article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
 }
 
 function ProjectReports({ contents, onChanged }: { contents: ProjectContents | null; onChanged: () => void }) {
@@ -513,12 +516,29 @@ function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }
 
 export function AutomationInputSelector({ projectId, automation, onSelected, onProjectData }: { projectId: string; automation: AutomationDefinition; onSelected: (saved: AutomationDefinition) => void; onProjectData: () => void }) {
   const [data, setData] = useState<ProjectDataSource[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set((automation.selected_files ?? []).map((item) => keyOf(item))));
+  const savedSelection = new Set((automation.selected_files ?? []).map((item) => keyOf(item)));
+  const [selected, setSelected] = useState<Set<string>>(savedSelection);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void api.projectData(projectId).then(setData).catch((caught) => setError(messageOf(caught))).finally(() => setBusy(false)); }, [projectId]);
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true); setError(null);
+    void api.projectData(projectId).then((sources) => {
+      if (cancelled) return;
+      const files = automationInputFiles(sources);
+      setData(sources);
+      // A new automation has no saved subset yet. Starting with every project
+      // file checked makes its primary action immediately usable, while an
+      // existing saved subset remains authoritative (#325).
+      setSelected(defaultAutomationSelection(files, savedSelection));
+    }).catch((caught) => { if (!cancelled) setError(messageOf(caught)); }).finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+    // The IDs are the complete identity of the selector. A refreshed
+    // automation object must not reset choices the person is currently making.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, automation.automation_id]);
   if (busy) return <div className="grid h-full place-items-center"><Spinner label={t("Loading project data…")} /></div>;
-  const files = data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label })));
+  const files = automationInputFiles(data);
   const allSelected = everyFileSelected(files, selected);
   async function save() {
     const selections = files.filter((item) => selected.has(keyOf(item))).map(({ source_id, path }) => ({ source_id, path }));
@@ -534,6 +554,17 @@ export function AutomationInputSelector({ projectId, automation, onSelected, onP
 const PROJECT_VIEWS: ProjectView[] = ["overview", "data", "automations", "models", "reports"];
 function projectViewLabel(view: ProjectView): string { switch (view) { case "data": return t("Data"); case "automations": return t("Automations"); case "models": return t("Models"); case "reports": return t("Reports"); default: return t("Overview"); } }
 function keyOf(file: AutomationInputFile): string { return `${file.source_id}\u0000${file.path}`; }
+type SelectableAutomationInputFile = AutomationInputFile & { label: string };
+function automationInputFiles(data: ProjectDataSource[]): SelectableAutomationInputFile[] { return data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label }))); }
+
+/** Choose the first meaningful input state after project files load.
+ *
+ * A persisted subset is a deliberate choice and wins. With no saved choice,
+ * this is a new automation, so every available project file is selected.
+ */
+export function defaultAutomationSelection(files: AutomationInputFile[], saved: Set<string>): Set<string> {
+  return saved.size ? new Set(saved) : new Set(files.map(keyOf));
+}
 
 /**
  * #184: the select-all toggle's label is derived, not stored. A separate "all

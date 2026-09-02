@@ -173,6 +173,7 @@ const TR: Record<string, string> = {
   "Validation Strategy": "Doğrulama Stratejisi",
   "Leakage Audit": "Sızıntı Denetimi",
   "Feature Pipeline": "Öznitelik Hattı",
+  "RL feature engineering": "RL öznitelik mühendisliği",
   "Splitting": "Veri Bölme",
   "Training": "Eğitim",
   "Evaluation": "Değerlendirme",
@@ -490,6 +491,16 @@ const TR: Record<string, string> = {
   "Continue to the pipeline": "Boruhattına geç",
   "Ask about this data": "Bu veri hakkında sorun",
   "Recommended pipeline overrides": "Önerilen boru hattı ayarları",
+  "Proposed pipeline override": "Önerilen boru hattı override’ı",
+  "Awaiting your approval": "Onayınız bekleniyor",
+  "Apply override": "Override’ı uygula",
+  "Applying…": "Uygulanıyor…",
+  "Override applied": "Override uygulandı",
+  "Override discarded": "Override iptal edildi",
+  "Human approval": "İnsan onayı",
+  "Auto proceed": "Otomatik devam",
+  "{count} retries": "{count} yeniden deneme",
+  "Pipeline graph revision {revision}": "Boru hattı grafiği revizyon {revision}",
   "The planner's pipeline change was not applied": "Planlayıcının boru hattı değişikliği uygulanmadı",
   "Dismiss": "Kapat",
   "recommended, not applied": "öneri, uygulanmadı",
@@ -833,18 +844,18 @@ const TR: Record<string, string> = {
   "Accepted tables become training data and are treated exactly like an uploaded file. Anything left unaccepted stays out.": "Kabul edilen tablolar eğitim verisi olur ve yüklenmiş bir dosyayla tamamen aynı şekilde işlenir. Kabul edilmeyen her şey dışarıda kalır.",
   "Promote {count} accepted": "{count} kabul edileni veriye al",
   "Promoting…": "Veriye alınıyor…",
-  "Recorded as a decision either way.": "Her iki durumda da karar olarak kaydedilir.",
-  // #303: per-candidate table review with an explicit accept/reject.
-  "Accept": "Kabul et",
-  "Reject": "Reddet",
-  "Accept or reject this table": "Bu tabloyu kabul et veya reddet",
+  // #360: the review is a checkbox list -- checked accepts, unchecked rejects.
+  "Accept all {count} tables": "{count} tablonun tümünü kabul et",
+  "Unchecked tables are recorded as rejected.":
+    "İşaretlenmemiş tablolar reddedilmiş olarak kaydedilir.",
+  "Check at least one table to promote.":
+    "Veriye almak için en az bir tabloyu işaretleyin.",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   // #361: how a promoted table is named in the ML inputs list.
   "{file} · page {page}": "{file} · sayfa {page}",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
   "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
-  "Decide on every table first ({count} left).": "Önce her tabloya karar verin ({count} kaldı).",
   "Stays out": "Dışarıda kalır",
   "{count} tables promoted": "{count} tablo veriye alındı",
   "Nothing was accepted, so nothing entered the pipeline.": "Hiçbir şey kabul edilmedi, bu yüzden hatta hiçbir şey girmedi.",
@@ -1057,6 +1068,12 @@ const TR: Record<string, string> = {
   "Sensitive": "Kişisel veri",
   "Download": "İndir",
   "Download model": "Modeli indir",
+  // RL feature engineering (#354 follow-up). "RL" stays untranslated: it is the
+  // name of the technique, and the reason there are two models on one card.
+  "Download original": "Özgün modeli indir",
+  "Download RL-enhanced": "RL ile geliştirilmiş modeli indir",
+  "With {count} engineered feature(s)": "{count} üretilmiş öznitelik ile",
+  "Holdout {metric}": "Ayrık küme {metric}",
   "Approve at every stage": "Her aşamada onayla",
   "The agent decides each gate on its own signals unless you take that over.":
     "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",

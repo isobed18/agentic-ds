@@ -565,6 +565,142 @@ _TR.update(
         "Build the selected split and measure retained support.": (
             "Seçilen bölmeyi oluşturun ve elde tutulan desteği ölçün."
         ),
+        # --- RL feature engineering
+        "Search externally for engineered features using training rows only.": (
+            "Yalnızca eğitim satırlarını kullanarak dış serviste üretilmiş öznitelik arar."
+        ),
+        "Feature engineering search": "Öznitelik mühendisliği araması",
+        "Features an external search added or removed, measured on training rows only.": (
+            "Dış bir aramanın eklediği veya çıkardığı öznitelikler; yalnızca eğitim "
+            "satırları üzerinde ölçülmüştür."
+        ),
+        "Model with engineered features": "Üretilmiş özniteliklerle model",
+        (
+            "The same candidates refit on engineered features and scored on the same "
+            "untouched holdout."
+        ): (
+            "Aynı adaylar üretilmiş öznitelikler üzerinde yeniden eğitilir ve aynı "
+            "dokunulmamış ayrık küme üzerinde puanlanır."
+        ),
+        "Features added": "Eklenen öznitelikler",
+        "Features removed": "Çıkarılan öznitelikler",
+        "Features kept": "Korunan öznitelikler",
+        "Improvement": "İyileşme",
+        "Feature engineering skipped": "Öznitelik mühendisliği atlandı",
+        "service unreachable": "servise ulaşılamadı",
+        (
+            "The feature engineering service could not be reached, so no enhanced "
+            "model was produced. The rest of the run is unaffected."
+        ): (
+            "Öznitelik mühendisliği servisine ulaşılamadı, bu yüzden geliştirilmiş bir "
+            "model üretilmedi. Koşunun geri kalanı bundan etkilenmez."
+        ),
+        "No data left this machine.": "Bu makineden hiçbir veri çıkmadı.",
+        "Feature engineering not applicable": "Öznitelik mühendisliği uygulanabilir değil",
+        "no enhanced model": "geliştirilmiş model yok",
+        (
+            "This dataset cannot support the external feature search, so only the "
+            "ordinary model was trained."
+        ): (
+            "Bu veri kümesi dış öznitelik aramasını destekleyemez, bu yüzden yalnızca "
+            "olağan model eğitildi."
+        ),
+        "No reason given.": "Gerekçe belirtilmedi.",
+        "Feature search result": "Öznitelik arama sonucu",
+        "Original features": "Özgün öznitelikler",
+        "Engineered features": "Üretilmiş öznitelikler",
+        "improved": "iyileşti",
+        "no improvement": "iyileşme yok",
+        (
+            "Measured by the feature engineering service on the training rows only, so "
+            "the holdout could not influence which features it chose. Compare models on "
+            "the holdout score, not on these numbers."
+        ): (
+            "Öznitelik mühendisliği servisi tarafından yalnızca eğitim satırları üzerinde "
+            "ölçülmüştür; bu yüzden ayrık küme, seçilen öznitelikleri etkileyemez. "
+            "Modelleri bu sayılarla değil, ayrık küme puanıyla karşılaştırın."
+        ),
+        "{metric} moved from {baseline} to {optimized}, a change of {delta}.": (
+            "{metric} {baseline} değerinden {optimized} değerine geçti; değişim {delta}."
+        ),
+        "{added} feature(s) added, {removed} removed.": (
+            "{added} öznitelik eklendi, {removed} çıkarıldı."
+        ),
+        "Features added and removed": "Eklenen ve çıkarılan öznitelikler",
+        "{count} change(s)": "{count} değişiklik",
+        (
+            "Every engineered feature is a formula over existing columns, so it can "
+            "be rebuilt on new data."
+        ): (
+            "Her üretilmiş öznitelik mevcut sütunlar üzerinde bir formüldür; bu yüzden "
+            "yeni veride yeniden kurulabilir."
+        ),
+        "Change": "Değişiklik",
+        # "Feature" already has an entry further down; the catalogue is one flat
+        # namespace and a second one is a duplicate-key error, not an override.
+        "Formula": "Formül",
+        "Added": "Eklendi",
+        "Removed": "Çıkarıldı",
+        "No target column was chosen, so there is nothing to optimise for.": (
+            "Hedef sütun seçilmedi, bu yüzden iyileştirilecek bir şey yok."
+        ),
+        "No column in this data works as a prediction target.": (
+            "Bu veride tahmin hedefi olarak çalışan bir sütun yok."
+        ),
+        "The chosen target column is not present in the data.": (
+            "Seçilen hedef sütun veride bulunmuyor."
+        ),
+        "The target never changes, so nothing can be learned from it.": (
+            "Hedef hiç değişmiyor, bu yüzden ondan bir şey öğrenilemez."
+        ),
+        "Too many rows are missing the target.": "Çok sayıda satırda hedef eksik.",
+        "The target looks like an identifier rather than an outcome.": (
+            "Hedef, bir sonuçtan çok tanımlayıcıya benziyor."
+        ),
+        "There are too few rows for a reliable feature search.": (
+            "Güvenilir bir öznitelik araması için satır sayısı çok az."
+        ),
+        "At least one target class has too few examples.": (
+            "En az bir hedef sınıfında yeterli örnek yok."
+        ),
+        "No column is usable as a model feature.": (
+            "Model özniteliği olarak kullanılabilir sütun yok."
+        ),
+        "There are too few rows to cross-validate.": (
+            "Çapraz doğrulama için satır sayısı çok az."
+        ),
+        "A baseline model could not be trained on this data.": (
+            "Bu veri üzerinde referans model eğitilemedi."
+        ),
+        "There are too many features to search over.": (
+            "Üzerinde arama yapılamayacak kadar çok öznitelik var."
+        ),
+        (
+            "Added {added} engineered feature(s) and removed {removed}; "
+            "{metric} moved by {delta} on training rows."
+        ): (
+            "{added} üretilmiş öznitelik eklendi, {removed} çıkarıldı; eğitim "
+            "satırlarında {metric} {delta} kadar değişti."
+        ),
+        "The feature engineering service was unreachable, so this step was skipped.": (
+            "Öznitelik mühendisliği servisine ulaşılamadı, bu yüzden bu adım atlandı."
+        ),
+        "This dataset cannot support the external feature search.": (
+            "Bu veri kümesi dış öznitelik aramasını destekleyemez."
+        ),
+        "Refit on {count} engineered feature(s) and scored on the same holdout.": (
+            "{count} üretilmiş öznitelik üzerinde yeniden eğitildi ve aynı ayrık küme "
+            "üzerinde puanlandı."
+        ),
+        "Feature engineering service unreachable; step skipped": (
+            "Öznitelik mühendisliği servisine ulaşılamadı; adım atlandı"
+        ),
+        "Feature engineering does not apply here": (
+            "Öznitelik mühendisliği burada uygulanamaz"
+        ),
+        "+{added} features, −{removed} · {metric} {delta}": (
+            "+{added} öznitelik, −{removed} · {metric} {delta}"
+        ),
         (
             "Fit the deterministic candidate menu, then optionally run one isolated, "
             "host-scored agent-authored development experiment."
