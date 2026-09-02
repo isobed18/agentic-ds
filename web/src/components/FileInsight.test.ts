@@ -16,7 +16,9 @@ describe("per-file profile insights (#329)", () => {
       },
     }));
 
-    expect(markup).toContain(t("File insight"));
+    // #382: the colon is what stops the bold brand-coloured label reading as a
+    // button. It lives in the JSX, so it holds in both languages.
+    expect(markup).toContain(`${t("File insight")}:`);
     expect(markup).toContain(activeLanguage() === "tr" ? "42 satır" : "42 rows");
     expect(markup).toContain("customer_id");
   });
