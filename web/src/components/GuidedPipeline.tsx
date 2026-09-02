@@ -334,13 +334,16 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {accepted && !canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
-        {/* #247: runs the current automation again, deliberately -- as a new
-            execution recorded in Execution history, not as recovery from a
-            failure the way Retry above is framed. */}
-        {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-surface/95 text-ink-soft shadow-card backdrop-blur transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
       </div>
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-line bg-surface/95 px-1.5 py-1 shadow-card backdrop-blur">
+          {/* #247: runs the current automation again, deliberately -- as a new
+              execution recorded in Execution history, not as recovery from a
+              failure the way Retry above is framed. #364: it is a secondary
+              action, so it belongs in this quieter pill rather than floating
+              over the graph beside the primary run controls. The pill already
+              supplies the border, shadow and backdrop this button carried. */}
+          {accepted && !active && <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-soft transition hover:bg-surface-sunken disabled:opacity-50" onClick={onRerun} disabled={busy}><Reload /></button>}
           <button type="button" className="btn-ghost text-xs" aria-expanded={selected === planPanel} onClick={() => setSelected((current) => (current === planPanel ? null : planPanel))}>{t("Review plan")}</button>
           {!accepted && profile.tables.length > 0 && <button type="button" className="btn-ghost inline-flex items-center gap-1.5 text-xs" aria-expanded={sensitivitySelected} onClick={() => setSelected((current) => (current === "sensitivity" ? null : "sensitivity"))}>{t("Review personal data")}{personalColumns > 0 && <Badge tone="warn">{personalColumns}</Badge>}</button>}
           {/* #305: only offered when there is something to reveal, so the normal
