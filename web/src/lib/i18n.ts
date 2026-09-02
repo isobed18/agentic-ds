@@ -1174,6 +1174,7 @@ const TR: Record<string, string> = {
   "Upload files or choose data you uploaded before.":
     "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin.",
   "Files": "Dosyalar",
+  "File insight": "Dosya içgörüsü",
   "or": "veya",
   "Each automation has its own data selection, graph, runs, models, and reports.":
     "Her otomasyonun kendi veri seçimi, grafiği, çalıştırmaları, modelleri ve raporları vardır.",
