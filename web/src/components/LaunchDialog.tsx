@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { api, type DatasetSummary } from "../lib/api";
 import { t } from "../lib/i18n";
 import { Badge, Spinner, cx } from "./ui";
+import { useOverlayDismiss } from "./overlayDismiss";
 
 export function LaunchDialog({
   onClose, onLaunched, initialSourceId = null,
@@ -34,6 +35,7 @@ export function LaunchDialog({
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [reuseCache, setReuseCache] = useState(false);
+  const panel = useOverlayDismiss<HTMLDivElement>(onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,8 +88,8 @@ export function LaunchDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4">
-      <div className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true">
+      <div ref={panel} className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-5 py-3.5">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold">{t("New run")}</h2>
