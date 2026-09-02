@@ -259,3 +259,47 @@ def test_promotion_without_a_workspace_still_succeeds(tmp_path: Path) -> None:
     promoted = plane.promote_document_tables("run-doc", review["artifact_id"])
 
     assert len(promoted["table_assets"]) == 1
+
+
+def test_promoted_tables_do_not_reach_the_abt_and_the_ui_does_not_claim_they_do():
+    """#390: the promise the review dialog used to make, measured.
+
+    Promotion writes a real ``TableAsset``; nothing loads it back. Rather than
+    pin the gap itself -- a test that passes only while the product is wrong --
+    this pins the two facts a future wiring change has to move together: intake
+    builds its frames from the uploaded directory, and the interface no longer
+    tells anyone that accepted tables become training data.
+    """
+    stages = Path("src/ads/pipeline/stages.py").read_text(encoding="utf-8")
+    intake = stages[stages.index("def intake_stage("):stages.index("def integration_stage(")]
+    # Intake reads the uploaded directory and nothing else.
+    assert "load_directory(source_path)" in intake
+    assert "TableAsset" not in intake
+    assert "load_table_asset" not in intake
+
+    # And the ML run resumes past intake, so it could not pick one up anyway.
+    service = Path("src/ads/api/service.py").read_text(encoding="utf-8")
+    assert 'STAGE_UNTIL = "schema_discovery"' in service
+    assert "resume_from = prior_pause or self.STAGE_UNTIL" in service
+
+    # The claims that measured false are gone from the rendered copy. Matched as
+    # whole strings so the comments explaining *why* they went do not count.
+    retired = (
+        "Accepted tables become training data and are treated exactly like an uploaded file.",
+        "They now behave like any other uploaded table.",
+        "Extracted tables are candidates and cannot enter ML until reviewed.",
+        "Review and promote each extracted table before it can enter training data.",
+    )
+    for path in (
+        "web/src/components/DocumentTableReview.tsx",
+        "web/src/components/UnderstandingWorkspace.tsx",
+        "web/src/components/GuidedPipeline.tsx",
+        "web/src/lib/i18n.ts",
+    ):
+        text = Path(path).read_text(encoding="utf-8")
+        for claim in retired:
+            assert claim not in text, f"{path} still says {claim!r}"
+
+    # And what replaced them says what promotion actually does.
+    dialog = Path("web/src/components/DocumentTableReview.tsx").read_text(encoding="utf-8")
+    assert "Promotion does not add them to the ML training table for this run" in dialog

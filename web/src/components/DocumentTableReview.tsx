@@ -178,7 +178,16 @@ export function DocumentTableReview({
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>
             <h3 className="mt-1 text-lg font-semibold text-ink">{t("Review extracted tables")}</h3>
-            <p className="mt-1 text-xs leading-relaxed text-ink-mute">{t("Accepted tables become training data and are treated exactly like an uploaded file. Anything left unaccepted stays out.")}</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-mute">{t("Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.")}</p>
+            {/* #390: this used to say accepted tables "become training data and
+                are treated exactly like an uploaded file". They are not. The ML
+                run resumes at the stage after schema_discovery, so intake never
+                re-runs, no promoted TableAsset is ever loaded back --
+                `load_table_asset` has no production caller -- and the
+                integration plan was authored before the table existed, so it
+                could not reference it either. Saying so is the honest half of
+                the fix; wiring it is tracked separately. */}
+            <p className="mt-1 text-[11px] leading-relaxed text-warn-700">{t("Promotion does not add them to the ML training table for this run; that is built from the uploaded files.")}</p>
           </div>
           <button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close")} onClick={onClose}>×</button>
         </div>
@@ -189,7 +198,7 @@ export function DocumentTableReview({
         {promoted !== null ? (
           <div className="mt-5 rounded-xl border border-ok-200 bg-ok-50 px-4 py-4">
             <p className="text-sm font-semibold text-ok-700">{t("{count} tables promoted", { count: promoted })}</p>
-            <p className="mt-1 text-[11px] text-ink-mute">{promoted === 0 ? t("Nothing was accepted, so nothing entered the pipeline.") : t("They now behave like any other uploaded table.")}</p>
+            <p className="mt-1 text-[11px] text-ink-mute">{promoted === 0 ? t("Nothing was accepted, so nothing was saved.") : t("They are recorded with their provenance and listed in the Documents panel.")}</p>
             <button type="button" className="btn-primary mt-4 w-full justify-center text-xs" onClick={onClose}>{t("Close")}</button>
           </div>
         ) : (
@@ -240,7 +249,7 @@ export function DocumentTableReview({
                           </span>
                         </span>
                         <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
-                          {settled ? t("Already promoted") : checked ? t("Enters ML") : t("Stays out")}
+                          {settled ? t("Already promoted") : checked ? t("Accepted") : t("Stays out")}
                         </span>
                       </label>
                       {/* The faithful visual preview of what was detected: the
