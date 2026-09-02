@@ -893,6 +893,42 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Artifact previews already fetched this session, keyed by artifact and language.
+ *
+ * #368: the only cache in this path was a `useRef` inside `ArtifactNodes`, so
+ * switching project sections -- which unmounts the section's whole subtree --
+ * threw it away. Coming back re-issued one `preview` request per expanded
+ * artifact and put every title back through "Loading…" on a run that finished
+ * hours ago.
+ *
+ * Caching it is not a guess about how often previews change: `ads.contracts.base`
+ * makes artifact immutability a contract invariant -- a stage produces a new
+ * artifact rather than mutating an existing one -- so a repeat fetch for the
+ * same id is guaranteed to return what it returned before.
+ *
+ * Language is part of the key because `request()` appends `?lang=` and a preview
+ * carries server-composed prose alongside its `{en, tr}` titles. Keying on the
+ * id alone would serve one language's wording after a switch to the other.
+ *
+ * Two maps rather than one: the promise map deduplicates concurrent and later
+ * callers, and the settled map answers synchronously so a remounting component
+ * can render a known title on its first frame. A rejection is cached by
+ * neither.
+ */
+const previewCache = new Map<string, Promise<ArtifactPreview>>();
+const settledPreviews = new Map<string, ArtifactPreview>();
+
+function previewKey(artifactId: string): string {
+  return `${activeLanguage()}:${artifactId}`;
+}
+
+/** Empty the preview cache. For tests; nothing in the app invalidates it. */
+export function clearArtifactPreviewCache(): void {
+  previewCache.clear();
+  settledPreviews.clear();
+}
+
 async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   // The server composes some panel prose around measured values, so it needs to
   // know the language at fetch time; it cannot be translated afterwards.
@@ -1254,8 +1290,35 @@ export const api = {
     ),
   runDocumentUnderstanding: (runId: string) =>
     request<StagingWorkspace>(`/api/runs/${runId}/staging/documents/run`, { method: "POST" }),
-  artifactPreview: (artifactId: string) =>
-    request<ArtifactPreview>(`/api/artifacts/${encodeURIComponent(artifactId)}/preview`),
+  /** One artifact's preview, fetched at most once per session and language.
+   *
+   * See {@link previewCache}. `cachedArtifactPreview` is the synchronous read
+   * of the same cache, for a component that wants to render a known title on
+   * its first frame instead of passing through "Loading…" again. */
+  artifactPreview: (artifactId: string) => {
+    const key = previewKey(artifactId);
+    const inFlight = previewCache.get(key);
+    if (inFlight) return inFlight;
+    const pending = request<ArtifactPreview>(
+      `/api/artifacts/${encodeURIComponent(artifactId)}/preview`,
+    )
+      .then((preview) => {
+        settledPreviews.set(key, preview);
+        return preview;
+      })
+      .catch((error) => {
+        // A failed preview is not a fact about the artifact. Forget it so a
+        // later expand can try again, rather than caching the failure for the
+        // rest of the session.
+        previewCache.delete(key);
+        throw error;
+      });
+    previewCache.set(key, pending);
+    return pending;
+  },
+  /** The preview for an artifact already fetched this session, or undefined. */
+  cachedArtifactPreview: (artifactId: string): ArtifactPreview | undefined =>
+    settledPreviews.get(previewKey(artifactId)),
   /** Amend a staged run's configuration. Accepted while it is still staging. */
   updateStaged: (runId: string, configuration: Record<string, unknown>) =>
     request<{ configuration: Record<string, unknown> }>(`/api/runs/${runId}/staged`, {
