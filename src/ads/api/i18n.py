@@ -1098,6 +1098,26 @@ _TR.update(
         ),
         "This run is already in progress.": "Bu koşu zaten devam ediyor.",
         "This run is not staged.": "Bu koşu evreleme aşamasında değil.",
+        # --- document table promotion refusals (#310). The candidate id used to
+        # appear in these; it is an internal key nobody has seen, so the table is
+        # named the way the review dialog named it instead.
+        "{name} (page {page})": "{name} (sayfa {page})",
+        "No rows were extracted from the table “{table}”, so it cannot become data.": (
+            "“{table}” tablosundan hiç satır çıkarılamadı, bu yüzden veriye dönüştürülemez."
+        ),
+        "No columns were extracted from the table “{table}”, so it cannot become data.": (
+            "“{table}” tablosundan hiç sütun çıkarılamadı, bu yüzden veriye dönüştürülemez."
+        ),
+        "The rows extracted from the table “{table}” do not all have the same "
+        "number of cells, so it cannot become data.": (
+            "“{table}” tablosundan çıkarılan satırların hücre sayıları aynı değil, "
+            "bu yüzden veriye dönüştürülemez."
+        ),
+        "The headers extracted from the table “{table}” do not match its rows, "
+        "so it cannot become data.": (
+            "“{table}” tablosundan çıkarılan başlıklar satırlarıyla uyuşmuyor, "
+            "bu yüzden veriye dönüştürülemez."
+        ),
     }
 )
 

@@ -18,6 +18,7 @@ import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import STAGING_ROUTING_SOURCE from "../components/stagingRoutingState.ts?raw";
 import UNDERSTANDING_WORKSPACE_SOURCE from "../components/UnderstandingWorkspace.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
+import { COUNT_UNITS } from "../components/collectionUnit";
 import { GROUPS } from "../components/mlPipelineGroups";
 import { LANGUAGES, localizedList, t } from "./i18n";
 
@@ -76,6 +77,14 @@ describe("labels the scanner cannot see", () => {
     const visibleText = GROUPS.flatMap((group) => [group.title, group.description]);
     const missing = visibleText.filter((text) => !known.has(text));
     expect(missing, "stage titles and descriptions reaching t() through variables").toEqual([]);
+  });
+
+  it("translates every unit an artifact collection count can carry", () => {
+    // #297: the count phrase is chosen by the collection's key and reaches t()
+    // through a variable, so the literal scan cannot see any of these. An
+    // untranslated one would ship a Turkish artifact dialog saying "42 columns".
+    const known = new Set(catalogueKeys());
+    expect(COUNT_UNITS.filter((phrase) => !known.has(phrase))).toEqual([]);
   });
 
   it("pins the top-level navigation labels the scanner cannot see", () => {

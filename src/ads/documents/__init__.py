@@ -13,12 +13,14 @@ from ads.documents.pdf import (
     pdf_prompt_context,
 )
 from ads.documents.promotion import (
+    CandidateNotPromotable,
     create_document_table_review,
     promote_reviewed_document_tables,
 )
 
 __all__ = [
     "PDF_SUFFIXES",
+    "CandidateNotPromotable",
     "DocumentExtractionError",
     "PdfDocument",
     "load_pdf",
