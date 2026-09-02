@@ -81,6 +81,46 @@ def test_sources_and_uploads_are_selectable_without_path_traversal(tmp_path: Pat
         raise AssertionError("source selection escaped the configured root")
 
 
+def test_each_structured_file_carries_a_row_free_profile_insight(tmp_path: Path) -> None:
+    """The Data tab and Intake used to receive only a file name and route.
+
+    The summary must come from the same measured DataCards the agents are
+    allowed to see: counts, keys and issue codes, never source values.
+    """
+    plane = _plane(tmp_path)
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    with (tmp_path / "sources" / "demo" / "context.pdf").open("wb") as handle:
+        writer.write(handle)
+
+    profile = plane.source_profile("demo")
+    file_summary = next(
+        item for item in profile["source_files"] if item["name"] == "table.csv"
+    )
+    document_summary = next(
+        item for item in profile["source_files"] if item["name"] == "context.pdf"
+    )
+
+    assert file_summary["rows"] == 1
+    assert file_summary["tables"] == 1
+    assert file_summary["schema_role"]["en"]
+    assert file_summary["candidate_keys"] == []
+    assert "no key candidate" in file_summary["insight"]["en"]
+    assert "1 row" in file_summary["insight"]["en"]
+    assert "1 satır" in file_summary["insight"]["tr"]
+    assert "1,2" not in str(file_summary), "raw source values leaked into the insight"
+    assert document_summary["schema_role"]["en"] == "document context"
+    assert "1 page" in document_summary["insight"]["en"]
+    assert "OCR or vision needed" in document_summary["insight"]["en"]
+
+    # Project Data reads the catalog-shaped summary, not SourceProfile
+    # directly. Keep the exact per-file evidence on that path too.
+    catalog = plane._dataset_summary({"source_id": "demo", "label": "demo"})
+    catalog_files = {item["name"]: item for item in catalog["file_summaries"]}
+    assert catalog_files["table.csv"]["insight"] == file_summary["insight"]
+    assert catalog_files["context.pdf"]["insight"] == document_summary["insight"]
+
+
 def test_an_identical_single_file_upload_reuses_its_owned_source(tmp_path: Path) -> None:
     """The same bytes used to create a fresh directory and source every time."""
     plane = _plane(tmp_path)
