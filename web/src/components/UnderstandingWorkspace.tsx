@@ -13,6 +13,7 @@ import { NodeStatusHeader, StatusMark } from "./NodeStatus";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
   buildStagingRoutingState,
+  fileNeedsAttention,
   pageOfFiles,
   type ProgressStatus,
   type RoutedSourceFile,
@@ -368,12 +369,51 @@ export function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
       </div>
       {pager}
     </div>
-    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div><FileInsight insight={file.insight} />{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
+    {shown.map((file) => <RoutedFileCard key={`${file.route}:${file.name}`} file={file} />)}
     {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
       {pager}
     </div>
+  </div>;
+}
+
+/** One routed file, explained on request rather than at all times (#386).
+ *
+ * Every card used to stack its insight, its routing reason, its table list and
+ * its measured-from-content block unconditionally, so a panel holding more than
+ * a couple of files was a wall of prose you scrolled past to find a file name.
+ * Collapsed, the card is the row a person is scanning for: format, name, route.
+ *
+ * The exception is a file carrying a measurement that disagrees with its
+ * extension, or one the measurement could not decide. Those are the reason
+ * someone opens this panel, so such a card starts expanded -- and if it is
+ * collapsed by hand, it still says why it mattered.
+ */
+function RoutedFileCard({ file }: { file: RoutedSourceFile }) {
+  const attention = fileNeedsAttention(file);
+  const [open, setOpen] = useState(attention);
+  const needsDecision = file.measuredDeterministic === false && file.needsDecisionBecause;
+  return <div className="rounded-xl border border-line bg-surface px-3 py-3">
+    <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <FileBadge format={file.format} />
+      <p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p>
+      <span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span>
+      {/* The name of the control, for anyone who cannot see the chevron. The
+          row's own content already names the file it belongs to. */}
+      <span className="sr-only">{open ? t("Hide file details") : t("Show file details")}</span>
+      <Chevron open={open} />
+    </button>
+    {!open && attention && <div className="mt-2 space-y-1">
+      {file.contradictsExtension === true && <p className="text-[10px] font-semibold leading-relaxed text-warn-800">{t("Extension and measurement disagree")}</p>}
+      {needsDecision && <p className="text-[10px] leading-relaxed text-warn-700">{t("Needs a decision")}: {file.needsDecisionBecause}</p>}
+    </div>}
+    {open && <>
+      <FileInsight insight={file.insight} />
+      {file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}
+      {file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}
+      <MeasuredType file={file} />
+    </>}
   </div>;
 }
 
