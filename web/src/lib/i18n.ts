@@ -286,6 +286,8 @@ const TR: Record<string, string> = {
   "Waiting for you": "Sizi bekliyor",
   "Run finished": "Koşu tamamlandı",
   "Run stopped with an error": "Koşu hatayla durdu",
+  "Model generated": "Model üretildi",
+  "Report generated": "Rapor üretildi",
 
   // data screen
   "Data understanding": "Veriyi anlama",
@@ -840,6 +842,7 @@ const TR: Record<string, string> = {
   "Accept or reject this table": "Bu tabloyu kabul et veya reddet",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
+  "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
   "Decide on every table first ({count} left).": "Önce her tabloya karar verin ({count} kaldı).",
   "Stays out": "Dışarıda kalır",
@@ -1292,7 +1295,18 @@ const TR: Record<string, string> = {
   "Artifact recorded": "Artifact kaydedildi",
   "Fields": "Alanlar",
   "Collection counts": "Koleksiyon sayıları",
+  // Turkish takes no plural after a numeral: "42 sütun", not "42 sütunlar".
+  // "öğe" stays the fallback for collections that really do hold opaque items.
   "{count} items": "{count} öğe",
+  "{count} columns": "{count} sütun",
+  "{count} rows": "{count} satır",
+  "{count} tables": "{count} tablo",
+  "{count} documents": "{count} belge",
+  "{count} pages": "{count} sayfa",
+  "{count} warnings": "{count} uyarı",
+  "{count} findings": "{count} bulgu",
+  "{count} candidates": "{count} aday",
+  "{count} metrics": "{count} metrik",
   "Data card": "Veri kartı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
