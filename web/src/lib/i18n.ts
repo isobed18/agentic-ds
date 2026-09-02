@@ -840,6 +840,8 @@ const TR: Record<string, string> = {
   "Reject": "Reddet",
   "Accept or reject this table": "Bu tabloyu kabul et veya reddet",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
+  // #361: how a promoted table is named in the ML inputs list.
+  "{file} · page {page}": "{file} · sayfa {page}",
   "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
   "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
