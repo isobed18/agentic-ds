@@ -903,7 +903,11 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert "<UnderstandingAndProposal" not in one_page
     assert "api.upload" in project_page
     assert "<AutomationInputSelector" in one_page
-    assert "<PlannerPanel" in guided
+    # #378: the Planner opener and its panel moved out of GuidedPipeline and
+    # onto the automation workspace, so it stays reachable in every lifecycle
+    # state instead of only the guided canvas.
+    assert "<PlannerPanel" in one_page
+    assert "onOpenPlanner" in guided
     assert "<PlannerPanel" in builder
     for control in ("pause_after", "gate_handler", "max_retries", "ArtifactPreview"):
         assert control in builder
