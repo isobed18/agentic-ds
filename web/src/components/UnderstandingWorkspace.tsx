@@ -65,7 +65,7 @@ function useRunProgress(runId: string | null): RunProgressSnapshot | null {
   return progress;
 }
 
-export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache, onRemoveFile, onAddFiles }: { profile: SourceProfile; onStart: () => void; busy: boolean; reuseCache: boolean; onReuseCache: (value: boolean) => void; onRemoveFile?: (name: string) => void; onAddFiles?: () => void }) {
+export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles }: { profile: SourceProfile; onStart: () => void; busy: boolean; onRemoveFile?: (name: string) => void; onAddFiles?: () => void }) {
   const [sourceOpen, setSourceOpen] = useState(false);
   const counts = sourceCounts(profile);
   return (
@@ -79,11 +79,10 @@ export function SourceSummary({ profile, onStart, busy, reuseCache, onReuseCache
           {/* A real button, full width of the card. It used to be bare text with
               no padding, so the hit area was the glyphs of "Run Intake" itself:
               the card looked like the control and swallowed every click that
-              missed the word. The card cannot become the button -- it holds a
-              checkbox, and nesting interactive elements is invalid -- so the
-              button grows to fill it instead. */}
+              missed the word, so the button grows to fill the card instead.
+              (#314 removed the reuse checkbox that used to sit under it, which
+              was the other reason the card could not become the button.) */}
           <button type="button" onClick={onStart} disabled={busy} className="btn-primary mt-3 w-full justify-center text-sm">{busy ? t("Starting…") : t("Run Intake")}</button>
-          <label className="mt-4 flex items-start gap-2 border-t border-brand-200 pt-3 text-[10px] leading-relaxed text-ink-mute"><input type="checkbox" className="mt-0.5" checked={reuseCache} onChange={(event) => onReuseCache(event.target.checked)} /><span><strong className="block text-ink">{t("Reuse matching understanding")}</strong>{t("Optional. Turn this off to rerun Intake and Schema Discovery for the same files.")}</span></label>
         </div>
       </div>
     </CanvasSurface>
