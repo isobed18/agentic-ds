@@ -177,7 +177,7 @@ export function PlannerPanel({
         className="flex w-11 shrink-0 flex-col items-center gap-3 border-l border-line bg-surface py-4 hover:bg-surface-sunken"
       >
         <SparkIcon />
-        <span className="text-[11px] font-medium tracking-wide text-ink-mute [writing-mode:vertical-rl]">
+        <span className="text-2xs font-medium tracking-wide text-ink-mute [writing-mode:vertical-rl]">
           {t("Planner")}
         </span>
       </button>
@@ -187,9 +187,9 @@ export function PlannerPanel({
   return (
     <aside className={cx(
       "flex flex-col bg-surface",
-      onToggle ? "w-[340px] shrink-0 border-l border-line" : "h-[560px] rounded-xl border border-line",
+      onToggle ? "w-[21.25rem] shrink-0 border-l border-line" : "h-[35rem] rounded-xl border border-line",
     )}>
-      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-line px-4">
         <SparkIcon />
         <span className="flex-1 text-sm font-semibold">
           {sourceId && !runId ? t("Ask about this data") : t("Planner / Orchestrator")}
@@ -204,7 +204,7 @@ export function PlannerPanel({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+        <p className="mb-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           {t("Remembered rules")}
         </p>
         <ul className="mb-4 space-y-1.5">
@@ -219,7 +219,7 @@ export function PlannerPanel({
         {graphEditRejected && (
           <section className="mb-4 rounded-lg border border-warn-300 bg-warn-50 px-3 py-2.5" role="alert">
             <div className="mb-1 flex items-start gap-2">
-              <p className="flex-1 text-[11px] font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
+              <p className="flex-1 text-2xs font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
               <button
                 onClick={() => setGraphEditRejected(null)}
                 className="rounded p-0.5 text-warn-800/70 hover:bg-warn-100 hover:text-warn-800"
@@ -230,20 +230,20 @@ export function PlannerPanel({
                 </svg>
               </button>
             </div>
-            <p className="text-[10px] leading-relaxed text-warn-800">{graphEditRejected}</p>
+            <p className="text-3xs leading-relaxed text-warn-800">{graphEditRejected}</p>
           </section>
         )}
 
-        {overrideOutcome && <p className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2 text-[11px] font-semibold text-ok-700" role="status">{overrideOutcome}</p>}
+        {overrideOutcome && <p className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2 text-2xs font-semibold text-ok-700" role="status">{overrideOutcome}</p>}
 
         {pendingOverride && recommendations.length > 0 && (
           <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
             <div className="mb-2 flex items-center gap-2">
-              <p className="text-[11px] font-semibold text-ink">{t("Proposed pipeline override")}</p>
+              <p className="text-2xs font-semibold text-ink">{t("Proposed pipeline override")}</p>
               <Badge tone="warn">{t("Awaiting your approval")}</Badge>
             </div>
             <ul className="space-y-1">
-              {recommendations.map((item) => <li key={item} className="text-[10px] leading-relaxed text-ink-soft">· {item}</li>)}
+              {recommendations.map((item) => <li key={item} className="text-3xs leading-relaxed text-ink-soft">· {item}</li>)}
             </ul>
             <div className="mt-3 flex justify-end gap-2 border-t border-brand-100 pt-3">
               <button type="button" className="btn-ghost !py-1.5 text-xs" disabled={busy} onClick={() => void resolveOverride("discard")}>{t("Cancel")}</button>
@@ -254,11 +254,11 @@ export function PlannerPanel({
 
         {problemRecommendations.length > 0 && (
           <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
-            <p className="mb-2 text-[11px] font-semibold text-ink">{t("Ranked ML opportunities")}</p>
+            <p className="mb-2 text-2xs font-semibold text-ink">{t("Ranked ML opportunities")}</p>
             <ol className="space-y-2">
               {problemRecommendations.map((item) => (
-                <li key={`${item.rank}:${item.target_column}`} className="rounded-lg bg-surface px-2.5 py-2 text-[10px] text-ink-soft">
-                  <div className="flex items-start gap-2"><Badge tone="brand">#{item.rank}</Badge><div className="min-w-0"><p className="font-semibold text-ink">{item.problem_title}</p><p className="font-mono text-[9px] text-ink-mute">{item.target_column} · {item.task_type} · {item.primary_metric}</p></div></div>
+                <li key={`${item.rank}:${item.target_column}`} className="rounded-lg bg-surface px-2.5 py-2 text-3xs text-ink-soft">
+                  <div className="flex items-start gap-2"><Badge tone="brand">#{item.rank}</Badge><div className="min-w-0"><p className="font-semibold text-ink">{item.problem_title}</p><p className="font-mono text-4xs text-ink-mute">{item.target_column} · {item.task_type} · {item.primary_metric}</p></div></div>
                   <ul className="mt-2 space-y-1">{item.evidence.map((line) => <li key={line}>· {line}</li>)}</ul>
                   {item.caveats.map((line) => <p key={line} className="mt-1 text-warn-700">! {line}</p>)}
                 </li>
@@ -280,7 +280,7 @@ export function PlannerPanel({
                   <button
                     key={prompt}
                     onClick={() => void send(prompt)}
-                    className="rounded-full border border-line bg-surface px-2.5 py-1 text-left text-[11px] text-ink-soft hover:border-brand-200 hover:bg-brand-50"
+                    className="rounded-full border border-line bg-surface px-2.5 py-1 text-left text-2xs text-ink-soft hover:border-brand-200 hover:bg-brand-50"
                   >
                     {t(prompt)}
                   </button>
@@ -293,7 +293,7 @@ export function PlannerPanel({
         <div className="space-y-2.5">
           {messages.map((m, i) => (
             <div key={i} className={cx("flex flex-col gap-0.5", m.role === "user" && "items-end")}>
-              <span className="text-[10px] text-ink-faint">
+              <span className="text-3xs text-ink-faint">
                 {m.role === "assistant" ? t("Assistant") : t("You")} · {m.at}
               </span>
               <p className={cx(
@@ -328,7 +328,7 @@ export function PlannerPanel({
             </svg>
           </button>
         </div>
-        <p className="mt-2 text-[10px] leading-relaxed text-ink-faint">
+        <p className="mt-2 text-3xs leading-relaxed text-ink-faint">
           {t("Planner uses workspace rules and context from this workflow.")}
         </p>
       </div>

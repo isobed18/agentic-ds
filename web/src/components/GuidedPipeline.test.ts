@@ -62,7 +62,7 @@ describe("planner access in the guided pipeline (#97)", () => {
     // to share with "Review plan".
     expect(SOURCE.match(/t\("Chat with Planner"\)/g) ?? []).toHaveLength(1);
     const toolbar = SOURCE.slice(
-      SOURCE.indexOf('fixed top-[70px] left-1/2'),
+      SOURCE.indexOf('fixed top-[4.375rem] left-1/2'),
       SOURCE.indexOf('t("Advanced editor · Experimental")'),
     );
     expect(toolbar).not.toContain("Chat with Planner");
@@ -147,7 +147,7 @@ describe("the run control (#197)", () => {
   it("docks the control top-centre instead of floating at the bottom edge", () => {
     // Bottom-middle placement was easy to miss, so the whole workspace read as
     // stuck (#194). Top-centre is where the eye lands on the canvas.
-    expect(SOURCE).toContain("fixed top-[70px] left-1/2");
+    expect(SOURCE).toContain("fixed top-[4.375rem] left-1/2");
     expect(SOURCE).not.toContain("fixed bottom-4 left-1/2");
   });
 
@@ -415,8 +415,8 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
 
   it("keeps one toolbar: Accept before acceptance, Run after", () => {
     const toolbar = SOURCE.slice(
-      SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]'),
-      SOURCE.indexOf("\n    </div>", SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]')),
+      SOURCE.indexOf('<div data-no-pan className="fixed top-[4.375rem]'),
+      SOURCE.indexOf("\n    </div>", SOURCE.indexOf('<div data-no-pan className="fixed top-[4.375rem]')),
     );
     expect(toolbar).toContain('{!accepted && <button');
     expect(toolbar).toContain('t("Accept and add base pipeline")');

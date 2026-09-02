@@ -46,7 +46,9 @@ describe("the project-first journey (#157, #165)", () => {
   });
 
   it("removes the automation toolbar's uploaded-data picker and uploader", () => {
-    const header = AUTOMATION_SOURCE.match(/<header className="relative flex h-\[58px\][\s\S]*?<\/header>/)?.[0] ?? "";
+    // #380 turned the header's pinned 58px into the rem it was worth, so it
+    // grows with the taller rows inside it instead of clipping them.
+    const header = AUTOMATION_SOURCE.match(/<header className="relative flex h-\[3\.625rem\][\s\S]*?<\/header>/)?.[0] ?? "";
     expect(header).toContain("<LanguagePicker");
     expect(header).not.toContain("<select");
     expect(header).not.toContain('title={t("Add files")}');

@@ -122,7 +122,7 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
           type="button"
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
-          className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+          className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-3xs font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
         >
           {t("Artifacts ({count})", { count: shown.length })}
         </button>
@@ -135,7 +135,7 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
             <li key={id} className="flex min-w-0 items-center gap-2">
               {/* The numbered circle straddles the dashed line down the list,
                   the way the opener straddles the node edge above it. */}
-              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-brand-300 bg-brand-50 text-[10px] font-semibold tabular-nums text-brand-700">
+              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-brand-300 bg-brand-50 text-3xs font-semibold tabular-nums text-brand-700">
                 {index + 1}
                 {index < shown.length - 1 && (
                   <span
@@ -149,7 +149,7 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
                 onClick={() => onOpen(id)}
                 title={titles[id]}
                 aria-current={active ? "true" : undefined}
-                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[10px] text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", active && "ring-2 ring-brand-400")}
+                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-3xs text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", active && "ring-2 ring-brand-400")}
               >
                 {titles[id]}
               </button>

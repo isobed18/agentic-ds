@@ -102,7 +102,7 @@ export function DataReview({ sourceId }: { sourceId: string }) {
               <div className="overflow-x-auto border-t border-line-soft px-4 py-3">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-[10px] uppercase tracking-wide text-ink-faint">
+                    <tr className="text-3xs uppercase tracking-wide text-ink-faint">
                       <th className="pb-2 pr-4 text-left font-medium">{t("Column")}</th>
                       <th className="pb-2 pr-4 text-left font-medium">{t("Kind")}</th>
                       <th className="pb-2 pr-4 text-right font-medium">{t("Missing")}</th>
@@ -175,7 +175,7 @@ function Figure({
       "rounded-lg border px-3 py-2",
       tone === "warn" ? "border-warn-500/40 bg-warn-50" : "border-line bg-surface",
     )}>
-      <p className="text-[10px] uppercase tracking-wide text-ink-faint">{label}</p>
+      <p className="text-3xs uppercase tracking-wide text-ink-faint">{label}</p>
       <p className="mt-0.5 text-lg font-semibold tabular-nums text-ink">{value}</p>
     </div>
   );
@@ -212,12 +212,12 @@ function Relationships({ relationships }: { relationships: MeasuredRelationship[
             <div key={i} className="rounded-lg border border-line bg-surface-sunken px-3 py-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <span className="font-medium text-ink">{r.from_table}</span>
-                <code className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-ink-soft">
+                <code className="rounded bg-surface px-1.5 py-0.5 text-2xs text-ink-soft">
                   {r.from_columns.join(" + ")}
                 </code>
                 <span className="text-ink-faint">→</span>
                 <span className="font-medium text-ink">{r.to_table}</span>
-                <code className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-ink-soft">
+                <code className="rounded bg-surface px-1.5 py-0.5 text-2xs text-ink-soft">
                   {r.to_columns.join(" + ")}
                 </code>
                 <Badge tone="neutral">{r.cardinality}</Badge>
@@ -239,7 +239,7 @@ function Relationships({ relationships }: { relationships: MeasuredRelationship[
                 </span>
               </div>
               {r.orphan_rate > 0.02 && (
-                <p className="mt-1.5 text-[11px] leading-relaxed text-warn-700">
+                <p className="mt-1.5 text-2xs leading-relaxed text-warn-700">
                   {t("Unmatched rows would be dropped from the joined table. Worth knowing what they are before the pipeline decides for you.")}
                 </p>
               )}

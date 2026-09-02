@@ -40,7 +40,7 @@ describe("the understanding inspector layout", () => {
       },
     ));
 
-    expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(440px, 94vw)");
+    expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(27.5rem, 94vw)");
     expect(classNameFor(markup, "aside").split(" ")).toEqual(expect.arrayContaining(["h-full", "w-full"]));
     expect(classNameFor(markup, "aside").split(" ")).not.toContain("fixed");
   });
@@ -161,7 +161,7 @@ describe("the understanding inspector layout", () => {
     }));
 
     expect(markup).toContain(
-      "grid-template-columns:minmax(0, 1fr) minmax(0, min(440px, 47vw)) minmax(0, min(390px, 47vw))",
+      "grid-template-columns:minmax(0, 1fr) minmax(0, min(27.5rem, 47vw)) minmax(0, min(24.375rem, 47vw))",
     );
     const planner = markup.match(/<div data-docked-panel="true" class="([^"]+)"/)?.[1]?.split(" ") ?? [];
     expect(planner).toEqual(expect.arrayContaining(["h-full", "w-full"]));

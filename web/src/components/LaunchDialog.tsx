@@ -93,7 +93,7 @@ export function LaunchDialog({
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-5 py-3.5">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold">{t("New run")}</h2>
-            <p className="mt-0.5 text-[11px] text-ink-mute">
+            <p className="mt-0.5 text-2xs text-ink-mute">
               {t("Choose the data. Intake and schema discovery run straight away; you configure the rest on the pipeline.")}
             </p>
           </div>
@@ -105,7 +105,7 @@ export function LaunchDialog({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <label className="mb-3 flex items-center gap-2 text-[11px] text-ink-mute">
+          <label className="mb-3 flex items-center gap-2 text-2xs text-ink-mute">
             <input
               type="checkbox"
               checked={reuseCache}
@@ -152,7 +152,7 @@ export function LaunchDialog({
                       </p>
                       {/* The table names are what tell you whether this is the
                           dataset you meant; the totals alone do not. */}
-                      <p className="mt-1.5 truncate font-mono text-[11px] text-ink-faint">
+                      <p className="mt-1.5 truncate font-mono text-2xs text-ink-faint">
                         {(d.table_summaries ?? []).map((table) => table.name).join(" · ")}
                       </p>
                     </>
@@ -184,7 +184,7 @@ export function LaunchDialog({
             {uploading ? t("Uploading…") : t("Or upload files — CSV, Parquet, Excel. Several files become one dataset.")}
           </label>
 
-          <p className="mt-4 text-[11px] leading-relaxed text-ink-faint">
+          <p className="mt-4 text-2xs leading-relaxed text-ink-faint">
             {t("Profiled locally. No rows leave this machine.")}
           </p>
         </div>

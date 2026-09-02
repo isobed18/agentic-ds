@@ -32,7 +32,7 @@ export function YourData({ onOpen }: { onOpen: (sourceId: string) => void }) {
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700">▦</div>
                 <div className="min-w-0 flex-1">
                   <h2 className="truncate text-sm font-semibold text-ink">{source.label}</h2>
-                  <p className="mt-1 text-[11px] text-ink-mute">{source.source_id}</p>
+                  <p className="mt-1 text-2xs text-ink-mute">{source.source_id}</p>
                 </div>
                 {source.files && <Badge>{source.files.length} {t("files")}</Badge>}
               </div>

@@ -86,7 +86,7 @@ export function SensitivityOverride({
       <div className="max-h-72 overflow-y-auto rounded-lg border border-line">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-surface-sunken">
-            <tr className="text-[10px] uppercase tracking-wide text-ink-faint">
+            <tr className="text-3xs uppercase tracking-wide text-ink-faint">
               <th className="px-3 py-2 text-left font-medium">{t("Column")}</th>
               <th className="px-3 py-2 text-left font-medium">{t("Kind")}</th>
               <th className="px-3 py-2 text-right font-medium">{t("Distinct")}</th>
@@ -101,7 +101,7 @@ export function SensitivityOverride({
                 <tr key={`${column.table}.${column.name}`} className="border-t border-line-soft">
                   <td className="px-3 py-1.5">
                     <span className="font-medium text-ink">{column.name}</span>
-                    <span className="ml-1.5 text-[10px] text-ink-faint">{column.table}</span>
+                    <span className="ml-1.5 text-3xs text-ink-faint">{column.table}</span>
                     {changed && <Badge tone="brand">{t("changed")}</Badge>}
                   </td>
                   <td className="px-3 py-1.5 text-ink-mute">
@@ -117,7 +117,7 @@ export function SensitivityOverride({
                           key={value}
                           onClick={() => set(column.name, value)}
                           className={cx(
-                            "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+                            "rounded px-2 py-0.5 text-2xs font-medium transition-colors",
                             choice === value
                               ? value === "pii"
                                 ? "bg-warn-500 text-white"

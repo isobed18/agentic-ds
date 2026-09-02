@@ -66,11 +66,11 @@ export function ArtifactMetadata({ preview }: { preview: ArtifactPreview }) {
     <div className="mt-4 space-y-4" data-artifact-metadata>
       {fields.length > 0 && (
         <section>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Fields")}</p>
+          <p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Fields")}</p>
           <dl className="mt-2 grid gap-2 sm:grid-cols-2">
             {fields.map(([key, value]) => (
               <div key={key} className="min-w-0 rounded-lg bg-surface-sunken px-3 py-2">
-                <dt className="text-[9px] uppercase tracking-wide text-ink-faint">{fieldLabel(key)}</dt>
+                <dt className="text-4xs uppercase tracking-wide text-ink-faint">{fieldLabel(key)}</dt>
                 <dd className="mt-1 break-words text-xs font-semibold text-ink">{String(value)}</dd>
               </div>
             ))}
@@ -79,12 +79,12 @@ export function ArtifactMetadata({ preview }: { preview: ArtifactPreview }) {
       )}
       {collections.length > 0 && (
         <section>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Collection counts")}</p>
+          <p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Collection counts")}</p>
           <dl className="mt-2 grid gap-2 sm:grid-cols-2">
             {collections.map(([key, count]) => (
               <div key={key} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
                 <dt className="truncate text-xs font-medium text-ink-soft">{fieldLabel(key)}</dt>
-                <dd className="shrink-0 text-[10px] font-semibold tabular-nums text-brand-700">{t(countUnit(key), { count })}</dd>
+                <dd className="shrink-0 text-3xs font-semibold tabular-nums text-brand-700">{t(countUnit(key), { count })}</dd>
               </div>
             ))}
           </dl>

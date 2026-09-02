@@ -201,7 +201,7 @@ export function ApprovalCard({
 
       {suspectColumns.length > 0 && (
         <div className="mt-3 rounded-lg border border-line bg-surface-sunken px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-ink">{t("Columns to drop")}</p>
+          <p className="text-2xs font-semibold text-ink">{t("Columns to drop")}</p>
           <ul className="mt-1.5 space-y-1">
             {suspectColumns.map((column) => (
               <li key={column}>
@@ -213,7 +213,7 @@ export function ApprovalCard({
                     onChange={() => toggleDropColumn(column)}
                   />
                   <span className="font-mono text-ink">{column}</span>
-                  <span className="text-[10px] text-ink-faint">
+                  <span className="text-3xs text-ink-faint">
                     {targetColumns.has(column) ? t("target leakage") : t("blocking leakage")}
                   </span>
                 </label>
@@ -239,14 +239,14 @@ export function ApprovalCard({
             <span className="flex items-baseline gap-1.5">
               <span className="text-sm font-medium text-ink">{metin.label}</span>
               {o.recommended && (
-                <span className="rounded bg-brand-500/15 px-1 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-brand-700">
+                <span className="rounded bg-brand-500/15 px-1 py-0.5 text-4xs font-semibold uppercase tracking-wide text-brand-700">
                   {t("suggested")}
                 </span>
               )}
             </span>
-            <span className="mt-0.5 block text-[11px] leading-snug text-ink-mute">{metin.consequence}</span>
+            <span className="mt-0.5 block text-2xs leading-snug text-ink-mute">{metin.consequence}</span>
             {o.downstream_effect && (
-              <span className="mt-1 block text-[11px] text-warn-700">
+              <span className="mt-1 block text-2xs text-warn-700">
                 {metin.downstream ?? o.downstream_effect}
               </span>
             )}

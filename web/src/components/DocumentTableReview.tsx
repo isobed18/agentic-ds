@@ -176,7 +176,7 @@ export function DocumentTableReview({
       <div ref={panel} className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
         <div className="flex shrink-0 items-start gap-4 border-b border-line p-5">
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>
+            <p className="text-3xs font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>
             <h3 className="mt-1 text-lg font-semibold text-ink">{t("Review extracted tables")}</h3>
             <p className="mt-1 text-xs leading-relaxed text-ink-mute">{t("Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.")}</p>
             {/* #390: this used to say accepted tables "become training data and
@@ -187,7 +187,7 @@ export function DocumentTableReview({
                 integration plan was authored before the table existed, so it
                 could not reference it either. Saying so is the honest half of
                 the fix; wiring it is tracked separately. */}
-            <p className="mt-1 text-[11px] leading-relaxed text-warn-700">{t("Promotion does not add them to the ML training table for this run; that is built from the uploaded files.")}</p>
+            <p className="mt-1 text-2xs leading-relaxed text-warn-700">{t("Promotion does not add them to the ML training table for this run; that is built from the uploaded files.")}</p>
           </div>
           <button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close")} onClick={onClose}>×</button>
         </div>
@@ -198,7 +198,7 @@ export function DocumentTableReview({
         {promoted !== null ? (
           <div className="mt-5 rounded-xl border border-ok-200 bg-ok-50 px-4 py-4">
             <p className="text-sm font-semibold text-ok-700">{t("{count} tables promoted", { count: promoted })}</p>
-            <p className="mt-1 text-[11px] text-ink-mute">{promoted === 0 ? t("Nothing was accepted, so nothing was saved.") : t("They are recorded with their provenance and listed in the Documents panel.")}</p>
+            <p className="mt-1 text-2xs text-ink-mute">{promoted === 0 ? t("Nothing was accepted, so nothing was saved.") : t("They are recorded with their provenance and listed in the Documents panel.")}</p>
             <button type="button" className="btn-primary mt-4 w-full justify-center text-xs" onClick={onClose}>{t("Close")}</button>
           </div>
         ) : (
@@ -244,11 +244,11 @@ export function DocumentTableReview({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-ink">{candidate.title}</span>
-                          <span className="mt-0.5 block text-[10px] text-ink-mute">
+                          <span className="mt-0.5 block text-3xs text-ink-mute">
                             {candidate.sourceFile} · {t("page {page}", { page: candidate.page })} · {t("{rows} rows × {columns} columns", { rows: candidate.rowCount, columns: candidate.columns.length })}
                           </span>
                         </span>
-                        <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
+                        <span className={`shrink-0 rounded-md px-2 py-1 text-3xs font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
                           {settled ? t("Already promoted") : checked ? t("Accepted") : t("Stays out")}
                         </span>
                       </label>
@@ -257,7 +257,7 @@ export function DocumentTableReview({
                           the decision above is made against evidence (#303). */}
                       <div className="overflow-x-auto px-4 py-3">
                         {candidate.columns.length > 0 || candidate.sampleRows.length > 0 ? (
-                          <table className="w-full border-collapse text-[10px]">
+                          <table className="w-full border-collapse text-3xs">
                             {candidate.columns.length > 0 && (
                               <thead>
                                 <tr>{candidate.columns.map((column, index) => <th key={index} className="border border-line bg-surface-sunken px-2 py-1 text-left font-semibold text-ink">{column}</th>)}</tr>
@@ -268,10 +268,10 @@ export function DocumentTableReview({
                             </tbody>
                           </table>
                         ) : (
-                          <p className="text-[10px] text-ink-faint">{t("No preview was extracted for this candidate.")}</p>
+                          <p className="text-3xs text-ink-faint">{t("No preview was extracted for this candidate.")}</p>
                         )}
                         {candidate.rowCount > candidate.sampleRows.length && (
-                          <p className="mt-2 text-[10px] text-ink-faint">{t("Showing the first {shown} of {total} rows.", { shown: candidate.sampleRows.length, total: candidate.rowCount })}</p>
+                          <p className="mt-2 text-3xs text-ink-faint">{t("Showing the first {shown} of {total} rows.", { shown: candidate.sampleRows.length, total: candidate.rowCount })}</p>
                         )}
                       </div>
                       </li>
@@ -289,10 +289,10 @@ export function DocumentTableReview({
                     about -- "check at least one" would be asking for a click
                     that no longer exists. */}
                 {acceptedCount > 0
-                  ? <span className="text-[10px] text-ink-faint">{t("Unchecked tables are recorded as rejected.")}</span>
+                  ? <span className="text-3xs text-ink-faint">{t("Unchecked tables are recorded as rejected.")}</span>
                   : selectable.length === 0
-                    ? <span className="text-[10px] text-ink-faint">{t("Every table here has already been promoted.")}</span>
-                    : <span className="text-[10px] font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
+                    ? <span className="text-3xs text-ink-faint">{t("Every table here has already been promoted.")}</span>
+                    : <span className="text-3xs font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
               </div>
             )}
           </>

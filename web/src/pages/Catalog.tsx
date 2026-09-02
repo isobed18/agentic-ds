@@ -76,7 +76,7 @@ export function Settings() {
             <dl className="grid gap-2 sm:grid-cols-2">
               {Object.entries(values).map(([k, v]) => (
                 <div key={k} className="rounded-lg border border-line bg-surface-sunken px-3 py-2">
-                  <dt className="text-[10px] uppercase tracking-wide text-ink-faint">{k.replace(/_/g, " ")}</dt>
+                  <dt className="text-3xs uppercase tracking-wide text-ink-faint">{k.replace(/_/g, " ")}</dt>
                   <dd className="text-sm text-ink">{renderValue(v)}</dd>
                 </div>
               ))}

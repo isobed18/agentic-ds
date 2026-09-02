@@ -51,7 +51,7 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
             {graph.base_table}
           </span>
         </div>
-        <span className="mt-0.5 block text-[11px] text-brand-700">{t("Base entity")}</span>
+        <span className="mt-0.5 block text-2xs text-brand-700">{t("Base entity")}</span>
       </div>
 
       <ul className="space-y-2">
@@ -65,7 +65,7 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
                 <TableIcon />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-ink">{edge.target}</p>
-                  <p className="truncate text-[11px] text-ink-mute">
+                  <p className="truncate text-2xs text-ink-mute">
                     {t("via {key}", { key: edge.via || "—" })}
                     {node?.source_table && (
                       <span className="text-ink-faint">
@@ -75,10 +75,10 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
                     )}
                   </p>
                 </div>
-                <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-mute">
+                <span className="shrink-0 rounded bg-surface-sunken px-1.5 py-0.5 text-3xs uppercase tracking-wide text-ink-mute">
                   {edge.how}
                 </span>
-                <span className={cx("flex shrink-0 items-center gap-1.5 text-[11px] font-medium", meta.text)}>
+                <span className={cx("flex shrink-0 items-center gap-1.5 text-2xs font-medium", meta.text)}>
                   <span className={cx("h-2 w-2 rounded-full", meta.dot)} />
                   {edge.overlap_rate != null
                     ? `${(edge.overlap_rate * 100).toFixed(1)}%`
@@ -92,16 +92,16 @@ export function SchemaMap({ graph }: { graph: SchemaGraph }) {
 
       <div className="lg:col-span-2">
         <div className="flex flex-wrap items-center gap-4 border-t border-line-soft pt-2.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+          <span className="text-2xs font-semibold uppercase tracking-wide text-ink-faint">
             {t("Match confidence")}
           </span>
           {(["high", "medium", "low", "unmeasured"] as const).map((key) => (
-            <span key={key} className="flex items-center gap-1.5 text-[11px] text-ink-mute">
+            <span key={key} className="flex items-center gap-1.5 text-2xs text-ink-mute">
               <span className={cx("h-2 w-2 rounded-full", CONFIDENCE[key].dot)} />
               {t(CONFIDENCE[key].label)}
             </span>
           ))}
-          <span className="text-[11px] text-ink-faint">
+          <span className="text-2xs text-ink-faint">
             {t("Share of child rows whose key was found in the parent.")}
           </span>
         </div>

@@ -117,14 +117,14 @@ export function Notifications() {
         aria-label={unread.length ? `${unread.length} unread notifications` : "Notifications"}
         className="relative rounded-lg p-2 text-ink-mute hover:bg-surface-sunken hover:text-ink"
       >
-        <svg viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <svg viewBox="0 0 20 20" className="h-[1.125rem] w-[1.125rem]" fill="none" stroke="currentColor" strokeWidth="1.7">
           <path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 3-1 4-1.5 4.5h12c-.5-.5-1.5-1.5-1.5-4.5A4.5 4.5 0 0 0 10 3Z" strokeLinejoin="round" />
           <path d="M8.5 15a1.6 1.6 0 0 0 3 0" strokeLinecap="round" />
         </svg>
         {unread.length > 0 && (
           <span
             className={cx(
-              "absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-semibold text-white",
+              "absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full px-1 text-3xs font-semibold text-white",
               urgent ? "bg-stop-600" : "bg-brand-600",
             )}
           >
@@ -134,14 +134,14 @@ export function Notifications() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 z-50 w-[340px] overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
+        <div className="absolute right-0 top-11 z-50 w-[21.25rem] overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
           <header className="flex items-center gap-2 border-b border-line px-4 py-2.5">
             <span className="flex-1 text-sm font-semibold text-ink">{t("Notifications")}</span>
-            <span className="text-[11px] text-ink-faint">{visible.length}</span>
+            <span className="text-2xs text-ink-faint">{visible.length}</span>
             {visible.length > 0 && (
               <button
                 onClick={() => persistDismissed(dismissAll(dismissed, visible))}
-                className="rounded-md px-1.5 py-0.5 text-[11px] font-medium text-ink-mute hover:bg-surface-sunken hover:text-ink"
+                className="rounded-md px-1.5 py-0.5 text-2xs font-medium text-ink-mute hover:bg-surface-sunken hover:text-ink"
               >
                 {t("Clear all")}
               </button>
@@ -151,7 +151,7 @@ export function Notifications() {
           {visible.length === 0 ? (
             <p className="px-4 py-6 text-center text-xs text-ink-mute">{t("Nothing to report.")}</p>
           ) : (
-            <ul className="max-h-[380px] overflow-y-auto">
+            <ul className="max-h-[23.75rem] overflow-y-auto">
               {visible.map((i) => (
                 // Row and dismiss are siblings, not nested: a button inside a
                 // button is invalid markup, and the inner click is swallowed in
