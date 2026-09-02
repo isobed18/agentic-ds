@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api, type ArtifactPreview, type DocumentTableDecisionInput } from "../lib/api";
 import { t } from "../lib/i18n";
+import { useOverlayDismiss } from "./overlayDismiss";
 
 type Candidate = {
   candidateId: string;
@@ -59,6 +60,7 @@ export function DocumentTableReview({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<number | null>(null);
+  const panel = useOverlayDismiss<HTMLDivElement>(onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,7 +148,7 @@ export function DocumentTableReview({
           only way out of the dialog was to scroll back up to find it. The
           panel is a column now: the header keeps its place and the list
           below it is what moves. */}
-      <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
+      <div ref={panel} className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
         <div className="flex shrink-0 items-start gap-4 border-b border-line p-5">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>

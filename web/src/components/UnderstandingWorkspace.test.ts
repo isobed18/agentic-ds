@@ -389,3 +389,73 @@ describe("closing a dialog that scrolls (#388)", () => {
     expect(REVIEW_SOURCE).toContain('<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">');
   });
 });
+
+describe("the Intake panel's per-file explanations (#386)", () => {
+  it("shows only the header row until a file is expanded", () => {
+    // Every card used to stack its insight, its reason, its table list and its
+    // measured-from-content block unconditionally, so a panel with more than a
+    // couple of files was a wall of prose to scroll past to find a file name.
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "orders.csv",
+        format: "csv",
+        route: "structured",
+        reason: { en: "CSV, read as a table.", tr: "CSV, tablo olarak okunur." },
+        tableNames: ["orders"],
+        measuredFlow: "tablo",
+        measuredEvidence: "Delimiter , over 12 columns",
+      }],
+    }));
+
+    expect(markup).toContain("orders.csv");
+    expect(markup).toContain('aria-expanded="false"');
+    // The prose is gone, not merely restyled.
+    expect(markup).not.toContain("tablo olarak okunur");
+    expect(markup).not.toContain("Delimiter");
+    expect(markup).not.toContain("orders</p>");
+  });
+
+  it("names the disclosure for anyone who cannot see the chevron", () => {
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{ name: "orders.csv", format: "csv", route: "structured", tableNames: [] }],
+    }));
+
+    expect(markup).toContain("Dosya ayrıntılarını göster");
+  });
+
+  it("starts expanded when the measurement contradicts the extension", () => {
+    // This is the reason a person opens the panel, so it may never end up
+    // behind a collapsed card.
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "report.csv",
+        format: "csv",
+        route: "structured",
+        tableNames: [],
+        measuredFlow: "belge",
+        contradictsExtension: true,
+        measuredEvidence: "PDF text layer: 15 pages",
+      }],
+    }));
+
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("PDF text layer: 15 pages");
+  });
+
+  it("starts expanded when the measurement could not decide", () => {
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "dump.bin",
+        format: "bin",
+        route: "needs_review",
+        tableNames: [],
+        measuredFlow: "islenemez",
+        measuredDeterministic: false,
+        needsDecisionBecause: "no delimiter found",
+      }],
+    }));
+
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("no delimiter found");
+  });
+});
