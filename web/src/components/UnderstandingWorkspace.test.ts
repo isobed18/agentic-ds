@@ -6,6 +6,7 @@ import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, Rout
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
+import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 
 Object.defineProperty(globalThis, "localStorage", {
@@ -342,5 +343,49 @@ describe("understanding node status placement", () => {
     }));
 
     expect(classNameFor(markup, "label")).toContain("whitespace-nowrap");
+  });
+});
+
+describe("the outcome notice's action (#388)", () => {
+  it("offers the extracted-tables dialog when there are candidates to choose", () => {
+    // "Inspect understanding" selected the synthesis node, which is not the
+    // action a person needs on this notice. The label and the target now match
+    // the Documents panel's own entry point into the same dialog.
+    expect(WORKSPACE_SOURCE).toContain("const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0)");
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")');
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? setReviewing(true) : setSelection("synthesis")');
+    // The notice renders for declined / deferred / no_plan alike, so the label
+    // is a prop rather than a literal inside OutcomeNotice.
+    expect(WORKSPACE_SOURCE).toContain("onClick={onInspect}>{actionLabel}</button>");
+  });
+});
+
+describe("closing a dialog that scrolls (#388)", () => {
+  it("keeps the artifact dialog's × out of the scrolling area", () => {
+    // The header used to sit inside the `overflow-y-auto` container, so with a
+    // long artifact the only way to close the dialog was to scroll back up.
+    const markup = renderToStaticMarkup(createElement(ArtifactDialog, {
+      preview: { artifact_id: "c".repeat(64), artifact_type: "artifact", findings: [] },
+      onClose: () => undefined,
+    }));
+
+    const panel = markup.match(/<div class="(flex max-h-\[86vh\][^"]*)"/);
+    expect(panel, "the dialog panel should be present").not.toBeNull();
+    // The panel itself no longer scrolls; it is a column.
+    expect(panel?.[1]).toContain("flex-col");
+    expect(panel?.[1]).not.toContain("overflow-y-auto");
+    // The close button is above the scrolling body, not inside it.
+    const closeIndex = markup.indexOf("btn-ghost");
+    const bodyIndex = markup.indexOf("min-h-0 flex-1 overflow-y-auto");
+    expect(closeIndex).toBeGreaterThan(-1);
+    expect(bodyIndex).toBeGreaterThan(closeIndex);
+  });
+
+  it("does the same for the extracted-table review", () => {
+    // Same structure, same bug: this one is the case in the report, because a
+    // PDF with many candidates makes the list long by design.
+    expect(REVIEW_SOURCE).toContain('className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"');
+    expect(REVIEW_SOURCE).toContain('className="flex shrink-0 items-start gap-4 border-b border-line p-5"');
+    expect(REVIEW_SOURCE).toContain('<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">');
   });
 });

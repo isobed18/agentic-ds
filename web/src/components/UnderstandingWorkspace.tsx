@@ -100,6 +100,18 @@ export function UnderstandingProgress({ profile, runId, workspace }: { profile: 
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  // #388: "Inspect understanding" selected the synthesis node, which is not the
+  // action a person needs on this notice. When PDFs produced table candidates
+  // the thing to do is choose which of them to accept, so the button says that
+  // and opens the dialog that does it. The guard is the one the Documents panel
+  // already uses; with no candidates the notice keeps its old label and target.
+  const extraction = workspace?.document_extractions?.at(-1);
+  const tableCandidates = extraction?.table_candidates ?? 0;
+  const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0);
+  // The parent polls the staging workspace while understanding is live, so the
+  // counts behind this notice catch up on their own; nothing to refetch here.
+  const afterPromotion = () => undefined;
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
@@ -110,7 +122,10 @@ export function UnderstandingProgress({ profile, runId, workspace }: { profile: 
           read the same explanation twice and then had to work out which of the
           two boxes could actually answer it, since only one of them could. The
           card is the one that can, so the banner is gone. */}
-      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
+      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)}
+        actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")}
+        onInspect={() => (canReviewTables ? setReviewing(true) : setSelection("synthesis"))} />}
+      {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
@@ -135,7 +150,7 @@ export function UnderstandingProgress({ profile, runId, workspace }: { profile: 
  * true: understanding finished, no plan came out of it, and these are the files
  * it was working on.
  */
-function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome; files: string[]; onInspect: () => void }) {
+function OutcomeNotice({ outcome, files, actionLabel, onInspect }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void }) {
   const declined = outcome.kind === "declined";
   const unexplained = outcome.kind === "no_plan";
   const tone = unexplained
@@ -177,7 +192,7 @@ function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome;
             </p>
           )}
         </div>
-        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{t("Inspect understanding")}</button>
+        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{actionLabel}</button>
       </div>
     </div>
   );
@@ -643,5 +658,5 @@ export function ArtifactDialog({ preview, onClose }: { preview: ArtifactPreview;
   // count them as content so an all-charts artifact is not judged empty.
   const panels = (preview.panels ?? []) as AnalysisPanel[];
   const hasContent = Boolean(preview.summary || isDocument || preview.findings?.length || panels.length || hasArtifactMetadata(preview));
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true"><div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl"><div className="flex items-start gap-4"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600">{t(artifactTypeLabel(preview.artifact_type))}</p><h3 className="mt-1 text-lg font-semibold text-ink">{artifactTitle(preview, activeLanguage(), t)}</h3></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close artifact")} onClick={onClose}>×</button></div>{preview.summary && <p className="mt-3 text-sm leading-relaxed text-ink-mute">{local(preview.summary)}</p>}{isDocument && <><div className="mt-4 grid grid-cols-3 gap-2"><Detail label={t("Selected engine")} value={`${preview.engine ?? "—"}${preview.engine_version ? ` ${preview.engine_version}` : ""}`} /><Detail label={t("OCR mode")} value={String(preview.ocr_mode ?? "auto")} /><Detail label={t("Duration")} value={formatDuration(Number(preview.duration_seconds ?? 0))} /></div><div className="mt-4 space-y-3">{preview.documents?.map((document) => <section key={document.source_file} className="rounded-xl border border-line p-4"><div className="flex items-center justify-between gap-3"><p className="truncate text-sm font-semibold text-ink">{document.source_file}</p><span className="text-[10px] text-ink-mute">{document.page_count} {t("pages")}</span></div><p className="mt-2 text-[10px] text-ink-mute">{document.tables.length} {t("table candidates")} · {document.figures.length} {t("figure candidates")}</p>{document.tables.map((table) => <div key={String(table.candidate_id)} className="mt-3 rounded-lg border border-warn-200 bg-warn-50 px-3 py-2"><p className="text-[10px] font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{String(table.title ?? table.candidate_id)} · {t("page {page}", { page: String(table.page_number ?? "—") })}</p></div>)}</section>)}</div></>}{panels.length > 0 && <div className="mt-4"><AnalysisStrip panels={panels} /></div>}{preview.findings && <ul className="mt-4 space-y-2">{preview.findings.map((finding) => <li key={finding.en} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink-soft">{local(finding)}</li>)}</ul>}<ArtifactMetadata preview={preview} />{!hasContent && <div className="mt-4"><Empty title={t("Artifact recorded")} hint={t("Open its stage inspection for measurements and provenance.")} /></div>}</div></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true"><div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"><div className="flex shrink-0 items-start gap-4 border-b border-line p-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600">{t(artifactTypeLabel(preview.artifact_type))}</p><h3 className="mt-1 text-lg font-semibold text-ink">{artifactTitle(preview, activeLanguage(), t)}</h3></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close artifact")} onClick={onClose}>×</button></div><div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{preview.summary && <p className="mt-3 text-sm leading-relaxed text-ink-mute">{local(preview.summary)}</p>}{isDocument && <><div className="mt-4 grid grid-cols-3 gap-2"><Detail label={t("Selected engine")} value={`${preview.engine ?? "—"}${preview.engine_version ? ` ${preview.engine_version}` : ""}`} /><Detail label={t("OCR mode")} value={String(preview.ocr_mode ?? "auto")} /><Detail label={t("Duration")} value={formatDuration(Number(preview.duration_seconds ?? 0))} /></div><div className="mt-4 space-y-3">{preview.documents?.map((document) => <section key={document.source_file} className="rounded-xl border border-line p-4"><div className="flex items-center justify-between gap-3"><p className="truncate text-sm font-semibold text-ink">{document.source_file}</p><span className="text-[10px] text-ink-mute">{document.page_count} {t("pages")}</span></div><p className="mt-2 text-[10px] text-ink-mute">{document.tables.length} {t("table candidates")} · {document.figures.length} {t("figure candidates")}</p>{document.tables.map((table) => <div key={String(table.candidate_id)} className="mt-3 rounded-lg border border-warn-200 bg-warn-50 px-3 py-2"><p className="text-[10px] font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{String(table.title ?? table.candidate_id)} · {t("page {page}", { page: String(table.page_number ?? "—") })}</p></div>)}</section>)}</div></>}{panels.length > 0 && <div className="mt-4"><AnalysisStrip panels={panels} /></div>}{preview.findings && <ul className="mt-4 space-y-2">{preview.findings.map((finding) => <li key={finding.en} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink-soft">{local(finding)}</li>)}</ul>}<ArtifactMetadata preview={preview} />{!hasContent && <div className="mt-4"><Empty title={t("Artifact recorded")} hint={t("Open its stage inspection for measurements and provenance.")} /></div>}</div></div></div>;
 }
