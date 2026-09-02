@@ -648,6 +648,22 @@ export interface DocumentExtractionSummary {
   }>;
 }
 
+/** An extracted PDF table a person accepted and promoted (#361).
+ *
+ * Promotion only ever wrote a table asset, so the plan panel -- which reads the
+ * workspace and the source profile -- had nothing new to show afterwards. The
+ * profile is a walk of the uploaded files and a promoted table is not a file,
+ * so a reload did not help either. The workspace carries the record now.
+ */
+export interface PromotedDocumentTable {
+  candidate_id: string;
+  artifact_id: string;
+  source_file: string;
+  page_number?: number | null;
+  row_count: number;
+  column_count: number;
+}
+
 export interface RunProgressSnapshot {
   status?: string;
   current_stage?: string | null;
@@ -716,6 +732,7 @@ export interface StagingWorkspace {
   pipeline_layout: PipelineLayout;
   component_outputs?: PipelineOutputReference[];
   document_extractions?: DocumentExtractionSummary[];
+  promoted_document_tables?: PromotedDocumentTable[];
   recommended_plan?: {
     proposal_id: string;
     status: "proposed" | "accepted" | "rejected" | "superseded";
