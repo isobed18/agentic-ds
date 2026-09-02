@@ -29,6 +29,12 @@ type Candidate = {
  * detected headers, and a bounded sample of its rows, and every candidate needs
  * an explicit Accept or Reject before anything can be promoted. Rejected
  * candidates are never promoted, so they never become pipeline evidence.
+ *
+ * #359: candidates the extractor produced nothing for never reach the list at
+ * all. They used to be shown carrying a warning badge and a disabled Accept,
+ * which made a failed extraction look like a decision waiting to be made --
+ * and still cost a click each, because the promote gate wanted a verdict on
+ * every row.
  */
 export function DocumentTableReview({
   runId,
@@ -66,7 +72,12 @@ export function DocumentTableReview({
       sampleRows: Array.isArray(table.sample_rows)
         ? (table.sample_rows as unknown[]).map((row) => (Array.isArray(row) ? row.map(String) : []))
         : [],
-    })),
+    }))
+    // #359: `row_count` is the length of the rows the extractor actually
+    // produced, so a zero here is a failed extraction rather than a small
+    // table. Such a candidate can never be promoted (#310), so listing it asks
+    // a person to make a decision that has already been made for them.
+    .filter((candidate) => candidate.rowCount > 0 || candidate.sampleRows.length > 0),
   ), [preview]);
 
   function decide(candidateId: string, decision: Decision) {
@@ -158,7 +169,6 @@ export function DocumentTableReview({
                 <ul className="mt-3 space-y-4">
                   {candidates.map((candidate) => {
                     const decision = decisions.get(candidate.candidateId);
-                    const empty = candidate.rowCount === 0;
                     const border = decision === "accepted" ? "border-ok-300" : decision === "rejected" ? "border-stop-200" : "border-line";
                     return (
                       <li key={candidate.candidateId} className={`rounded-xl border ${border} bg-surface`}>
@@ -168,14 +178,9 @@ export function DocumentTableReview({
                           <span className="mt-0.5 block text-[10px] text-ink-mute">
                             {candidate.sourceFile} · {t("page {page}", { page: candidate.page })} · {t("{rows} rows × {columns} columns", { rows: candidate.rowCount, columns: candidate.columns.length })}
                           </span>
-                          {/* #310: a candidate can carry headers and no rows at
-                              all, and the preview does not include row data --
-                              so it looked promotable and failed on promote.
-                              Say so here, where the decision is made. */}
-                          {empty && <span className="mt-1.5 inline-block rounded-md bg-warn-50 px-2 py-1 text-[10px] font-semibold text-warn-800">{t("No data extracted — cannot be accepted")}</span>}
                         </span>
                         <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label={t("Accept or reject this table")}>
-                          <button type="button" disabled={empty} title={empty ? t("No data extracted — cannot be accepted") : undefined} aria-pressed={decision === "accepted"} onClick={() => decide(candidate.candidateId, "accepted")} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${decision === "accepted" ? "bg-ok-600 text-white" : "border border-line text-ink-soft hover:bg-ok-50"}`}>{t("Accept")}</button>
+                          <button type="button" aria-pressed={decision === "accepted"} onClick={() => decide(candidate.candidateId, "accepted")} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${decision === "accepted" ? "bg-ok-600 text-white" : "border border-line text-ink-soft hover:bg-ok-50"}`}>{t("Accept")}</button>
                           <button type="button" aria-pressed={decision === "rejected"} onClick={() => decide(candidate.candidateId, "rejected")} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${decision === "rejected" ? "bg-stop-600 text-white" : "border border-line text-ink-soft hover:bg-stop-50"}`}>{t("Reject")}</button>
                         </div>
                       </div>

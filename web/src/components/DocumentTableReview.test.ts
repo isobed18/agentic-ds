@@ -47,24 +47,44 @@ describe("the extracted-table review (#303)", () => {
     expect(SOURCE).toContain('decisions.get(candidate.candidateId) ?? "rejected"');
   });
 
-  it("flags a candidate with no rows and refuses to accept it (#310)", () => {
-    // The preview strips row data, so a candidate carrying headers and an
-    // empty `rows` list looked exactly as promotable as a real table -- and
-    // failed on promote with a raw Python message. The row count is already in
-    // the preview; say so on the card and block the only choice that crashes.
-    expect(SOURCE).toContain("const empty = candidate.rowCount === 0");
-    expect(SOURCE).toContain('t("No data extracted — cannot be accepted")');
-    expect(SOURCE).toContain("disabled={empty}");
-    // Rejecting one is still possible, so a review can be completed.
-    expect(SOURCE).toContain('decide(candidate.candidateId, "rejected")');
-  });
-
   it("translates the new review copy", () => {
     expect(CATALOGUE).toContain('"Accept": "Kabul et"');
     expect(CATALOGUE).toContain('"Reject": "Reddet"');
     expect(CATALOGUE).toContain('"{rows} rows × {columns} columns": "{rows} satır × {columns} sütun"');
     expect(CATALOGUE).toContain('"Decide on every table first ({count} left).":');
-    expect(CATALOGUE).toContain('"No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez"');
+  });
+});
+
+/**
+ * A failed extraction is not a decision waiting to be made (#359).
+ *
+ * #310 had made an un-promotable candidate legible -- a warning badge and a
+ * disabled Accept -- but it was still listed, so the reviewer read it, could
+ * not accept it, and still had to click Reject to satisfy the promote gate.
+ * The honest answer is not to offer it.
+ */
+describe("candidates that failed extraction (#359)", () => {
+  it("drops candidates the extractor produced no rows for", () => {
+    // `row_count` is the length of the extracted rows, so zero is a failure
+    // rather than a small table.
+    expect(SOURCE).toContain(
+      ".filter((candidate) => candidate.rowCount > 0 || candidate.sampleRows.length > 0)",
+    );
+  });
+
+  it("retires the un-acceptable-candidate warning with them", () => {
+    // Nothing reaches the list that the badge could describe, and #310's
+    // disabled Accept is unreachable, so neither is left behind as dead code.
+    expect(SOURCE).not.toContain("const empty = candidate.rowCount === 0");
+    expect(SOURCE).not.toContain('t("No data extracted — cannot be accepted")');
+    expect(SOURCE).not.toContain("disabled={empty}");
+    expect(CATALOGUE).not.toContain('"No data extracted — cannot be accepted"');
+  });
+
+  it("still shows a candidate whose preview carried rows but no count", () => {
+    // The filter accepts either signal, so a preview that sampled rows without
+    // reporting a count is not thrown away with the genuine failures.
+    expect(SOURCE).toContain("candidate.sampleRows.length > 0)");
   });
 });
 
