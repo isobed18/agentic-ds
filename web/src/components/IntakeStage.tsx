@@ -189,7 +189,7 @@ export function IntakeStage({
             >
               {t("Discard")}
             </button>
-            <span className="text-[11px] text-ink-faint">
+            <span className="text-2xs text-ink-faint">
               {staging
                 ? t("Available once the first two stages finish.")
                 : t("Continues this run; it does not start a second one.")}
@@ -215,9 +215,9 @@ function Field({
 }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">{label}</p>
+      <p className="mb-1 text-3xs uppercase tracking-wide text-ink-faint">{label}</p>
       {children}
-      {hint && <p className="mt-1 text-[11px] leading-snug text-ink-faint">{hint}</p>}
+      {hint && <p className="mt-1 text-2xs leading-snug text-ink-faint">{hint}</p>}
     </div>
   );
 }

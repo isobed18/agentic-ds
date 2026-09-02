@@ -90,7 +90,7 @@ export function StageDirective({ runId, stageId }: { runId: string; stageId: str
             >
               {t("Send to the agent")}
             </button>
-            <span className="text-[11px] text-ink-faint">
+            <span className="text-2xs text-ink-faint">
               {t("Applies the next time this stage runs.")}
             </span>
           </div>

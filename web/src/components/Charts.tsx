@@ -40,6 +40,9 @@ export interface ChartSpec {
   max?: number;
 }
 
+// #380: SVG text is in user units and scales with the viewBox, not with the
+// root font size, so a 10% larger UI would have left every axis label visibly
+// smaller than the text around it. These are bumped at the source instead.
 const PALETTE = {
   bar: "var(--chart-bar, #3b82f6)",
   alt: "var(--chart-alt, #10b981)",
@@ -77,7 +80,7 @@ export function Chart({ spec, compact = false }: { spec: ChartSpec; compact?: bo
 
 function NoChart() {
   return (
-    <div className="flex h-full w-full items-center justify-center text-[11px] text-ink-faint">
+    <div className="flex h-full w-full items-center justify-center text-2xs text-ink-faint">
       nothing measured
     </div>
   );
@@ -115,7 +118,7 @@ function BarChart({ spec, compact }: { spec: ChartSpec; compact?: boolean }) {
                 x={padL + i * bw + bw / 2}
                 y={h - padB + 13}
                 textAnchor="middle"
-                fontSize="10"
+                fontSize="11"
                 fill={PALETTE.axis}
               >
                 {s.label.length > 12 ? `${s.label.slice(0, 11)}…` : s.label}
@@ -158,10 +161,10 @@ function HistogramChart({ spec, compact }: { spec: ChartSpec; compact?: boolean 
       })}
       {!compact && (
         <>
-          <text x={padL} y={h - 8} fontSize="10" fill={PALETTE.axis}>
+          <text x={padL} y={h - 8} fontSize="11" fill={PALETTE.axis}>
             {fmtTick(bins[0].lower)}
           </text>
-          <text x={w - 8} y={h - 8} textAnchor="end" fontSize="10" fill={PALETTE.axis}>
+          <text x={w - 8} y={h - 8} textAnchor="end" fontSize="11" fill={PALETTE.axis}>
             {fmtTick(bins[bins.length - 1].upper)}
           </text>
         </>
@@ -201,7 +204,7 @@ function HBarChart({ spec, compact }: { spec: ChartSpec; compact?: boolean }) {
         return (
           <g key={s.label}>
             {!compact && (
-              <text x={padL - 6} y={y + rowH * 0.55} textAnchor="end" fontSize="10" fill={PALETTE.axis}>
+              <text x={padL - 6} y={y + rowH * 0.55} textAnchor="end" fontSize="11" fill={PALETTE.axis}>
                 {s.label.length > 20 ? `${s.label.slice(0, 19)}…` : s.label}
               </text>
             )}
@@ -214,7 +217,7 @@ function HBarChart({ spec, compact }: { spec: ChartSpec; compact?: boolean }) {
               fill={strong ? PALETTE.warn : PALETTE.bar}
             />
             {!compact && (
-              <text x={w - 6} y={y + rowH * 0.55} textAnchor="end" fontSize="10" fill={PALETTE.axis}>
+              <text x={w - 6} y={y + rowH * 0.55} textAnchor="end" fontSize="11" fill={PALETTE.axis}>
                 {label(v)}
               </text>
             )}
@@ -270,7 +273,7 @@ function HeatmapChart({ spec, compact }: { spec: ChartSpec; compact?: boolean })
             x={padL - 6}
             y={padT + i * cell + cell * 0.7}
             textAnchor="end"
-            fontSize={Math.min(cell * 0.7, 10)}
+            fontSize={Math.min(cell * 0.7, 11)}
             fill={PALETTE.axis}
           >
             {c.length > 18 ? `${c.slice(0, 17)}…` : c}
@@ -303,7 +306,7 @@ function BoxChart({ spec, compact }: { spec: ChartSpec; compact?: boolean }) {
         return (
           <g key={s.label}>
             {!compact && (
-              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill={PALETTE.axis}>
+              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="11" fill={PALETTE.axis}>
                 {s.label.length > 20 ? `${s.label.slice(0, 19)}…` : s.label}
               </text>
             )}
@@ -375,7 +378,7 @@ function DonutChart({ spec, compact }: { spec: ChartSpec; compact?: boolean }) {
         })}
       </g>
       {!compact && (
-        <text x={size / 2} y={size / 2 + 4} textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">
+        <text x={size / 2} y={size / 2 + 4} textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">
           {series.length}
         </text>
       )}
@@ -394,7 +397,7 @@ function Gridlines({
         return (
           <g key={f}>
             <line x1={padL} y1={y} x2={w - 8} y2={y} stroke={PALETTE.grid} strokeWidth="1" />
-            <text x={padL - 6} y={y + 3} textAnchor="end" fontSize="9" fill={PALETTE.axis}>
+            <text x={padL - 6} y={y + 3} textAnchor="end" fontSize="10" fill={PALETTE.axis}>
               {fmtTick(max * f)}
             </text>
           </g>

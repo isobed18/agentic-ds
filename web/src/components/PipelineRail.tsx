@@ -238,7 +238,7 @@ export function PipelineRail({ nodes, selected, onSelect, pseudoBranches }: Prop
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2.5">
-          <span className="rounded bg-surface/80 px-1.5 py-0.5 text-[10px] text-ink-faint backdrop-blur">
+          <span className="rounded bg-surface/80 px-1.5 py-0.5 text-3xs text-ink-faint backdrop-blur">
             {t("Drag to move · pinch or ctrl+scroll to zoom")}
           </span>
           <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg border border-line bg-surface/95 p-0.5 shadow-sm backdrop-blur">
@@ -248,7 +248,7 @@ export function PipelineRail({ nodes, selected, onSelect, pseudoBranches }: Prop
             <button
               onClick={() => setView({ x: 0, y: 0, k: 1 })}
               title={t("Reset zoom")}
-              className="min-w-[3.1rem] rounded px-1 py-1 text-[11px] tabular-nums text-ink-mute hover:bg-surface-sunken"
+              className="min-w-[3.1rem] rounded px-1 py-1 text-2xs tabular-nums text-ink-mute hover:bg-surface-sunken"
             >
               {Math.round(view.k * 100)}%
             </button>
@@ -259,7 +259,7 @@ export function PipelineRail({ nodes, selected, onSelect, pseudoBranches }: Prop
             <button
               onClick={fit}
               title={t("Fit to view")}
-              className="rounded px-2 py-1 text-[11px] text-ink-mute hover:bg-surface-sunken"
+              className="rounded px-2 py-1 text-2xs text-ink-mute hover:bg-surface-sunken"
             >
               {t("Fit")}
             </button>
@@ -305,7 +305,7 @@ function NodeCard({
       onClick={() => onSelect(node.id)}
       title={t(node.description)}
       className={cx(
-        "relative flex w-[132px] shrink-0 flex-col gap-1 rounded-xl border bg-surface px-3 text-left transition-all",
+        "relative flex w-[8.25rem] shrink-0 flex-col gap-1 rounded-xl border bg-surface px-3 text-left transition-all",
         compact ? "py-2" : "py-2.5",
         active
           ? "border-brand-500 ring-2 ring-brand-100"
@@ -315,31 +315,31 @@ function NodeCard({
       )}
     >
       <span className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold tabular-nums text-ink-faint">
+        <span className="text-2xs font-semibold tabular-nums text-ink-faint">
           {String(node.order).padStart(2, "0")}
         </span>
         {node.retry_count > 0 && (
-          <span className="rounded bg-warn-50 px-1 text-[10px] font-semibold text-warn-700">
+          <span className="rounded bg-warn-50 px-1 text-3xs font-semibold text-warn-700">
             ×{node.retry_count + 1}
           </span>
         )}
       </span>
-      <span className="truncate text-[13px] font-semibold leading-tight text-ink">
+      <span className="truncate text-2xs font-semibold leading-tight text-ink">
         {node.label ?? stageName(node.id)}
       </span>
       <span className="flex items-center gap-1.5">
         <span className={cx("h-2 w-2 shrink-0 rounded-full", DOT[node.status] ?? DOT.pending)} />
-        <span className="truncate text-[10.5px] text-ink-mute">
+        <span className="truncate text-3xs text-ink-mute">
           {node.kind === "deterministic" ? t("deterministic") : t("agent")}
         </span>
         {elapsed && (
-          <span className="ml-auto shrink-0 text-[10.5px] tabular-nums text-ink-faint">
+          <span className="ml-auto shrink-0 text-3xs tabular-nums text-ink-faint">
             {elapsed}
           </span>
         )}
       </span>
       {attention && (
-        <span className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-stop-500 text-[9px] font-bold text-white">
+        <span className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-stop-500 text-4xs font-bold text-white">
           !
         </span>
       )}

@@ -284,7 +284,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
                 <div className="mb-1 flex flex-wrap items-center gap-2">
                   <Badge tone="brand">{t("Agent proposal")}</Badge>
                   {item.subjects?.slice(0, 3).map((subject) => (
-                    <code key={subject} className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-ink-soft">
+                    <code key={subject} className="rounded bg-surface px-1.5 py-0.5 text-2xs text-ink-soft">
                       {subject}
                     </code>
                   ))}
@@ -362,7 +362,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
           <ul className="space-y-1.5">
             {Object.entries(s.criteria!).map(([label, ok]) => (
               <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
-                <span className={cx("grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold text-white", ok ? "bg-ok-500" : "bg-stop-500")}>
+                <span className={cx("grid h-4 w-4 place-items-center rounded-full text-3xs font-bold text-white", ok ? "bg-ok-500" : "bg-stop-500")}>
                   {ok ? "✓" : "!"}
                 </span>
                 {label}
@@ -387,7 +387,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
 
       {has("findings") && (
         <Disclosure title={t("Findings")} count={s.findings!.length}>
-          <pre className="overflow-x-auto rounded-lg bg-surface-sunken p-3 text-[11px] leading-relaxed text-ink-soft">
+          <pre className="overflow-x-auto rounded-lg bg-surface-sunken p-3 text-2xs leading-relaxed text-ink-soft">
             {JSON.stringify(s.findings, null, 2)}
           </pre>
         </Disclosure>
@@ -413,7 +413,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
             {s.quality_checks!.map((qc, i) => (
               <li key={i} className="flex items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-soft">
                 <span className={cx(
-                  "grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold text-white",
+                  "grid h-4 w-4 place-items-center rounded-full text-3xs font-bold text-white",
                   qc.passed ? "bg-ok-500" : "bg-stop-500"
                 )}>
                   {qc.passed ? "✓" : "!"}
@@ -455,7 +455,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
 
       {s.report_markdown && (
         <Disclosure title={t("Full report")}>
-          <pre className="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed text-ink-soft">
+          <pre className="max-h-[32.5rem] overflow-auto whitespace-pre-wrap rounded-lg bg-surface-sunken p-3 text-xs leading-relaxed text-ink-soft">
             {s.report_markdown}
           </pre>
         </Disclosure>
@@ -469,7 +469,7 @@ function OutputBlock({ output }: { output: StageOutput }) {
 function Pair({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wide text-ink-faint">{label}</dt>
+      <dt className="text-3xs uppercase tracking-wide text-ink-faint">{label}</dt>
       <dd className="truncate text-xs font-semibold text-ink">{value}</dd>
     </div>
   );
@@ -575,19 +575,19 @@ function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
                   {attempt.verdict ? verdictLabel(attempt.verdict) : t("running")}
                 </Badge>
                 {elapsedLabel(seconds) && (
-                  <span className="text-[11px] tabular-nums text-ink-mute">
+                  <span className="text-2xs tabular-nums text-ink-mute">
                     {elapsedLabel(seconds)}
                   </span>
                 )}
                 {attempt.artifact_ids.length > 0 && (
-                  <span className="text-[11px] text-ink-faint">
+                  <span className="text-2xs text-ink-faint">
                     {attempt.artifact_ids.length} {t("artifacts")}
                   </span>
                 )}
               </div>
 
               {attempt.error && (
-                <p className="mt-1.5 text-[11px] text-stop-700">{attempt.error}</p>
+                <p className="mt-1.5 text-2xs text-stop-700">{attempt.error}</p>
               )}
 
               {/* The mechanical checks the plan failed. These are what turned a
@@ -598,7 +598,7 @@ function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
                   {unmet.map((id) => {
                     const finding = findings.find((f) => f.check_id === id);
                     return (
-                      <li key={id} className="text-[11px] leading-snug text-warn-700">
+                      <li key={id} className="text-2xs leading-snug text-warn-700">
                         · {t(checkText(id, finding?.evidence))}
                       </li>
                     );

@@ -14,7 +14,7 @@ export const cx = (...parts: (string | false | null | undefined)[]) =>
 /**
  * #183: the width of a workspace header's rename field.
  *
- * It was `w-[290px] max-w-[28vw]`, which reads as responsive but is not: the
+ * It was `w-[18.125rem] max-w-[28vw]`, which reads as responsive but is not: the
  * vw cap only bites below roughly a 1000px viewport, so at every ordinary
  * window size the box sat at a flat 290px and never moved. clamp() makes the
  * viewport term the driver instead, with the pixel values as floor and
@@ -207,10 +207,10 @@ export function Pause({ label, className }: { label?: string; className?: string
 
 export function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="card flex min-w-[128px] flex-col gap-0.5 px-3.5 py-2.5">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-faint">{label}</span>
+    <div className="card flex min-w-[8rem] flex-col gap-0.5 px-3.5 py-2.5">
+      <span className="text-2xs font-medium uppercase tracking-wide text-ink-faint">{label}</span>
       <span className="text-sm font-semibold text-ink">{value}</span>
-      {hint && <span className="text-[11px] text-ink-mute">{hint}</span>}
+      {hint && <span className="text-2xs text-ink-mute">{hint}</span>}
     </div>
   );
 }

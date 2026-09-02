@@ -53,7 +53,7 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
             >
               <span
                 className={cx(
-                  "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold",
+                  "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-3xs font-bold",
                   icon.bg,
                   icon.fg,
                 )}
@@ -65,12 +65,12 @@ export function NeedsAttention({ items }: { items: AttentionItem[] }) {
                   {item.title}
                 </span>
                 {item.detail && (
-                  <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-mute">
+                  <span className="mt-0.5 block text-2xs leading-relaxed text-ink-mute">
                     {item.detail}
                   </span>
                 )}
                 {item.source && (
-                  <span className="mt-0.5 block text-[10px] uppercase tracking-wide text-ink-faint">
+                  <span className="mt-0.5 block text-3xs uppercase tracking-wide text-ink-faint">
                     {item.source}
                   </span>
                 )}

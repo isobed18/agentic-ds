@@ -3,6 +3,14 @@
 @tailwind utilities;
 
 @layer base {
+  /* #380: the whole UI, 10% larger. Tailwind's default scales are rem-based, so
+     moving the root moves type, padding, gaps, control heights and radii
+     together -- which is precisely what the browser's own zoom does. The
+     default is meant to look like Chrome at 110% without anyone reaching for
+     it. The px-pinned sizes do not follow a root change, so they are named
+     steps (text-2xs/3xs/4xs) and rem lengths instead; the SVG chart text is in
+     user units and is bumped at its source. */
+  html { font-size: 110%; }
   html, body, #root { height: 100%; }
   body {
     @apply bg-surface-sunken text-ink antialiased;

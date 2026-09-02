@@ -12,7 +12,7 @@
  * that is slightly generous costs a second line rather than clipped text.
  */
 
-/** Matches `max-w-[120px]` on the chip. */
+/** Matches `max-w-[7.5rem]` on the chip. */
 const CHIP_MAX = 120;
 /** `px-2` either side. */
 const CHIP_PADDING = 16;

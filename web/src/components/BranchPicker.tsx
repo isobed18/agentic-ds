@@ -100,7 +100,7 @@ export function BranchPicker({
             <span className="flex items-start gap-2">
               <span
                 className={cx(
-                  "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border text-[10px] font-bold",
+                  "mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border text-3xs font-bold",
                   picked.has(i) ? "border-brand-600 bg-brand-600 text-white" : "border-line",
                 )}
                 aria-hidden
@@ -109,7 +109,7 @@ export function BranchPicker({
               </span>
               <span className="min-w-0">
                 <span className="block text-sm font-medium text-ink">{c.title}</span>
-                <span className="mt-0.5 block text-[11px] text-ink-mute">
+                <span className="mt-0.5 block text-2xs text-ink-mute">
                   {c.target ?? "—"} · {(c.task ?? "").replace(/_/g, " ")} · {c.metric ?? "—"}
                 </span>
               </span>

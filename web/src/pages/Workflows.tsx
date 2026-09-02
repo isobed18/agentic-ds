@@ -152,25 +152,25 @@ export function Workflows() {
               </svg>
             </button>
             {showRuns && (
-              <div className="absolute left-0 top-10 z-20 max-h-80 w-[360px] overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-pop">
+              <div className="absolute left-0 top-10 z-20 max-h-80 w-[22.5rem] overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-pop">
                 {runs.length === 0 && <p className="px-3 py-4 text-center text-xs text-ink-mute">{t("No runs yet.")}</p>}
                 {runs.map((r) => (
                   <div key={r.run_id} className={cx("group flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-surface-sunken", r.run_id === runId && "bg-brand-50")}>
                     <button className="min-w-0 flex-1 text-left" onClick={() => { setRunId(r.run_id); setShowRuns(false); }}>
                       <span className="block truncate font-mono text-xs text-ink">{r.run_id}</span>
-                      <span className="text-[10px] text-ink-mute">{statusLabel(r.status)}</span>
+                      <span className="text-3xs text-ink-mute">{statusLabel(r.status)}</span>
                     </button>
                     {confirming === r.run_id ? (
                       <span className="flex shrink-0 items-center gap-1">
                         <button
                           onClick={() => void removeRun(r.run_id)}
-                          className="rounded bg-stop-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-stop-600"
+                          className="rounded bg-stop-500 px-2 py-1 text-2xs font-semibold text-white hover:bg-stop-600"
                         >
                           {t("Delete")}
                         </button>
                         <button
                           onClick={() => setConfirming(null)}
-                          className="rounded px-2 py-1 text-[11px] text-ink-mute hover:bg-surface-sunken"
+                          className="rounded px-2 py-1 text-2xs text-ink-mute hover:bg-surface-sunken"
                         >
                           {t("Cancel")}
                         </button>
@@ -205,7 +205,7 @@ export function Workflows() {
                   onClick={() => setRunId(r.run_id)}
                   title={r.branch_label ?? t("original")}
                   className={cx(
-                    "rounded-md border px-2 py-0.5 text-[11px]",
+                    "rounded-md border px-2 py-0.5 text-2xs",
                     r.run_id === runId
                       ? "border-brand-500 bg-brand-50 text-ink"
                       : "border-line text-ink-mute hover:bg-surface-sunken",

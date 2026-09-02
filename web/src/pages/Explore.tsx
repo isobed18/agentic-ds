@@ -207,7 +207,7 @@ export function Explore({ onStart }: { onStart: (runId: string) => void }) {
         )}
       </div>
 
-      <p className="mb-4 text-[11px] text-ink-faint">
+      <p className="mb-4 text-2xs text-ink-faint">
         {t("Databases are not supported yet — export the tables you need as files for now.")}
       </p>
 
@@ -377,7 +377,7 @@ function UnderstandingMonitor({
         </div>
         {profile.tables.length > 0 && (
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className="flex items-center gap-2 text-[11px] text-ink-mute">
+            <label className="flex items-center gap-2 text-2xs text-ink-mute">
               <input
                 type="checkbox"
                 checked={reuseCache}
@@ -452,11 +452,11 @@ function MonitorStep({
   return (
     <div className="rounded-lg border border-line bg-surface-sunken px-3 py-2.5">
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[10px] text-ink-faint">{number}</span>
+        <span className="font-mono text-3xs text-ink-faint">{number}</span>
         <span className="text-xs font-semibold text-ink">{title}</span>
         <Badge tone={agent ? "brand" : "ok"}>{status}</Badge>
       </div>
-      <p className="mt-1.5 text-[11px] leading-relaxed text-ink-mute">{detail}</p>
+      <p className="mt-1.5 text-2xs leading-relaxed text-ink-mute">{detail}</p>
     </div>
   );
 }
@@ -525,9 +525,9 @@ function InsightCard({
       "rounded-xl border px-3.5 py-3",
       tone === "warn" ? "border-warn-500/40 bg-warn-50" : tone === "ok" ? "border-ok-500/30 bg-ok-50" : "border-line bg-surface",
     )}>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{label}</p>
+      <p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{label}</p>
       <p className="mt-1 text-base font-semibold text-ink">{value}</p>
-      <p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{detail}</p>
+      <p className="mt-1 text-2xs leading-relaxed text-ink-mute">{detail}</p>
     </div>
   );
 }
@@ -547,7 +547,7 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
             <Badge tone="ok">{t("ready")}</Badge>
             {workspace.cache_reused && <Badge tone="brand">{t("cache reused")}</Badge>}
           </div>
-          <p className="mt-1 text-[11px] text-ink-mute">
+          <p className="mt-1 text-2xs text-ink-mute">
             {t("Intake, schema evidence, planner reports, runtime plan, and chat history share this run lineage.")}
           </p>
         </div>
@@ -561,7 +561,7 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
               key={`${relationship.from_table}:${relationship.from_columns.join("+")}→${relationship.to_table}:${relationship.to_columns.join("+")}`}
               className="group rounded-lg border border-line bg-surface-sunken"
             >
-              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 px-3 py-2.5 text-[10px]">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 px-3 py-2.5 text-3xs">
                 <Badge tone="ok">{t("measured + interpreted")}</Badge>
                 <span className="min-w-0 flex-1 truncate font-mono text-ink-soft">
                   {relationship.from_table}.{relationship.from_columns.join("+")} → {relationship.to_table}.{relationship.to_columns.join("+")}
@@ -570,8 +570,8 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
               </summary>
               <div className="border-t border-line-soft px-3 pb-3 pt-2">
                 <p className="text-xs leading-relaxed text-ink">{localized(relationship.explanation)}</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-mute">{localized(relationship.why_it_matters)}</p>
-                <p className="mt-2 text-[10px] text-brand-700">{localized(relationship.verification_question)}</p>
+                <p className="mt-1 text-2xs leading-relaxed text-ink-mute">{localized(relationship.why_it_matters)}</p>
+                <p className="mt-2 text-3xs text-brand-700">{localized(relationship.verification_question)}</p>
               </div>
             </details>
           ))}
@@ -588,10 +588,10 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
                 <span className="text-sm text-ink-faint group-open:rotate-45">+</span>
               </summary>
               <div className="border-t border-line-soft px-3 pb-3 pt-2">
-                <p className="text-[11px] leading-relaxed text-ink-mute">{localized(report.summary)}</p>
+                <p className="text-2xs leading-relaxed text-ink-mute">{localized(report.summary)}</p>
                 {report.findings.length > 0 && (
                   <ul className="mt-2 space-y-1">
-                    {report.findings.map((item) => <li key={item.en} className="text-[10px] text-ink-soft">· {localized(item)}</li>)}
+                    {report.findings.map((item) => <li key={item.en} className="text-3xs text-ink-soft">· {localized(item)}</li>)}
                   </ul>
                 )}
               </div>
@@ -614,17 +614,17 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
           </summary>
           <div className="grid gap-2 border-t border-brand-100 px-3 pb-3 pt-2 md:grid-cols-2">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Configuration")}</p>
+              <p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Configuration")}</p>
               <dl className="mt-1 space-y-1">
                 {Object.entries(plan.configuration).map(([key, value]) => (
-                  <div key={key} className="flex gap-2 text-[11px]"><dt className="font-mono text-ink-mute">{key}</dt><dd className="ml-auto text-right text-ink">{JSON.stringify(value)}</dd></div>
+                  <div key={key} className="flex gap-2 text-2xs"><dt className="font-mono text-ink-mute">{key}</dt><dd className="ml-auto text-right text-ink">{JSON.stringify(value)}</dd></div>
                 ))}
               </dl>
             </div>
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Why these overrides")}</p>
+              <p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Why these overrides")}</p>
               <ul className="mt-1 space-y-1">
-                {plan.rationale.map((item) => <li key={item.en} className="text-[11px] text-ink-soft">· {localized(item)}</li>)}
+                {plan.rationale.map((item) => <li key={item.en} className="text-2xs text-ink-soft">· {localized(item)}</li>)}
               </ul>
             </div>
           </div>
@@ -632,7 +632,7 @@ function StagingResults({ workspace }: { workspace: StagingWorkspace }) {
       )}
 
       {workspace.planner_error && (
-        <p className="rounded-lg bg-warn-50 px-3 py-2 text-[11px] text-warn-700">
+        <p className="rounded-lg bg-warn-50 px-3 py-2 text-2xs text-warn-700">
           {t("Planner analysis is unavailable right now. The measured intake and relationship view is still ready.")}
         </p>
       )}
@@ -691,7 +691,7 @@ function AgentBriefing({ sourceId }: { sourceId: string }) {
       {briefing && (
         <div className="mt-3 rounded-lg border border-brand-100 bg-brand-50 px-3.5 py-3">
           <p className="whitespace-pre-wrap text-xs leading-6 text-ink-soft">{briefing}</p>
-          <button onClick={() => void generate()} disabled={busy} className="mt-3 text-[11px] font-medium text-brand-700 hover:underline">
+          <button onClick={() => void generate()} disabled={busy} className="mt-3 text-2xs font-medium text-brand-700 hover:underline">
             {t("Regenerate from current evidence")}
           </button>
         </div>
@@ -722,7 +722,7 @@ function DocumentUnderstanding({ profile }: { profile: SourceProfile }) {
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate text-xs font-semibold text-ink" title={document.name}>{document.title || document.name}</h3>
-                  <p className="mt-0.5 truncate text-[10px] text-ink-faint">{document.name}</p>
+                  <p className="mt-0.5 truncate text-3xs text-ink-faint">{document.name}</p>
                 </div>
                 <Badge tone={document.understanding_status === "text_ready" ? "ok" : "warn"}>
                   {t(document.understanding_status === "text_ready" ? "text ready" : "needs OCR / vision")}
@@ -734,14 +734,14 @@ function DocumentUnderstanding({ profile }: { profile: SourceProfile }) {
                 <DocumentMetric value={document.image_count} label={t("embedded images")} />
               </div>
               <div className="mt-3">
-                <div className="mb-1 flex justify-between text-[10px] text-ink-faint">
+                <div className="mb-1 flex justify-between text-3xs text-ink-faint">
                   <span>{t("Text-layer coverage")}</span><span>{(coverage * 100).toFixed(0)}%</span>
                 </div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-line-soft">
                   <div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.max(2, coverage * 100)}%` }} />
                 </div>
               </div>
-              <p className="mt-3 text-[10px] text-warn-700">{t("Training rows: not extracted")}</p>
+              <p className="mt-3 text-3xs text-warn-700">{t("Training rows: not extracted")}</p>
             </article>
           );
         })}
@@ -751,7 +751,7 @@ function DocumentUnderstanding({ profile }: { profile: SourceProfile }) {
 }
 
 function DocumentMetric({ value, label }: { value: number; label: string }) {
-  return <div className="rounded-md bg-surface px-2 py-2"><p className="text-sm font-semibold text-ink">{value}</p><p className="text-[9px] text-ink-faint">{label}</p></div>;
+  return <div className="rounded-md bg-surface px-2 py-2"><p className="text-sm font-semibold text-ink">{value}</p><p className="text-4xs text-ink-faint">{label}</p></div>;
 }
 
 function FormatReadiness({ profile }: { profile: SourceProfile }) {
@@ -767,7 +767,7 @@ function FormatReadiness({ profile }: { profile: SourceProfile }) {
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto">
           <h2 className="text-sm font-semibold text-ink">{t("Input format readiness")}</h2>
-          <p className="mt-0.5 text-[11px] text-ink-mute">{t("Structured files can enter the ML pipeline. PDFs can enter local understanding and chat; chart-to-row extraction remains planned.")}</p>
+          <p className="mt-0.5 text-2xs text-ink-mute">{t("Structured files can enter the ML pipeline. PDFs can enter local understanding and chat; chart-to-row extraction remains planned.")}</p>
         </div>
         {formats.map((format) => <Badge key={format.label} tone={format.active ? "ok" : "neutral"}>{format.label}</Badge>)}
         <Badge tone={documents.length ? "ok" : "neutral"}>PDF · {documents.length ? t("understanding ready") : t("available")}</Badge>
@@ -809,7 +809,7 @@ function TableList({
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-[10px] uppercase tracking-wide text-ink-faint">
+                      <tr className="text-3xs uppercase tracking-wide text-ink-faint">
                         <th className="pb-2 pr-4 text-left font-medium">{t("Column")}</th>
                         <th className="pb-2 pr-4 text-left font-medium">{t("Kind")}</th>
                         <th className="pb-2 pr-4 text-right font-medium">{t("Missing")}</th>
