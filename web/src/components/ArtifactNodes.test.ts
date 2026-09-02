@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { ArtifactNodes } from "./ArtifactNodes";
 import SOURCE from "./ArtifactNodes.tsx?raw";
+import GUIDED from "./GuidedPipeline.tsx?raw";
+import UNDERSTANDING from "./UnderstandingWorkspace.tsx?raw";
 
 // Force the default (English) catalogue so the opener text is predictable.
 Object.defineProperty(globalThis, "localStorage", {
@@ -21,16 +23,13 @@ describe("the artifacts opener under a node", () => {
     expect(markup).toContain('aria-expanded="false"');
     // The parenthesised count format the redesign asks for, in any language.
     expect(markup).toMatch(/\(\d+\)/);
-    // The property that actually matters (#162): the column holding the list
-    // has its top pinned to the node's edge and *no* height-proportional
-    // transform. Asserting the class names alone let a change that recentred
-    // the column on the edge pass -- `bottom-0 translate-y-1/2` and
-    // `top-full -translate-y-1/2` place a wrapper identically, because the
-    // percentage resolves against the wrapper's own height either way.
+    // #327: the collection participates in layout. An absolute list looked
+    // attached to the node, but its wrapper contributed zero height and the
+    // next node in a vertical branch stayed directly underneath it.
     const column = markup.match(/^<div class="([^"]+)"/)?.[1] ?? "";
-    expect(column).toContain("top-full");
-    expect(column).not.toContain("bottom-0");
-    expect(column, "the wrapper containing the list must not scale with its height").not.toMatch(/translate-y/);
+    expect(column).toContain("relative");
+    expect(column).not.toContain("absolute");
+    expect(column).not.toContain("top-full");
     // The straddle from #66 survives, as a fixed offset on the pill alone: its
     // wrapper closes before the list starts, so the list cannot move it.
     const straddle = SOURCE.indexOf('className="-translate-y-1/2"');
@@ -46,5 +45,13 @@ describe("the artifacts opener under a node", () => {
     expect(
       renderToStaticMarkup(createElement(ArtifactNodes, { ids: [], onOpen: () => undefined })),
     ).toBe("");
+  });
+
+  it("marks the artifact that owns the open preview", () => {
+    expect(SOURCE).toContain("activeId?: string | null");
+    expect(SOURCE).toContain('aria-current={active ? "true" : undefined}');
+    expect(SOURCE).toContain('active && "ring-2 ring-brand-400"');
+    expect(GUIDED).toContain("activeArtifactId={preview?.artifact_id ?? null}");
+    expect(UNDERSTANDING).toContain("activeArtifactId={preview?.artifact_id ?? null}");
   });
 });

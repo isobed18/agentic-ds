@@ -359,5 +359,9 @@ export function stageName(id: string) {
 
 export function titleize(id: string) {
   if (id === "eda") return "Exploratory analysis";
+  // Prettifying would give "Rl Feature Engineering". RL is an initialism, and
+  // the same reason `eda` is special-cased applies: the catalogue key has to be
+  // a string a person would actually write.
+  if (id === "rl_feature_engineering") return "RL feature engineering";
   return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }

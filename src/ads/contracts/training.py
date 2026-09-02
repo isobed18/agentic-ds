@@ -223,8 +223,43 @@ class TrainingReport(Artifact):
         }
 
 
+class EnhancedTrainingReport(TrainingReport):
+    """The same comparison, refit on externally engineered features.
+
+    A distinct artifact type rather than a second ``TRAINED_MODEL``: evaluation
+    resolves its trained model by recency, so a second artifact of that type
+    would quietly make this the model the run evaluates and reports on. As its
+    own type it is invisible to the primary spine and visible only where it is
+    asked for.
+
+    It is trained on the same rows, the same split, and the same candidate menu
+    as its base model, so the two holdout scores are directly comparable. That is
+    the whole point of the artifact, and it is only true because the feature
+    search never saw the holdout.
+    """
+
+    artifact_type: ClassVar[ArtifactType] = ArtifactType.RL_ENHANCED_MODEL
+    schema_version: ClassVar[str] = "1"
+
+    #: The ``TrainingReport`` this one is the enhanced counterpart of. Recorded
+    #: rather than inferred from "same run" so the pair survives a run that
+    #: trained more than once.
+    base_model_artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rl_feature_report_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    generated_feature_names: list[str] = Field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            **super().summary(),
+            "base_model_artifact_id": self.base_model_artifact_id,
+            "rl_feature_report_id": self.rl_feature_report_id,
+            "n_generated_features": len(self.generated_feature_names),
+        }
+
+
 __all__ = [
     "CandidateResult",
+    "EnhancedTrainingReport",
     "LabelIssueMeasurement",
     "MetricEvaluation",
     "ModelBlobReference",
