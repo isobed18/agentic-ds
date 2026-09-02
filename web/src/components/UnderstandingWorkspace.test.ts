@@ -2,12 +2,13 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, RoutingDetails, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
+import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, OutcomeNotice, RoutingDetails, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
 import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
+import { t } from "../lib/i18n";
 
 Object.defineProperty(globalThis, "localStorage", {
   value: { getItem: () => null },
@@ -493,5 +494,43 @@ describe("the Intake panel's per-file explanations (#386)", () => {
 
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("no delimiter found");
+  });
+});
+
+describe("dismissing the outcome notice (#384)", () => {
+  const kinds = ["declined", "deferred", "no_plan"] as const;
+
+  function notice(kind: (typeof kinds)[number]) {
+    return renderToStaticMarkup(createElement(OutcomeNotice, {
+      outcome: { kind, summary: { en: "No target survives.", tr: "Hedef kalmıyor." }, rationale: [] },
+      files: ["a.csv"],
+      actionLabel: "Inspect",
+      onInspect: () => undefined,
+      onDismiss: () => undefined,
+    }));
+  }
+
+  it("gives every variant of the fixed banner an ×", () => {
+    // All three are the same `fixed left-1/2 top-[72px]` overlay pinned over the
+    // page, so all three need a way out -- not just the declined one.
+    for (const kind of kinds) {
+      const markup = notice(kind);
+      expect(markup, kind).toContain(`aria-label="${t("Dismiss")}"`);
+      expect(markup, kind).toContain("×");
+    }
+  });
+
+  it("keeps the action button beside it", () => {
+    // The × is an addition, not a replacement: "Inspect understanding" (or the
+    // extracted-tables entry point from #388) still has to be reachable.
+    expect(notice("declined")).toContain("Inspect");
+  });
+
+  it("dismisses locally, per outcome, without touching the run", () => {
+    // A bare boolean would silence a later, different outcome too; the run and
+    // the routing state are never written.
+    expect(WORKSPACE_SOURCE).toContain('const [dismissed, setDismissed] = useState<StagingOutcome["kind"] | null>(null)');
+    expect(WORKSPACE_SOURCE).toContain("routing.outcome.kind !== dismissed ? routing.outcome : null");
+    expect(WORKSPACE_SOURCE).toContain("onDismiss={() => setDismissed(outcome.kind)}");
   });
 });
