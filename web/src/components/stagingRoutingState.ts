@@ -88,9 +88,13 @@ export interface StagingRoutingState {
   ocrMode: string;
   documentFiles: DocumentFileProgress[];
   error?: string;
+  // #362: `attention` used to carry the escalated gate's own prose so the
+  // canvas could show it in a yellow banner. The red ApprovalCard already
+  // renders that text with its reason list and its action buttons, so the
+  // banner said the same thing twice and could not answer it. Both are gone;
+  // `schemaBlocked` still drives the node statuses below.
   /** #365: why understanding ended with nothing to accept, when it did. */
   outcome?: StagingOutcome;
-  attention?: string;
 }
 
 /**
@@ -217,11 +221,6 @@ export function buildStagingRoutingState(
   const currentStage = String(progress?.current_stage ?? "");
   const needsHuman = runStatus === "awaiting_human";
   const schemaBlocked = currentStage === "schema_discovery" && (needsHuman || runFailed);
-  const humanPrompt = progress?.pending_question?.human_prompt;
-  const attention = needsHuman
-    ? [humanPrompt?.question, humanPrompt?.context_summary].filter(Boolean).join(" ")
-      || "Understanding stopped because a decision is required."
-    : undefined;
   // #365: "staged" is set by the worker only after the analysis call returns,
   // so a settled run with no plan has genuinely finished without one -- it is
   // not a plan that has yet to arrive.
@@ -280,7 +279,6 @@ export function buildStagingRoutingState(
     documentFiles,
     error: runErrorText(progress?.error) ?? workspace?.planner_error ?? undefined,
     outcome,
-    attention,
   };
 }
 
