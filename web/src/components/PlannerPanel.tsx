@@ -6,7 +6,7 @@
  * so the standing constraints are visible without scrolling.
  */
 import { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, type PlannerOverrideProposal } from "../lib/api";
 import { t } from "../lib/i18n";
 import { Badge, Spinner, cx } from "./ui";
 
@@ -28,6 +28,18 @@ const RULES = [
   "Retry weak analysis once, then escalate",
 ];
 
+function overrideItems(proposal: PlannerOverrideProposal | null): string[] {
+  if (!proposal) return [];
+  return [
+    ...Object.entries(proposal.configuration_patch).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
+    ...Object.entries(proposal.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage.replaceAll("_", " ")} → ${value}`)),
+    ...proposal.checkpoint_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Human approval")}`),
+    ...proposal.auto_proceed_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Auto proceed")}`),
+    ...Object.entries(proposal.max_retries_by_stage).map(([stage, value]) => `${stage.replaceAll("_", " ")} → ${t("{count} retries", { count: value })}`),
+    ...(proposal.pipeline_blueprint ? [t("Pipeline graph revision {revision}", { revision: proposal.pipeline_blueprint.revision ?? 1 })] : []),
+  ];
+}
+
 export function PlannerPanel({
   runId = null, stageId = null, sourceId = null, open = true, onToggle,
   starterPrompts = [], onWorkspaceUpdated,
@@ -47,6 +59,8 @@ export function PlannerPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [pendingOverride, setPendingOverride] = useState<PlannerOverrideProposal | null>(null);
+  const [overrideOutcome, setOverrideOutcome] = useState<string | null>(null);
   const [problemRecommendations, setProblemRecommendations] = useState<ProblemRecommendation[]>([]);
   // #246: a planner graph edit the runner would refuse is dropped server-side
   // (#231) with the reason in `graph_edit_rejected`. The panel used to ignore
@@ -58,7 +72,7 @@ export function PlannerPanel({
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
-    if (!runId) { setMessages([]); setRecommendations([]); setProblemRecommendations([]); setGraphEditRejected(null); return; }
+    if (!runId) { setMessages([]); setRecommendations([]); setPendingOverride(null); setOverrideOutcome(null); setProblemRecommendations([]); setGraphEditRejected(null); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loadWorkspace = async () => {
@@ -70,13 +84,9 @@ export function PlannerPanel({
           text: item.content.en,
           at: t("saved"),
         })));
-        const plan = workspace.recommended_plan;
-        if (!plan) { setRecommendations([]); return; }
-        setRecommendations([
-          ...Object.entries(plan.configuration).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
-          ...Object.entries(plan.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage} → ${value}`)),
-          ...Object.entries(plan.max_retries_by_stage).map(([stage, value]) => `${stage} retries → ${value}`),
-        ]);
+        const pending = workspace.pending_override ?? null;
+        setPendingOverride(pending);
+        setRecommendations(overrideItems(pending));
       } catch {
         // Intake and schema discovery may still be running. Retry until the
         // durable staging snapshot exists, then stop polling.
@@ -97,6 +107,7 @@ export function PlannerPanel({
     setDraft("");
     setBusy(true);
     setError(null);
+    setOverrideOutcome(null);
     try {
       const res = await api.plannerChat({
         run_id: runId, stage_id: stageId, source_id: sourceId, message: text,
@@ -106,23 +117,9 @@ export function PlannerPanel({
       // this the reply's prose ("moving on to the ML stage") is all the person
       // sees, while the edit that would carry the run there was rejected.
       setGraphEditRejected(typeof res.graph_edit_rejected === "string" ? res.graph_edit_rejected : null);
-      const proposed: string[] = [];
-      const configuration = res.configuration_patch;
-      if (configuration && typeof configuration === "object" && !Array.isArray(configuration)) {
-        for (const [key, value] of Object.entries(configuration)) {
-          proposed.push(`${key} → ${JSON.stringify(value)}`);
-        }
-      }
-      const directives = res.stage_directives;
-      if (directives && typeof directives === "object" && !Array.isArray(directives)) {
-        for (const [stage, values] of Object.entries(directives)) {
-          if (Array.isArray(values)) values.forEach((value) => proposed.push(`${stage} → ${String(value)}`));
-        }
-      }
-      const retries = res.max_retries_by_stage;
-      if (retries && typeof retries === "object" && !Array.isArray(retries)) {
-        for (const [stage, value] of Object.entries(retries)) proposed.push(`${stage} retries → ${String(value)}`);
-      }
+      const pending = res.override_proposal ?? null;
+      setPendingOverride(pending);
+      setRecommendations(overrideItems(pending));
       const ranked = Array.isArray(res.problem_recommendations)
         ? res.problem_recommendations
             .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -138,20 +135,33 @@ export function PlannerPanel({
             .filter((item) => item.target_column && item.problem_title)
         : [];
       setProblemRecommendations(ranked);
-      setRecommendations(proposed);
       setMessages((m) => [...m, { role: "assistant", text: String(reply), at: now }]);
       if (runId) {
         const workspace = await api.stagingWorkspace(runId).catch(() => null);
         if (workspace) onWorkspaceUpdated?.(workspace);
-        const plan = workspace?.recommended_plan;
-        if (plan) {
-          setRecommendations([
-            ...Object.entries(plan.configuration).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
-            ...Object.entries(plan.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage} → ${value}`)),
-            ...Object.entries(plan.max_retries_by_stage).map(([stage, value]) => `${stage} retries → ${value}`),
-          ]);
-        }
+        const savedPending = workspace?.pending_override ?? pending;
+        setPendingOverride(savedPending);
+        setRecommendations(overrideItems(savedPending));
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resolveOverride(action: "apply" | "discard") {
+    if (!runId || !pendingOverride || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const workspace = action === "apply"
+        ? await api.applyPlannerOverride(runId, pendingOverride.proposal_id)
+        : await api.discardPlannerOverride(runId, pendingOverride.proposal_id);
+      setPendingOverride(workspace.pending_override ?? null);
+      setRecommendations(overrideItems(workspace.pending_override ?? null));
+      setOverrideOutcome(t(action === "apply" ? "Override applied" : "Override discarded"));
+      onWorkspaceUpdated?.(workspace);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -224,15 +234,21 @@ export function PlannerPanel({
           </section>
         )}
 
-        {recommendations.length > 0 && (
-          <section className="mb-4 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2.5">
+        {overrideOutcome && <p className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2 text-[11px] font-semibold text-ok-700" role="status">{overrideOutcome}</p>}
+
+        {pendingOverride && recommendations.length > 0 && (
+          <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
             <div className="mb-2 flex items-center gap-2">
-              <p className="text-[11px] font-semibold text-ink">{t("Recommended pipeline overrides")}</p>
-              <Badge tone="brand">{t(runId ? "review / applied where possible" : "recommended, not applied")}</Badge>
+              <p className="text-[11px] font-semibold text-ink">{t("Proposed pipeline override")}</p>
+              <Badge tone="warn">{t("Awaiting your approval")}</Badge>
             </div>
             <ul className="space-y-1">
               {recommendations.map((item) => <li key={item} className="text-[10px] leading-relaxed text-ink-soft">· {item}</li>)}
             </ul>
+            <div className="mt-3 flex justify-end gap-2 border-t border-brand-100 pt-3">
+              <button type="button" className="btn-ghost !py-1.5 text-xs" disabled={busy} onClick={() => void resolveOverride("discard")}>{t("Cancel")}</button>
+              <button type="button" className="btn-primary !py-1.5 text-xs" disabled={busy} onClick={() => void resolveOverride("apply")}>{busy ? t("Applying…") : t("Apply override")}</button>
+            </div>
           </section>
         )}
 

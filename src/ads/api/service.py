@@ -77,6 +77,7 @@ from ads.contracts.staging import (
     PipelineBlueprint,
     PipelineLayout,
     PipelineOutputReference,
+    PlannerOverrideProposal,
     RelationshipExplanation,
     RuntimeConfigurationPlan,
     StagingMessage,
@@ -1584,6 +1585,8 @@ class ControlPlane:
             "Valid stages are intake, schema_discovery, integration, problem_discovery, "
             "validation_strategy, eda, leakage_audit, splitting, training, evaluation, report. "
             "Rules such as approval preferences or retry limits belong in rules_to_remember. "
+            "Every enforceable change you return is a proposal until the human confirms it in "
+            "the UI. Describe it as proposed, never as already applied. "
             "When the human asks for something an agent should do differently at a "
             "specific stage -- a model family to prefer, a metric to report, a column "
             "to leave alone -- put it in stage_directives keyed by that stage id. It "
@@ -1771,15 +1774,35 @@ class ControlPlane:
                             name="graph_patch",
                         )
                         result["graph_patch_artifact_id"] = patch_ref.artifact_id
-                    result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                    if updated_blueprint.revision > workspace.pipeline_blueprint.revision:
+                        result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
                 except PlannerGraphEditRejected as exc:
                     result["graph_edit_rejected"] = str(exc)
-        # Applied here rather than returned for the UI to apply, so the planner
-        # route and the direct route end in the same place. A directive the user
-        # never sees applied is the failure mode worth avoiding: they asked the
-        # planner, the planner agreed, and nothing reached the agent.
+        proposed_blueprint = (
+            PipelineBlueprint.model_validate(result["pipeline_blueprint"])
+            if isinstance(result.get("pipeline_blueprint"), dict)
+            else None
+        )
+        pending_override = PlannerOverrideProposal(
+            configuration_patch=dict(result["configuration_patch"]),
+            stage_directives={
+                stage: list(lines) for stage, lines in result["stage_directives"].items()
+            },
+            checkpoint_stages=list(result["checkpoint_stages"]),
+            auto_proceed_stages=list(result["auto_proceed_stages"]),
+            max_retries_by_stage=dict(result["max_retries_by_stage"]),
+            pipeline_blueprint=proposed_blueprint,
+        )
+        if not pending_override.has_changes:
+            pending_override = None
+        else:
+            result["override_proposal"] = pending_override.model_dump(mode="json")
+
+        # Directives and supervision change execution, so chat may only stage
+        # them. The explicit apply route below is the sole place they reach the
+        # runtime or accepted plan (#328).
         applied: dict[str, list[str]] = {}
-        if run_id and result["stage_directives"]:
+        if run_id and pending_override is None and result["stage_directives"]:
             for stage, lines in result["stage_directives"].items():
                 for line in lines:
                     try:
@@ -1797,6 +1820,8 @@ class ControlPlane:
                 self._runtime_runs[run_id],
                 planner_result=result,
                 user_message=message.strip(),
+                pending_override=pending_override,
+                preserve_effects=True,
             )
         return result
 
@@ -1842,6 +1867,116 @@ class ControlPlane:
             **workspace.model_dump(mode="json", exclude={"component_outputs"}),
             "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
         }
+
+    def apply_planner_override(self, run_id: str, proposal_id: str) -> dict[str, Any]:
+        """Apply exactly one validated Planner proposal after a human click."""
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.pending_override is None:
+            raise ValueError("there is no pending Planner override")
+        pending = previous.pending_override
+        if pending.proposal_id != proposal_id:
+            raise ValueError("the Planner override changed; review the latest proposal")
+        old_plan = previous.recommended_plan or RuntimeConfigurationPlan(
+            pipeline_recommendation="create_pipeline"
+        )
+        configuration = dict(old_plan.configuration)
+        configuration.update(pending.configuration_patch)
+        if previous.recommended_plan is None:
+            for artifact_id in previous.schema_artifact_ids:
+                try:
+                    integration_plan = self.store.load(artifact_id, IntegrationPlan)
+                except Exception:
+                    continue
+                configuration.setdefault("base_table", integration_plan.base_table)
+                configuration.setdefault("base_grain", integration_plan.base_grain)
+                break
+            configuration.setdefault("candidate_limit", 2)
+            configuration.setdefault("n_folds", 5)
+        directives = {stage: list(lines) for stage, lines in old_plan.stage_directives.items()}
+        for stage, lines in pending.stage_directives.items():
+            directives[stage] = [*directives.get(stage, []), *lines]
+        checkpoints = set(old_plan.checkpoint_stages)
+        checkpoints.update(pending.checkpoint_stages)
+        checkpoints.difference_update(pending.auto_proceed_stages)
+        auto_proceed = set(old_plan.auto_proceed_stages)
+        auto_proceed.update(pending.auto_proceed_stages)
+        auto_proceed.difference_update(pending.checkpoint_stages)
+        retries = dict(old_plan.max_retries_by_stage)
+        retries.update(pending.max_retries_by_stage)
+        plan = old_plan.model_copy(
+            update={
+                "configuration": configuration,
+                "stage_directives": directives,
+                "checkpoint_stages": sorted(checkpoints),
+                "auto_proceed_stages": sorted(auto_proceed),
+                "max_retries_by_stage": retries,
+            }
+        )
+        blueprint = pending.pipeline_blueprint or previous.pipeline_blueprint
+        if blueprint is None:
+            raise ValueError("the proposed workflow has no materializable blueprint")
+        blueprint.validate_connections()
+
+        for stage, lines in pending.stage_directives.items():
+            for instruction in lines:
+                self.direct_stage(run_id, stage, instruction)
+
+        saved = previous.model_copy(
+            update={
+                "recommended_plan": plan,
+                "pipeline_blueprint": blueprint,
+                "pending_override": None,
+                "component_outputs": self._staging_component_outputs(
+                    blueprint,
+                    intake_ids=previous.intake_artifact_ids,
+                    schema_ids=previous.schema_artifact_ids,
+                    document_ids=[
+                        artifact_id
+                        for output in previous.component_outputs
+                        if output.component_id == "understand-documents"
+                        for artifact_id in output.artifact_ids
+                    ],
+                    document_summary=(
+                        previous.document_extractions[-1]
+                        if previous.document_extractions
+                        else None
+                    ),
+                    reports_ready=bool(previous.reports),
+                    report_artifact_ids=self._staging_report_artifact_ids(run_id),
+                    plan_ready=True,
+                    plan_accepted=self._plan_is_accepted(plan),
+                ),
+            }
+        )
+        ref = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="planner-override",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, ref.artifact_id)
+        return self.staging_workspace(run_id)
+
+    def discard_planner_override(self, run_id: str, proposal_id: str) -> dict[str, Any]:
+        """Discard a proposal without changing the accepted plan or runtime."""
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.pending_override is None:
+            raise ValueError("there is no pending Planner override")
+        if previous.pending_override.proposal_id != proposal_id:
+            raise ValueError("the Planner override changed; review the latest proposal")
+        saved = previous.model_copy(update={"pending_override": None})
+        ref = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="planner-override-discard",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, ref.artifact_id)
+        return self.staging_workspace(run_id)
 
     def _branch_component_outputs(
         self, parent_run_id: str, workspace: StagingWorkspace
@@ -2429,9 +2564,14 @@ class ControlPlane:
         planner_result: dict[str, Any] | None = None,
         user_message: str | None = None,
         planner_error: str | None = None,
+        pending_override: PlannerOverrideProposal | None = None,
+        preserve_effects: bool = False,
     ) -> StagingWorkspace:
         """Append an immutable snapshot of staging evidence, chat, and plan."""
         previous = self._latest_staging_workspace(runtime.run_id)
+        pending = previous.pending_override if previous else None
+        if pending_override is not None:
+            pending = pending_override
         intake_ids = [
             artifact_id
             for attempt in runtime.state.attempts
@@ -2673,6 +2813,11 @@ class ControlPlane:
                 )
             )
 
+        if preserve_effects:
+            plan = previous.recommended_plan if previous else None
+            if previous and previous.pipeline_blueprint is not None:
+                blueprint = previous.pipeline_blueprint
+
         workspace = StagingWorkspace(
             source_id=runtime.source_id,
             source_fingerprint=self._source_fingerprint(runtime.source_id),
@@ -2696,6 +2841,7 @@ class ControlPlane:
             ),
             document_extractions=document_summaries,
             recommended_plan=plan,
+            pending_override=pending,
             chat_history=history,
             planner_model=model,
             planner_error=planner_error,
@@ -7097,6 +7243,20 @@ def create_app(
             # request. 502 says the gateway got a bad response from the model,
             # and the detail is a readable sentence rather than a parser offset.
             raise HTTPException(status_code=502, detail=str(exc)) from None
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/planner-overrides/{proposal_id}/apply")
+    def apply_planner_override(run_id: str, proposal_id: str) -> dict[str, Any]:
+        try:
+            return plane.apply_planner_override(run_id, proposal_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/planner-overrides/{proposal_id}/discard")
+    def discard_planner_override(run_id: str, proposal_id: str) -> dict[str, Any]:
+        try:
+            return plane.discard_planner_override(run_id, proposal_id)
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
