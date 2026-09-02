@@ -114,6 +114,13 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
   // The parent polls the staging workspace while understanding is live, so the
   // counts behind this notice catch up on their own; nothing to refetch here.
   const afterPromotion = () => undefined;
+  // #384: the notice is a fixed banner pinned over the top of the viewport with
+  // no way to get rid of it. Dismissal is local UI state and nothing else -- it
+  // does not touch the run or the routing outcome, and a reload shows it again.
+  // Remembering *which* outcome was dismissed rather than a bare flag means a
+  // run that moves on to a different outcome speaks up instead of staying quiet.
+  const [dismissed, setDismissed] = useState<StagingOutcome["kind"] | null>(null);
+  const outcome = routing.outcome && routing.outcome.kind !== dismissed ? routing.outcome : null;
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
@@ -124,7 +131,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
           read the same explanation twice and then had to work out which of the
           two boxes could actually answer it, since only one of them could. The
           card is the one that can, so the banner is gone. */}
-      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)}
+      {!routing.error && outcome && <OutcomeNotice outcome={outcome} files={routing.files.map((file) => file.name)} onDismiss={() => setDismissed(outcome.kind)}
         actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")}
         onInspect={() => (canReviewTables ? setReviewing(true) : setSelection("synthesis"))} />}
       {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
@@ -152,7 +159,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
  * true: understanding finished, no plan came out of it, and these are the files
  * it was working on.
  */
-function OutcomeNotice({ outcome, files, actionLabel, onInspect }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void }) {
+export function OutcomeNotice({ outcome, files, actionLabel, onInspect, onDismiss }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void; onDismiss: () => void }) {
   const declined = outcome.kind === "declined";
   const unexplained = outcome.kind === "no_plan";
   const tone = unexplained
@@ -195,6 +202,9 @@ function OutcomeNotice({ outcome, files, actionLabel, onInspect }: { outcome: St
           )}
         </div>
         <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{actionLabel}</button>
+        {/* #384: all three variants of this notice are the same fixed overlay,
+            so all three get the ×. It closes the banner and nothing else. */}
+        <button type="button" className={cx("btn-ghost !px-2 !py-1 shrink-0", tone.head)} aria-label={t("Dismiss")} onClick={onDismiss}>×</button>
       </div>
     </div>
   );
