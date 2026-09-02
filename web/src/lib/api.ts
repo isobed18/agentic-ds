@@ -29,6 +29,14 @@ export interface WorkflowNode {
   ended_at?: string | null;
   branch_of?: string | null;
   label?: string;
+  /**
+   * A short line the canvas card shows under its description, already
+   * translated, with the tone it should read in. Composed on the server for the
+   * same reason panel severity is: whether something is a warning is a judgment
+   * about the run, and the two sides disagreeing about it is worse than either
+   * being slightly wrong.
+   */
+  note?: { text: string; tone: "neutral" | "warn" } | null;
 }
 
 export interface Workflow {
@@ -178,6 +186,23 @@ export interface ModelSummary {
   saved: boolean;
   candidate_count: number;
   training_rows: number;
+  /**
+   * The same run's model refit on externally engineered features, when there is
+   * one. It shares this card rather than getting its own: one run produced both,
+   * and two cards would read as two unrelated models.
+   */
+  enhanced?: EnhancedModelSummary | null;
+}
+
+export interface EnhancedModelSummary {
+  artifact_id: string;
+  display_name: string;
+  estimator: string;
+  holdout_score: number | null;
+  /** Oriented so positive always means better, whichever way the metric runs. */
+  score_delta: number | null;
+  generated_feature_count: number;
+  saved: boolean;
 }
 
 export interface ReportSummary {
