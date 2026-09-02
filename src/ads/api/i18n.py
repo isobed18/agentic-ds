@@ -97,7 +97,30 @@ _TR: dict[str, str] = {
         "Bu oranda doğruluk yanıltıcıdır — çoğunluğu tahmin eden bir model "
     ),
     # --- units and connectors that appear inside composed sentences
+    "row": "satır",
     "rows": "satır",
+    "table": "tablo",
+    "tables": "tablo",
+    "page": "sayfa",
+    "pages": "sayfa",
+    "multi-table source": "çok tablolu kaynak",
+    "joinable table": "birleştirilebilir tablo",
+    "keyed table": "anahtarlı tablo",
+    "analysis table": "analiz tablosu",
+    "document context": "belge bağlamı",
+    "key candidate: {keys}": "anahtar adayı: {keys}",
+    "key candidates: {keys}": "anahtar adayları: {keys}",
+    "no key candidate": "anahtar adayı yok",
+    "no quality notes": "kalite notu yok",
+    "{count} quality notes": "{count} kalite notu",
+    "text layer ready": "metin katmanı hazır",
+    "OCR or vision needed": "OCR veya görüntü işleme gerekli",
+    "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}": (
+        "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}"
+    ),
+    "{pages} {page_unit} · {role} · {readiness}": (
+        "{pages} {page_unit} · {role} · {readiness}"
+    ),
     "columns": "sütun",
     "of {column} is missing": "{column} sütununun {pct}'i eksik",
     "no candidate target measured": "ölçülmüş hedef adayı yok",
