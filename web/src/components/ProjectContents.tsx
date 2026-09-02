@@ -16,6 +16,7 @@ import {
 } from "../lib/api";
 import type { WorkspaceView } from "./automationWorkspaceState";
 import { Badge, Empty, Spinner } from "./ui";
+import { useOverlayDismiss } from "./overlayDismiss";
 import { t } from "../lib/i18n";
 
 const fmt = (n: number) => n.toLocaleString();
@@ -210,9 +211,11 @@ function Pair({ label, value }: { label: string; value: string }) {
  * unlike an automation/project delete which also names what else is affected.
  */
 function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  // Dismissing a confirmation is a cancel, never a confirm (#387).
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>

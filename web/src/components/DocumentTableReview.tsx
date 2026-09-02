@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api, type ArtifactPreview, type DocumentTableDecisionInput } from "../lib/api";
 import { t } from "../lib/i18n";
+import { useOverlayDismiss } from "./overlayDismiss";
 
 type Candidate = {
   candidateId: string;
@@ -59,6 +60,7 @@ export function DocumentTableReview({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<number | null>(null);
+  const panel = useOverlayDismiss<HTMLDivElement>(onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +143,7 @@ export function DocumentTableReview({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true">
-      <div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl">
+      <div ref={panel} className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl">
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>

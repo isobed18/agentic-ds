@@ -6,6 +6,7 @@ import { Notifications } from "../components/Notifications";
 import { EnhancedRow } from "../components/ProjectContents";
 import { FileInsight } from "../components/FileInsight";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { useOverlayDismiss } from "../components/overlayDismiss";
 import {
   api,
   type AutomationDefinition,
@@ -98,9 +99,11 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
  * readable exactly as automation deletion promises.
  */
 export function ProjectDeleteDialog({ project, busy, onCancel, onConfirm }: { project: ProjectDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  // Dismissing a confirmation is a cancel, never a confirm (#387).
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-project-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: project.name })}</h2>
         <div id="delete-project-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -443,9 +446,10 @@ function TrashIcon() {
  * audited separately and stay readable after the deletion.
  */
 export function AutomationDeleteDialog({ automation, busy, onCancel, onConfirm }: { automation: AutomationDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" aria-describedby="delete-automation-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-automation-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: automation.name })}</h2>
         <div id="delete-automation-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -499,9 +503,10 @@ function ProjectReports({ contents, onChanged }: { contents: ProjectContents | n
  * unlike the automation/project dialogs which name what else is affected.
  */
 function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>
