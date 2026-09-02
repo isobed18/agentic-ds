@@ -315,6 +315,27 @@ class RuntimeConfigurationPlan(FrozenModel):
     accepted_by: Literal["human"] | None = None
 
 
+class PromotedDocumentTable(FrozenModel):
+    """One extracted PDF table a person accepted and promoted into the run.
+
+    Promotion writes a ``TableAsset`` and nothing else, so the only record that
+    it happened lived in the artifact store. The plan panel reads the workspace
+    and the source profile, and the profile is built by walking the uploaded
+    files on disk -- a promoted table is not a file, so it could never appear
+    there. The panel therefore kept saying "no trusted structured input is
+    selected" after a successful promotion, and reloading did not help because
+    there was nothing new to read (#361). Recorded here instead, beside the
+    extraction it came from.
+    """
+
+    candidate_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]+$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_file: str
+    page_number: int | None = Field(default=None, ge=1)
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
+
+
 class StagingWorkspace(Artifact):
     artifact_type: ClassVar[ArtifactType] = ArtifactType.STAGING_WORKSPACE
     schema_version: ClassVar[str] = "1"
@@ -330,6 +351,10 @@ class StagingWorkspace(Artifact):
     pipeline_layout: PipelineLayout = Field(default_factory=PipelineLayout)
     component_outputs: list[PipelineOutputReference] = Field(default_factory=list)
     document_extractions: list[DocumentExtractionSummary] = Field(default_factory=list)
+    #: Candidates from those extractions that a person promoted (#361). Every
+    #: entry is already an ML input; the remaining candidates are the ones the
+    #: review dialog still has to offer.
+    promoted_document_tables: list[PromotedDocumentTable] = Field(default_factory=list)
     recommended_plan: RuntimeConfigurationPlan | None = None
     chat_history: list[StagingMessage] = Field(default_factory=list)
     planner_model: str | None = None
@@ -348,6 +373,7 @@ class StagingWorkspace(Artifact):
                 output.status == "ready" for output in self.component_outputs
             ),
             "document_extractions": len(self.document_extractions),
+            "promoted_document_tables": len(self.promoted_document_tables),
             "messages": len(self.chat_history),
             "plan_ready": self.recommended_plan is not None,
             "plan_accepted": bool(self.recommended_plan and self.recommended_plan.accepted),
@@ -367,6 +393,7 @@ __all__ = [
     "PipelineLayout",
     "PipelineOutputReference",
     "PipelinePort",
+    "PromotedDocumentTable",
     "RelationshipExplanation",
     "RuntimeConfigurationPlan",
     "StagingMessage",
