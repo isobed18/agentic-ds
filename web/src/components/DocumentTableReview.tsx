@@ -41,15 +41,27 @@ type Candidate = {
  * which made a failed extraction look like a decision waiting to be made --
  * and still cost a click each, because the promote gate wanted a verdict on
  * every row.
+ *
+ * #389: the dialog knew nothing about what a previous round had already
+ * promoted, so reopening it showed every candidate unchecked -- the same blank
+ * slate as the first visit, which read as "that promotion was used for nothing
+ * at all". `promotedCandidateIds` comes from `workspace.promoted_document_tables`
+ * and is what the caller already has. Those candidates come back checked and
+ * locked, because promotion writes an immutable table asset and nothing here
+ * can take it back; they are also kept out of the decisions this round submits,
+ * since re-accepting one would promote it a second time and mint a duplicate
+ * asset.
  */
 export function DocumentTableReview({
   runId,
   extractionArtifactId,
+  promotedCandidateIds,
   onClose,
   onPromoted,
 }: {
   runId: string;
   extractionArtifactId: string;
+  promotedCandidateIds?: readonly string[];
   onClose: () => void;
   onPromoted: () => void;
 }) {
@@ -59,6 +71,8 @@ export function DocumentTableReview({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<number | null>(null);
+  // Already promoted in an earlier round, and not undoable from here (#389).
+  const alreadyPromoted = useMemo(() => new Set(promotedCandidateIds ?? []), [promotedCandidateIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +114,13 @@ export function DocumentTableReview({
   // promoted, so its box is not checkable and it is excluded from "all". Were
   // it counted, a single failed extraction would put "all checked" out of
   // reach and the header would never leave indeterminate.
-  const selectable = useMemo(() => candidates.filter((candidate) => candidate.rowCount > 0), [candidates]);
+  // #389: an already-promoted candidate is settled, so it is out of "all" for
+  // the same reason -- it is permanently checked and cannot be unchecked, and
+  // counting it would leave the header stuck at indeterminate forever.
+  const selectable = useMemo(
+    () => candidates.filter((candidate) => candidate.rowCount > 0 && !alreadyPromoted.has(candidate.candidateId)),
+    [candidates, alreadyPromoted],
+  );
   const acceptedCount = useMemo(
     () => selectable.filter((candidate) => accepted.has(candidate.candidateId)).length,
     [selectable, accepted],
@@ -124,10 +144,15 @@ export function DocumentTableReview({
       // Every candidate carries a decision, not just the accepted ones. The
       // review artifact is the record of what a person decided, and a record
       // that only lists approvals cannot show that the rest were considered.
-      const inputs: DocumentTableDecisionInput[] = candidates.map((candidate) => ({
-        candidate_id: candidate.candidateId,
-        decision: accepted.has(candidate.candidateId) ? "accepted" : "rejected",
-      }));
+      // #389: except the ones a previous round already promoted. Promotion
+      // mints an immutable table asset per accepted candidate, so listing one
+      // as accepted again would create a second copy of the same table.
+      const inputs: DocumentTableDecisionInput[] = candidates
+        .filter((candidate) => !alreadyPromoted.has(candidate.candidateId))
+        .map((candidate) => ({
+          candidate_id: candidate.candidateId,
+          decision: accepted.has(candidate.candidateId) ? "accepted" : "rejected",
+        }));
       const review = await api.reviewDocumentTables(runId, inputs);
       const result = await api.promoteDocumentTables(runId, review.artifact_id);
       setPromoted(result.table_assets.length);
@@ -168,12 +193,11 @@ export function DocumentTableReview({
                 {/* #360: the header box is the same control as the rows below
                     it, in the same column, so "check all then uncheck two"
                     reads the way it does in every other list. */}
-                <div className="mt-5 flex items-center gap-3 rounded-lg bg-surface-sunken px-4 py-2">
+                {selectable.length > 0 && <div className="mt-5 flex items-center gap-3 rounded-lg bg-surface-sunken px-4 py-2">
                   <input
                     type="checkbox"
                     className="h-4 w-4 shrink-0 accent-ok-600"
                     checked={allAccepted}
-                    disabled={!selectable.length}
                     // `indeterminate` is a DOM property with no HTML
                     // attribute, so React can only set it on the node itself.
                     ref={(node) => { if (node) node.indeterminate = someAccepted; }}
@@ -181,20 +205,24 @@ export function DocumentTableReview({
                     aria-label={allAccepted ? t("Unselect all") : t("Select all")}
                   />
                   <span className="text-xs font-medium text-ink-soft">{t("Accept all {count} tables", { count: selectable.length })}</span>
-                </div>
+                </div>}
                 <ul className="mt-3 space-y-4">
                   {candidates.map((candidate) => {
                     const empty = candidate.rowCount === 0;
-                    const checked = accepted.has(candidate.candidateId);
+                    // #389: a candidate promoted earlier is checked because it
+                    // is in the data, not because this session ticked it.
+                    const settled = alreadyPromoted.has(candidate.candidateId);
+                    const checked = settled || accepted.has(candidate.candidateId);
+                    const locked = empty || settled;
                     return (
                       <li key={candidate.candidateId} className={`rounded-xl border ${checked ? "border-ok-300" : "border-line"} bg-surface`}>
-                      <label className={`flex items-start gap-3 border-b border-line px-4 py-3 ${empty ? "" : "cursor-pointer"}`}>
+                      <label className={`flex items-start gap-3 border-b border-line px-4 py-3 ${locked ? "" : "cursor-pointer"}`}>
                         <input
                           type="checkbox"
                           className="mt-0.5 h-4 w-4 shrink-0 accent-ok-600 disabled:cursor-not-allowed disabled:opacity-40"
                           checked={checked}
-                          disabled={empty}
-                          title={empty ? t("No data extracted — cannot be accepted") : undefined}
+                          disabled={locked}
+                          title={empty ? t("No data extracted — cannot be accepted") : settled ? t("Already promoted — this cannot be undone here") : undefined}
                           onChange={(event) => setAcceptance(candidate.candidateId, event.target.checked)}
                         />
                         <span className="min-w-0 flex-1">
@@ -204,7 +232,7 @@ export function DocumentTableReview({
                           </span>
                         </span>
                         <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
-                          {checked ? t("Enters ML") : t("Stays out")}
+                          {settled ? t("Already promoted") : checked ? t("Enters ML") : t("Stays out")}
                         </span>
                       </label>
                       {/* The faithful visual preview of what was detected: the
@@ -240,9 +268,14 @@ export function DocumentTableReview({
                 <button type="button" className="btn-primary text-xs" onClick={() => void promote()} disabled={busy || acceptedCount === 0}>
                   {busy ? t("Promoting…") : t("Promote {count} accepted", { count: acceptedCount })}
                 </button>
+                {/* #389: with nothing left undecided there is nothing to nag
+                    about -- "check at least one" would be asking for a click
+                    that no longer exists. */}
                 {acceptedCount > 0
                   ? <span className="text-[10px] text-ink-faint">{t("Unchecked tables are recorded as rejected.")}</span>
-                  : <span className="text-[10px] font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
+                  : selectable.length === 0
+                    ? <span className="text-[10px] text-ink-faint">{t("Every table here has already been promoted.")}</span>
+                    : <span className="text-[10px] font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
               </div>
             )}
           </>

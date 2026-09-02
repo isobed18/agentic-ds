@@ -377,7 +377,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {/* One panel for the whole graph. A staging node opens the staging
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
-    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
+    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
     {sensitivitySelected && <Inspector eyebrow={t("Staging")} title={t("Personal data")} onClose={() => setSelected(null)}>
       <SensitivityOverride runId={runId} tables={profile.tables} />
     </Inspector>}
@@ -460,7 +460,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
         rather than leaving the panel describing what was true before. #361:
         this callback was already here and already correct -- what was missing
         is that promotion left no trace on the workspace to re-read. */}
-    {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} onClose={() => setReviewing(false)} onPromoted={() => { void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
+    {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} promotedCandidateIds={promoted.map((table) => table.candidate_id)} onClose={() => setReviewing(false)} onPromoted={() => { void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("ML objective")}</p><p className="mt-2 text-sm font-semibold text-ink">{objective}</p>{target && <p className="mt-1 text-[11px] text-ink-mute">{t("Target")}: {target}</p>}</section>
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Execution scope")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{t("Run the established base pipeline through integration, analysis, training, evaluation, and reporting.")}</p>{plan.checkpoint_stages.length > 0 ? <div className="mt-3 flex flex-wrap gap-1.5">{plan.checkpoint_stages.map((stage) => <Badge key={stage} tone="warn">{t("Review after {stage}", { stage: stage.replaceAll("_", " ") })}</Badge>)}</div> : <p className="mt-2 text-[10px] text-ink-faint">{t("No optional human checkpoints; hard safety gates still apply.")}</p>}</section>
     {plan.rationale.length > 0 && <section className="rounded-xl bg-violet-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Planner rationale")}</p><ul className="mt-2 space-y-2">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></section>}

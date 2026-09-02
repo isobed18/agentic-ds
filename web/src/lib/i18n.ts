@@ -860,6 +860,14 @@ const TR: Record<string, string> = {
   "Nothing was accepted, so nothing entered the pipeline.": "Hiçbir şey kabul edilmedi, bu yüzden hatta hiçbir şey girmedi.",
   "They now behave like any other uploaded table.": "Artık yüklenmiş herhangi bir tablo gibi davranırlar.",
   "This extraction produced no table candidates.": "Bu çıkarım hiç tablo adayı üretmedi.",
+  // #389: a promotion that leaves no trace reads as a promotion that did not
+  // take, so the candidates it settled say so and the workspace keeps the list.
+  "Already promoted": "Zaten veriye alındı",
+  "Already promoted — this cannot be undone here":
+    "Zaten veriye alındı — buradan geri alınamaz",
+  "Every table here has already been promoted.":
+    "Buradaki her tablo zaten veriye alındı.",
+  "{count} tables promoted into data": "{count} tablo veriye alındı",
   "Fixed ML pipeline": "Sabit ML hattı",
   "Preparing the plan…": "Plan hazırlanıyor…",
   "This pipeline is fixed. Staging is deciding which data feeds it.": "Bu hat sabittir. Hazırlık aşaması hangi verinin ona besleneceğine karar veriyor.",
