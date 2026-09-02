@@ -535,7 +535,6 @@ const TR: Record<string, string> = {
   "tables": "tablo",
   "candidate key": "aday anahtar",
   "candidate keys": "aday anahtar",
-  "Exploratory analysis": "Keşifsel analiz",
   "Ask the Planner to reconsider": "Planner'a yeniden değerlendirmesini söyle",
   "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir pipeline çalışmaz. Geçersiz kılma yeri Planner'dır: eksik olanı söylersen bir pipeline önerebilir.",
   "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.": "{stage} aşaması hiçbir şey üretmedi, onaylanacak bir çıktı yok. Yeniden çalışması için geri gönder ya da koşumu durdur.",
@@ -921,7 +920,6 @@ const TR: Record<string, string> = {
   "Candidate document tables": "Aday belge tabloları",
   "Measured relationships": "Ölçülen ilişkiler",
   "Measured / extracted facts": "Ölçülen / çıkarılan gerçekler",
-  "Document extraction": "Belge çıkarımı",
   "{tables} candidate tables · {figures} figures/charts": "{tables} aday tablo · {figures} şekil/grafik",
   "Open extracted content and provenance": "Çıkarılan içeriği ve veri kökenini aç",
   "{coverage}% measured coverage · {cardinality}": "%{coverage} ölçülen kapsama · {cardinality}",
@@ -1192,7 +1190,6 @@ const TR: Record<string, string> = {
   "Every report is labelled with the automation that produced it.":
     "Her rapor, onu üreten otomasyonla etiketlenir.",
   "From {automation}": "{automation} otomasyonundan",
-  "Evaluation report": "Değerlendirme raporu",
   "Automation data": "Otomasyon verisi",
   "Loading project data…": "Proje verisi yükleniyor…",
   "Add project data first": "Önce proje verisi ekleyin",
@@ -1316,7 +1313,44 @@ const TR: Record<string, string> = {
   "{count} findings": "{count} bulgu",
   "{count} candidates": "{count} aday",
   "{count} metrics": "{count} metrik",
+  // #366: every kind in the closed `ArtifactType` vocabulary, because the label
+  // reaches t() through a variable (see `artifactTypeLabel.ts`) and the literal
+  // scanner that guards this catalogue cannot see a single one of them. 29 of
+  // them sat in English on a Turkish screen until someone read the cards.
+  // "integration" is settled as "birleştirme" by the backend catalogue
+  // (`src/ads/api/i18n.py`, "Veri birleştirme planı"), so the card and the
+  // server-composed panel prose name the same artifact the same way.
   "Data card": "Veri kartı",
+  "Integration plan": "Birleştirme planı",
+  "Integration trial": "Birleştirme planı denemesi",
+  "Problem candidates": "Aday problemler",
+  "Problem definition": "Problem tanımı",
+  "Validation strategy": "Doğrulama stratejisi",
+  "Validation trial": "Doğrulama planı denemesi",
+  "EDA report": "EDA raporu",
+  "Exploratory analysis": "Keşifsel analiz",
+  "Feature spec": "Öznitelik tanımı",
+  "Feature experiment": "Öznitelik denemesi",
+  "Leakage report": "Sızıntı raporu",
+  "Candidate set": "Aday kümesi",
+  "Trained model": "Eğitilmiş model",
+  "Model experiment": "Model denemesi",
+  "Evaluation report": "Değerlendirme raporu",
+  "Final report": "Nihai rapor",
+  "Agent audit": "Ajan denetimi",
+  "Measurement bundle": "Ölçüm paketi",
+  "Comprehension brief": "Kavrayış özeti",
+  "Staging workspace": "Hazırlık çalışma alanı",
+  "Staging report": "Hazırlık raporu",
+  "Document extraction": "Belge çıkarımı",
+  "Document table review": "Belge tablosu incelemesi",
+  "Automation execution plan": "Otomasyon çalıştırma planı",
+  "Graph patch": "Grafik yaması",
+  "Table asset": "Tablo varlığı",
+  "Split manifest": "Bölme bildirimi",
+  "Node attempt": "Düğüm denemesi",
+  "Critique": "Eleştiri",
+  "Gate decision": "Kapı kararı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
 
