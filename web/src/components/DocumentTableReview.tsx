@@ -35,6 +35,12 @@ type Candidate = {
  * cleared every decision rather than the accepted ones, and Promote stayed
  * gated behind ruling on every row. Checked means accepted, unchecked means
  * rejected, and the header is the ordinary tri-state select-all.
+ *
+ * #359: candidates the extractor produced nothing for never reach the list at
+ * all. They used to be shown carrying a warning badge and a disabled checkbox,
+ * which made a failed extraction look like a decision waiting to be made --
+ * and still cost a click each, because the promote gate wanted a verdict on
+ * every row.
  */
 export function DocumentTableReview({
   runId,
@@ -73,7 +79,12 @@ export function DocumentTableReview({
       sampleRows: Array.isArray(table.sample_rows)
         ? (table.sample_rows as unknown[]).map((row) => (Array.isArray(row) ? row.map(String) : []))
         : [],
-    })),
+    }))
+    // #359: `row_count` is the length of the rows the extractor actually
+    // produced, so a zero here is a failed extraction rather than a small
+    // table. Such a candidate can never be promoted (#310), so listing it asks
+    // a person to make a decision that has already been made for them.
+    .filter((candidate) => candidate.rowCount > 0 || candidate.sampleRows.length > 0),
   ), [preview]);
 
   function setAcceptance(candidateId: string, checked: boolean) {
@@ -191,11 +202,6 @@ export function DocumentTableReview({
                           <span className="mt-0.5 block text-[10px] text-ink-mute">
                             {candidate.sourceFile} · {t("page {page}", { page: candidate.page })} · {t("{rows} rows × {columns} columns", { rows: candidate.rowCount, columns: candidate.columns.length })}
                           </span>
-                          {/* #310: a candidate can carry headers and no rows at
-                              all, and the preview does not include row data --
-                              so it looked promotable and failed on promote.
-                              Say so here, where the decision is made. */}
-                          {empty && <span className="mt-1.5 inline-block rounded-md bg-warn-50 px-2 py-1 text-[10px] font-semibold text-warn-800">{t("No data extracted — cannot be accepted")}</span>}
                         </span>
                         <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
                           {checked ? t("Enters ML") : t("Stays out")}
