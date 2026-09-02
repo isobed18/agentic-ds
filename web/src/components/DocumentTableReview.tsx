@@ -143,8 +143,13 @@ export function DocumentTableReview({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true">
-      <div ref={panel} className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl">
-        <div className="flex items-start gap-4">
+      {/* #388: the header used to sit inside the scrolling container, so
+          with more than a few candidates the × scrolled out of view and the
+          only way out of the dialog was to scroll back up to find it. The
+          panel is a column now: the header keeps its place and the list
+          below it is what moves. */}
+      <div ref={panel} className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl">
+        <div className="flex shrink-0 items-start gap-4 border-b border-line p-5">
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>
             <h3 className="mt-1 text-lg font-semibold text-ink">{t("Review extracted tables")}</h3>
@@ -153,6 +158,7 @@ export function DocumentTableReview({
           <button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close")} onClick={onClose}>×</button>
         </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         {error && <p role="alert" className="mt-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
 
         {promoted !== null ? (
@@ -249,6 +255,7 @@ export function DocumentTableReview({
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   );
