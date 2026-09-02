@@ -55,6 +55,25 @@ class KeyDetectionOptions:
     detect_composite_keys: bool = True
     max_composite_width: int = _MAX_COMPOSITE_WIDTH
     max_candidates_per_pair: int = 5
+    # #381: two tables can be joinable on a set of columns while no single
+    # column on either side is unique, which the pairwise pass above cannot see
+    # at any threshold -- it emits `from_columns=[one]` and nothing else. A
+    # shared-schema pass measures the columns the two tables have in common as
+    # one key. Bounded on both sides: enough shared columns that this is a real
+    # schema overlap rather than two tables that both happen to have `id`, and
+    # few enough tables that the greedy narrowing below stays cheap.
+    detect_shared_schema_joins: bool = True
+    min_shared_join_columns: int = 3
+    min_shared_column_ratio: float = 0.30
+    """Share of the narrower schema that must be common to both tables.
+
+    0.30 rather than a half because the reported case sits at 13 of 33 (0.39):
+    two course-split exports of one survey, sharing their demographic columns
+    and nothing else. This only decides whether the pair is worth measuring --
+    the overlap floor still decides whether the key is real.
+    """
+    max_shared_join_width: int = 24
+    max_shared_join_tables: int = 12
     max_pairwise_tables: int = 60
     """Above this many tables, skip pairwise detection instead of hanging.
 
@@ -286,6 +305,70 @@ def measure_relationship(
     )
 
 
+#: Separator for composite join keys. A unit separator cannot occur in the
+#: normalised values, so "a" + "b|c" and "a|b" + "c" stay distinguishable.
+_KEY_SEPARATOR = ""
+
+
+def composite_join_key(frame: pd.DataFrame, columns: list[str]) -> pd.Series:
+    """One comparable value per row for a multi-column key (#381).
+
+    Normalisation is per column and row alignment is preserved, then rows
+    carrying a null in any part are dropped -- a partially-null key cannot
+    match anything, and dropping per column independently would silently
+    compare row 4's surname against row 9's postcode.
+    """
+    present = [column for column in columns if column in frame.columns]
+    if not present:
+        return pd.Series(dtype="object")
+    subset = frame[present].dropna()
+    if subset.empty:
+        return pd.Series(dtype="object")
+    parts = [
+        _normalize_for_join(subset[column]).reindex(subset.index).astype(str)
+        for column in present
+    ]
+    joined = parts[0]
+    for part in parts[1:]:
+        joined = joined.str.cat(part, sep=_KEY_SEPARATOR)
+    return joined
+
+
+def measure_composite_relationship(
+    from_table: str,
+    from_columns: list[str],
+    from_frame: pd.DataFrame,
+    to_table: str,
+    to_columns: list[str],
+    to_frame: pd.DataFrame,
+) -> RelationshipCandidate:
+    """``measure_relationship`` over a column set rather than one column.
+
+    The statistics are exactly the single-column ones -- the key is collapsed to
+    one comparable value per row first -- so a composite candidate is ranked and
+    reviewed against the same numbers as every other.
+    """
+    measured = measure_relationship(
+        from_table,
+        _KEY_SEPARATOR.join(from_columns),
+        composite_join_key(from_frame, from_columns),
+        to_table,
+        _KEY_SEPARATOR.join(to_columns),
+        composite_join_key(to_frame, to_columns),
+    )
+    return measured.model_copy(
+        update={
+            "from_columns": list(from_columns),
+            "to_columns": list(to_columns),
+            # The joined names are an implementation detail; affinity is about
+            # whether these columns name each other, and identical sets do.
+            "name_affinity": (
+                1.0 if list(from_columns) == list(to_columns) else measured.name_affinity
+            ),
+        }
+    )
+
+
 def _is_plausible_relationship(rel: RelationshipCandidate, options: KeyDetectionOptions) -> bool:
     """Reject numerically-coincidental overlaps.
 
@@ -318,6 +401,78 @@ class TooManyTablesForPairwiseDetection(RuntimeError):
             f"{table_count} tables exceeds the {limit}-table budget for pairwise "
             "relationship detection"
         )
+
+
+def _shared_joinable_columns(
+    left_card: DataCard,
+    right_card: DataCard,
+    left_frame: pd.DataFrame,
+    right_frame: pd.DataFrame,
+) -> list[str]:
+    """Identically-named joinable columns present in both frames, in left order."""
+    right_types = {column.name: column.semantic_type for column in right_card.columns}
+    return [
+        column.name
+        for column in left_card.columns
+        if column.semantic_type in _JOINABLE
+        and right_types.get(column.name) in _JOINABLE
+        and column.name in left_frame.columns
+        and column.name in right_frame.columns
+    ]
+
+
+def _widest_matching_key(
+    left_name: str,
+    left_frame: pd.DataFrame,
+    right_name: str,
+    right_frame: pd.DataFrame,
+    shared: list[str],
+    options: KeyDetectionOptions,
+) -> RelationshipCandidate | None:
+    """The widest shared column set whose rows still match, or nothing (#381).
+
+    Starting from the whole shared schema and narrowing is the point. The widest
+    set that clears the overlap floor is the *most specific* key that still
+    matches, so this cannot drift down to three loosely-matching columns and
+    call it a relationship; it stops the moment the key is real.
+
+    Narrowing is greedy: at each step drop the single column whose removal helps
+    most. Bounded by the shared width, so the worst case here is quadratic in
+    the number of shared columns and nothing else.
+    """
+    # How much each shared column's own values line up across the two tables.
+    # Only used to order the search; every candidate is still measured.
+    alignment = {
+        column: measure_composite_relationship(
+            left_name, [column], left_frame, right_name, [column], right_frame
+        ).distinct_overlap_rate
+        for column in shared
+    }
+    columns = list(shared)
+    while len(columns) >= options.min_shared_join_columns:
+        measured = measure_composite_relationship(
+            left_name, columns, left_frame, right_name, columns, right_frame
+        )
+        if _is_plausible_relationship(measured, options):
+            return measured
+        if len(columns) == options.min_shared_join_columns:
+            return None
+        # Scan worst-aligned column first so that when removing any of them
+        # helps equally -- a wide key that matches nothing, where every drop
+        # still measures zero -- the one that gets dropped is the column least
+        # like a join key, rather than whichever happened to be first.
+        best: tuple[float, list[str]] | None = None
+        for dropped in sorted(columns, key=lambda column: alignment.get(column, 0.0)):
+            trimmed = [column for column in columns if column != dropped]
+            attempt = measure_composite_relationship(
+                left_name, trimmed, left_frame, right_name, trimmed, right_frame
+            )
+            if best is None or attempt.overlap_rate > best[0]:
+                best = (attempt.overlap_rate, trimmed)
+        if best is None:
+            return None
+        columns = best[1]
+    return None
 
 
 def detect_relationships(
@@ -379,6 +534,34 @@ def detect_relationships(
                     if _is_plausible_relationship(rel, options):
                         pair_results.append(rel)
 
+        # #381: every pair above was skipped unless one side had a unique
+        # column, and the loop can only ever emit a single-column key anyway. A
+        # pair of tables that share most of their schema -- the same survey
+        # split in two, an export sharded by category -- is joinable on the
+        # columns they have in common, and that shape cannot come out of the
+        # loop above under any threshold.
+        if (
+            options.detect_shared_schema_joins
+            and len(by_name) <= options.max_shared_join_tables
+        ):
+            shared = _shared_joinable_columns(left_card, right_card, left_frame, right_frame)
+            widest = min(len(left_card.columns), len(right_card.columns))
+            if (
+                len(shared) >= options.min_shared_join_columns
+                and widest > 0
+                and len(shared) / widest >= options.min_shared_column_ratio
+            ):
+                composite = _widest_matching_key(
+                    left_name,
+                    left_frame,
+                    right_name,
+                    right_frame,
+                    shared[: options.max_shared_join_width],
+                    options,
+                )
+                if composite is not None:
+                    pair_results.append(composite)
+
         pair_results.sort(key=lambda r: r.confidence, reverse=True)
         results.extend(pair_results[: options.max_candidates_per_pair])
 
@@ -413,7 +596,19 @@ def _drop_mirrored(relationships: list[RelationshipCandidate]) -> list[Relations
 def relationships_digest(relationships: list[RelationshipCandidate]) -> str:
     """Render measured relationships as compact text for LLM context."""
     if not relationships:
-        return "No candidate relationships found above the overlap threshold."
+        # #381: this sentence was the whole of what an investigator was told,
+        # and it reads as "these tables are unrelated, stop". It is not that --
+        # it is "the automatic pass found nothing", and the pass is directional
+        # and key-shaped. Naming the one thing the agent can still do turns a
+        # dead end into a next step, and join_overlap can now answer it.
+        return (
+            "No candidate relationships found above the overlap threshold. "
+            "This means the automatic pass found none, not that the tables are "
+            "unrelated: it looks for a key relationship, so tables that share a "
+            "set of descriptive columns will not appear here. Use join_overlap "
+            "with from_columns/to_columns to measure a composite join before "
+            "concluding the sources cannot be related."
+        )
 
     lines = ["CANDIDATE RELATIONSHIPS (measured, ranked by confidence):"]
     for rel in relationships:
@@ -431,8 +626,10 @@ def relationships_digest(relationships: list[RelationshipCandidate]) -> str:
 
 __all__ = [
     "KeyDetectionOptions",
+    "composite_join_key",
     "detect_primary_keys",
     "detect_relationships",
+    "measure_composite_relationship",
     "measure_relationship",
     "relationships_digest",
 ]
