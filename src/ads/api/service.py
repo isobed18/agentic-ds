@@ -328,10 +328,157 @@ def _measure_file_detection(
     }
 
 
+def _translated(text: str, language: str, **params: Any) -> str:
+    """Render one catalogue key without changing the request's language."""
+    with i18n.using(language):
+        return i18n.t(text, **params)
+
+
+def _file_profile_insights(
+    source_files: list[dict[str, Any]],
+    tables: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach one bounded, row-free explanation to every routed file.
+
+    These sentences use only DataCard measurements already safe for agent
+    context: table/row counts, candidate key names, issue counts and measured
+    relationship participation. Source values never enter the payload.
+    """
+
+    tables_by_file: dict[str, list[dict[str, Any]]] = {}
+    for table in tables:
+        tables_by_file.setdefault(str(table.get("source_file") or ""), []).append(table)
+    documents_by_name = {str(item.get("name") or ""): item for item in documents}
+    related_tables = {
+        str(relationship.get(side) or "")
+        for relationship in relationships
+        for side in ("from_table", "to_table")
+    }
+
+    enriched: list[dict[str, Any]] = []
+    for source_file in source_files:
+        item = dict(source_file)
+        name = str(item.get("name") or "")
+        file_tables = tables_by_file.get(name, [])
+        route = str(item.get("route") or "unsupported")
+
+        if route == "structured" and file_tables:
+            table_count = len(file_tables)
+            row_count = sum(int(table.get("rows") or 0) for table in file_tables)
+            issue_count = sum(len(table.get("issues") or []) for table in file_tables)
+            key_labels: list[str] = []
+            for table in file_tables:
+                for columns in table.get("candidate_keys") or []:
+                    joined = "+".join(str(column) for column in columns)
+                    if joined:
+                        key_labels.append(
+                            joined if table_count == 1 else f"{table.get('name')}.{joined}"
+                        )
+
+            if table_count > 1:
+                role_key = "multi-table source"
+            elif any(str(table.get("name") or "") in related_tables for table in file_tables):
+                role_key = "joinable table"
+            elif key_labels:
+                role_key = "keyed table"
+            else:
+                role_key = "analysis table"
+
+            shown_keys = key_labels[:2]
+            remaining_keys = len(key_labels) - len(shown_keys)
+            suffix = f" +{remaining_keys}" if remaining_keys else ""
+            key_template = (
+                "key candidate: {keys}" if len(key_labels) == 1 else "key candidates: {keys}"
+            )
+            insight: dict[str, str] = {}
+            role: dict[str, str] = {}
+            for language in ("en", "tr"):
+                role[language] = _translated(role_key, language)
+                keys = (
+                    _translated(
+                        key_template,
+                        language,
+                        keys=f"{', '.join(shown_keys)}{suffix}",
+                    )
+                    if shown_keys
+                    else _translated("no key candidate", language)
+                )
+                quality = (
+                    _translated("no quality notes", language)
+                    if issue_count == 0
+                    else _translated("{count} quality notes", language, count=issue_count)
+                )
+                insight[language] = _translated(
+                    "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}",
+                    language,
+                    tables=table_count,
+                    table_unit=_translated(
+                        "table" if table_count == 1 else "tables", language
+                    ),
+                    rows=f"{row_count:,}",
+                    row_unit=_translated("row" if row_count == 1 else "rows", language),
+                    role=role[language],
+                    keys=keys,
+                    quality=quality,
+                )
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": row_count,
+                    "tables": table_count,
+                    "candidate_keys": key_labels,
+                    "quality_issues": issue_count,
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        elif route == "documents" and name in documents_by_name:
+            document = documents_by_name[name]
+            pages = int(document.get("pages") or 0)
+            ready = document.get("understanding_status") == "text_ready"
+            role = {
+                language: _translated("document context", language)
+                for language in ("en", "tr")
+            }
+            insight = {
+                language: _translated(
+                    "{pages} {page_unit} · {role} · {readiness}",
+                    language,
+                    pages=pages,
+                    page_unit=_translated("page" if pages == 1 else "pages", language),
+                    role=role[language],
+                    readiness=_translated(
+                        "text layer ready" if ready else "OCR or vision needed", language
+                    ),
+                )
+                for language in ("en", "tr")
+            }
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": 0,
+                    "tables": 0,
+                    "candidate_keys": [],
+                    "quality_issues": len(document.get("issues") or []),
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        else:
+            reason = item.get("reason")
+            if isinstance(reason, dict) and reason.get("en") and reason.get("tr"):
+                item["origin"] = "measured"
+                item["insight"] = {"en": str(reason["en"]), "tr": str(reason["tr"])}
+        enriched.append(item)
+    return enriched
+
+
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _AUTOMATION_INPUT_ID = re.compile(r"^automation-input:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
-_PROFILE_CACHE_SCHEMA_VERSION = 1
+_PROFILE_CACHE_SCHEMA_VERSION = 2
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
 # Windows' classic MAX_PATH. A host can lift it with LongPathsEnabled, but that
 # is a per-machine opt-in outside this application's control, so the budget is
@@ -3658,6 +3805,11 @@ class ControlPlane:
                         }
                         for document in documents
                     ],
+                    # The project Data tab lists physical files, not only the
+                    # source-level totals above. Preserve each file's bounded,
+                    # row-free profile explanation so that view and Intake
+                    # describe the same evidence (#329).
+                    "file_summaries": [dict(file) for file in profile["source_files"]],
                     "privacy": profile["privacy"],
                 }
             )
@@ -4214,6 +4366,44 @@ class ControlPlane:
                     f"olculdu. {kanit}"
                 ).strip(),
             }
+        # Karantinadaki tablolar profile HIC girmez. Route'u degistirip tabloyu
+        # birakmak, agent'a hala `pdf_1_4` adli bir kolon gostermek demekti;
+        # asil zarar oradaydi.
+        profile_table_payloads = [
+            {
+                "name": card.table_name,
+                "source_file": (
+                    Path(card.source_uri).resolve().relative_to(source_root).as_posix()
+                    if source_root in Path(card.source_uri).resolve().parents
+                    else Path(card.source_uri).name
+                ),
+                "sheet_name": card.sheet_name,
+                "format": card.source_format,
+                "rows": card.n_rows,
+                "columns_count": card.n_columns,
+                "candidate_keys": card.candidate_primary_keys,
+                "issues": [issue.code for issue in card.issues],
+                "columns": [
+                    {
+                        "name": column.name,
+                        "dtype": column.dtype,
+                        "semantic_type": column.semantic_type.value,
+                        "sensitivity": column.sensitivity.value,
+                        "null_rate": column.null_rate,
+                        "unique_rate": column.unique_rate,
+                        "is_unique": column.is_unique,
+                        "candidate_target": column.is_usable_target,
+                    }
+                    for column in card.columns
+                ],
+            }
+            for card in cards
+            if card.table_name not in karantina
+        ]
+        profile_documents = [document.public_summary() for document in documents]
+        source_files = _file_profile_insights(
+            source_files, profile_table_payloads, profile_documents, relationships
+        )
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
@@ -4222,41 +4412,8 @@ class ControlPlane:
             # So a caller can tell "none found" apart from "not measured".
             "relationships_measured": relationships_measured,
             "relationships_note": relationships_note,
-            "documents": [document.public_summary() for document in documents],
-            # Karantinadaki tablolar profile HIC girmez. Route'u degistirip
-            # tabloyu birakmak, agent'a hala `pdf_1_4` adli bir kolon gostermek
-            # demekti; asil zarar oradaydi.
-            "tables": [
-                {
-                    "name": card.table_name,
-                    "source_file": (
-                        Path(card.source_uri).resolve().relative_to(source_root).as_posix()
-                        if source_root in Path(card.source_uri).resolve().parents
-                        else Path(card.source_uri).name
-                    ),
-                    "sheet_name": card.sheet_name,
-                    "format": card.source_format,
-                    "rows": card.n_rows,
-                    "columns_count": card.n_columns,
-                    "candidate_keys": card.candidate_primary_keys,
-                    "issues": [issue.code for issue in card.issues],
-                    "columns": [
-                        {
-                            "name": column.name,
-                            "dtype": column.dtype,
-                            "semantic_type": column.semantic_type.value,
-                            "sensitivity": column.sensitivity.value,
-                            "null_rate": column.null_rate,
-                            "unique_rate": column.unique_rate,
-                            "is_unique": column.is_unique,
-                            "candidate_target": column.is_usable_target,
-                        }
-                        for column in card.columns
-                    ],
-                }
-                for card in cards
-                if card.table_name not in karantina
-            ],
+            "documents": profile_documents,
+            "tables": profile_table_payloads,
             "privacy": (
                 "Schema and aggregate statistics only; document metadata may also be shown. "
                 "Source rows, values, and PDF text are omitted from this API response."

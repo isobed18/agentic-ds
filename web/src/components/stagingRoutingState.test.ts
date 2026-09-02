@@ -6,7 +6,7 @@ const profile: SourceProfile = {
   source_id: "mixed",
   privacy: "safe",
   source_files: [
-    { name: "employees.csv", format: "csv", route: "structured", reason: { en: "table", tr: "tablo" }, table_names: ["employees"] },
+    { name: "employees.csv", format: "csv", route: "structured", reason: { en: "table", tr: "tablo" }, table_names: ["employees"], insight: { en: "42 rows · keyed table", tr: "42 satır · anahtarlı tablo" } },
     { name: "metrics.parquet", format: "parquet", route: "structured", reason: { en: "table", tr: "tablo" }, table_names: ["metrics"] },
     { name: "survey.pdf", format: "pdf", route: "documents", reason: { en: "document", tr: "belge" }, table_names: [] },
     { name: "report.pdf", format: "pdf", route: "documents", reason: { en: "document", tr: "belge" }, table_names: [] },
@@ -65,6 +65,13 @@ describe("staging source routing", () => {
       ["survey.pdf", "documents"],
       ["report.pdf", "documents"],
     ]);
+  });
+
+  it("carries the measured per-file insight into the Intake card", () => {
+    expect(routedFiles(profile)[0].insight).toEqual({
+      en: "42 rows · keyed table",
+      tr: "42 satır · anahtarlı tablo",
+    });
   });
 
   it("shows independent measured progress and selected document engine", () => {

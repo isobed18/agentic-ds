@@ -1,7 +1,7 @@
 import type { LocalizedText, SourceProfile, StagingWorkspace } from "../lib/api";
 import { runErrorText } from "./stageFailure";
 
-export type RouteKind = "structured" | "documents" | "unsupported";
+export type RouteKind = "structured" | "documents" | "unsupported" | "needs_review";
 export type ProgressStatus = "complete" | "running" | "pending" | "failed";
 
 export interface RoutedSourceFile {
@@ -9,6 +9,7 @@ export interface RoutedSourceFile {
   format: string;
   route: RouteKind;
   reason?: LocalizedText;
+  insight?: LocalizedText;
   tableNames: string[];
   // What ads.file_detection measured from the file's content. The route above still
   // comes from the extension, so these two can disagree -- and when they do,
@@ -144,6 +145,7 @@ export function routedFiles(profile: SourceProfile): RoutedSourceFile[] {
       format: file.format,
       route: file.route,
       reason: file.reason,
+      insight: file.insight,
       tableNames: file.table_names ?? [],
       measuredFlow: file.detected_flow,
       measuredDeterministic: file.detection_deterministic,
