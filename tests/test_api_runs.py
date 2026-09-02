@@ -219,6 +219,19 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
     event_names = [event["event"] for event in progress["events"]]
     assert "source_discovery_ready" in event_names
     assert "document_understanding_started" in event_names
+    # #365: `object()` is not a structured LLM, so no plan can be proposed. The
+    # run used to report `staging_analysis_ready` and carry no plan, and the
+    # canvas -- which has only "pending" and "failed" for the proposal node --
+    # drew that as still working. The file was accepted, nothing went red, and
+    # the flow never advanced. The reason is recorded now. The status is
+    # deliberately unchanged: the understanding that ran is real, and a
+    # deployment with no planner configured is a configuration fact rather
+    # than a failed run.
+    skipped = next(
+        event for event in progress["events"] if event["event"] == "staging_analysis_skipped"
+    )
+    assert "No planner model is available" in skipped["reason"]["en"]
+    assert skipped["reason"]["tr"] != skipped["reason"]["en"]
     assert {item["name"]: item["route"] for item in profile["source_files"]} == {
         "brief.pdf": "documents"
     }

@@ -3,8 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type ArtifactPreview, type DocumentTableDecisionInput } from "../lib/api";
 import { t } from "../lib/i18n";
 
-type Decision = "accepted" | "rejected";
-
 type Candidate = {
   candidateId: string;
   sourceFile: string;
@@ -26,9 +24,20 @@ type Candidate = {
  * #303: a checkbox that defaulted to rejected still asked for trust without
  * evidence -- a person could not see what a candidate table actually held, so
  * accepting one was a blind click. Each candidate now shows its page, its
- * detected headers, and a bounded sample of its rows, and every candidate needs
- * an explicit Accept or Reject before anything can be promoted. Rejected
- * candidates are never promoted, so they never become pipeline evidence.
+ * detected headers, and a bounded sample of its rows, so the decision is made
+ * against evidence. Rejected candidates are never promoted, so they never
+ * become pipeline evidence.
+ *
+ * #359: candidates the extractor produced nothing for never reach the list at
+ * all. They used to be shown carrying a warning badge and a disabled Accept,
+ * which made a failed extraction look like a decision waiting to be made.
+ *
+ * #360: one checkbox per candidate, not an Accept/Reject button pair. The pair
+ * carried three states (accepted / rejected / undecided) while "Select all"
+ * assumed two, so the two controls fought each other -- accept-all-then-reject
+ * a-few could not be expressed, and Promote was gated behind ruling on every
+ * row. Checked means accepted, unchecked means rejected, and the header
+ * checkbox is the ordinary tri-state select-all.
  */
 export function DocumentTableReview({
   runId,
@@ -42,7 +51,8 @@ export function DocumentTableReview({
   onPromoted: () => void;
 }) {
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
-  const [decisions, setDecisions] = useState<Map<string, Decision>>(new Map());
+  // Checked means accepted; a candidate not in here is rejected on promote (#360).
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<number | null>(null);
@@ -66,44 +76,41 @@ export function DocumentTableReview({
       sampleRows: Array.isArray(table.sample_rows)
         ? (table.sample_rows as unknown[]).map((row) => (Array.isArray(row) ? row.map(String) : []))
         : [],
-    })),
+    }))
+    // #359: `row_count` is the length of the rows the extractor actually
+    // produced, so a zero here is a failed extraction rather than a small
+    // table. Such a candidate can never be promoted (#310), so listing it asks
+    // a person to make a decision that has already been made for them.
+    .filter((candidate) => candidate.rowCount > 0 || candidate.sampleRows.length > 0),
   ), [preview]);
 
-  function decide(candidateId: string, decision: Decision) {
-    setDecisions((current) => {
-      const next = new Map(current);
-      // A second click on the same choice clears it, so a mis-click is undoable
-      // and lands back on "no decision yet" rather than the opposite verdict.
-      if (next.get(candidateId) === decision) next.delete(candidateId);
-      else next.set(candidateId, decision);
-      return next;
-    });
-  }
-
-  const allAccepted = candidates.length > 0 && candidates.every(
-    (candidate) => decisions.get(candidate.candidateId) === "accepted",
-  );
-
-  function toggleAllAccepted() {
-    setDecisions((current) => {
-      const next = new Map(current);
-      for (const candidate of candidates) {
-        if (allAccepted) next.delete(candidate.candidateId);
-        else next.set(candidate.candidateId, "accepted");
-      }
+  function setAcceptance(candidateId: string, checked: boolean) {
+    setAccepted((current) => {
+      const next = new Set(current);
+      if (checked) next.add(candidateId);
+      else next.delete(candidateId);
       return next;
     });
   }
 
   const acceptedCount = useMemo(
-    () => [...decisions.values()].filter((decision) => decision === "accepted").length,
-    [decisions],
+    () => candidates.filter((candidate) => accepted.has(candidate.candidateId)).length,
+    [candidates, accepted],
   );
-  const undecided = candidates.filter((candidate) => !decisions.has(candidate.candidateId)).length;
-  const allDecided = candidates.length > 0 && undecided === 0;
+  const allAccepted = candidates.length > 0 && acceptedCount === candidates.length;
+  // The third state every multi-select header has: some checked, but not all.
+  const someAccepted = acceptedCount > 0 && !allAccepted;
+
+  function toggleAllAccepted() {
+    // Ordinary tri-state behaviour: indeterminate resolves upward to "all
+    // checked", and only an already-full selection is cleared.
+    setAccepted(allAccepted ? new Set() : new Set(candidates.map((candidate) => candidate.candidateId)));
+  }
 
   async function promote() {
-    if (busy || !allDecided) return;
+    // #360: unchecked is a verdict, not a gap, so the only thing left to gate
+    // on is whether anything at all was accepted.
+    if (busy || acceptedCount === 0) return;
     setBusy(true); setError(null);
     try {
       // Every candidate carries a decision, not just the accepted ones. The
@@ -111,7 +118,7 @@ export function DocumentTableReview({
       // that only lists approvals cannot show that the rest were considered.
       const inputs: DocumentTableDecisionInput[] = candidates.map((candidate) => ({
         candidate_id: candidate.candidateId,
-        decision: decisions.get(candidate.candidateId) ?? "rejected",
+        decision: accepted.has(candidate.candidateId) ? "accepted" : "rejected",
       }));
       const review = await api.reviewDocumentTables(runId, inputs);
       const result = await api.promoteDocumentTables(runId, review.artifact_id);
@@ -150,35 +157,44 @@ export function DocumentTableReview({
             {preview && !candidates.length && <p className="mt-5 rounded-lg bg-surface-sunken px-3 py-3 text-xs text-ink-mute">{t("This extraction produced no table candidates.")}</p>}
             {candidates.length > 0 && (
               <>
-                <div className="mt-5 flex justify-end">
-                  <button type="button" className="btn-ghost text-xs" aria-pressed={allAccepted} onClick={toggleAllAccepted}>
-                    {allAccepted ? t("Unselect all") : t("Select all")}
-                  </button>
+                {/* #360: the header box is the same control as the rows below
+                    it, in the same column, so "check all then uncheck two"
+                    reads the way it does in every other list. */}
+                <div className="mt-5 flex items-center gap-3 rounded-lg bg-surface-sunken px-4 py-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 shrink-0 accent-ok-600"
+                    checked={allAccepted}
+                    // `indeterminate` is a DOM property with no HTML attribute,
+                    // so React can only set it through the node itself.
+                    ref={(node) => { if (node) node.indeterminate = someAccepted; }}
+                    onChange={toggleAllAccepted}
+                    aria-label={allAccepted ? t("Unselect all") : t("Select all")}
+                  />
+                  <span className="text-xs font-medium text-ink-soft">{t("Accept all {count} tables", { count: candidates.length })}</span>
                 </div>
                 <ul className="mt-3 space-y-4">
                   {candidates.map((candidate) => {
-                    const decision = decisions.get(candidate.candidateId);
-                    const empty = candidate.rowCount === 0;
-                    const border = decision === "accepted" ? "border-ok-300" : decision === "rejected" ? "border-stop-200" : "border-line";
+                    const checked = accepted.has(candidate.candidateId);
                     return (
-                      <li key={candidate.candidateId} className={`rounded-xl border ${border} bg-surface`}>
-                      <div className="flex items-start gap-3 border-b border-line px-4 py-3">
+                      <li key={candidate.candidateId} className={`rounded-xl border ${checked ? "border-ok-300" : "border-line"} bg-surface`}>
+                      <label className="flex cursor-pointer items-start gap-3 border-b border-line px-4 py-3">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-ok-600"
+                          checked={checked}
+                          onChange={(event) => setAcceptance(candidate.candidateId, event.target.checked)}
+                        />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-ink">{candidate.title}</span>
                           <span className="mt-0.5 block text-[10px] text-ink-mute">
                             {candidate.sourceFile} · {t("page {page}", { page: candidate.page })} · {t("{rows} rows × {columns} columns", { rows: candidate.rowCount, columns: candidate.columns.length })}
                           </span>
-                          {/* #310: a candidate can carry headers and no rows at
-                              all, and the preview does not include row data --
-                              so it looked promotable and failed on promote.
-                              Say so here, where the decision is made. */}
-                          {empty && <span className="mt-1.5 inline-block rounded-md bg-warn-50 px-2 py-1 text-[10px] font-semibold text-warn-800">{t("No data extracted — cannot be accepted")}</span>}
                         </span>
-                        <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label={t("Accept or reject this table")}>
-                          <button type="button" disabled={empty} title={empty ? t("No data extracted — cannot be accepted") : undefined} aria-pressed={decision === "accepted"} onClick={() => decide(candidate.candidateId, "accepted")} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${decision === "accepted" ? "bg-ok-600 text-white" : "border border-line text-ink-soft hover:bg-ok-50"}`}>{t("Accept")}</button>
-                          <button type="button" aria-pressed={decision === "rejected"} onClick={() => decide(candidate.candidateId, "rejected")} className={`rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${decision === "rejected" ? "bg-stop-600 text-white" : "border border-line text-ink-soft hover:bg-stop-50"}`}>{t("Reject")}</button>
-                        </div>
-                      </div>
+                        <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${checked ? "bg-ok-50 text-ok-700" : "bg-surface-sunken text-ink-faint"}`}>
+                          {checked ? t("Enters ML") : t("Stays out")}
+                        </span>
+                      </label>
                       {/* The faithful visual preview of what was detected: the
                           detected headers over a bounded sample of the rows, so
                           the decision above is made against evidence (#303). */}
@@ -209,12 +225,12 @@ export function DocumentTableReview({
             )}
             {candidates.length > 0 && (
               <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
-                <button type="button" className="btn-primary text-xs" onClick={() => void promote()} disabled={busy || !allDecided}>
+                <button type="button" className="btn-primary text-xs" onClick={() => void promote()} disabled={busy || acceptedCount === 0}>
                   {busy ? t("Promoting…") : t("Promote {count} accepted", { count: acceptedCount })}
                 </button>
-                {allDecided
-                  ? <span className="text-[10px] text-ink-faint">{t("Recorded as a decision either way.")}</span>
-                  : <span className="text-[10px] font-medium text-warn-700">{t("Decide on every table first ({count} left).", { count: undecided })}</span>}
+                {acceptedCount > 0
+                  ? <span className="text-[10px] text-ink-faint">{t("Unchecked tables are recorded as rejected.")}</span>
+                  : <span className="text-[10px] font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
               </div>
             )}
           </>

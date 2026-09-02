@@ -17,6 +17,7 @@ import {
   type ProgressStatus,
   type RoutedSourceFile,
   type RoutingSubstep,
+  type StagingOutcome,
   type StagingRoutingState,
 } from "./stagingRoutingState";
 import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
@@ -89,7 +90,10 @@ export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles
   );
 }
 
-export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onRetry?: () => void }) {
+// #362: `onRetry` went with the yellow banner -- it was that banner's only
+// caller, and a run stopped at a gate is answered on the ApprovalCard (which
+// offers "Stop the run" among its options) rather than restarted from here.
+export function UnderstandingProgress({ profile, runId, workspace }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
@@ -97,12 +101,83 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
-      {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
+      {/* #362: a yellow "Understanding needs review" banner used to sit here,
+          built from the same `human_prompt.question` + `context_summary` the
+          red ApprovalCard above the run already renders in full -- with the
+          stage name, the reason list, and the three action buttons. A person
+          read the same explanation twice and then had to work out which of the
+          two boxes could actually answer it, since only one of them could. The
+          card is the one that can, so the banner is gone. */}
+      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
-      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
+      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome ? "blocked" : routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} />
     </CanvasSurface>
+  );
+}
+
+/**
+ * Understanding finished and there is no plan to accept -- say so (#365).
+ *
+ * This is the whole reported bug: a file was accepted, nothing went red, and
+ * the flow never reached the suggested-plan node. The proposal node has only
+ * "pending" and "blocked", and every way of ending without a proposal rendered
+ * as pending, so a run that had already stopped was indistinguishable from one
+ * still working. People waited, reloaded, and started again.
+ *
+ * The two decision cases are not faults and are not dressed as ones: the
+ * planner is asked to weigh `defer_pipeline` and `no_pipeline`, and it records
+ * its reason in `decision_summary` -- which nothing rendered until now. The
+ * third case is the one we cannot explain from here, so it says only what is
+ * true: understanding finished, no plan came out of it, and these are the files
+ * it was working on.
+ */
+function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome; files: string[]; onInspect: () => void }) {
+  const declined = outcome.kind === "declined";
+  const unexplained = outcome.kind === "no_plan";
+  const tone = unexplained
+    ? { border: "border-stop-300", bg: "bg-stop-50", head: "text-stop-700", body: "text-stop-700" }
+    : declined
+      ? { border: "border-line", bg: "bg-surface", head: "text-ink", body: "text-ink-mute" }
+      : { border: "border-warn-300", bg: "bg-warn-50", head: "text-warn-800", body: "text-warn-700" };
+  const title = unexplained
+    ? t("Understanding finished without a plan")
+    : declined
+      ? t("No ML pipeline is proposed for this source")
+      : t("A review is needed before a plan can be proposed");
+  return (
+    <div role="alert" className={cx("fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border px-4 py-3 shadow-pop", tone.border, tone.bg)}>
+      <div className="flex items-start gap-3">
+        <StatusMark status={unexplained ? "failed" : "blocked"} />
+        <div className="min-w-0 flex-1">
+          <p className={cx("text-xs font-semibold", tone.head)}>{title}</p>
+          {outcome.summary && <p className={cx("mt-1 break-words text-[11px] leading-relaxed", tone.body)}>{local(outcome.summary)}</p>}
+          {unexplained && !outcome.summary && (
+            <p className={cx("mt-1 break-words text-[11px] leading-relaxed", tone.body)}>
+              {t("The run reached the end of understanding and produced no proposal, and it recorded no reason. Nothing further will happen on its own.")}
+            </p>
+          )}
+          {outcome.rationale.length > 0 && (
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-4">
+              {outcome.rationale.slice(0, 4).map((reason) => (
+                <li key={reason.en} className={cx("break-words text-[11px] leading-relaxed", tone.body)}>{local(reason)}</li>
+              ))}
+            </ul>
+          )}
+          {/* Naming the files is the point: the reporter's stall was per-file,
+              and a message that does not say which file leaves the same
+              guessing behind. */}
+          {files.length > 0 && (
+            <p className="mt-1.5 break-words text-[10px] leading-relaxed text-ink-faint">
+              {t("Files understood: {files}", { files: files.slice(0, 8).join(", ") })}
+              {files.length > 8 && ` +${files.length - 8}`}
+            </p>
+          )}
+        </div>
+        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{t("Inspect understanding")}</button>
+      </div>
+    </div>
   );
 }
 
