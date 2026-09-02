@@ -232,3 +232,130 @@ describe("paginating the routed-file list (#98)", () => {
     expect(result.shown.map((f) => f.name)).toEqual(["00001.csv"]);
   });
 });
+
+/**
+ * Understanding that ends with nothing to accept has to say so (#365).
+ *
+ * The reported bug was silence: a file was accepted, nothing went red, and the
+ * flow never reached the suggested-plan node. The proposal node has only
+ * "pending" and "blocked", so every way of finishing without a proposal drew as
+ * "still working" -- indistinguishable from a run that had genuinely stopped.
+ */
+describe("understanding that produces no plan (#365)", () => {
+  const events = [
+    { event: "source_discovery_ready" },
+    { event: "gate_decided", stage: "intake", verdict: "auto_proceed" },
+    { event: "gate_decided", stage: "schema_discovery", verdict: "auto_proceed" },
+  ];
+
+  function plan(recommendation: string) {
+    return {
+      proposal_id: "p1",
+      status: "proposed" as const,
+      mode: "fully_auto" as const,
+      pipeline_recommendation: recommendation as "create_pipeline" | "defer_pipeline" | "no_pipeline",
+      decision_summary: { en: "The papers carry no table-shaped data.", tr: "Makaleler tablo biciminde veri tasimiyor." },
+      configuration: {},
+      stage_directives: {},
+      checkpoint_stages: [],
+      auto_proceed_stages: [],
+      max_retries_by_stage: {},
+      rationale: [{ en: "Text-only sources.", tr: "Yalnizca metin kaynaklari." }],
+      accepted: false,
+    };
+  }
+
+  function workspaceWith(recommendation: string | null) {
+    return {
+      artifact_id: "w1",
+      run_id: "run-1",
+      source_id: "mixed",
+      source_fingerprint: "f",
+      intake_artifact_ids: [],
+      schema_artifact_ids: [],
+      cache_reused: false,
+      relationship_explanations: [],
+      reports: [],
+      pipeline_layout: { version: "1", nodes: [], collapsed_branches: [] },
+      ...(recommendation ? { recommended_plan: plan(recommendation) } : {}),
+    } as unknown as Parameters<typeof buildStagingRoutingState>[2];
+  }
+
+  it("reports a settled run that produced no plan at all", () => {
+    const state = buildStagingRoutingState(
+      profile,
+      { status: "staged", events },
+      workspaceWith(null),
+    );
+    expect(state.outcome).toEqual({ kind: "no_plan", summary: undefined, rationale: [] });
+  });
+
+  it("names the reason the server recorded for skipping the planner", () => {
+    // The one case the server can explain: no planner model is configured, so
+    // no plan was ever attempted. It used to be a bare `return`.
+    const state = buildStagingRoutingState(
+      profile,
+      {
+        status: "staged",
+        events: [
+          ...events,
+          { event: "staging_analysis_skipped", reason: { en: "No planner model is available.", tr: "Planlayici model yok." } },
+        ],
+      },
+      workspaceWith(null),
+    );
+    expect(state.outcome?.kind).toBe("no_plan");
+    expect(state.outcome?.summary?.en).toContain("No planner model");
+  });
+
+  it("carries the planner's own reason when it declines to propose a pipeline", () => {
+    // `decision_summary` was computed on every run and rendered nowhere, so the
+    // one sentence explaining the stop was thrown away.
+    const state = buildStagingRoutingState(profile, { status: "staged", events }, workspaceWith("no_pipeline"));
+    expect(state.outcome?.kind).toBe("declined");
+    expect(state.outcome?.summary?.en).toContain("no table-shaped data");
+    expect(state.outcome?.rationale).toHaveLength(1);
+  });
+
+  it("distinguishes a deferral from a refusal", () => {
+    const state = buildStagingRoutingState(profile, { status: "staged", events }, workspaceWith("defer_pipeline"));
+    expect(state.outcome?.kind).toBe("deferred");
+  });
+
+  it("stays quiet while the run is still working", () => {
+    // Absence of an outcome is what keeps the notice from claiming a stop that
+    // has not happened. "staged" is set only after the analysis call returns.
+    const state = buildStagingRoutingState(profile, { status: "staging", events }, workspaceWith(null));
+    expect(state.outcome).toBeUndefined();
+  });
+
+  it("says nothing when there is a real proposal to accept", () => {
+    const state = buildStagingRoutingState(profile, { status: "staged", events }, workspaceWith("create_pipeline"));
+    expect(state.outcome).toBeUndefined();
+  });
+});
+
+describe("the staging error banner reads a bilingual run error (#365)", () => {
+  it("accepts the {en, tr} shape run errors have carried since #263", () => {
+    // This is the regression behind "no error, no warning, nothing red": the
+    // read narrowed on `typeof === "string"`, so every failure after errors
+    // became objects fell through and the red banner never rendered.
+    const state = buildStagingRoutingState(
+      profile,
+      { status: "failed", error: { en: "Planner could not create a staging plan", tr: "Planlayici plan olusturamadi" } },
+      null,
+    );
+    // Which half is read depends on the reader's language, so the assertion
+    // that matters is that a half was read at all: the defect was `undefined`.
+    expect(state.error).toBeDefined();
+    expect([
+      "Planner could not create a staging plan",
+      "Planlayici plan olusturamadi",
+    ]).toContain(state.error);
+  });
+
+  it("still accepts a plain string from an older run", () => {
+    const state = buildStagingRoutingState(profile, { status: "failed", error: "boom" }, null);
+    expect(state.error).toBe("boom");
+  });
+});
