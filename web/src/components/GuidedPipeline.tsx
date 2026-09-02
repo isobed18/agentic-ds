@@ -443,17 +443,19 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
   const objective = String(config.problem_title ?? (target ? t("Model {target}", { target }) : t("The objective will be finalized during problem discovery")));
   const baseTable = String(config.base_table ?? profile.tables[0]?.name ?? "—");
   const baseGrain = Array.isArray(config.base_grain) ? config.base_grain.map(String).join(", ") : "—";
-  // #361: a promoted table is an ML input and is treated exactly like an
-  // uploaded file, so it belongs in this list. It is named by the document and
-  // page it came from rather than by its candidate id, which is a store key.
-  const mlInputs = [
-    ...structured,
-    ...promoted.map((table) => (table.page_number
-      ? t("{file} · page {page}", { file: table.source_file, page: table.page_number })
-      : table.source_file)),
-  ];
+  // #361 listed promoted tables here as ML inputs. #390 measured that they are
+  // not: the ML run resumes at the stage after schema_discovery, so intake never
+  // re-runs and no promoted TableAsset is ever loaded back -- `load_table_asset`
+  // has no production caller at all. They get their own line below rather than
+  // being counted among the files that really do reach the model. Named by the
+  // document and page they came from, not by the candidate id, which is a
+  // store key.
+  const mlInputs = structured;
+  const promotedNames = promoted.map((table) => (table.page_number
+    ? t("{file} · page {page}", { file: table.source_file, page: table.page_number })
+    : table.source_file));
   return <div className="space-y-5">
-    <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={mlInputs} tone="ok" empty={t("No trusted structured input is selected.")} /></section>
+    <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={mlInputs} tone="ok" empty={t("No trusted structured input is selected.")} />{promotedNames.length > 0 && <><FileRoles title={t("Promoted from documents")} files={promotedNames} tone="neutral" empty="" /><p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{t("Saved as reviewed tables with their provenance. They do not join the ML training table for this run.")}</p></>}</section>
     {documents.length > 0 && <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><FileRoles title={t("Document context")} files={documents} tone="neutral" empty="" /><p className="mt-3 text-[10px] leading-relaxed text-ink-mute">{candidateTables ? t("{count} extracted table candidates remain review-only until explicitly promoted.", { count: candidateTables }) : t("Documents inform understanding but do not silently become training rows.")}</p>{candidateTables > 0 && extractionId && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: candidateTables })}</button>}</section>}
     {/* Promoting turns candidates into real tables, so the count above and the
         ML inputs beside it are both stale afterwards. Re-read the workspace

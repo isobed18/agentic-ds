@@ -844,7 +844,6 @@ const TR: Record<string, string> = {
   "Proposed plan": "Önerilen plan",
   "Review extracted tables": "Çıkarılan tabloları incele",
   "Review {count} extracted tables": "{count} çıkarılan tabloyu incele",
-  "Accepted tables become training data and are treated exactly like an uploaded file. Anything left unaccepted stays out.": "Kabul edilen tablolar eğitim verisi olur ve yüklenmiş bir dosyayla tamamen aynı şekilde işlenir. Kabul edilmeyen her şey dışarıda kalır.",
   "Promote {count} accepted": "{count} kabul edileni veriye al",
   "Promoting…": "Veriye alınıyor…",
   // #360: the review is a checkbox list -- checked accepts, unchecked rejects.
@@ -861,9 +860,24 @@ const TR: Record<string, string> = {
   "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
   "Stays out": "Dışarıda kalır",
   "{count} tables promoted": "{count} tablo veriye alındı",
-  "Nothing was accepted, so nothing entered the pipeline.": "Hiçbir şey kabul edilmedi, bu yüzden hatta hiçbir şey girmedi.",
-  "They now behave like any other uploaded table.": "Artık yüklenmiş herhangi bir tablo gibi davranırlar.",
   "This extraction produced no table candidates.": "Bu çıkarım hiç tablo adayı üretmedi.",
+  // #390: promotion writes a durable, provenance-carrying TableAsset and
+  // nothing loads it back -- the ML run resumes after schema_discovery, so
+  // intake never re-runs and `load_table_asset` has no production caller. The
+  // copy said accepted tables "become training data"; it says what happens now.
+  "Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.":
+    "Kabul edilen tablolar, geldikleri belge ve sayfa ile birlikte incelenmiş tablo olarak kaydedilir. Kabul edilmeyenler dışarıda kalır.",
+  "Promotion does not add them to the ML training table for this run; that is built from the uploaded files.":
+    "Veriye alma, bu koşunun ML eğitim tablosuna onları eklemez; o tablo yüklenen dosyalardan kurulur.",
+  "Nothing was accepted, so nothing was saved.": "Hiçbir şey kabul edilmedi, bu yüzden hiçbir şey kaydedilmedi.",
+  "They are recorded with their provenance and listed in the Documents panel.":
+    "Kaynak bilgileriyle birlikte kaydedilir ve Belgeler panelinde listelenir.",
+  "Saved as reviewed tables with their provenance. They do not join the ML training table for this run.":
+    "Kaynak bilgileriyle birlikte incelenmiş tablo olarak kaydedildi. Bu koşunun ML eğitim tablosuna katılmazlar.",
+  "Extracted tables are candidates until they are reviewed.": "Çıkarılan tablolar incelenene kadar adaydır.",
+  "Review each extracted table before it is trusted as structured data.":
+    "Yapısal veri olarak güvenilmeden önce her çıkarılan tabloyu inceleyin.",
+  "Promoted from documents": "Belgelerden veriye alındı",
   // #389: a promotion that leaves no trace reads as a promotion that did not
   // take, so the candidates it settled say so and the workspace keeps the list.
   "Already promoted": "Zaten veriye alındı",
@@ -896,7 +910,6 @@ const TR: Record<string, string> = {
   "Failed": "Başarısız",
   "{pages} pages · {tables} tables · {figures} figures": "{pages} sayfa · {tables} tablo · {figures} şekil",
   "Candidate — not trusted structured data": "Aday — güvenilir yapısal veri değil",
-  "Review and promote each extracted table before it can enter training data.": "Eğitim verisine girmeden önce çıkarılan her tabloyu inceleyip terfi ettirin.",
   "Open produced artifacts": "Üretilen artifact'ları aç",
   "Extracted document artifacts": "Çıkarılan belge artifact'ları",
   "table candidates": "tablo adayı",
@@ -991,7 +1004,6 @@ const TR: Record<string, string> = {
   "Delete execution": "Çalıştırmayı sil",
   "Delete this execution and all of its artifacts?": "Bu çalıştırma ve tüm artifact'leri silinsin mi?",
   "Understanding summary": "Veri anlama özeti",
-  "Extracted tables are candidates and cannot enter ML until reviewed.": "Çıkarılan tablolar adaydır ve incelenmeden ML'e giremez.",
   "Understanding completed without a reported warning.": "Veri anlama bildirilen bir uyarı olmadan tamamlandı.",
   "Agent reports": "Ajan raporları",
   "Local session": "Yerel oturum",
