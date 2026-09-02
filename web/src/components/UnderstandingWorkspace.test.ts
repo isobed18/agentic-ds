@@ -402,7 +402,7 @@ describe("the Intake panel's per-file explanations (#386)", () => {
       files: [{
         name: "dump.bin",
         format: "bin",
-        route: "review",
+        route: "needs_review",
         tableNames: [],
         measuredFlow: "islenemez",
         measuredDeterministic: false,
