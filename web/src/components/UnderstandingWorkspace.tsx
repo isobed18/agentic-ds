@@ -91,7 +91,10 @@ export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles
   );
 }
 
-export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onRetry?: () => void }) {
+// #362: `onRetry` went with the yellow banner -- it was that banner's only
+// caller, and a run stopped at a gate is answered on the ApprovalCard (which
+// offers "Stop the run" among its options) rather than restarted from here.
+export function UnderstandingProgress({ profile, runId, workspace }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
@@ -99,8 +102,14 @@ export function UnderstandingProgress({ profile, runId, workspace, onRetry }: { 
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
-      {!routing.error && routing.attention && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-warn-300 bg-warn-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-warn-100 text-xs font-bold text-warn-800">!</span><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-warn-800">{t("Understanding needs review")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-warn-700">{routing.attention}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-warn-800 hover:underline" onClick={() => onRetry ? onRetry() : setSelection("structured")}>{t(onRetry ? "Start a new understanding run" : "Inspect")}</button></div></div>}
-      {!routing.error && !routing.attention && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
+      {/* #362: a yellow "Understanding needs review" banner used to sit here,
+          built from the same `human_prompt.question` + `context_summary` the
+          red ApprovalCard above the run already renders in full -- with the
+          stage name, the reason list, and the three action buttons. A person
+          read the same explanation twice and then had to work out which of the
+          two boxes could actually answer it, since only one of them could. The
+          card is the one that can, so the banner is gone. */}
+      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
