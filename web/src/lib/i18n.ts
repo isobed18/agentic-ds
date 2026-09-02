@@ -961,8 +961,6 @@ const TR: Record<string, string> = {
   "Add data": "Veri ekle",
   "Add data to begin": "Başlamak için veri ekleyin",
   "Drop files to add them as one source": "Dosyaları tek kaynak olarak eklemek için bırakın",
-  "Reuse matching understanding": "Eşleşen veri anlayışını yeniden kullan",
-  "Optional. Turn this off to rerun Intake and Schema Discovery for the same files.": "İsteğe bağlı. Aynı dosyalar için Intake ve Schema Discovery'yi yeniden çalıştırmak üzere kapatın.",
   "Choose uploaded data": "Yüklenmiş veri seç",
   "Upload new files here or choose a reusable source from the data selector above.": "Buraya yeni dosyalar yükleyin veya yukarıdaki veri seçiciden tekrar kullanılabilir bir kaynak seçin.",
   "Data library": "Veri kütüphanesi",

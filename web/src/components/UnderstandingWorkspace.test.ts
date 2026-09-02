@@ -2,7 +2,7 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, RoutingDetails, SourceOverview } from "./UnderstandingWorkspace";
+import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, RoutingDetails, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
@@ -305,6 +305,31 @@ describe("understanding node status placement", () => {
     }));
 
     expect(classNameFor(markup, "button")).toContain("overflow-hidden");
+  });
+
+  it("offers no reuse-cache checkbox before running Intake (#314)", () => {
+    // The cache it controlled is an in-memory dict on the plane, lost on every
+    // server restart, so in the deployed product the box almost never had a
+    // cache to hit. Its description also read as if it were on by default when
+    // the state initialised to false.
+    const profile = {
+      source_id: "upload:abc",
+      tables: [], documents: [], privacy: "safe",
+      source_files: [
+        { name: "a.csv", format: "csv", route: "structured", reason: { en: "", tr: "" }, table_names: [] },
+      ],
+    } as unknown as SourceProfile;
+
+    const markup = renderToStaticMarkup(createElement(SourceSummary, {
+      profile, onStart: () => undefined, busy: false,
+    }));
+
+    expect(markup).not.toContain('type="checkbox"');
+    // The one control that does still act is untouched.
+    expect(markup).toMatch(/Run Intake|Veri almayı çalıştır/);
+    // The prop chain is gone with it, not merely unrendered.
+    expect(WORKSPACE_SOURCE).not.toContain("onReuseCache");
+    expect(WORKSPACE_SOURCE).not.toContain("reuseCache");
   });
 
   it("keeps the page-size label on one line whatever the language calls it (#293)", () => {
