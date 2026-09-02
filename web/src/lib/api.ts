@@ -153,6 +153,7 @@ export interface DatasetSummary {
   documents?: number;
   document_pages?: number;
   document_summaries?: { name: string; format: string; pages: number }[];
+  file_summaries?: FileProfileSummary[];
   privacy?: string;
 }
 
@@ -449,22 +450,31 @@ export interface MeasuredRelationship {
   rationale?: string;
 }
 
+/** A bounded, row-free explanation of one physical input file. */
+export interface FileProfileSummary {
+  name: string;
+  format: string;
+  route: "structured" | "documents" | "unsupported" | "needs_review";
+  reason?: LocalizedText;
+  table_names?: string[];
+  /** Profile measurements only; source row values never enter this text. */
+  insight?: LocalizedText;
+  origin?: "measured";
+  rows?: number;
+  tables?: number;
+  candidate_keys?: string[];
+  quality_issues?: number;
+  schema_role?: LocalizedText;
+  detected_flow?: string;
+  detection_deterministic?: boolean;
+  detection_evidence?: string;
+  detection_reason?: string;
+  detection_conflicts_with_extension?: boolean;
+}
+
 export interface SourceProfile {
   source_id: string;
-  source_files?: Array<{
-    name: string;
-    format: string;
-    route: "structured" | "documents" | "unsupported";
-    reason: LocalizedText;
-    table_names: string[];
-    // Measured from content by ads.file_detection, not from the extension. Optional
-    // because the extra may not be installed, in which case the API omits it.
-    detected_flow?: string;
-    detection_deterministic?: boolean;
-    detection_evidence?: string;
-    detection_reason?: string;
-    detection_conflicts_with_extension?: boolean;
-  }>;
+  source_files?: FileProfileSummary[];
   tables: ProfiledTable[];
   documents?: ProfiledDocument[];
   relationships?: MeasuredRelationship[];
