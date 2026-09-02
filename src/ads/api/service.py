@@ -87,6 +87,7 @@ from ads.contracts.staging import (
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
 from ads.documents import (
     PDF_SUFFIXES,
+    CandidateNotPromotable,
     DocumentExtractionError,
     create_document_table_review,
     document_extraction_prompt_context,
@@ -6803,6 +6804,45 @@ def _cannot_stage_error(runtime: _RuntimeRun | None) -> ValueError:
     return ValueError(i18n.t("This run is not staged."))
 
 
+def _promotion_message(exc: CandidateNotPromotable) -> str:
+    """Say why one extracted table cannot be promoted, in the reader's language.
+
+    Precedent and reasoning are `_cannot_stage_error`'s (#263/#265/#282): the
+    promote endpoint answers with the exception text, so a raw
+    ``ValueError("accepted candidate '0001_…:table:2' has no rows")`` reached
+    the reader verbatim -- English whatever their language, and naming an
+    internal identifier they have never seen (#310). The candidate carries its
+    own provenance, so name the table the way the review dialog named it.
+    """
+    name = exc.title or exc.source_file
+    table = (
+        i18n.t("{name} (page {page})", name=name, page=exc.page_number)
+        if exc.page_number
+        else name
+    )
+    if exc.code == "no_rows":
+        return i18n.t(
+            "No rows were extracted from the table “{table}”, so it cannot become data.",
+            table=table,
+        )
+    if exc.code == "no_columns":
+        return i18n.t(
+            "No columns were extracted from the table “{table}”, so it cannot become data.",
+            table=table,
+        )
+    if exc.code == "ragged_rows":
+        return i18n.t(
+            "The rows extracted from the table “{table}” do not all have the same "
+            "number of cells, so it cannot become data.",
+            table=table,
+        )
+    return i18n.t(
+        "The headers extracted from the table “{table}” do not match its rows, "
+        "so it cannot become data.",
+        table=table,
+    )
+
+
 def _resolved_pipeline_recommendation(
     requested: Any,
     previous: RuntimeConfigurationPlan | None,
@@ -7599,6 +7639,13 @@ def create_app(
     def promote_document_tables(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
             return plane.promote_document_tables(run_id, str(body.get("review_artifact_id") or ""))
+        except CandidateNotPromotable as exc:
+            # #310: the reader used to get the exception text verbatim -- English
+            # whatever their language, and carrying the internal candidate id.
+            # The code is turned into a sentence here, where the request's
+            # language is bound, and the table is named the way the review
+            # dialog named it.
+            raise HTTPException(status_code=400, detail=_promotion_message(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
