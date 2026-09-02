@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type ArtifactPreview,
+  type PromotedDocumentTable,
   type RunProgressSnapshot,
   type SourceProfile,
   type StageDetail,
@@ -195,7 +196,15 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace), [profile, progress, workspace]);
   const structured = (profile.source_files ?? []).filter((file) => file.route === "structured");
   const documents = (profile.source_files ?? []).filter((file) => file.route === "documents");
-  const candidateTables = workspace.document_extractions?.reduce((sum, extraction) => sum + extraction.table_candidates, 0) ?? 0;
+  // #361: both of these used to describe the state before a promotion and stay
+  // that way. `structured` reads `profile`, a prop the parent never re-fetches
+  // -- and could not have helped anyway, since the profile is a walk of the
+  // uploaded files and a promoted table is not a file. The workspace now
+  // records what was promoted, and the workspace *is* re-read on promotion, so
+  // both the ML inputs list and the remaining-candidate count follow.
+  const promotedTables = workspace.promoted_document_tables ?? [];
+  const extractedCandidates = workspace.document_extractions?.reduce((sum, extraction) => sum + extraction.table_candidates, 0) ?? 0;
+  const candidateTables = Math.max(0, extractedCandidates - promotedTables.length);
   // #197: right after Run is clicked the poll has not refetched, so `progress`
   // still holds the pre-click "staged" and used to outrank the fresh prop. Trust
   // a non-staged polled status (the freshest truth while a run is live), but
@@ -365,7 +374,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     </Inspector>}
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
-        ? <PlanSummary runId={runId} profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} onWorkspaceUpdated={onWorkspaceUpdated} />
+        ? <PlanSummary runId={runId} profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} promoted={promotedTables} candidateTables={candidateTables} onWorkspaceUpdated={onWorkspaceUpdated} />
         : <div className="space-y-4">
             {/* #295: the diagnosis leads. Below it the stage rows still hold
                 the full attempt history for anyone who wants it. */}
@@ -413,7 +422,7 @@ function groupStatus(nodes: WorkflowNode[], runStatus: string, groupIndex: numbe
   return "pending";
 }
 
-function PlanSummary({ runId, profile, workspace, structured, documents, candidateTables, onWorkspaceUpdated }: { runId: string; profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; candidateTables: number; onWorkspaceUpdated: (workspace: StagingWorkspace) => void }) {
+function PlanSummary({ runId, profile, workspace, structured, documents, promoted, candidateTables, onWorkspaceUpdated }: { runId: string; profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; promoted: PromotedDocumentTable[]; candidateTables: number; onWorkspaceUpdated: (workspace: StagingWorkspace) => void }) {
   // #311: the note below said candidates "remain review-only until explicitly
   // promoted" and offered no way to promote them -- the only Review button was
   // on the staging document panel, a canvas away. The same dialog opens here.
@@ -425,12 +434,23 @@ function PlanSummary({ runId, profile, workspace, structured, documents, candida
   const objective = String(config.problem_title ?? (target ? t("Model {target}", { target }) : t("The objective will be finalized during problem discovery")));
   const baseTable = String(config.base_table ?? profile.tables[0]?.name ?? "—");
   const baseGrain = Array.isArray(config.base_grain) ? config.base_grain.map(String).join(", ") : "—";
+  // #361: a promoted table is an ML input and is treated exactly like an
+  // uploaded file, so it belongs in this list. It is named by the document and
+  // page it came from rather than by its candidate id, which is a store key.
+  const mlInputs = [
+    ...structured,
+    ...promoted.map((table) => (table.page_number
+      ? t("{file} · page {page}", { file: table.source_file, page: table.page_number })
+      : table.source_file)),
+  ];
   return <div className="space-y-5">
-    <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={structured} tone="ok" empty={t("No trusted structured input is selected.")} /></section>
+    <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={mlInputs} tone="ok" empty={t("No trusted structured input is selected.")} /></section>
     {documents.length > 0 && <section className="rounded-xl border border-violet-200 bg-violet-50/40 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><FileRoles title={t("Document context")} files={documents} tone="neutral" empty="" /><p className="mt-3 text-[10px] leading-relaxed text-ink-mute">{candidateTables ? t("{count} extracted table candidates remain review-only until explicitly promoted.", { count: candidateTables }) : t("Documents inform understanding but do not silently become training rows.")}</p>{candidateTables > 0 && extractionId && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: candidateTables })}</button>}</section>}
     {/* Promoting turns candidates into real tables, so the count above and the
         ML inputs beside it are both stale afterwards. Re-read the workspace
-        rather than leaving the panel describing what was true before. */}
+        rather than leaving the panel describing what was true before. #361:
+        this callback was already here and already correct -- what was missing
+        is that promotion left no trace on the workspace to re-read. */}
     {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} onClose={() => setReviewing(false)} onPromoted={() => { void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("ML objective")}</p><p className="mt-2 text-sm font-semibold text-ink">{objective}</p>{target && <p className="mt-1 text-[11px] text-ink-mute">{t("Target")}: {target}</p>}</section>
     <section><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Execution scope")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{t("Run the established base pipeline through integration, analysis, training, evaluation, and reporting.")}</p>{plan.checkpoint_stages.length > 0 ? <div className="mt-3 flex flex-wrap gap-1.5">{plan.checkpoint_stages.map((stage) => <Badge key={stage} tone="warn">{t("Review after {stage}", { stage: stage.replaceAll("_", " ") })}</Badge>)}</div> : <p className="mt-2 text-[10px] text-ink-faint">{t("No optional human checkpoints; hard safety gates still apply.")}</p>}</section>
@@ -438,7 +458,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, candida
   </div>;
 }
 
-function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file) => <Badge key={file} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
+function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-[10px] font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file, index) => <Badge key={`${file}-${index}`} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-[10px] text-warn-700">{empty}</p>}</div>; }
 
 function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, checkpointStages, footer, artifactIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; checkpointStages: string[]; footer?: string; artifactIds: string[]; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   // #194: a group waiting to be started reads distinctly -- a dashed brand ring

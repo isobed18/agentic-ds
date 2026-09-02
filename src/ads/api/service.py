@@ -57,6 +57,7 @@ from ads.automation import (
 )
 from ads.contracts.automation_definition import AutomationInputFile
 from ads.contracts.base import ArtifactType, is_diagnostic_artifact
+from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
     DocumentExtraction,
     DocumentExtractionSummary,
@@ -78,6 +79,7 @@ from ads.contracts.staging import (
     PipelineLayout,
     PipelineOutputReference,
     PlannerOverrideProposal,
+    PromotedDocumentTable,
     RelationshipExplanation,
     RuntimeConfigurationPlan,
     StagingMessage,
@@ -161,7 +163,7 @@ from ads.staging import (
     document_engine_catalog,
     validate_executable_blueprint,
 )
-from ads.store import ArtifactNotFoundError, ArtifactStore
+from ads.store import ArtifactNotFoundError, ArtifactRef, ArtifactStore
 
 # Content-based file detection is optional. When its dependency is unavailable,
 # the source profile is still produced without detection measurements.
@@ -2631,6 +2633,13 @@ class ControlPlane:
             run_id=run_id,
             review=review,
         )
+        # #361: promotion wrote table assets and left every reader describing
+        # the state before it. The plan panel reads the staging workspace and
+        # the source profile, and the profile is a walk of the uploaded files --
+        # a promoted table is not a file, so nothing there could ever change.
+        # Record the promotion on the workspace, which the client already
+        # re-reads on this callback.
+        self._record_promoted_document_tables(run_id, review, promoted)
         return {
             "review_artifact_id": review_artifact_id,
             "table_assets": [
@@ -2644,6 +2653,53 @@ class ControlPlane:
                 for asset, reference in promoted
             ],
         }
+
+    def _record_promoted_document_tables(
+        self,
+        run_id: str,
+        review: DocumentTableReview,
+        promoted: list[tuple[TableAsset, ArtifactRef]],
+    ) -> None:
+        """Write the promotion onto the staging workspace so readers can see it.
+
+        ``promote_reviewed_document_tables`` walks ``review.decisions`` in order
+        and skips everything that is not accepted, so zipping the accepted
+        decisions against its result pairs each asset with the candidate whose
+        provenance it already verified.
+        """
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None:
+            return
+        accepted = [item for item in review.decisions if item.decision == "accepted"]
+        already = {item.candidate_id for item in previous.promoted_document_tables}
+        additions = [
+            PromotedDocumentTable(
+                candidate_id=decision.candidate_id,
+                artifact_id=reference.artifact_id,
+                source_file=decision.source_file,
+                page_number=decision.page_number,
+                row_count=asset.row_count,
+                column_count=asset.column_count,
+            )
+            for decision, (asset, reference) in zip(accepted, promoted, strict=True)
+            if decision.candidate_id not in already
+        ]
+        if not additions:
+            return
+        saved = previous.model_copy(
+            update={
+                "promoted_document_tables": [*previous.promoted_document_tables, *additions],
+            }
+        )
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="document-table-promotion",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
 
     def _measured_relationship_explanations(self, source_id: str) -> list[RelationshipExplanation]:
         explanations: list[RelationshipExplanation] = []
