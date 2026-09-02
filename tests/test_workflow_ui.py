@@ -29,6 +29,7 @@ from ads.contracts.gates import DecisionOption, GateDecision, GateVerdict, Human
 from ads.contracts.staging import StagingWorkspace
 from ads.documents.pdf import PdfDocument, PdfPage
 from ads.llm import LLMResponse, ModelProfile
+from ads.pipeline.workflow import build_default_spec
 from ads.staging import build_default_blueprint
 from ads.store import ArtifactStore
 
@@ -111,6 +112,9 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
         "leakage_audit",
         "feature_pipeline",
         "splitting",
+        # After the split on purpose: it sends training rows only, so the
+        # external feature search cannot see the holdout.
+        "rl_feature_engineering",
         "training",
         "evaluation",
         "report",
@@ -131,12 +135,14 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
     )
 
 
-def test_manual_mode_graph_matches_the_nine_executed_stages(tmp_path: Path) -> None:
+def test_manual_mode_graph_matches_the_executed_stages(tmp_path: Path) -> None:
     client = TestClient(create_app(plane=_plane(tmp_path)))
     graph = client.get("/api/workflow", params={"mode": "manual"}).json()
 
     assert graph["workflow"] == "deterministic-default"
-    assert len(graph["nodes"]) == 9
+    # Held to the spec rather than to a literal count, so adding a stage updates
+    # this in one place instead of leaving a number nobody can tie to anything.
+    assert [node["id"] for node in graph["nodes"]] == list(build_default_spec().stage_ids())
     assert not any(node["kind"] == "planner_agent" for node in graph["nodes"])
 
 

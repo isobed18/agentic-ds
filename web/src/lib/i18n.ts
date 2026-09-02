@@ -173,6 +173,7 @@ const TR: Record<string, string> = {
   "Validation Strategy": "Doğrulama Stratejisi",
   "Leakage Audit": "Sızıntı Denetimi",
   "Feature Pipeline": "Öznitelik Hattı",
+  "RL feature engineering": "RL öznitelik mühendisliği",
   "Splitting": "Veri Bölme",
   "Training": "Eğitim",
   "Evaluation": "Değerlendirme",
@@ -1057,6 +1058,12 @@ const TR: Record<string, string> = {
   "Sensitive": "Kişisel veri",
   "Download": "İndir",
   "Download model": "Modeli indir",
+  // RL feature engineering (#354 follow-up). "RL" stays untranslated: it is the
+  // name of the technique, and the reason there are two models on one card.
+  "Download original": "Özgün modeli indir",
+  "Download RL-enhanced": "RL ile geliştirilmiş modeli indir",
+  "With {count} engineered feature(s)": "{count} üretilmiş öznitelik ile",
+  "Holdout {metric}": "Ayrık küme {metric}",
   "Approve at every stage": "Her aşamada onayla",
   "The agent decides each gate on its own signals unless you take that over.":
     "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",

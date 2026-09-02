@@ -1261,6 +1261,140 @@ def _baseline_panel(winner, baseline, primary, metric, lower_is_better):
     )
 
 
+# ------------------------------------------------- rl feature engineering
+
+
+def rl_feature_panels(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """The external feature search: what it changed, and by how much.
+
+    The scores here are the *service's* own cross-validated numbers, measured on
+    the training rows we sent it. They are not the holdout numbers the run
+    reports for its models, and the copy says so -- presenting the two as
+    interchangeable would overstate what the search demonstrated.
+    """
+    status = str(payload.get("status") or "")
+    if status == "unavailable":
+        return [
+            _panel(
+                "rl_feature_engineering",
+                _t("Feature engineering skipped"),
+                {"kind": "empty"},
+                severity=WARNING,
+                caption=_t("service unreachable"),
+                description=_t(
+                    "The feature engineering service could not be reached, so no enhanced "
+                    "model was produced. The rest of the run is unaffected."
+                ),
+                insights=[_t("No data left this machine.")],
+            )
+        ]
+    if status != "applicable":
+        reasons = [str(code) for code in payload.get("reasons") or []]
+        return [
+            _panel(
+                "rl_feature_engineering",
+                _t("Feature engineering not applicable"),
+                {"kind": "empty"},
+                severity=REVIEW,
+                caption=_t("no enhanced model"),
+                description=_t(
+                    "This dataset cannot support the external feature search, so only the "
+                    "ordinary model was trained."
+                ),
+                insights=[_rl_reason_text(code) for code in reasons] or [_t("No reason given.")],
+            )
+        ]
+
+    metric = str(payload.get("primary_metric") or "")
+    baseline = payload.get("api_baseline_score")
+    optimized = payload.get("api_optimized_score")
+    improvement = payload.get("api_score_improvement")
+    generated = payload.get("generated_features") or []
+    removed = [str(name) for name in payload.get("removed_features") or []]
+    improved = isinstance(improvement, int | float) and improvement > 0
+
+    panels = [
+        _panel(
+            "rl_feature_engineering",
+            _t("Feature search result"),
+            {
+                "kind": "bar",
+                "y_label": metric,
+                "series": [
+                    {"label": _t("Original features"), "value": baseline or 0.0},
+                    {"label": _t("Engineered features"), "value": optimized or 0.0},
+                ],
+            },
+            severity=INFO if improved else REVIEW,
+            caption=(_t("improved") if improved else _t("no improvement")),
+            description=_t(
+                "Measured by the feature engineering service on the training rows only, so "
+                "the holdout could not influence which features it chose. Compare models on "
+                "the holdout score, not on these numbers."
+            ),
+            insights=[
+                _t(
+                    "{metric} moved from {baseline} to {optimized}, a change of {delta}.",
+                    metric=metric,
+                    baseline=_fmt(baseline),
+                    optimized=_fmt(optimized),
+                    delta=_fmt(improvement),
+                ),
+                _t(
+                    "{added} feature(s) added, {removed} removed.",
+                    added=len(generated),
+                    removed=len(removed),
+                ),
+            ],
+        )
+    ]
+    if generated or removed:
+        rows = [
+            [_t("Added"), str(item.get("name") or ""), str(item.get("expression") or "")]
+            for item in generated
+        ]
+        rows += [[_t("Removed"), name, "—"] for name in removed]
+        panels.append(
+            _panel(
+                "rl_feature_changes",
+                _t("Features added and removed"),
+                {"kind": "empty"},
+                severity=INFO,
+                caption=_t("{count} change(s)", count=len(rows)),
+                description=_t(
+                    "Every engineered feature is a formula over existing columns, so it can "
+                    "be rebuilt on new data."
+                ),
+                table={
+                    "columns": [_t("Change"), _t("Feature"), _t("Formula")],
+                    "rows": rows,
+                },
+            )
+        )
+    return panels
+
+
+def _rl_reason_text(code: str) -> str:
+    """Turn one service reason code into a sentence. Codes are not words."""
+    known = {
+        "NO_TARGET": _t("No target column was chosen, so there is nothing to optimise for."),
+        "NO_ENHANCEABLE_TARGET": _t("No column in this data works as a prediction target."),
+        "TARGET_NOT_FOUND": _t("The chosen target column is not present in the data."),
+        "TARGET_CONSTANT": _t("The target never changes, so nothing can be learned from it."),
+        "TARGET_TOO_SPARSE": _t("Too many rows are missing the target."),
+        "TARGET_LIKELY_IDENTIFIER": _t(
+            "The target looks like an identifier rather than an outcome."
+        ),
+        "INSUFFICIENT_ROWS": _t("There are too few rows for a reliable feature search."),
+        "INSUFFICIENT_CLASS_SUPPORT": _t("At least one target class has too few examples."),
+        "NO_USABLE_FEATURES": _t("No column is usable as a model feature."),
+        "CV_NOT_FEASIBLE": _t("There are too few rows to cross-validate."),
+        "BASELINE_TRAINING_FAILED": _t("A baseline model could not be trained on this data."),
+        "TOO_HIGH_DIMENSIONAL_FOR_SEARCH": _t("There are too many features to search over."),
+    }
+    return known.get(code, code)
+
+
 # -------------------------------------------------------------- evaluation
 
 

@@ -55,6 +55,30 @@ TRANSACTIONS = "transactions"
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _no_live_rlfe_service():
+    """Point the external feature service at a closed port for the whole suite.
+
+    The pipeline attempts the service on every run and degrades when it is not
+    there, so the default base URL is a live loopback address. Left alone, the
+    suite would behave differently on a machine that happens to be running the
+    sidecar -- passing or failing on what else is open locally rather than on the
+    code. Port 1 refuses immediately, so the unavailable path is what every test
+    exercises unless it injects its own client.
+
+    Session-scoped, with its own MonkeyPatch context, deliberately. As a
+    function-scoped autouse fixture taking `monkeypatch` it pulled the shared
+    function-scoped `monkeypatch` earlier in the setup order, which pushed its
+    undo *after* other modules' teardown -- `test_engine_fallback` then tore down
+    while its own patch was still installed and raised `'function' object has no
+    attribute 'cache_clear'` eight times. Nothing about this fixture needs to be
+    per-test, and staying out of that ordering is what keeps it harmless.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("ADS_RLFE_API_URL", "http://127.0.0.1:1")
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _english_assertions():
     """Pin the suite to English.
 

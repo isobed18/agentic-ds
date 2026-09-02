@@ -79,6 +79,14 @@ stages:
     risk_class: medium
     max_attempts: 3
 
+  # An external service that may simply be absent. One attempt: an unreachable
+  # sidecar is not something a retry fixes, and the stage degrades to a report
+  # saying so rather than failing, so there is nothing here for the gate to
+  # stop on.
+  rl_feature_engineering:
+    risk_class: low
+    max_attempts: 1
+
   training:
     risk_class: medium
     max_attempts: 2
