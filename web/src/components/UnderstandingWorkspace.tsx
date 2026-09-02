@@ -13,6 +13,7 @@ import { NodeStatusHeader, StatusMark } from "./NodeStatus";
 import { sourceCounts, visibleWorkflowSteps } from "./automationWorkspaceState";
 import {
   buildStagingRoutingState,
+  fileNeedsAttention,
   pageOfFiles,
   type ProgressStatus,
   type RoutedSourceFile,
@@ -30,6 +31,7 @@ import { ArtifactMetadata, hasArtifactMetadata } from "./ArtifactMetadata";
 import { artifactTitle } from "./artifactTitle";
 import { artifactTypeLabel } from "./artifactTypeLabel";
 import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
+import { useOverlayDismiss } from "./overlayDismiss";
 import { ResizableNode } from "./ResizableNode";
 import { DocumentTableReview } from "./DocumentTableReview";
 import { FileInsight } from "./FileInsight";
@@ -100,6 +102,18 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  // #388: "Inspect understanding" selected the synthesis node, which is not the
+  // action a person needs on this notice. When PDFs produced table candidates
+  // the thing to do is choose which of them to accept, so the button says that
+  // and opens the dialog that does it. The guard is the one the Documents panel
+  // already uses; with no candidates the notice keeps its old label and target.
+  const extraction = workspace?.document_extractions?.at(-1);
+  const tableCandidates = extraction?.table_candidates ?? 0;
+  const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0);
+  // The parent polls the staging workspace while understanding is live, so the
+  // counts behind this notice catch up on their own; nothing to refetch here.
+  const afterPromotion = () => undefined;
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[72px] z-20 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-[11px] leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-[10px] font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
@@ -110,7 +124,10 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
           read the same explanation twice and then had to work out which of the
           two boxes could actually answer it, since only one of them could. The
           card is the one that can, so the banner is gone. */}
-      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)} onInspect={() => setSelection("synthesis")} />}
+      {!routing.error && routing.outcome && <OutcomeNotice outcome={routing.outcome} files={routing.files.map((file) => file.name)}
+        actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")}
+        onInspect={() => (canReviewTables ? setReviewing(true) : setSelection("synthesis"))} />}
+      {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
@@ -135,7 +152,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
  * true: understanding finished, no plan came out of it, and these are the files
  * it was working on.
  */
-function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome; files: string[]; onInspect: () => void }) {
+function OutcomeNotice({ outcome, files, actionLabel, onInspect }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void }) {
   const declined = outcome.kind === "declined";
   const unexplained = outcome.kind === "no_plan";
   const tone = unexplained
@@ -177,7 +194,7 @@ function OutcomeNotice({ outcome, files, onInspect }: { outcome: StagingOutcome;
             </p>
           )}
         </div>
-        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{t("Inspect understanding")}</button>
+        <button type="button" className={cx("shrink-0 text-[10px] font-semibold hover:underline", tone.head)} onClick={onInspect}>{actionLabel}</button>
       </div>
     </div>
   );
@@ -295,7 +312,11 @@ export function RoutingInspector({ selection, profile, workspace, routing, onClo
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
     {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-[11px] leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
-    {selection === "proposal" && (workspace && onAdvanced ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
+    {/* #385: gated on the plan existing, not on the caller happening to offer
+        an advanced editor. "Plan not ready yet" now means what it says --
+        synthesis has not produced a recommendation -- rather than standing in
+        for a decision the Planner has already made and explained. */}
+    {selection === "proposal" && (workspace?.recommended_plan ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
   </Inspector>;
 }
 
@@ -364,12 +385,51 @@ export function RoutingDetails({ files }: { files: RoutedSourceFile[] }) {
       </div>
       {pager}
     </div>
-    {shown.map((file) => <div key={`${file.route}:${file.name}`} className="rounded-xl border border-line bg-surface px-3 py-3"><div className="flex items-center gap-2"><FileBadge format={file.format} /><p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p><span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span></div><FileInsight insight={file.insight} />{file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}{file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}<MeasuredType file={file} /></div>)}
+    {shown.map((file) => <RoutedFileCard key={`${file.route}:${file.name}`} file={file} />)}
     {total === 0 && search && <p className="rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{t("No files match your search")}</p>}
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[10px] text-ink-mute">{t("Showing {shown} of {total}", { shown: shown.length, total })}</p>
       {pager}
     </div>
+  </div>;
+}
+
+/** One routed file, explained on request rather than at all times (#386).
+ *
+ * Every card used to stack its insight, its routing reason, its table list and
+ * its measured-from-content block unconditionally, so a panel holding more than
+ * a couple of files was a wall of prose you scrolled past to find a file name.
+ * Collapsed, the card is the row a person is scanning for: format, name, route.
+ *
+ * The exception is a file carrying a measurement that disagrees with its
+ * extension, or one the measurement could not decide. Those are the reason
+ * someone opens this panel, so such a card starts expanded -- and if it is
+ * collapsed by hand, it still says why it mattered.
+ */
+function RoutedFileCard({ file }: { file: RoutedSourceFile }) {
+  const attention = fileNeedsAttention(file);
+  const [open, setOpen] = useState(attention);
+  const needsDecision = file.measuredDeterministic === false && file.needsDecisionBecause;
+  return <div className="rounded-xl border border-line bg-surface px-3 py-3">
+    <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+      <FileBadge format={file.format} />
+      <p className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{file.name}</p>
+      <span className={cx("rounded-full px-2 py-1 text-[9px] font-semibold", file.route === "structured" ? "bg-ok-50 text-ok-700" : file.route === "documents" ? "bg-brand-50 text-brand-700" : "bg-warn-50 text-warn-700")}>{t(file.route === "structured" ? "Structured data" : file.route === "documents" ? "Documents" : "Needs review")}</span>
+      {/* The name of the control, for anyone who cannot see the chevron. The
+          row's own content already names the file it belongs to. */}
+      <span className="sr-only">{open ? t("Hide file details") : t("Show file details")}</span>
+      <Chevron open={open} />
+    </button>
+    {!open && attention && <div className="mt-2 space-y-1">
+      {file.contradictsExtension === true && <p className="text-[10px] font-semibold leading-relaxed text-warn-800">{t("Extension and measurement disagree")}</p>}
+      {needsDecision && <p className="text-[10px] leading-relaxed text-warn-700">{t("Needs a decision")}: {file.needsDecisionBecause}</p>}
+    </div>}
+    {open && <>
+      <FileInsight insight={file.insight} />
+      {file.reason && <p className="mt-2 text-[10px] leading-relaxed text-ink-mute">{local(file.reason)}</p>}
+      {file.tableNames.length > 0 && <p className="mt-1 text-[9px] text-ink-faint">{t("Tables")}: {file.tableNames.join(", ")}</p>}
+      <MeasuredType file={file} />
+    </>}
   </div>;
 }
 
@@ -473,14 +533,21 @@ export function SourceOverview({ profile, onRemoveFile, onAddFiles, busy = false
 
 /** `onAccept` is optional: the merged canvas puts Accept in the one run
  *  toolbar, where it becomes Run the moment the plan is accepted, so this panel
- *  reviews the plan without offering a second, competing primary button. */
-function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced: () => void; onOpenPlanner?: () => void; busy: boolean }) {
+ *  reviews the plan without offering a second, competing primary button.
+ *
+ *  #385: `onAdvanced` is optional for the same reason, and this is the whole
+ *  regression. It used to be required, so `RoutingInspector` gated the entire
+ *  panel on having one -- and the understanding canvas passes none of these
+ *  handlers, so a run the Planner had declined showed "Plan not ready yet"
+ *  beside a node reading "Blocked — no plan was created". The explanation is
+ *  what the panel is for; only the actions depend on having somewhere to go. */
+function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy: boolean }) {
   const plan = workspace.recommended_plan;
   if (!plan) return <Spinner label={t("The Planner is preparing a proposal…")} />;
   const recommendation = plan.pipeline_recommendation ?? "create_pipeline";
   if (recommendation !== "create_pipeline") {
     const denied = recommendation === "no_pipeline";
-    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}<button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.")}</p></div>;
+    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onOpenPlanner || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-[10px] text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.")}</p></div>;
   }
   const steps = visibleWorkflowSteps(workspace, activeLanguage());
   const target = String(plan.configuration.target_column ?? "");
@@ -489,7 +556,7 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const documentFiles = (profile.source_files ?? []).filter((file) => file.route === "documents").map((file) => file.name);
   const baseTable = String(plan.configuration.base_table ?? profile.tables[0]?.name ?? "—");
   const scope = plan.checkpoint_stages.length ? t("Runs with {count} planned review checkpoints.", { count: plan.checkpoint_stages.length }) : t("Runs through the final report; hard safety gates still apply.");
-  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}<button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button></div><p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
+  return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-[10px] text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-[10px] text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p></section>}<section className="mt-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-[10px] text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-[11px] leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onAccept || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-[10px] text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-[10px] font-normal text-ink-mute">{t(step.detail)}</span>}</span></li>)}</ol>; }
@@ -645,8 +712,15 @@ function GraphEdge({ status }: { status: ProgressStatus }) { return <div classNa
 function ForkConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 ${height / 2} H20 M20 ${height / 2} V8 M20 ${height / 2} V${height - 8} M20 8 H48 M20 ${height - 8} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : "#cbd5e1"} strokeWidth="1.5" /></svg>; }
 function MergeConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 8 H28 M0 ${height - 8} H28 M28 8 V${height - 8} M28 ${height / 2} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : status === "running" ? "#4f7cff" : "#cbd5e1"} strokeWidth="1.5" /><path d={`M43 ${height / 2 - 4} L48 ${height / 2} L43 ${height / 2 + 4}`} fill="none" stroke="#94a3b8" strokeWidth="1.5" /></svg>; }
 function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], activeArtifactId, onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; activeArtifactId?: string | null; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><NodeStatusHeader status={status} /><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 text-[11px] text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 truncate text-[10px] font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "h-full w-full p-4" : "h-full w-full p-5", "overflow-hidden rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <ResizableNode className="relative shrink-0" defaultWidth={compact ? 190 : 230}>{card}<ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact ?? (() => {})} /></ResizableNode>; }
-export function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) { return <aside className="z-20 flex h-full min-h-0 w-full flex-col border-l border-line bg-surface shadow-2xl"><header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header>{/* Scroll only the body: overflow used to sit on the aside, so the header
-    and its × scrolled out of reach on a long panel (#75). */}<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5"><div className="mt-5">{children}</div></div></aside>; }
+export function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) {
+  // #387: the docked panel is an <aside> beside the canvas rather than a
+  // backdrop overlay, so there is nothing to click *through* -- clicking the
+  // workspace itself is the dismissal, and a press that begins inside the panel
+  // is never one however far it travels.
+  const panel = useOverlayDismiss<HTMLElement>(onClose);
+  return <aside ref={panel} className="z-20 flex h-full min-h-0 w-full flex-col border-l border-line bg-surface shadow-2xl"><header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header>{/* Scroll only the body: overflow used to sit on the aside, so the header
+    and its × scrolled out of reach on a long panel (#75). */}<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5"><div className="mt-5">{children}</div></div></aside>;
+}
 export function DockedPanel({ children }: { children: React.ReactNode }) { return <div data-docked-panel className="z-30 flex h-full min-h-0 min-w-0 w-full overflow-hidden border-l border-line bg-surface shadow-2xl [&>aside]:!w-full">{children}</div>; }
 function EvidenceSection({ title, tone, children }: { title: string; tone: "measured" | "interpretation"; children: React.ReactNode }) { return <section className={cx("rounded-xl border p-4", tone === "measured" ? "border-sky-200 bg-sky-50/40" : "border-violet-200 bg-violet-50/40")}><p className={cx("text-[10px] font-semibold uppercase tracking-[0.12em]", tone === "measured" ? "text-sky-700" : "text-violet-700")}>{title}</p><div className="mt-3">{children}</div></section>; }
 function SourceFiles({ profile, compact = false, onRemove, busy = false }: { profile: SourceProfile; compact?: boolean; onRemove?: (name: string) => void; busy?: boolean }) {
@@ -659,6 +733,7 @@ function Detail({ label, value }: { label: string; value: string | number }) { r
 function formatDuration(seconds: number): string { return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(1)} s`; }
 
 export function ArtifactDialog({ preview, onClose }: { preview: ArtifactPreview; onClose: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onClose);
   const isDocument = preview.artifact_type === "document_extraction";
   // An artifact with no summary, no findings and no document body used to
   // render a literally blank dialog under a generic "ARTIFACT" eyebrow, which
@@ -671,5 +746,5 @@ export function ArtifactDialog({ preview, onClose }: { preview: ArtifactPreview;
   // count them as content so an all-charts artifact is not judged empty.
   const panels = (preview.panels ?? []) as AnalysisPanel[];
   const hasContent = Boolean(preview.summary || isDocument || preview.findings?.length || panels.length || hasArtifactMetadata(preview));
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true"><div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl"><div className="flex items-start gap-4"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600">{t(artifactTypeLabel(preview.artifact_type))}</p><h3 className="mt-1 text-lg font-semibold text-ink">{artifactTitle(preview, activeLanguage(), t)}</h3></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close artifact")} onClick={onClose}>×</button></div>{preview.summary && <p className="mt-3 text-sm leading-relaxed text-ink-mute">{local(preview.summary)}</p>}{isDocument && <><div className="mt-4 grid grid-cols-3 gap-2"><Detail label={t("Selected engine")} value={`${preview.engine ?? "—"}${preview.engine_version ? ` ${preview.engine_version}` : ""}`} /><Detail label={t("OCR mode")} value={String(preview.ocr_mode ?? "auto")} /><Detail label={t("Duration")} value={formatDuration(Number(preview.duration_seconds ?? 0))} /></div><div className="mt-4 space-y-3">{preview.documents?.map((document) => <section key={document.source_file} className="rounded-xl border border-line p-4"><div className="flex items-center justify-between gap-3"><p className="truncate text-sm font-semibold text-ink">{document.source_file}</p><span className="text-[10px] text-ink-mute">{document.page_count} {t("pages")}</span></div><p className="mt-2 text-[10px] text-ink-mute">{document.tables.length} {t("table candidates")} · {document.figures.length} {t("figure candidates")}</p>{document.tables.map((table) => <div key={String(table.candidate_id)} className="mt-3 rounded-lg border border-warn-200 bg-warn-50 px-3 py-2"><p className="text-[10px] font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{String(table.title ?? table.candidate_id)} · {t("page {page}", { page: String(table.page_number ?? "—") })}</p></div>)}</section>)}</div></>}{panels.length > 0 && <div className="mt-4"><AnalysisStrip panels={panels} /></div>}{preview.findings && <ul className="mt-4 space-y-2">{preview.findings.map((finding) => <li key={finding.en} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink-soft">{local(finding)}</li>)}</ul>}<ArtifactMetadata preview={preview} />{!hasContent && <div className="mt-4"><Empty title={t("Artifact recorded")} hint={t("Open its stage inspection for measurements and provenance.")} /></div>}</div></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true"><div ref={panel} className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"><div className="flex shrink-0 items-start gap-4 border-b border-line p-5"><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-wide text-brand-600">{t(artifactTypeLabel(preview.artifact_type))}</p><h3 className="mt-1 text-lg font-semibold text-ink">{artifactTitle(preview, activeLanguage(), t)}</h3></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close artifact")} onClick={onClose}>×</button></div><div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{preview.summary && <p className="mt-3 text-sm leading-relaxed text-ink-mute">{local(preview.summary)}</p>}{isDocument && <><div className="mt-4 grid grid-cols-3 gap-2"><Detail label={t("Selected engine")} value={`${preview.engine ?? "—"}${preview.engine_version ? ` ${preview.engine_version}` : ""}`} /><Detail label={t("OCR mode")} value={String(preview.ocr_mode ?? "auto")} /><Detail label={t("Duration")} value={formatDuration(Number(preview.duration_seconds ?? 0))} /></div><div className="mt-4 space-y-3">{preview.documents?.map((document) => <section key={document.source_file} className="rounded-xl border border-line p-4"><div className="flex items-center justify-between gap-3"><p className="truncate text-sm font-semibold text-ink">{document.source_file}</p><span className="text-[10px] text-ink-mute">{document.page_count} {t("pages")}</span></div><p className="mt-2 text-[10px] text-ink-mute">{document.tables.length} {t("table candidates")} · {document.figures.length} {t("figure candidates")}</p>{document.tables.map((table) => <div key={String(table.candidate_id)} className="mt-3 rounded-lg border border-warn-200 bg-warn-50 px-3 py-2"><p className="text-[10px] font-semibold text-warn-800">{t("Candidate — not trusted structured data")}</p><p className="mt-1 text-[10px] text-warn-700">{String(table.title ?? table.candidate_id)} · {t("page {page}", { page: String(table.page_number ?? "—") })}</p></div>)}</section>)}</div></>}{panels.length > 0 && <div className="mt-4"><AnalysisStrip panels={panels} /></div>}{preview.findings && <ul className="mt-4 space-y-2">{preview.findings.map((finding) => <li key={finding.en} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink-soft">{local(finding)}</li>)}</ul>}<ArtifactMetadata preview={preview} />{!hasContent && <div className="mt-4"><Empty title={t("Artifact recorded")} hint={t("Open its stage inspection for measurements and provenance.")} /></div>}</div></div></div>;
 }

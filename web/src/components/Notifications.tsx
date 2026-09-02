@@ -17,13 +17,14 @@ import { t } from "../lib/i18n";
  * no server-side notification to delete, so "cleared" can only mean "this
  * browser stops rebuilding the item from the run list".
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { itemsFrom, type NotificationItem } from "./notificationItems";
 import { dismissAll, dismissOne, pruneDismissed, visibleItems } from "./notificationDismissal";
 import { projectOfAutomation, runHref } from "./runDeepLink";
 import { cx } from "./ui";
+import { useOverlayDismiss } from "./overlayDismiss";
 
 const SEEN_KEY = "ads.notifications.seen";
 const DISMISSED_KEY = "ads.notifications.dismissed";
@@ -42,7 +43,10 @@ export function Notifications() {
   const [open, setOpen] = useState(false);
   const [seen, setSeen] = useState<Set<string>>(() => readIds(SEEN_KEY));
   const [dismissed, setDismissed] = useState<Set<string>>(() => readIds(DISMISSED_KEY));
-  const panel = useRef<HTMLDivElement>(null);
+  // #387: this was the only overlay in the app that closed on an outside
+  // click, and it did it inline. The hook is that pattern lifted so the seven
+  // others share it; Escape comes along with it.
+  const panel = useOverlayDismiss<HTMLDivElement>(() => setOpen(false), open);
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
@@ -70,15 +74,6 @@ export function Notifications() {
     const timer = setInterval(() => void refresh(), POLL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (panel.current && !panel.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
 
   const visible = visibleItems(items, dismissed);
   const unread = visible.filter((i) => !seen.has(i.id));

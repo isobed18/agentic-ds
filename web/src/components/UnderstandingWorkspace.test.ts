@@ -6,6 +6,7 @@ import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, Rout
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
+import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 
 Object.defineProperty(globalThis, "localStorage", {
@@ -378,5 +379,119 @@ describe("promoted document tables in the Documents panel (#389)", () => {
     // stays on the workspace, so the panel can show it.
     expect(WORKSPACE_SOURCE).toContain('t("{count} tables promoted into data", { count: promoted.length })');
     expect(WORKSPACE_SOURCE).toContain("{promoted.map((table) =>");
+  });
+});
+
+describe("the outcome notice's action (#388)", () => {
+  it("offers the extracted-tables dialog when there are candidates to choose", () => {
+    // "Inspect understanding" selected the synthesis node, which is not the
+    // action a person needs on this notice. The label and the target now match
+    // the Documents panel's own entry point into the same dialog.
+    expect(WORKSPACE_SOURCE).toContain("const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0)");
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")');
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? setReviewing(true) : setSelection("synthesis")');
+    // The notice renders for declined / deferred / no_plan alike, so the label
+    // is a prop rather than a literal inside OutcomeNotice.
+    expect(WORKSPACE_SOURCE).toContain("onClick={onInspect}>{actionLabel}</button>");
+  });
+});
+
+describe("closing a dialog that scrolls (#388)", () => {
+  it("keeps the artifact dialog's × out of the scrolling area", () => {
+    // The header used to sit inside the `overflow-y-auto` container, so with a
+    // long artifact the only way to close the dialog was to scroll back up.
+    const markup = renderToStaticMarkup(createElement(ArtifactDialog, {
+      preview: { artifact_id: "c".repeat(64), artifact_type: "artifact", findings: [] },
+      onClose: () => undefined,
+    }));
+
+    const panel = markup.match(/<div class="(flex max-h-\[86vh\][^"]*)"/);
+    expect(panel, "the dialog panel should be present").not.toBeNull();
+    // The panel itself no longer scrolls; it is a column.
+    expect(panel?.[1]).toContain("flex-col");
+    expect(panel?.[1]).not.toContain("overflow-y-auto");
+    // The close button is above the scrolling body, not inside it.
+    const closeIndex = markup.indexOf("btn-ghost");
+    const bodyIndex = markup.indexOf("min-h-0 flex-1 overflow-y-auto");
+    expect(closeIndex).toBeGreaterThan(-1);
+    expect(bodyIndex).toBeGreaterThan(closeIndex);
+  });
+
+  it("does the same for the extracted-table review", () => {
+    // Same structure, same bug: this one is the case in the report, because a
+    // PDF with many candidates makes the list long by design.
+    expect(REVIEW_SOURCE).toContain('className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"');
+    expect(REVIEW_SOURCE).toContain('className="flex shrink-0 items-start gap-4 border-b border-line p-5"');
+    expect(REVIEW_SOURCE).toContain('<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">');
+  });
+});
+
+describe("the Intake panel's per-file explanations (#386)", () => {
+  it("shows only the header row until a file is expanded", () => {
+    // Every card used to stack its insight, its reason, its table list and its
+    // measured-from-content block unconditionally, so a panel with more than a
+    // couple of files was a wall of prose to scroll past to find a file name.
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "orders.csv",
+        format: "csv",
+        route: "structured",
+        reason: { en: "CSV, read as a table.", tr: "CSV, tablo olarak okunur." },
+        tableNames: ["orders"],
+        measuredFlow: "tablo",
+        measuredEvidence: "Delimiter , over 12 columns",
+      }],
+    }));
+
+    expect(markup).toContain("orders.csv");
+    expect(markup).toContain('aria-expanded="false"');
+    // The prose is gone, not merely restyled.
+    expect(markup).not.toContain("tablo olarak okunur");
+    expect(markup).not.toContain("Delimiter");
+    expect(markup).not.toContain("orders</p>");
+  });
+
+  it("names the disclosure for anyone who cannot see the chevron", () => {
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{ name: "orders.csv", format: "csv", route: "structured", tableNames: [] }],
+    }));
+
+    expect(markup).toContain("Dosya ayrıntılarını göster");
+  });
+
+  it("starts expanded when the measurement contradicts the extension", () => {
+    // This is the reason a person opens the panel, so it may never end up
+    // behind a collapsed card.
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "report.csv",
+        format: "csv",
+        route: "structured",
+        tableNames: [],
+        measuredFlow: "belge",
+        contradictsExtension: true,
+        measuredEvidence: "PDF text layer: 15 pages",
+      }],
+    }));
+
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("PDF text layer: 15 pages");
+  });
+
+  it("starts expanded when the measurement could not decide", () => {
+    const markup = renderToStaticMarkup(createElement(RoutingDetails, {
+      files: [{
+        name: "dump.bin",
+        format: "bin",
+        route: "needs_review",
+        tableNames: [],
+        measuredFlow: "islenemez",
+        measuredDeterministic: false,
+        needsDecisionBecause: "no delimiter found",
+      }],
+    }));
+
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("no delimiter found");
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SourceProfile } from "../lib/api";
-import { buildStagingRoutingState, pageOfFiles, routedFiles, type RoutedSourceFile } from "./stagingRoutingState";
+import { buildStagingRoutingState, fileNeedsAttention, pageOfFiles, routedFiles, type RoutedSourceFile } from "./stagingRoutingState";
 
 const profile: SourceProfile = {
   source_id: "mixed",
@@ -367,5 +367,25 @@ describe("the staging error banner reads a bilingual run error (#365)", () => {
   it("still accepts a plain string from an older run", () => {
     const state = buildStagingRoutingState(profile, { status: "failed", error: "boom" }, null);
     expect(state.error).toBe("boom");
+  });
+});
+
+describe("which files may not be collapsed away (#386)", () => {
+  const file = (extra: Partial<RoutedSourceFile>): RoutedSourceFile =>
+    ({ name: "f.csv", format: "csv", route: "structured", tableNames: [], ...extra });
+
+  it("flags a measurement that contradicts the extension", () => {
+    expect(fileNeedsAttention(file({ contradictsExtension: true }))).toBe(true);
+  });
+
+  it("flags a measurement that could not decide, but only with a reason to show", () => {
+    expect(fileNeedsAttention(file({ measuredDeterministic: false, needsDecisionBecause: "no delimiter" }))).toBe(true);
+    // Nothing to say means nothing to keep out of the collapse.
+    expect(fileNeedsAttention(file({ measuredDeterministic: false }))).toBe(false);
+  });
+
+  it("leaves an ordinary routed file collapsible", () => {
+    expect(fileNeedsAttention(file({ measuredFlow: "tablo", measuredDeterministic: true }))).toBe(false);
+    expect(fileNeedsAttention(file({}))).toBe(false);
   });
 });

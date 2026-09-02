@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
 // Shared with the automation-scoped models tab so the two views cannot disagree
-// about how an enhanced model reads.
-import { EnhancedRow } from "../components/ProjectContents";
+// about how an original/RL pair reads.
+import { ModelComparison } from "../components/ProjectContents";
 import { FileInsight } from "../components/FileInsight";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { useOverlayDismiss } from "../components/overlayDismiss";
 import {
   api,
   type AutomationDefinition,
@@ -98,9 +99,11 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
  * readable exactly as automation deletion promises.
  */
 export function ProjectDeleteDialog({ project, busy, onCancel, onConfirm }: { project: ProjectDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  // Dismissing a confirmation is a cancel, never a confirm (#387).
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-project-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: project.name })}</h2>
         <div id="delete-project-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -443,9 +446,10 @@ function TrashIcon() {
  * audited separately and stay readable after the deletion.
  */
 export function AutomationDeleteDialog({ automation, busy, onCancel, onConfirm }: { automation: AutomationDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" aria-describedby="delete-automation-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-automation-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: automation.name })}</h2>
         <div id="delete-automation-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -474,7 +478,32 @@ function ProjectModels({ contents, onChanged }: { contents: ProjectContents | nu
     finally { setDeleteBusy(false); }
   }
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Models from every automation in this project will appear here.")} />;
-  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card relative p-4 pr-12"><button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.enhanced && <EnhancedRow enhanced={model.enhanced} metric={model.metric} />}<div className="mt-3 flex flex-wrap items-center gap-1.5">{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download original")}</a>}{model.enhanced?.saved && <a href={`/api/models/${model.enhanced.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download RL-enhanced")}</a>}</div></article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
+  return (
+    <section>
+      <h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1>
+      <p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>
+      {error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {models.map((model) => (
+          <article key={model.artifact_id} className="card relative p-4 pr-12">
+            <button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button>
+            <Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge>
+            <h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2>
+            <p className="text-xs text-ink-mute">{model.estimator}</p>
+            {model.enhanced ? <ModelComparison model={model} /> : (
+              <dl className="mt-3 grid grid-cols-2 gap-2">
+                <div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div>
+                <div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div>
+              </dl>
+            )}
+            {model.enhanced && <p className="mt-2 text-[10px] text-ink-faint">{t("Training rows")}: {model.training_rows.toLocaleString()}</p>}
+            {!model.enhanced && model.saved && <div className="mt-3"><a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download original")}</a></div>}
+          </article>
+        ))}
+      </div>
+      {deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </section>
+  );
 }
 
 function ProjectReports({ contents, onChanged }: { contents: ProjectContents | null; onChanged: () => void }) {
@@ -499,9 +528,10 @@ function ProjectReports({ contents, onChanged }: { contents: ProjectContents | n
  * unlike the automation/project dialogs which name what else is affected.
  */
 function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>

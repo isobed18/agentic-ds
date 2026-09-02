@@ -21,6 +21,18 @@ export interface RoutedSourceFile {
   contradictsExtension?: boolean;
 }
 
+/** Whether a routed file is carrying something a person has to look at (#386).
+ *
+ * The Intake panel collapses each file's explanation by default, and these two
+ * are the reason someone opens the panel at all: a measurement that contradicts
+ * the extension, and a measurement that could not decide. Neither may end up
+ * behind a collapsed card, so a card carrying one starts expanded.
+ */
+export function fileNeedsAttention(file: RoutedSourceFile): boolean {
+  if (file.contradictsExtension === true) return true;
+  return file.measuredDeterministic === false && Boolean(file.needsDecisionBecause);
+}
+
 export interface FilePage {
   shown: RoutedSourceFile[];
   total: number;
