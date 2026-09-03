@@ -129,6 +129,48 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     return () => { cancelled = true; };
   }, [runId, runStatus]);
 
+  // #462: promoting tables is not a synchronous state change.
+  // `_replan_after_promotion` puts the run back into `staging` and re-enters
+  // the graph at `intake` on a background worker, so the re-authored plan does
+  // not exist yet when the promote call returns. Every promotion callback
+  // re-read the staging workspace once, immediately -- storing the
+  // pre-promotion snapshot and never looking again -- and
+  // `UnderstandingProgress`'s callback was a literal no-op, on the assumption
+  // that this page polls while understanding is live. It does not: the poll is
+  // gated on `isRunActive`, and `staged`/`awaiting_human` are not active, so it
+  // has already stopped by the time the review dialog is reachable.
+  //
+  // Re-reading the *run* is what fixes it. The server flips the status back to
+  // `staging` under its lock before starting the worker, so it is already
+  // `staging` when this response lands -- and `staging` is an active status, so
+  // the poll effect above resumes on its own and carries the canvas through to
+  // the re-authored plan. `applyWorkspace` never touched `runStatus`, which is
+  // exactly why a page refresh was the only thing that worked.
+  //
+  // Sequential, run first: concurrent reads could take the workspace while the
+  // worker was still re-profiling and the status after it finished, leaving a
+  // stale plan with no poll to correct it. Reading the run first means a
+  // `staged` answer proves the worker is done, because it writes the workspace
+  // before it flips the status.
+  //
+  // The terminal `replan` outcomes -- `plan_accepted`, `run_active`,
+  // `nothing_promoted`, `unavailable` -- start no worker, so the status comes
+  // back unchanged and this is the single refresh they need. Deliberately not
+  // branching on the returned string: the run's own status is the truth, and a
+  // client that reasons about the string breaks the moment a new outcome is
+  // added server-side.
+  const onPromoted = useCallback(async () => {
+    if (!runId) return;
+    const progress = await api.runProgress(runId).catch(() => null);
+    if (progress) {
+      setRunStatus(String(progress.status ?? ""));
+      setPendingQuestion((progress.pending_question as GateDecision | null) ?? null);
+    }
+    const saved = await api.stagingWorkspace(runId).catch(() => null);
+    if (saved) applyWorkspace(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId]);
+
   // A gate answer is accepted once and the run leaves `awaiting_human`, so
   // re-read its status to clear the card and let polling pick up the resume.
   const onGateAnswered = useCallback(() => {
@@ -345,7 +387,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       {/* #378: the Planner docks beside whatever the workspace is showing, for
           every lifecycle state, rather than only beside the guided canvas. */}
       <div className="flex min-h-0 flex-1">
-      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind, checkpointStages) => void runAcceptedWorkflow(runMode, target, problemKind, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} onPromoted={() => void onPromoted()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} onPromoted={() => void onPromoted()} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind, checkpointStages) => void runAcceptedWorkflow(runMode, target, problemKind, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
       {plannerOpen && <div className="min-h-0 w-[min(390px,94vw)] shrink-0"><DockedPanel><PlannerPanel runId={runId} sourceId={sourceId || profile?.source_id || null} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={applyWorkspace} starterPrompts={plannerPrompts} /></DockedPanel></div>}
       </div>
       {/* One opener, one place on screen, whatever the workspace is doing. The

@@ -598,7 +598,10 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
   it("stops the plan node calling itself a proposal once it is accepted", () => {
     // The node used to leave the screen at that moment, so it never had to
     // describe a plan it had already handed on. It stays now, so it does.
-    expect(SOURCE).toContain('accepted ? "accepted" : "ready"');
+    // #462 inserted a `working` state between "not accepted" and "ready", for
+    // the window where a promotion is re-authoring the plan. What #214 pins is
+    // that acceptance still wins over everything else, which it does.
+    expect(SOURCE).toContain('accepted ? "accepted" : routing.replanning ? "working" : "ready"');
     expect(SOURCE).toContain('selection === "proposal" && accepted ? "summary" : selection');
     expect(UNDERSTANDING_SOURCE).toContain('export type ProposalStatus');
     expect(UNDERSTANDING_SOURCE).toContain('t("The pipeline below runs this plan")');

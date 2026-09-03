@@ -1,4 +1,5 @@
 import type { LocalizedText, SourceProfile, StagingWorkspace } from "../lib/api";
+import { isRunActive } from "../lib/status";
 import { runErrorText } from "./stageFailure";
 
 export type RouteKind = "structured" | "documents" | "unsupported" | "needs_review";
@@ -107,6 +108,15 @@ export interface StagingRoutingState {
   // `schemaBlocked` still drives the node statuses below.
   /** #365: why understanding ended with nothing to accept, when it did. */
   outcome?: StagingOutcome;
+  /** #462: the plan on this workspace is being rewritten right now.
+   *
+   * Promoting document tables re-enters the graph at `intake` on a background
+   * worker, so for as long as that runs the workspace still holds the plan from
+   * before the promotion. Reporting that plan as the answer -- as a finished
+   * proposal, or as the deferral it used to be -- is how the canvas came to be
+   * describing a state the run had already left.
+   */
+  replanning: boolean;
 }
 
 /**
@@ -274,6 +284,13 @@ export function buildStagingRoutingState(
   ] satisfies RoutingSubstep[] : [];
 
   const documentFiles = documentProgress(files, events, latestExtraction?.files ?? []);
+  // #462: understanding running *again* over a workspace that already carries a
+  // plan means that plan is being rewritten -- the only way to reach it is a
+  // promotion re-entering the graph. On the first pass through staging no plan
+  // exists yet, so this cannot fire there; in the brief window after the first
+  // plan is persisted and before the run is marked `staged`, "still working" is
+  // the correct thing to say anyway.
+  const replanning = isRunActive(String(progress?.status ?? "")) && Boolean(workspace?.recommended_plan);
   return {
     files,
     discovery: statusAfter(discoveryReady, !discoveryReady),
@@ -290,7 +307,11 @@ export function buildStagingRoutingState(
     ocrMode,
     documentFiles,
     error: runErrorText(progress?.error) ?? workspace?.planner_error ?? undefined,
-    outcome,
+    // The outcome describes a settled run. While the plan is being re-authored
+    // the run is not settled, and the outcome on hand is the previous one --
+    // "Blocked — no plan was created" over a promotion that is un-blocking it.
+    outcome: replanning ? undefined : outcome,
+    replanning,
   };
 }
 

@@ -51,6 +51,10 @@ interface GuidedPipelineProps {
   busy: boolean;
   onAccept: () => void;
   onWorkspaceUpdated: (workspace: StagingWorkspace) => void;
+  // #462: promoting tables re-enters the graph on a background worker, so the
+  // canvas needs the run re-read -- not just the workspace, which is still the
+  // pre-promotion one when the promote call returns.
+  onPromoted?: () => void;
   // #244/#198: the run carries a chosen ML target column (or null to let
   // problem discovery propose one) so the guided flow can actually be aimed.
   // #241: `problemKind` set skips the planner conversation entirely -- the
@@ -90,7 +94,7 @@ function local(value: { en: string; tr: string }): string {
  * on screen. One canvas (`CanvasSurface`, which has zoom; `PanCanvas` did not),
  * one selection, one docked panel, one toolbar.
  */
-export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onRun, onPause, onRetry, onOpenPlanner, onAdvanced }: GuidedPipelineProps) {
+export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onPromoted, onRun, onPause, onRetry, onOpenPlanner, onAdvanced }: GuidedPipelineProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<RunProgressSnapshot | null>(null);
   // One selection for both halves of the graph. Staging ids ("discovery",
@@ -466,13 +470,13 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {/* One panel for the whole graph. A staging node opens the staging
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
-    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
+    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} onPromoted={onPromoted} />}
     {sensitivitySelected && <Inspector eyebrow={t("Staging")} title={t("Personal data")} onClose={() => setSelected(null)}>
       <SensitivityOverride runId={runId} tables={profile.tables} />
     </Inspector>}
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
-        ? <PlanSummary runId={runId} profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} promoted={promotedTables} candidateTables={candidateTables} onWorkspaceUpdated={onWorkspaceUpdated} />
+        ? <PlanSummary runId={runId} profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} promoted={promotedTables} candidateTables={candidateTables} onWorkspaceUpdated={onWorkspaceUpdated} onPromoted={onPromoted} />
         : <div className="space-y-4">
             {/* #295: the diagnosis leads. Below it the stage rows still hold
                 the full attempt history for anyone who wants it. */}
@@ -505,7 +509,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   </>}>
     {/* Once the plan is accepted the plan node opens the summary of what will
         run, not the proposal it no longer is. */}
-    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} trailing={mlPipeline} />
+    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : routing.replanning ? "working" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} trailing={mlPipeline} />
   </CanvasSurface>;
 }
 
@@ -523,7 +527,7 @@ function groupStatus(nodes: WorkflowNode[], runStatus: string, groupIndex: numbe
   return "pending";
 }
 
-function PlanSummary({ runId, profile, workspace, structured, documents, promoted, candidateTables, onWorkspaceUpdated }: { runId: string; profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; promoted: PromotedDocumentTable[]; candidateTables: number; onWorkspaceUpdated: (workspace: StagingWorkspace) => void }) {
+function PlanSummary({ runId, profile, workspace, structured, documents, promoted, candidateTables, onWorkspaceUpdated, onPromoted }: { runId: string; profile: SourceProfile; workspace: StagingWorkspace; structured: string[]; documents: string[]; promoted: PromotedDocumentTable[]; candidateTables: number; onWorkspaceUpdated: (workspace: StagingWorkspace) => void; onPromoted?: () => void }) {
   // #311: the note below said candidates "remain review-only until explicitly
   // promoted" and offered no way to promote them -- the only Review button was
   // on the staging document panel, a canvas away. The same dialog opens here.
@@ -554,7 +558,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
         rather than leaving the panel describing what was true before. #361:
         this callback was already here and already correct -- what was missing
         is that promotion left no trace on the workspace to re-read. */}
-    {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} promotedCandidateIds={promoted.map((table) => table.candidate_id)} onClose={() => setReviewing(false)} onPromoted={() => { void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
+    {reviewing && extractionId && <DocumentTableReview runId={runId} extractionArtifactId={extractionId} promotedCandidateIds={promoted.map((table) => table.candidate_id)} onClose={() => setReviewing(false)} onPromoted={() => { if (onPromoted) { onPromoted(); return; } void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined); }} />}
     <section><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("ML objective")}</p><p className="mt-2 text-sm font-semibold text-ink">{objective}</p>{target && <p className="mt-1 text-2xs text-ink-mute">{t("Target")}: {target}</p>}</section>
     <section><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Execution scope")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{t("Run the established base pipeline through integration, analysis, training, evaluation, and reporting.")}</p>{plan.checkpoint_stages.length > 0 ? <div className="mt-3 flex flex-wrap gap-1.5">{plan.checkpoint_stages.map((stage) => <Badge key={stage} tone="warn">{t("Review after {stage}", { stage: stage.replaceAll("_", " ") })}</Badge>)}</div> : <p className="mt-2 text-3xs text-ink-faint">{t("No optional human checkpoints; hard safety gates still apply.")}</p>}</section>
     {plan.rationale.length > 0 && <section className="rounded-xl bg-violet-50 p-4"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Planner rationale")}</p><ul className="mt-2 space-y-2">{plan.rationale.map((reason) => <li key={reason.en} className="text-2xs leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></section>}
