@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -2069,10 +2069,22 @@ class ControlPlane:
             if item.component_id not in branch_component_ids
         ]
         projected_outputs.extend(branch_outputs)
+        # #430: the deferral is re-checked here too, not only where a snapshot
+        # is written. The client polls this every 2.2s, so a precondition that
+        # resolves lifts the block on the next read -- no timer and no event
+        # needed, which is what "nothing re-evaluates it" was missing. The
+        # snapshot itself stays the immutable record; this is a projection over
+        # it, like `component_outputs` above.
+        projected_plan = self._reconsidered_plan(run_id, workspace.recommended_plan)
         return {
             "artifact_id": ref.artifact_id,
             "run_id": run_id,
-            **workspace.model_dump(mode="json", exclude={"component_outputs"}),
+            **workspace.model_dump(
+                mode="json", exclude={"component_outputs", "recommended_plan"}
+            ),
+            "recommended_plan": (
+                projected_plan.model_dump(mode="json") if projected_plan else None
+            ),
             "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
         }
 
@@ -2509,7 +2521,13 @@ class ControlPlane:
         if previous.pipeline_blueprint is None:
             raise ValueError("the proposed workflow has no materializable blueprint")
         validate_executable_blueprint(previous.pipeline_blueprint)
-        accepted_plan = previous.recommended_plan.model_copy(
+        # #430: accept what the reader was shown. `staging_workspace` projects a
+        # deferral whose precondition has resolved as runnable, so freezing the
+        # stored snapshot verbatim would accept a `defer_pipeline` with an empty
+        # configuration -- an accepted plan that cannot start.
+        proposed_plan = self._reconsidered_plan(run_id, previous.recommended_plan)
+        assert proposed_plan is not None
+        accepted_plan = proposed_plan.model_copy(
             update={
                 "status": "accepted",
                 "accepted": True,
@@ -2819,6 +2837,72 @@ class ControlPlane:
             return False
         return self.store.latest(run_id, ArtifactType.DOCUMENT_TABLE_REVIEW) is None
 
+    def _fill_pipeline_plan_configuration(
+        self, configuration: dict[str, Any], schema_artifact_ids: Sequence[str]
+    ) -> dict[str, Any]:
+        """The defaults a runnable plan needs, taken from what the run measured.
+
+        Extracted so a deferral lifted after the fact (#430) produces the same
+        runnable configuration a `create_pipeline` turn would have, rather than
+        an accepted plan with nothing in it.
+        """
+        for artifact_id in schema_artifact_ids:
+            try:
+                integration_plan = self.store.load(artifact_id, IntegrationPlan)
+            except Exception:
+                continue
+            configuration.setdefault("base_table", integration_plan.base_table)
+            configuration.setdefault("base_grain", integration_plan.base_grain)
+            break
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        return configuration
+
+    def _reconsidered_plan(
+        self, run_id: str, plan: RuntimeConfigurationPlan | None
+    ) -> RuntimeConfigurationPlan | None:
+        """Re-check a deferral's precondition against the run as it is now.
+
+        #430: the recommendation only ever changed on a planner turn, and on
+        such a turn a reply that named none inherited the previous one. So a
+        `defer_pipeline` sustained itself: no timer, no re-check, no event, and
+        reloading, re-opening or waiting changed nothing. This runs wherever a
+        plan is read or carried, so the precondition resolving is enough --
+        which is also the reopen path #316 never had.
+
+        A plan a person has already acted on is left exactly as it is; their
+        decision is not something to recompute.
+        """
+        if plan is None or plan.pipeline_recommendation != "defer_pipeline":
+            return plan
+        if plan.status != "proposed":
+            return plan
+        recommendation, deferred_on = _resolved_deferral(
+            plan.deferred_on, self._document_tables_await_review(run_id)
+        )
+        if (recommendation, deferred_on) == (plan.pipeline_recommendation, plan.deferred_on):
+            return plan
+        configuration = self._fill_pipeline_plan_configuration(
+            dict(plan.configuration), self._schema_artifact_ids(run_id)
+        )
+        return plan.model_copy(
+            update={
+                "pipeline_recommendation": recommendation,
+                "deferred_on": deferred_on,
+                "configuration": configuration,
+                "checkpoint_stages": sorted(
+                    set(plan.checkpoint_stages) | set(_REFUSED_DEFERRAL_CHECKPOINTS)
+                ),
+            }
+        )
+
+    def _schema_artifact_ids(self, run_id: str) -> list[str]:
+        """Ids of the run's schema-discovery outputs, newest last."""
+        return [
+            reference.artifact_id
+            for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN)
+        ]
+
     def _persist_staging_workspace(
         self,
         runtime: _RuntimeRun,
@@ -2854,7 +2938,13 @@ class ControlPlane:
         reports = list(previous.reports) if previous else []
         report_artifact_ids = self._staging_report_artifact_ids(runtime.run_id)
         history = list(previous.chat_history) if previous else []
-        plan = previous.recommended_plan if previous else None
+        # #430: a deferral carried forward verbatim is what made the state
+        # absorbing -- nothing re-evaluated it, so `defer_pipeline` sustained
+        # itself through every later snapshot. Re-check its stated precondition
+        # here as well as on a planner turn.
+        plan = (
+            self._reconsidered_plan(runtime.run_id, previous.recommended_plan) if previous else None
+        )
         model = previous.planner_model if previous else None
         profile = self.source_profile(runtime.source_id)
         document_ref = self.store.latest(runtime.run_id, ArtifactType.DOCUMENT_EXTRACTION)
@@ -3011,26 +3101,31 @@ class ControlPlane:
                 plan_configuration.pop("validation_strategy", None)
             if plan_configuration.get("task_type") not in {item.value for item in TaskType}:
                 plan_configuration.pop("task_type", None)
-            pipeline_recommendation = _resolved_pipeline_recommendation(
-                planner_result.get("pipeline_recommendation"),
+            requested_recommendation = planner_result.get("pipeline_recommendation")
+            pipeline_recommendation, deferred_on = _resolved_pipeline_recommendation(
+                requested_recommendation,
                 plan,
                 self._document_tables_await_review(runtime.run_id),
             )
+            # #430: the planner asked to defer and the product has no
+            # outstanding decision to point at, so the block was refused. It
+            # still wanted the review it named, and the reviews this pipeline
+            # performs are its own stages -- so the run stops at one for a
+            # person instead of not starting at all.
+            refused_deferral = (
+                requested_recommendation == "defer_pipeline"
+                and pipeline_recommendation == "create_pipeline"
+            )
             if pipeline_recommendation == "create_pipeline":
-                for artifact_id in schema_ids:
-                    try:
-                        integration_plan = self.store.load(artifact_id, IntegrationPlan)
-                    except Exception:
-                        continue
-                    plan_configuration.setdefault("base_table", integration_plan.base_table)
-                    plan_configuration.setdefault("base_grain", integration_plan.base_grain)
-                    break
-                plan_configuration.setdefault("candidate_limit", 2)
-                plan_configuration.setdefault("n_folds", 5)
+                self._fill_pipeline_plan_configuration(plan_configuration, schema_ids)
             else:
                 plan_configuration = {}
+            checkpoints = list(planner_result.get("checkpoint_stages") or [])
+            if refused_deferral:
+                checkpoints = sorted(set(checkpoints) | set(_REFUSED_DEFERRAL_CHECKPOINTS))
             plan = RuntimeConfigurationPlan(
                 pipeline_recommendation=pipeline_recommendation,
+                deferred_on=deferred_on,
                 decision_summary=(
                     self._localized(
                         (planner_result.get("decision_summary") or {}).get("en"),
@@ -3044,7 +3139,7 @@ class ControlPlane:
                     key: list(value)
                     for key, value in (planner_result.get("stage_directives") or {}).items()
                 },
-                checkpoint_stages=list(planner_result.get("checkpoint_stages") or []),
+                checkpoint_stages=checkpoints,
                 auto_proceed_stages=list(planner_result.get("auto_proceed_stages") or []),
                 max_retries_by_stage=dict(planner_result.get("max_retries_by_stage") or {}),
                 rationale=[
@@ -3532,10 +3627,15 @@ class ControlPlane:
             "Do not invent columns, relationships, files, metrics, or completed actions. Explain "
             "high-value measured relationships inside report findings. Choose exactly one neutral "
             "pipeline_decision: create_pipeline when the evidence supports an executable ML "
-            "objective and suitable inputs; defer_pipeline when a named review or missing fact "
-            "must resolve viability; no_pipeline when the understood source does not warrant an "
-            "ML workflow. Evaluate all three options and state the evidence-based reason. Keep "
-            "every field concise."
+            "objective and suitable inputs; defer_pipeline ONLY when a human decision this "
+            "product can perform is outstanding -- today that means extracted PDF table "
+            "candidates that nobody has reviewed yet. The audits the ML pipeline performs are "
+            "its own stages (leakage_audit, validation_strategy, eda), so wanting one of those "
+            "is a reason to RUN the pipeline and stop at that stage, not to defer it: a "
+            "deferral waiting on a pipeline stage blocks the pipeline that contains the audit "
+            "it is waiting for, and nothing can then resolve it. no_pipeline when the "
+            "understood source does not warrant an ML workflow at all. Evaluate all three "
+            "options and state the evidence-based reason. Keep every field concise."
         )
         try:
             response = None
@@ -7474,27 +7574,74 @@ def _resolved_pipeline_recommendation(
     requested: Any,
     previous: RuntimeConfigurationPlan | None,
     tables_await_review: bool,
-) -> str:
-    """What one planner turn is allowed to say about running a pipeline (#316).
+) -> tuple[str, str]:
+    """What one planner turn is allowed to say about running a pipeline.
 
-    This used to be ``str(requested or "create_pipeline")``, so *any* chat turn
-    published a runnable plan and unlocked the ML controls -- a question about
-    the raw files, or a reply whose own text told the reader to review the
-    extracted PDF tables first. Two rules replace that default:
+    Returns the recommendation and, for a deferral, the precondition that would
+    lift it -- see `RuntimeConfigurationPlan.deferred_on`.
 
-    A turn that names no recommendation has made no decision, so the workspace
-    keeps the one it already carries and a first turn defers. And promoting an
-    extracted table is a human decision the product refuses to make silently, so
-    a plan that would start ML while candidates sit unreviewed is proposing to
-    skip it, and defers instead however confident the planner was.
+    #316: this used to be ``str(requested or "create_pipeline")``, so *any* chat
+    turn published a runnable plan and unlocked the ML controls -- a question
+    about the raw files, or a reply whose own text told the reader to review the
+    extracted PDF tables first. A turn that names no recommendation has made no
+    decision, so the workspace keeps the one it already carries and a first turn
+    defers. And promoting an extracted table is a human decision the product
+    refuses to make silently, so a plan that would start ML while candidates sit
+    unreviewed is proposing to skip it, and defers instead however confident the
+    planner was.
+
+    #430: a deferral has to be actionable to be worth having. The reviews the ML
+    pipeline performs are its own stages -- `leakage_audit`, `eda`,
+    `validation_strategy` -- so deferring the pipeline to wait for one blocks
+    the pipeline that contains the audit it is waiting for, and nothing can ever
+    resolve it. A `defer_pipeline` is honoured only where the product can point
+    at the outstanding decision and watch it resolve. Everywhere else the answer
+    is to run the pipeline to the stage that produces the evidence, which is
+    what `_deferral_checkpoints` arranges; the planner's stated reason is kept
+    on `decision_summary` either way, so nothing it said is lost.
     """
     valid = {"create_pipeline", "defer_pipeline", "no_pipeline"}
     recommendation = str(requested or "")
     if recommendation not in valid:
-        recommendation = previous.pipeline_recommendation if previous else "defer_pipeline"
+        # No decision this turn. Inherit the state, but never re-assert a block
+        # whose precondition has meanwhile resolved -- inheriting it verbatim is
+        # what made the deferral absorbing (#430).
+        if previous is None:
+            return "defer_pipeline", "planner_decision"
+        recommendation = previous.pipeline_recommendation
+        if recommendation == "defer_pipeline":
+            return _resolved_deferral(previous.deferred_on, tables_await_review)
     if recommendation == "create_pipeline" and tables_await_review:
-        return "defer_pipeline"
-    return recommendation
+        return "defer_pipeline", "document_table_review"
+    if recommendation == "defer_pipeline":
+        return _resolved_deferral("document_table_review", tables_await_review)
+    return recommendation, ""
+
+
+def _resolved_deferral(precondition: str, tables_await_review: bool) -> tuple[str, str]:
+    """Whether a deferral still has something to wait for (#430).
+
+    `planner_decision` is settled only by a turn that states one, so it is
+    carried. `document_table_review` is settled the moment a review is recorded
+    -- rejecting every candidate counts, it is a completed decision. Anything
+    else names no precondition this product can observe, so there is nothing
+    the person could do to lift it and it is not grounds for a block.
+    """
+    if precondition == "planner_decision":
+        return "defer_pipeline", "planner_decision"
+    if tables_await_review:
+        return "defer_pipeline", "document_table_review"
+    return "create_pipeline", ""
+
+
+#: Where a run stops instead of not starting, when a deferral is refused.
+#:
+#: #430: the planner deferred because it wanted a named review, and the review
+#: it named is a stage the pipeline runs. Refusing to start withholds the
+#: evidence; running to the stage and stopping there for a person is the same
+#: review, actually performed. `leakage_audit` is the audit the reported case
+#: asked for and the one whose verdict a human most needs to see.
+_REFUSED_DEFERRAL_CHECKPOINTS: Final = ("leakage_audit",)
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
