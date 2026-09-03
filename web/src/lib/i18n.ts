@@ -946,13 +946,20 @@ const TR: Record<string, string> = {
   // copy said accepted tables "become training data"; it says what happens now.
   "Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.":
     "Kabul edilen tablolar, geldikleri belge ve sayfa ile birlikte incelenmiş tablo olarak kaydedilir. Kabul edilmeyenler dışarıda kalır.",
-  "Promotion does not add them to the ML training table for this run; that is built from the uploaded files.":
-    "Veriye alma, bu koşunun ML eğitim tablosuna onları eklemez; o tablo yüklenen dosyalardan kurulur.",
+  // #445 wired the promotion through, so the corrected copy became wrong in
+  // the other direction. Promoted rows are profiled and joined now, and the
+  // plan is re-authored because the one on screen predates them.
+  "Accepted tables join the ML training data for this run, alongside the uploaded files. The plan is re-authored afterwards, because the one you see now was written before these rows existed.":
+    "Kabul edilen tablolar, yüklenen dosyaların yanında bu koşunun ML eğitim verisine katılır. Gördüğünüz plan bu satırlar var olmadan önce yazıldığı için plan sonrasında yeniden kurgulanır.",
+  "The plan is being re-authored so it describes the data that now includes these rows.":
+    "Plan, artık bu satırları da içeren veriyi anlatacak şekilde yeniden kurgulanıyor.",
+  "These rows are not part of the plan that was already accepted. Re-open the plan to include them.":
+    "Bu satırlar, daha önce kabul edilen planın parçası değil. Dahil etmek için planı yeniden açın.",
   "Nothing was accepted, so nothing was saved.": "Hiçbir şey kabul edilmedi, bu yüzden hiçbir şey kaydedilmedi.",
   "They are recorded with their provenance and listed in the Documents panel.":
     "Kaynak bilgileriyle birlikte kaydedilir ve Belgeler panelinde listelenir.",
-  "Saved as reviewed tables with their provenance. They do not join the ML training table for this run.":
-    "Kaynak bilgileriyle birlikte incelenmiş tablo olarak kaydedildi. Bu koşunun ML eğitim tablosuna katılmazlar.",
+  "Saved as reviewed tables with their provenance, and joined into the ML training data for this run.":
+    "Kaynak bilgileriyle birlikte incelenmiş tablo olarak kaydedildi ve bu koşunun ML eğitim verisine katıldı.",
   "Extracted tables are candidates until they are reviewed.": "Çıkarılan tablolar incelenene kadar adaydır.",
   "Review each extracted table before it is trusted as structured data.":
     "Yapısal veri olarak güvenilmeden önce her çıkarılan tabloyu inceleyin.",
