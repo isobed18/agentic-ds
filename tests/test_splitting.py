@@ -99,6 +99,36 @@ class TestConcreteSplitters:
         assert holdout_a.index.equals(holdout_b.index)
         assert set(train_a["group"]).isdisjoint(holdout_a["group"])
 
+    def test_a_null_group_column_no_longer_refuses_to_split(self) -> None:
+        """A null in the group column is an unmeasured identity, not a reason
+        to refuse grouping altogether. `tmdb_id` (MovieLens) has a handful of
+        missing values out of ~9,700 rows and is otherwise exactly the right
+        column to group on; this used to make it permanently unusable.
+        """
+        frame = pd.DataFrame(
+            {
+                "group": [f"g{i // 3}" for i in range(57)] + [None, None, None],
+                "value": range(60),
+            }
+        )
+        strategy = _strategy(SplitStrategy.GROUPED, group_column="group")
+
+        train, holdout = split_holdout(frame, strategy)
+
+        assert len(train) + len(holdout) == len(frame)
+        non_null_train_groups = set(train["group"].dropna())
+        non_null_holdout_groups = set(holdout["group"].dropna())
+        assert non_null_train_groups.isdisjoint(non_null_holdout_groups)
+        # The null rows themselves must not have been dropped by treating an
+        # unknown identity as unsplittable.
+        assert train["group"].isna().sum() + holdout["group"].isna().sum() == 3
+
+        splitter = make_splitter(strategy, train)
+        for fold_train, fold_validation in splitter.iter_folds(train):
+            fold_train_groups = set(train.loc[fold_train, "group"].dropna())
+            fold_validation_groups = set(train.loc[fold_validation, "group"].dropna())
+            assert fold_train_groups.isdisjoint(fold_validation_groups)
+
     def test_temporal_holdout_uses_cutoff_not_n_folds(self) -> None:
         frame = pd.DataFrame({"when": pd.date_range("2025-01-01", periods=20), "target": range(20)})
         strategy = _strategy(

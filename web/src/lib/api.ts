@@ -829,6 +829,9 @@ export interface StagingWorkspace {
   pipeline_layout: PipelineLayout;
   component_outputs?: PipelineOutputReference[];
   document_extractions?: DocumentExtractionSummary[];
+  /** Human-promoted PDF tables for this run, computed live (never baked into
+   * this otherwise-immutable snapshot, since promotion happens after it). */
+  promoted_tables?: { name: string; artifact_id: string; row_count: number; columns: string[] }[];
   promoted_document_tables?: PromotedDocumentTable[];
   recommended_plan?: {
     proposal_id: string;

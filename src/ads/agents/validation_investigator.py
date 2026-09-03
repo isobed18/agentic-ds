@@ -102,7 +102,16 @@ def investigate_validation_context(
             transcript.append(
                 f"Turn {adapter.request_count} {tool_id} failed: {type(exc).__name__}: {exc}"
             )
-            raise ModelRetry(f"tool_error:{tool_id}:{type(exc).__name__}") from exc
+            # The retry message is the only feedback the model actually sees on
+            # its next turn -- the detailed transcript line above is discarded
+            # unless the run later succeeds. A bare "tool_error:<id>:<type>"
+            # (e.g. "tool_error:trial_validation_strategy:ToolExecutionError")
+            # carries no information about *why* a proposal was rejected --
+            # nothing to correct from. A model asked to fix a grouped split on
+            # a column with nulls, told only that its call errored, proposes
+            # the same column again. Surface the exception text so a genuinely
+            # correctable mistake (bad column, missing field) can be fixed.
+            raise ModelRetry(f"tool_error:{tool_id}: {exc}") from exc
         tools.append(tool_id)
         transcript.append(
             f"Turn {adapter.request_count} {tool_id}: {result.summary}; data="

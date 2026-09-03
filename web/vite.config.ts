@@ -9,6 +9,6 @@ export default defineConfig({
   build: { outDir: "../src/ads/api/static", emptyOutDir: true },
   server: {
     port: 5173,
-    proxy: { "/api": "http://127.0.0.1:8077" },
+    proxy: { "/api": `http://127.0.0.1:${process.env.ADS_DEV_API_PORT ?? "8077"}` },
   },
 });
