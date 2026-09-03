@@ -224,7 +224,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   // #166 second path: `runMode` carries the person's choice to approve every
   // stage. `manual` declares every stage a checkpoint, so the run stops after
   // each one for a human decision instead of the agent deciding the gate.
-  async function runAcceptedWorkflow(runMode: "fully_auto" | "manual" = "fully_auto", targetColumn: string | null = null, problemKind: "predict_column" | "flag_anomalies" | null = null, checkpointStages: string[] | null = null) {
+  async function runAcceptedWorkflow(runMode: "fully_auto" | "manual" = "fully_auto", targetColumn: string | null = null, problemKind: "predict_column" | null = null, checkpointStages: string[] | null = null) {
     if (!runId || !workspace || !blueprint || busy) return; setBusy(true); setError(null);
     // #244/#198: the guided run used to pass nothing but the run mode, so a
     // chosen target never reached the pipeline. Carry the picker's column into

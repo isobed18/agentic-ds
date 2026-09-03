@@ -213,7 +213,9 @@ const TR: Record<string, string> = {
   "Problem": "Problem",
   "Ask the planner": "Planlayıcıya sor",
   "Predict a column": "Bir sütunu tahmin et",
-  "Flag unusual rows": "Alışılmadık satırları işaretle",
+  // #466: "Flag unusual rows" was here for two pickers that offered a framing
+  // the ML spine cannot execute. Both are gone; the server refuses the framing
+  // as well, so nothing renders this string any more.
   "Agent panel": "Ajan paneli",
   "Running a stage several times independently is what produces the agreement signal the gate uses.": "Bir aşamayı birkaç kez bağımsız çalıştırmak, kapının kullandığı uzlaşma sinyalini üretir.",
   "Let an agent write its own analysis on top of the fixed profile": "Sabit profilin üstüne bir ajan kendi analizini yazsın",

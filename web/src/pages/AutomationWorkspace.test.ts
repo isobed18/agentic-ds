@@ -86,7 +86,9 @@ describe("the project-first journey (#157, #165)", () => {
   });
 
   it("forwards a quick-picked problem kind as problem_selection, skipping the planner (#241)", () => {
-    expect(AUTOMATION_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
+    // #466 removed the anomaly kind, which had no executable pipeline. What
+    // #241 states -- the picked kind reaching startStaged -- is unchanged.
+    expect(AUTOMATION_SOURCE).toContain('problemKind: "predict_column" | null = null');
     expect(AUTOMATION_SOURCE).toContain("problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}");
   });
 });

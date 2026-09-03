@@ -514,7 +514,16 @@ def feature_pipeline_stage(state: RunState, correction: list[str] | None = None)
     frame = _frame(state, MODEL_FRAME_KEY)
     problem = _current_problem(state)
     if problem.target_column is None:
-        raise ValueError("Feature preparation requires a supervised target column.")
+        # #466: the message used to read like a misconfiguration a person could
+        # fix, four stages after intake, when the framing they chose simply
+        # cannot execute. `compute_support` refuses an unsupervised framing at
+        # problem discovery now, so reaching here means a run framed before that
+        # existed -- say what is actually true.
+        raise ValueError(
+            "This run is framed as anomaly detection, which has no executable pipeline: "
+            "feature preparation and training both require a target column. Re-frame the "
+            "problem around a column to predict."
+        )
     card = profile_table(
         LoadedTable(
             name="model_frame",

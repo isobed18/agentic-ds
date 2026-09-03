@@ -267,10 +267,13 @@ describe("quick problem selector (#241)", () => {
     // Before this, an ordinary problem ("predict this column", "flag the odd
     // ones") had no path but the planner conversation. "ask_planner" preserves
     // that exact existing behaviour as the default.
-    expect(SOURCE).toContain('useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner")');
+    // #466 removed the third kind: "Flag unusual rows" had no executable
+    // pipeline behind it. What #241 states -- a kind picker that defaults to
+    // the pre-existing planner conversation -- is unchanged.
+    expect(SOURCE).toContain('useState<"ask_planner" | "predict_column">("ask_planner")');
     expect(SOURCE).toContain('<option value="ask_planner">{t("Ask the planner")}</option>');
     expect(SOURCE).toContain('<option value="predict_column">{t("Predict a column")}</option>');
-    expect(SOURCE).toContain('<option value="flag_anomalies">{t("Flag unusual rows")}</option>');
+    expect(SOURCE).not.toContain('<option value="flag_anomalies">');
   });
 
   it("passes the picked kind to onRun instead of always going through the planner", () => {
@@ -284,11 +287,12 @@ describe("quick problem selector (#241)", () => {
   it("translates the picker's options", () => {
     expect(CATALOGUE).toContain('"Ask the planner": "Planlayıcıya sor"');
     expect(CATALOGUE).toContain('"Predict a column": "Bir sütunu tahmin et"');
-    expect(CATALOGUE).toContain('"Flag unusual rows": "Alışılmadık satırları işaretle"');
+    // #466: the string went with the options that rendered it.
+    expect(CATALOGUE).not.toContain('"Flag unusual rows":');
   });
 
   it("forwards the selection to startStaged as problem_selection", () => {
-    expect(PAGE_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
+    expect(PAGE_SOURCE).toContain('problemKind: "predict_column" | null = null');
     expect(PAGE_SOURCE).toContain("problem_selection: { kind: problemKind, target_column: targetColumn }");
   });
 });

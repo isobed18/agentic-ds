@@ -67,7 +67,7 @@ interface GuidedPipelineProps {
   onRun: (
     runMode: "fully_auto" | "manual",
     targetColumn: string | null,
-    problemKind: "predict_column" | "flag_anomalies" | null,
+    problemKind: "predict_column" | null,
     checkpointStages: string[],
   ) => void;
   onPause: () => void;
@@ -126,7 +126,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // #241: the common problem shapes named straight from the selector, skipping
   // the planner conversation. "ask_planner" is the pre-existing behaviour --
   // the column above is only a hint the agent may take or leave.
-  const [problemKind, setProblemKind] = useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner");
+  const [problemKind, setProblemKind] = useState<"ask_planner" | "predict_column">("ask_planner");
   // Accepting is a state change on one canvas, not a navigation, so the panel
   // follows the plan it was reviewing into the summary of what will run.
   useEffect(() => { if (accepted) setSelected("summary"); }, [accepted]);
@@ -371,11 +371,19 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
             <select value={problemKind} onChange={(event) => setProblemKind(event.target.value as typeof problemKind)} className="max-w-[10rem] bg-transparent text-2xs font-medium text-ink outline-none">
               <option value="ask_planner">{t("Ask the planner")}</option>
               {targetColumns.length > 0 && <option value="predict_column">{t("Predict a column")}</option>}
-              <option value="flag_anomalies">{t("Flag unusual rows")}</option>
+              {/* #466: "Flag unusual rows" was offered here and in the manual
+                  reframe picker, and could not run. `feature_pipeline_stage`
+                  raises on a null target, `default_candidates` has no
+                  unsupervised menu, and `training_stage` raises on the same
+                  condition -- so an anomaly framing was selectable, accepted,
+                  planned, and then fatal four stages in. It is refused at
+                  problem discovery now (`UNSUPPORTED_UNSUPERVISED_FRAMING`),
+                  and offering a choice whose only outcome is that refusal is
+                  worse than not offering it. */}
             </select>
           </label>
         )}
-        {canStart && !currentStage && targetColumns.length > 0 && problemKind !== "flag_anomalies" && (
+        {canStart && !currentStage && targetColumns.length > 0 && (
           // #428: the two modes treat this picker differently and the control
           // used to say so nowhere. Under "Predict a column" the choice is
           // built and measured directly; under "Ask the planner" it reaches the
