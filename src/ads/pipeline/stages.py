@@ -49,6 +49,7 @@ from ads.contracts.validation import (
 )
 from ads.dataflow import persist_table_asset
 from ads.discovery import audit_leakage
+from ads.documents.promotion import load_promoted_document_tables
 from ads.ds_toolkit import build_preprocessor
 from ads.eda import profile_for_eda
 from ads.intake import LoadedTable, load_directory, profile_table, profile_tables
@@ -206,6 +207,22 @@ def intake_stage(state: RunState, correction: list[str] | None = None) -> StageR
     if not isinstance(source_path, Path):
         raise ValueError(f"RunState.blackboard[{SOURCE_PATH_KEY!r}] must contain a Path.")
     loaded = load_directory(source_path)
+    # #445: the uploaded directory was all intake ever read, so a promoted PDF
+    # table -- a durable `TableAsset` with verified provenance and a recorded
+    # human decision -- changed no training data. `load_table_asset` had no
+    # production caller at all. Promoted tables are appended after the uploaded
+    # ones so an upload can never be shadowed by a document table of the same
+    # name, and they arrive carrying `source_format="document_table"` and their
+    # `file#page=N` uri, so rows extracted from a PDF stay distinguishable from
+    # uploaded rows in the DataCard, in the digest an agent reads, and in the
+    # plan that joins them.
+    promoted = load_promoted_document_tables(state.store, state.run_id)
+    taken = {table.name for table in loaded}
+    for table in promoted:
+        while table.name in taken:
+            table.name = f"{table.name}_x"
+        taken.add(table.name)
+    loaded = [*loaded, *promoted]
     cards = profile_tables(loaded)
     state.blackboard[LOADED_TABLES_KEY] = loaded
     state.blackboard[SOURCE_FRAMES_KEY] = {table.name: table.frame for table in loaded}
