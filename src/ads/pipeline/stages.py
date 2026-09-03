@@ -498,6 +498,18 @@ def _excluded_feature_columns(state: RunState, problem, card) -> set[str]:
 
     Shared by the stage that builds the spec and the stage that re-derives it to
     check consistency, so the two cannot disagree about what was excluded.
+
+    #472: the target is subtracted last, whatever either source says. This set
+    names columns kept out of the *features*, and the target is never a
+    feature -- `FeatureSpec.from_card` skips it while routing, so an excluded
+    target lands in `excluded_columns` and never reaches `dropped_columns`,
+    and the validator that requires `excluded <= dropped` refuses the spec it
+    was just asked to build. Excluding the target could therefore never mean
+    anything; it could only crash, four stages after intake, as a pydantic
+    traceback. Reported on UCI Student Performance predicting `g3`, where the
+    sensitivity investigator is entitled to call a student's grade personal.
+    Calling the target personal is a real finding about the *run* -- one that
+    belongs at problem discovery, not here, and not as a crash.
     """
     personal = {
         column.name
@@ -505,7 +517,8 @@ def _excluded_feature_columns(state: RunState, problem, card) -> set[str]:
         for column in source.columns
         if column.sensitivity is Sensitivity.PII
     }
-    return (set(problem.excluded_columns) | personal) & set(card.column_names)
+    excluded = (set(problem.excluded_columns) | personal) & set(card.column_names)
+    return excluded - {problem.target_column}
 
 
 def feature_pipeline_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
