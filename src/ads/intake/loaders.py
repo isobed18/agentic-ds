@@ -207,9 +207,9 @@ def _type_family(value: object) -> str:
     and DuckDB widens it without complaint. bool rides with them because it is
     an int subclass, so separating it would only produce false positives.
     """
-    if isinstance(value, (bool, int, float)) or isinstance(value, (np.integer, np.floating)):
+    if isinstance(value, bool | int | float) or isinstance(value, np.integer | np.floating):
         return "number"
-    if isinstance(value, (datetime, date, pd.Timestamp)):
+    if isinstance(value, datetime | date | pd.Timestamp):
         return "datetime"
     if isinstance(value, str):
         return "text"

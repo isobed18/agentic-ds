@@ -40,7 +40,7 @@ def _resolve_symbol(path: str) -> Any:
 
 
 def _encode(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, str)):
+    if value is None or isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
         if math.isfinite(value):

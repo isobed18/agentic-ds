@@ -275,7 +275,7 @@ describe("quick problem selector (#241)", () => {
   });
 
   it("requires a target column before Run is enabled for a predict-column pick", () => {
-    expect(SOURCE).toContain('disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}');
+    expect(SOURCE).toContain('disabled={busy || !hasTrainableTables || (problemKind === "predict_column" && !targetColumn)}');
   });
 
   it("translates the picker's options", () => {
@@ -665,3 +665,12 @@ describe("the target picker reaches past the base table (#448)", () => {
     expect(SOURCE).toContain("columns={targetColumns}");
   });
 });
+
+describe("promoted document tables enable ML pipeline run (#461)", () => {
+  it("treats promoted document tables as trainable tables so Run is not blocked", () => {
+    expect(SOURCE).toContain("const hasTrainableTables = profile.tables.length > 0 || promotedTables.length > 0;");
+    expect(SOURCE).toContain('disabled={busy || !hasTrainableTables || (problemKind === "predict_column" && !targetColumn)}');
+    expect(PAGE_SOURCE).toContain("const hasTrainableTables = Boolean(profile?.tables.length || workspace?.promoted_document_tables?.length);");
+  });
+});
+
