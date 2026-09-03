@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type ArtifactPreview,
-  type ProfiledColumn,
   type PromotedDocumentTable,
   type RunProgressSnapshot,
   type SourceProfile,
@@ -18,6 +17,8 @@ import { Badge, Empty, Pause, Play, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { uniqueIds } from "./artifactReveal";
 import { DocumentTableReview } from "./DocumentTableReview";
+import { ProblemTargetDialog } from "./ProblemTargetDialog";
+import { targetColumnGroups } from "./targetColumns";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
@@ -115,37 +116,11 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // whatever target the plan already carries, shown before the run starts. Its
   // value is passed to the run as guidance for problem discovery.
   const planConfig = (workspace.recommended_plan?.configuration ?? {}) as Record<string, unknown>;
-  const baseTableName = String(planConfig.base_table ?? profile.tables[0]?.name ?? "");
-  const baseTable = profile.tables.find((table) => table.name === baseTableName) ?? profile.tables[0];
-  // #448: this was `baseTable?.columns ?? []`, so on a multi-table source the
-  // fact table's measure was unreachable -- on MovieLens the agent could
-  // propose predicting `rating` and the planner could be asked for it in chat,
-  // and the one control named "Target" could not offer it, because `ratings` is
-  // not the base table. Everything the source profiled is offered instead,
-  // grouped by the table it came from so a bare column name is not the only
-  // thing distinguishing `movies.title` from `tags.tag`.
-  //
-  // Base table first, and a name already claimed is not offered twice: the
-  // value sent is the bare column name, which is what the integrated ABT will
-  // call it, and the base table's column is the one a join resolves that name
-  // to. A column that the accepted joins do not actually bring into the ABT is
-  // refused with measured blocking reasons rather than silently mis-aimed
-  // (#427), which is a far better answer than not being able to ask.
-  const targetGroups = useMemo(() => {
-    const ordered = [
-      ...(baseTable ? [baseTable] : []),
-      ...profile.tables.filter((table) => table.name !== baseTable?.name),
-    ];
-    const claimed = new Set<string>();
-    const groups: Array<{ table: string; columns: ProfiledColumn[] }> = [];
-    for (const table of ordered) {
-      const columns = (table.columns ?? []).filter((column) => !claimed.has(column.name));
-      for (const column of columns) claimed.add(column.name);
-      if (columns.length) groups.push({ table: table.name, columns });
-    }
-    return groups;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.tables, baseTable?.name]);
+  // #448/#464: which columns may be a target is one rule with two readers now
+  // -- this picker, and the dialog the gate escalation card also opens -- so it
+  // lives beside neither of them. Two derivations would drift, which is how the
+  // toolbar picker and the reframe picker came to disagree in the first place.
+  const targetGroups = useMemo(() => targetColumnGroups(profile, workspace), [profile, workspace]);
   const targetColumns = useMemo(() => targetGroups.flatMap((group) => group.columns), [targetGroups]);
   const [targetColumn, setTargetColumn] = useState<string>(String(planConfig.target_column ?? ""));
   // #241: the common problem shapes named straight from the selector, skipping
@@ -313,16 +288,15 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // intake, schema discovery or integration was wrong; the framing was. This
   // re-enters the graph at problem discovery with the person's column pinned,
   // keeping every artifact the run already produced.
-  const [pinning, setPinning] = useState(false);
-  async function pinProblem(kind: "predict_column" | "flag_anomalies", column: string, taskType: string) {
-    setPinning(true); setError(null);
-    try {
-      await api.pinProblemFraming(runId, { kind, target_column: kind === "predict_column" ? column : null, task_type: taskType || null });
-      setDetail(null);
-      setProgress(await api.runProgress(runId));
-    }
+  // #464: the dialog owns the request now, so this side only has to react to
+  // it having happened. The stage detail describes the attempt that failed and
+  // the run has left it.
+  const [reframing, setReframing] = useState(false);
+  async function afterPin() {
+    setDetail(null);
+    setError(null);
+    try { setProgress(await api.runProgress(runId)); }
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
-    finally { setPinning(false); }
   }
 
   async function inspectStage(stageId: string) {
@@ -480,7 +454,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         : <div className="space-y-4">
             {/* #295: the diagnosis leads. Below it the stage rows still hold
                 the full attempt history for anyone who wants it. */}
-            {selectedFailure && <FailureNotice failure={selectedFailure} stageId={detail?.stage.id ?? selectedGroup?.nodes.find((node) => isAttention(node.status))?.id ?? null} columns={targetColumns} busy={busy || pinning} onPin={pinProblem} />}
+            {selectedFailure && <FailureNotice failure={selectedFailure} stageId={detail?.stage.id ?? selectedGroup?.nodes.find((node) => isAttention(node.status))?.id ?? null} busy={busy} onReframe={() => setReframing(true)} />}
             {selectedGroup?.nodes.length
               ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} diagnosticIds={diagnosticIds} checkpoint={checkpointSet.has(node.id)} canSetCheckpoint={canStart} onToggleCheckpoint={() => toggleCheckpoint(node.id)} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
               : selectedFailure
@@ -504,6 +478,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {/* Whatever failed -- a stage inspection, an artifact preview opened from a
         staging node -- says so over the canvas rather than inside whichever of
         the two panels happens to be docked. */}
+    {reframing && <ProblemTargetDialog runId={runId} groups={targetGroups} onClose={() => setReframing(false)} onPinned={() => void afterPin()} />}
     {error && <p data-no-pan className="absolute bottom-5 left-5 z-40 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
     {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
   </>}>
@@ -590,12 +565,15 @@ function Arrow({ active, complete, dimmed = false }: { active: boolean; complete
  * specific answer -- "the plan failed a trial execution against the real
  * tables" says what to change, where a stack trace does not.
  */
-function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: StageFailure;
+function FailureNotice({ failure, stageId, busy, onReframe }: { failure: StageFailure;
   /** Which stage failed, so the box can offer the correction that stage takes. */
   stageId?: string | null;
-  columns?: ProfiledColumn[];
   busy?: boolean;
-  onPin?: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void;
+  /** #464: opens the target selector. It used to be inlined here -- three
+   *  selects and a button in one wrapping row, inside a red box, inside a
+   *  440px docked panel -- at the moment a person most needs to read column
+   *  names and compare them. */
+  onReframe?: () => void;
 }) {
   return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
@@ -609,54 +587,11 @@ function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: St
     {failure.checks.length > 0 && <ul className="mt-2 space-y-1.5">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}
       {check.measurements.length > 0 && <ul className="mt-1 space-y-0.5 pl-3">{check.measurements.map((measurement) => <li key={measurement} className="break-words font-mono text-3xs leading-snug text-stop-800">{measurement}</li>)}</ul>}
     </li>)}</ul>}
-    {stageId === "problem_discovery" && onPin && <ProblemReframe columns={columns ?? []} busy={busy ?? false} onPin={onPin} />}
+    {stageId === "problem_discovery" && onReframe && <div className="mt-4 border-t border-stop-200 pt-3">
+      <p className="text-3xs leading-relaxed text-stop-700">{t("Problem discovery could not frame this run on its own. You can name the target it should use.")}</p>
+      <button type="button" className="btn-primary mt-3 text-xs" disabled={busy} onClick={onReframe}>{t("Name the problem yourself")}</button>
+    </div>}
   </section>;
-}
-
-/** Name the framing a failed problem discovery could not find on its own.
- *
- * #428: the Target picker exists on the toolbar, gated on `canStart`, which is
- * false for a failed run -- so the control was present in the state where
- * nothing had gone wrong yet and absent in the one where a person knows
- * exactly what to fix. The column is pinned as a constraint rather than passed
- * as prose the agent may rank first and then ignore: the candidate is built
- * directly and measured, so an unviable column comes back as the blocking
- * reasons for *that* column, which is an answer somebody can act on.
- */
-function ProblemReframe({ columns, busy, onPin }: { columns: ProfiledColumn[]; busy: boolean; onPin: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void }) {
-  const [kind, setKind] = useState<"predict_column" | "flag_anomalies">("predict_column");
-  // Empty means "read it off the column's measured shape", which is the right
-  // default. It is offered because inference cannot tell a 0/1 label from a
-  // 0/1 quantity and the person looking at their own data can.
-  const [taskType, setTaskType] = useState("");
-  const [column, setColumn] = useState(() => (columns.find((item) => item.candidate_target) ?? columns[0])?.name ?? "");
-  const ready = kind === "flag_anomalies" || Boolean(column);
-  return <div className="mt-4 border-t border-stop-200 pt-3">
-    <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Name the problem yourself")}</p>
-    <p className="mt-1 text-3xs leading-relaxed text-stop-700">{t("This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.")}</p>
-    <div className="mt-3 flex flex-wrap items-end gap-2">
-      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Problem")}
-        <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
-          <option value="predict_column">{t("Predict a column")}</option>
-          <option value="flag_anomalies">{t("Flag unusual rows")}</option>
-        </select>
-      </label>
-      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Target")}
-        <select value={column} onChange={(event) => setColumn(event.target.value)} className="max-w-[11.25rem] rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
-          {columns.map((item) => <option key={item.name} value={item.name}>{item.name}{item.candidate_target ? " ★" : ""}</option>)}
-        </select>
-      </label>}
-      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Task type")}
-        <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
-          <option value="">{t("From the column's shape")}</option>
-          <option value="regression">{t("Regression")}</option>
-          <option value="binary_classification">{t("Binary classification")}</option>
-          <option value="multiclass_classification">{t("Multiclass classification")}</option>
-        </select>
-      </label>}
-      <button type="button" className="btn-primary text-xs" disabled={busy || !ready} onClick={() => onPin(kind, column, taskType)}>{busy ? t("Working…") : t("Re-run problem discovery")}</button>
-    </div>
-  </div>;
 }
 
 /** #424: the per-stage chips inside the docked group panel, filtered against

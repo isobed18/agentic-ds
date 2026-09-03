@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import SOURCE from "./GuidedPipeline.tsx?raw";
+import DIALOG_SOURCE from "./ProblemTargetDialog.tsx?raw";
+import GATE_SOURCE from "./GateApproval.tsx?raw";
+import TARGETS_SOURCE from "./targetColumns.ts?raw";
 import GROUPS_SOURCE from "./mlPipelineGroups.ts?raw";
 import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
 import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
@@ -291,15 +294,20 @@ describe("quick problem selector (#241)", () => {
 });
 
 describe("correcting a failed problem discovery (#428)", () => {
-  it("puts the picker in the failure box, where the toolbar's is gated out", () => {
+  it("offers the correction in the failure box, where the toolbar's picker is gated out", () => {
     // The Target dropdown is gated on `canStart`, which is
     // `accepted && activeStatus === "staged"` -- false for a failed run. So the
     // control existed in the state where nothing had gone wrong yet and was
     // absent in the one where a person knows exactly what to fix, leaving
     // "Retry from Intake" as the only action.
-    expect(SOURCE).toContain('stageId === "problem_discovery" && onPin && <ProblemReframe');
+    //
+    // #464 moved the picker itself out of this box and behind a button: three
+    // selects in one wrapping row inside a 440px docked panel was the wrong
+    // surface for reading column names. What #428 states -- the correction is
+    // offered here, for this stage -- is unchanged.
+    expect(SOURCE).toContain('stageId === "problem_discovery" && onReframe');
     expect(SOURCE).toContain('t("Name the problem yourself")');
-    expect(SOURCE).toContain('t("Re-run problem discovery")');
+    expect(DIALOG_SOURCE).toContain('t("Re-run problem discovery")');
     // Offered only for the stage it corrects, not on every failure.
     expect(SOURCE).toContain("stageId?: string | null;");
   });
@@ -308,8 +316,8 @@ describe("correcting a failed problem discovery (#428)", () => {
     // Inference reads the column's measured shape, which is the right default
     // -- but it cannot tell a 0/1 label from a 0/1 quantity, and the person
     // looking at their own data can.
-    expect(SOURCE).toContain(`<option value="">{t("From the column's shape")}</option>`);
-    expect(SOURCE).toContain('<option value="binary_classification">{t("Binary classification")}</option>');
+    expect(DIALOG_SOURCE).toContain(`<option value="">{t("From the column's shape")}</option>`);
+    expect(DIALOG_SOURCE).toContain('<option value="binary_classification">{t("Binary classification")}</option>');
     expect(CATALOGUE).toContain(`"From the column's shape": "Sütunun şeklinden"`);
   });
 
@@ -317,16 +325,68 @@ describe("correcting a failed problem discovery (#428)", () => {
     // "Retry from Intake" re-runs everything from the beginning with no target
     // guidance, so it fails the same way -- and nothing about intake, schema
     // discovery or integration was wrong.
-    expect(SOURCE).toContain("await api.pinProblemFraming(runId, { kind, target_column: kind === \"predict_column\" ? column : null, task_type: taskType || null })");
+    expect(DIALOG_SOURCE).toContain("await api.pinProblemFraming(runId, {");
+    expect(DIALOG_SOURCE).toContain('kind: "predict_column",');
+    expect(DIALOG_SOURCE).toContain("target_column: column,");
     expect(SOURCE).toContain("setProgress(await api.runProgress(runId));");
     expect(API_SOURCE).toContain("`/api/runs/${id}/problem/pin`");
     // And retrying from Intake stays available rather than being replaced.
     expect(SOURCE).toContain('t("Retry from Intake")');
   });
+});
 
-  it("keeps anomaly detection from claiming a target column", () => {
-    expect(SOURCE).toContain('target_column: kind === "predict_column" ? column : null');
-    expect(SOURCE).toContain('const ready = kind === "flag_anomalies" || Boolean(column);');
+describe("naming the target on a surface big enough to read it (#464)", () => {
+  it("takes the shape an artifact preview already uses", () => {
+    // Three selects and a button in one `flex-wrap` row, inside a red box,
+    // inside a docked panel that defaults to 440px: the row wrapped to several
+    // lines and column names clipped at 11.25rem -- at the moment a person most
+    // needs to read column names and compare them.
+    expect(DIALOG_SOURCE).toContain('className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-2xl"');
+    expect(DIALOG_SOURCE).toContain('role="dialog" aria-modal="true"');
+    expect(DIALOG_SOURCE).toContain("useOverlayDismiss<HTMLDivElement>(onClose)");
+  });
+
+  it("shows the measurements behind the star, not just the star", () => {
+    // `is_usable_target` marks the plausible ones; the shape, null rate and
+    // cardinality behind that mark are what let a person disagree with it.
+    expect(DIALOG_SOURCE).toContain("function ColumnEvidence({ column }: { column: ProfiledColumn })");
+    expect(DIALOG_SOURCE).toContain("t(column.semantic_type)");
+    expect(DIALOG_SOURCE).toContain('t("{percent}% null"');
+    expect(DIALOG_SOURCE).toContain('t("{percent}% distinct"');
+    expect(CATALOGUE).toContain('"{percent}% null": "%{percent} boş"');
+  });
+
+  it("is reachable from the gate that asks the question", () => {
+    // When the run stops at a `problem_discovery` gate the person is looking at
+    // the ApprovalCard, whose options are Approve / rework / Stop -- none of
+    // which names a target, and a rework with no note is close to a no-op.
+    expect(GATE_SOURCE).toContain('onReframe && decision.stage_id === "problem_discovery" && !sent');
+    expect(GATE_SOURCE).toContain('t("Name the problem yourself")');
+    expect(PAGE_SOURCE).toContain("onReframe={profile ? () => setReframing(true) : undefined}");
+    expect(PAGE_SOURCE).toContain("{reframing && runId && profile && <ProblemTargetDialog");
+  });
+
+  it("leaves the gate's own three answers in place", () => {
+    // Approving a framing the agent did propose, and stopping, are still real
+    // answers to this escalation. The new action is offered beside them.
+    expect(GATE_SOURCE).toContain("{prompt.options.map((o) => {");
+    expect(GATE_SOURCE).toContain('onClick={() => void answer(o.option_id)}');
+  });
+
+  it("derives its columns from one rule, shared with the toolbar picker", () => {
+    // Two derivations of "which columns can be a target" would drift, which is
+    // how the toolbar picker and the reframe picker came to disagree at all.
+    expect(SOURCE).toContain("targetColumnGroups(profile, workspace)");
+    expect(PAGE_SOURCE).toContain("targetColumnGroups(profile, workspace)");
+    expect(TARGETS_SOURCE).toContain("export function targetColumnGroups(");
+  });
+
+  it("stays open when the pin is refused", () => {
+    // An unknown column, or a run that has moved on, is something to correct
+    // here -- not a reason to lose the choice that was just made.
+    const body = DIALOG_SOURCE.slice(DIALOG_SOURCE.indexOf("async function pin()"));
+    expect(body.indexOf("onPinned();")).toBeLessThan(body.indexOf("catch (caught)"));
+    expect(body).toContain("setBusy(false);");
   });
 });
 
@@ -641,8 +701,11 @@ describe("the target picker reaches past the base table (#448)", () => {
     // agent could propose predicting `rating`, the planner could be asked for
     // it in chat, and the one control named "Target" could not offer it,
     // because `ratings` is not the base table.
+    // #464 lifted the derivation into `targetColumns.ts`, so the dialog the
+    // gate card opens and this picker cannot disagree about it. The rule is
+    // unchanged and asserted where it now lives.
     expect(SOURCE).not.toContain("const targetColumns = baseTable?.columns ?? [];");
-    expect(SOURCE).toContain("...profile.tables.filter((table) => table.name !== baseTable?.name)");
+    expect(TARGETS_SOURCE).toContain("...profile.tables.filter((table) => table.name !== baseTable?.name)");
   });
 
   it("says which table each column came from", () => {
@@ -656,16 +719,17 @@ describe("the target picker reaches past the base table (#448)", () => {
     // will call it -- and the base table's column is the one a join resolves
     // that name to. Offering the same name twice would be two options that do
     // the same thing.
-    expect(SOURCE).toContain("...(baseTable ? [baseTable] : []),");
-    expect(SOURCE).toContain("const claimed = new Set<string>();");
-    expect(SOURCE).toContain("(table.columns ?? []).filter((column) => !claimed.has(column.name))");
+    expect(TARGETS_SOURCE).toContain("...(baseTable ? [baseTable] : []),");
+    expect(TARGETS_SOURCE).toContain("const claimed = new Set<string>();");
+    expect(TARGETS_SOURCE).toContain("(table.columns ?? []).filter((column) => !claimed.has(column.name))");
   });
 
   it("keeps the flat list the rest of the panel reads", () => {
-    // The default pick and the failure notice's column list both take
-    // `targetColumns`; splitting the picker into groups must not strand them.
+    // The default pick still takes `targetColumns`; splitting the picker into
+    // groups must not strand it. (#464 removed the failure box's own column
+    // list -- the dialog takes the groups directly.)
     expect(SOURCE).toContain("targetGroups.flatMap((group) => group.columns)");
-    expect(SOURCE).toContain("columns={targetColumns}");
+    expect(SOURCE).toContain("targetColumns.find((column) => column.candidate_target)");
   });
 });
 

@@ -89,8 +89,16 @@ function questionText(prompt: { question: string; question_kind?: string; stage_
 }
 
 export function ApprovalCard({
-  runId, decision, onAnswered,
-}: { runId: string; decision: GateDecision; onAnswered: () => void }) {
+  runId, decision, onAnswered, onReframe,
+}: { runId: string; decision: GateDecision; onAnswered: () => void;
+  /** #464: open the manual target selector, when this gate is the one it
+   *  answers. The card's three options are Approve / rework / Stop, and none of
+   *  them names a target -- while a rework with no note is close to a no-op:
+   *  `instructions` is `[]`, the empty list is falsy in `_correction_for`, and
+   *  the previous verdict is ESCALATE not RETRY, so the stage re-runs with
+   *  identical pinned inputs and `correction=None`. The action that actually
+   *  resolves the situation was one this screen did not offer. */
+  onReframe?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -234,6 +242,16 @@ export function ApprovalCard({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* #464: offered above the options, because on this gate it is the one
+          that changes something. The other three stay: approving a framing the
+          agent did propose, and stopping, are still real answers. */}
+      {onReframe && decision.stage_id === "problem_discovery" && !sent && (
+        <div className="mt-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
+          <p className="text-2xs font-medium text-ink">{t("Problem discovery could not frame this run on its own. You can name the target it should use.")}</p>
+          <button type="button" className="btn-primary mt-2 text-xs" disabled={busy !== null} onClick={onReframe}>{t("Name the problem yourself")}</button>
         </div>
       )}
 

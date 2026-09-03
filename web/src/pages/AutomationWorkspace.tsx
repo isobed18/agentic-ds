@@ -3,6 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { PipelineBuilder } from "../components/PipelineBuilder";
 import { GuidedPipeline } from "../components/GuidedPipeline";
 import { ApprovalCard } from "../components/GateApproval";
+import { ProblemTargetDialog } from "../components/ProblemTargetDialog";
+import { targetColumnGroups } from "../components/targetColumns";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
 import {
@@ -73,6 +75,11 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   const [blueprint, setBlueprint] = useState<PipelineBlueprint | null>(null);
   const [busy, setBusy] = useState(false);
   const [advancedGraph, setAdvancedGraph] = useState(false);
+  // #464: the gate card is the screen that asks the question, and the manual
+  // target selector lived somewhere else entirely -- nested in the failure box
+  // of a docked panel, reachable only for a *failed* run. Same dialog, opened
+  // from here too.
+  const [reframing, setReframing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshAutomation = useCallback(async () => {
@@ -383,13 +390,17 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       {/* A stage gate that escalated to a human: shown here, above the run, so
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
-      {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard key={`${pendingQuestion.stage_id}:${pendingQuestion.attempt}`} runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
+      {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard key={`${pendingQuestion.stage_id}:${pendingQuestion.attempt}`} runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} onReframe={profile ? () => setReframing(true) : undefined} /></div>}
       {/* #378: the Planner docks beside whatever the workspace is showing, for
           every lifecycle state, rather than only beside the guided canvas. */}
       <div className="flex min-h-0 flex-1">
       <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} onPromoted={() => void onPromoted()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} onPromoted={() => void onPromoted()} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind, checkpointStages) => void runAcceptedWorkflow(runMode, target, problemKind, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
       {plannerOpen && <div className="min-h-0 w-[min(390px,94vw)] shrink-0"><DockedPanel><PlannerPanel runId={runId} sourceId={sourceId || profile?.source_id || null} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={applyWorkspace} starterPrompts={plannerPrompts} /></DockedPanel></div>}
       </div>
+      {/* #464: mounted at the page so the gate card can open it. The failed-run
+          path opens the same component from inside the canvas -- one panel,
+          two ways in, as the issue asks. */}
+      {reframing && runId && profile && <ProblemTargetDialog runId={runId} groups={targetColumnGroups(profile, workspace)} onClose={() => setReframing(false)} onPinned={() => void onGateAnswered()} />}
       {/* One opener, one place on screen, whatever the workspace is doing. The
           other tabs are project-contents lists rather than this automation's
           work, so it keeps to the editor. */}
