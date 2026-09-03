@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -59,6 +59,7 @@ from ads.automation import (
 )
 from ads.contracts.automation_definition import AutomationInputFile
 from ads.contracts.base import ArtifactType, is_diagnostic_artifact
+from ads.contracts.datacard import DataCard
 from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
     DocumentExtraction,
@@ -5804,6 +5805,146 @@ class ControlPlane:
 
         return dict(runtime.state.blackboard.get(STAGE_DIRECTIVES_KEY) or {})
 
+    #: The stage a pinned framing re-enters the graph at.
+    PROBLEM_STAGE: Final = "problem_discovery"
+
+    def pin_problem_framing(
+        self,
+        run_id: str,
+        *,
+        kind: str,
+        target_column: str | None,
+        task_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Pin an ML framing and re-run problem discovery on the same run.
+
+        #428: when problem discovery failed there was one action available --
+        "Retry from Intake" -- which starts a whole new run from the beginning
+        with no target guidance, so it fails the same way. Nothing about intake,
+        schema discovery or integration was wrong; the framing was. This
+        re-enters the graph at problem discovery with the person's column pinned
+        as a constraint, keeping every artifact the run already produced.
+
+        Pinned means built and measured directly, not ranked first for an agent
+        that may still propose something else: `_quick_problem_proposal` makes
+        the candidate and `compute_support` decides whether it is viable. If it
+        is not, the answer is the measured blocking reasons for *that column* --
+        which is something a person can act on.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None:
+            raise ValueError("this archived run cannot resume after the server restarted")
+        if runtime.status not in {"failed", "awaiting_human", "interrupted", "aborted"}:
+            raise ValueError("this run is not stopped, so there is nothing to re-frame")
+        if kind not in {"predict_column", "flag_anomalies"}:
+            raise ValueError("kind must be 'predict_column' or 'flag_anomalies'")
+        column = str(target_column).strip() if target_column else ""
+        if kind == "predict_column" and not column:
+            raise ValueError("target_column is required for 'predict_column'")
+        # The ABT card is the run's own record of what the columns are, so a
+        # typo or a stale picker is refused here rather than surfacing as a
+        # second background failure with an "unknown target" critique.
+        card = runtime.state.latest(ArtifactType.DATA_CARD, DataCard)
+        if card is None:
+            raise ValueError("this run has not profiled its data yet")
+        if column and column not in card.column_names:
+            raise ValueError(
+                f"target_column {column!r} is not a column of the analytical base table"
+            )
+        if task_type is not None:
+            try:
+                chosen_task = TaskType(str(task_type))
+            except ValueError:
+                raise ValueError(f"unknown task_type {task_type!r}") from None
+            if kind == "predict_column" and chosen_task is TaskType.ANOMALY_DETECTION:
+                raise ValueError("anomaly detection does not predict a column")
+            task_type = chosen_task.value
+
+        state = runtime.state
+        state.blackboard[QUICK_PROBLEM_KEY] = {
+            "kind": kind,
+            "target_column": column or None,
+            "task_type": task_type,
+            "pinned": True,
+        }
+        # The failed attempt left a machine critique behind, and the stage falls
+        # back to the agent conversation whenever one is present. The pin is the
+        # correction now, so the stale one goes.
+        state.blackboard.pop(f"human_correction::{self.PROBLEM_STAGE}", None)
+
+        mode = runtime.configuration.get("mode", "manual")
+        llm: StructuredLLM | None = None
+        if mode == "agent":
+            llm = self.llm_factory() if self.llm_factory else OllamaClient()
+            spec, registry = build_full_spec(
+                llm,
+                panel_size=int(runtime.configuration.get("agent_panel_size", 1)),
+            )
+        else:
+            spec, registry = build_default_spec(), build_default_registry()
+        supervision = self._normalise_supervision(runtime.configuration.get("supervision") or {})
+        policy = self._policy_for_supervision(supervision)
+        runner = self.workflow_runner or run_workflow
+
+        with self._lock:
+            runtime.events.append(
+                {
+                    "event": "problem_framing_pinned",
+                    "at": _now(),
+                    "stage": self.PROBLEM_STAGE,
+                    "kind": kind,
+                    "target_column": column or None,
+                    "task_type": task_type,
+                }
+            )
+            runtime.error = None
+            runtime.pause_requested = False
+            runtime.status = "resuming"
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+
+        def execute() -> None:
+            with self._lock:
+                runtime.status = "running"
+                runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=policy,
+                    on_event=event,
+                    start_at=self.PROBLEM_STAGE,
+                )
+                with self._lock:
+                    runtime.status = runtime.outcome.status
+                    runtime.error = runtime.outcome.error
+                    runtime.current_stage = getattr(runtime.outcome, "final_stage", None)
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - present the failure in the UI
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = _run_error_text(exc)
+                    runtime.updated_at = _now()
+            finally:
+                if isinstance(llm, OllamaClient):
+                    llm.close()
+            self._persist_runtime(runtime)
+
+        start_worker(execute, name=f"ads-ui-reframe-{run_id}")
+        return {
+            "run_id": run_id,
+            "status": "resuming",
+            "stage_id": self.PROBLEM_STAGE,
+            "kind": kind,
+            "target_column": column or None,
+            "task_type": task_type,
+        }
+
     def answer_run(
         self, run_id: str, *, decision: str, instructions: list[str] | None = None
     ) -> None:
@@ -8342,6 +8483,24 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"run_id": run_id, "status": "discarded"}
+
+    @app.post("/api/runs/{run_id}/problem/pin")
+    def pin_problem(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """#428: re-frame a failed problem discovery instead of restarting.
+
+        The failed run keeps its intake, schema discovery and integration --
+        none of which was wrong -- and re-enters the graph at problem discovery
+        with the named framing pinned.
+        """
+        try:
+            return plane.pin_problem_framing(
+                run_id,
+                kind=str(body.get("kind") or "predict_column"),
+                target_column=body.get("target_column"),
+                task_type=body.get("task_type") or None,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/runs/{run_id}/answer")
     def answer_run(run_id: str, body: dict[str, Any]) -> dict[str, str]:

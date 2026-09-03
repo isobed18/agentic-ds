@@ -1217,6 +1217,21 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+  /** #428: pin an ML framing on a stopped run and re-run problem discovery.
+   *
+   * Not a new run: the intake, schema discovery and integration this run
+   * already did were not what failed, so they are kept. The named column is a
+   * constraint, not a ranking hint -- the candidate is built and measured
+   * directly, and an unviable one comes back as blocking reasons for that
+   * column rather than as another unexplained failure. */
+  pinProblemFraming: (
+    id: string,
+    body: { kind: "predict_column" | "flag_anomalies"; target_column: string | null; task_type?: string | null },
+  ) =>
+    request<{ run_id: string; status: string; stage_id: string; target_column: string | null; task_type: string | null }>(
+      `/api/runs/${id}/problem/pin`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   deleteModel: (artifactId: string) =>
     request<{ artifact_id: string; index_entries: number }>(
       `/api/models/${encodeURIComponent(artifactId)}`,
