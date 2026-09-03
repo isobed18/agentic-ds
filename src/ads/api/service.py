@@ -166,6 +166,7 @@ from ads.staging import (
 )
 from ads.store import ArtifactNotFoundError, ArtifactRef, ArtifactStore
 from ads.tools.activity import FEED as tool_activity_feed
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 # Content-based file detection is optional. When its dependency is unavailable,
 # the source profile is still produced without detection measurements.
@@ -3520,6 +3521,9 @@ class ControlPlane:
             "short bilingual report artifacts and a bounded runtime rationale. "
             f"{reply_instruction} Artifacts remain bilingual: use English and Turkish in "
             "artifact fields. "
+            # #406: this synthesis is where "belge külliyatı" was reported. The
+            # same correction the agent prompts carry.
+            f"{TURKISH_PROSE_INSTRUCTION} "
             "Explain each modality "
             "and cross-source relationships. Measured/extracted evidence must be verbally "
             "distinct from interpretation. Cite document evidence with file name and page. "
