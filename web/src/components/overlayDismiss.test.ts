@@ -15,7 +15,6 @@ import { pressDismisses } from "./overlayDismiss";
 import DISMISS_SOURCE from "./overlayDismiss.ts?raw";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
-import LAUNCH_SOURCE from "./LaunchDialog.tsx?raw";
 import CONTENTS_SOURCE from "./ProjectContents.tsx?raw";
 import NOTIFICATIONS_SOURCE from "./Notifications.tsx?raw";
 import PROJECT_SOURCE from "../pages/ProjectWorkspace.tsx?raw";
@@ -107,7 +106,7 @@ describe("the dismissal hook", () => {
 
 describe("every overlay uses it", () => {
   it("covers the backdrop dialogs", () => {
-    for (const source of [WORKSPACE_SOURCE, REVIEW_SOURCE, LAUNCH_SOURCE, CONTENTS_SOURCE]) {
+    for (const source of [WORKSPACE_SOURCE, REVIEW_SOURCE, CONTENTS_SOURCE]) {
       expect(source).toContain("useOverlayDismiss<HTMLDivElement>");
       expect(source).toContain("ref={panel}");
     }
@@ -132,8 +131,7 @@ describe("every overlay uses it", () => {
     expect(NOTIFICATIONS_SOURCE).not.toContain('document.addEventListener("mousedown"');
   });
 
-  it("gives the launch dialog's backdrop the role the stacking rule reads", () => {
-    // It was the one modal backdrop without it.
-    expect(LAUNCH_SOURCE).toContain('bg-ink/40 p-4" role="dialog" aria-modal="true"');
-  });
+  // #434 removed the launch dialog's case with the dialog itself: it lived only
+  // on the unrouted Workflows page, and a backdrop nobody can open is not a
+  // backdrop this rule has to cover.
 });

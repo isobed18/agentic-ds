@@ -8,7 +8,6 @@ import CATALOGUE from "../lib/i18n.ts?raw";
 import PAGE_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import ARTIFACT_NODES_SOURCE from "./ArtifactNodes.tsx?raw";
-import STAGE_WORKSPACE_SOURCE from "./StageWorkspace.tsx?raw";
 import API_SOURCE from "../lib/api.ts?raw";
 import DIAGNOSTICS_SOURCE from "../lib/diagnostics.ts?raw";
 import SENSITIVITY_SOURCE from "./SensitivityOverride.tsx?raw";
@@ -417,13 +416,6 @@ describe("the diagnostics toggle reaches every artifact surface (#424)", () => {
     expect(BUILDER_SOURCE).toContain("visibleIds(output.artifact_ids).map((artifactId)");
     expect(BUILDER_SOURCE).toContain("!outputs.some((output) => visibleIds(output.artifact_ids).length)");
     expect(DIAGNOSTICS_SOURCE).toContain("export function useDiagnosticIds(");
-  });
-
-  it("counts what the default view shows, in the attempt list too", () => {
-    // "{n} artifacts" per attempt counted the hidden diagnostics in.
-    expect(STAGE_WORKSPACE_SOURCE).toContain("const visibleCount = (ids: string[]) => (showDiagnostics ? ids.length : ids.filter((id) => !diagnosticIds.has(id)).length);");
-    expect(STAGE_WORKSPACE_SOURCE).toContain("{visibleCount(attempt.artifact_ids)} {t(\"artifacts\")}");
-    expect(STAGE_WORKSPACE_SOURCE).toContain("const visibleOutputs = withoutDiagnostics(outputs, (o) => o.diagnostic === true, showDiagnostics);");
   });
 
   it("counts the run's diagnostics, not the ML stages' share of them", () => {

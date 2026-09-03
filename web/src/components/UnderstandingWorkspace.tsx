@@ -24,6 +24,7 @@ import {
   type StagingOutcome,
   type StagingRoutingState,
 } from "./stagingRoutingState";
+import { SchemaDiagram } from "./SchemaDiagram";
 import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
 import { GROUPS } from "./mlPipelineGroups";
 import { CANVAS_BASE_HEIGHT, CANVAS_BASE_WIDTH, CANVAS_MAX_STEP, CANVAS_MIN_STEP, clampStep, isZoomGesture, scaledBox, zoomForStep, zoomPercent } from "./canvasZoom";
@@ -479,7 +480,7 @@ function RoutedFileCard({ file }: { file: RoutedSourceFile }) {
 
 function StructuredDetails({ profile, workspace, routing }: { profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState }) {
   const files = routing.files.filter((file) => file.route === "structured");
-  return <div className="space-y-5"><ProgressList steps={routing.structured} /><EvidenceSection title={t("Measured source facts")} tone="measured"><RoutingDetails files={files} /><div className="mt-3 grid grid-cols-2 gap-2"><Metric label={t("Tables")} value={profile.tables.length} /><Metric label={t("Structured rows")} value={profile.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString()} /></div></EvidenceSection>{workspace && <EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection>}</div>;
+  return <div className="space-y-5"><ProgressList steps={routing.structured} /><EvidenceSection title={t("Measured source facts")} tone="measured"><RoutingDetails files={files} /><div className="mt-3 grid grid-cols-2 gap-2"><Metric label={t("Tables")} value={profile.tables.length} /><Metric label={t("Structured rows")} value={profile.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString()} /></div></EvidenceSection>{workspace && <EvidenceSection title={t("Measured relationships")} tone="measured"><MeasuredSchema profile={profile} /><RelationshipList workspace={workspace} /></EvidenceSection>}</div>;
 }
 
 function DocumentDetails({ workspace, routing, onOpenArtifact, runId, onWorkspaceUpdated }: { workspace: StagingWorkspace | null; routing: StagingRoutingState; onOpenArtifact: (id: string) => void; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
@@ -535,7 +536,7 @@ function UnderstandingResults({ profile, workspace, onOpenArtifact }: { profile:
       {!insights.length && !warnings.length && <SignalLine symbol="✓" tone="ok" text={t("Understanding completed without a reported warning.")} />}
     </section>
     <EvidenceSection title={t("Measured / extracted facts")} tone="measured"><SourceFiles profile={profile} compact />{extraction?.artifact_id && <button type="button" className="mt-3 w-full rounded-lg border border-line px-3 py-3 text-left hover:border-brand-300" onClick={() => onOpenArtifact(extraction.artifact_id!)}><p className="text-xs font-semibold text-ink">{t("Document extraction")}</p><p className="mt-1 text-2xs text-ink-mute">{t("{tables} candidate tables · {figures} figures/charts", { tables: extraction.table_candidates, figures: extraction.figure_candidates })}</p><p className="mt-2 text-3xs font-medium text-brand-700">{t("Open extracted content and provenance")}</p></button>}</EvidenceSection>
-    <EvidenceSection title={t("Measured relationships")} tone="measured"><RelationshipList workspace={workspace} /></EvidenceSection>
+    <EvidenceSection title={t("Measured relationships")} tone="measured"><MeasuredSchema profile={profile} /><RelationshipList workspace={workspace} /></EvidenceSection>
     {workspace.reports.length ? <AgentReports reports={workspace.reports} reportIds={reportIds} onOpenArtifact={onOpenArtifact} /> : <Spinner label={t("The Planner is preparing an explanation…")} />}
   </div>;
 }
@@ -564,6 +565,30 @@ function AgentReports({ reports, reportIds, onOpenArtifact }: { reports: Staging
 
 function SignalLine({ symbol, tone, text }: { symbol: string; tone: "insight" | "warning" | "ok"; text: string }) {
   return <div className={cx("flex items-start gap-2 rounded-lg border px-3 py-2", tone === "warning" ? "border-warn-200 bg-warn-50 text-warn-800" : tone === "ok" ? "border-ok-200 bg-ok-50 text-ok-800" : "border-violet-200 bg-violet-50 text-violet-800")}><span className="grid h-4 w-4 shrink-0 place-items-center text-3xs font-bold">{symbol}</span><p className="line-clamp-2 text-3xs leading-relaxed">{text}</p></div>;
+}
+
+/** The measured schema as a picture, above the evidence for each edge.
+ *
+ * #434: the product had no picture of how the tables connect. `SchemaDiagram`
+ * -- tables as nodes, cardinality and overlap rate on each edge, reference
+ * left and dependent right, lossy joins drawn apart from suggested ones -- was
+ * still in the tree with its own layout module and tests, reachable only
+ * through `DataReview <- IntakeStage <- StageWorkspace <- Workflows` and
+ * through `Explore`, both of which stopped being routed at e04a5e8. Nothing
+ * failed when the route went; the graph simply left the product.
+ *
+ * It takes what this overlay already has in hand, so mounting it needs no new
+ * data: `profile.relationships` is the same `MeasuredRelationship[]` the list
+ * below is built from. Two tables at minimum, because a single-table source
+ * has no join to draw and an empty canvas reads as a broken panel rather than
+ * as "there is nothing here".
+ */
+function MeasuredSchema({ profile }: { profile: SourceProfile }) {
+  const relationships = profile.relationships ?? [];
+  if (profile.tables.length < 2 || !relationships.length) return null;
+  return <div className="mb-3 h-[18rem] overflow-hidden rounded-xl border border-line bg-surface">
+    <SchemaDiagram tables={profile.tables} relationships={relationships} />
+  </div>;
 }
 
 function RelationshipList({ workspace }: { workspace: StagingWorkspace }) {
