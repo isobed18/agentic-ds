@@ -253,15 +253,47 @@ def detect_validation_signals(
     )
 
 
+#: The smallest class a stratified split can survive. `StratifiedKFold` needs
+#: every class present in each of `n_folds` folds, and `train_test_split` needs
+#: at least two members to put one on each side of the outer holdout -- so a
+#: singleton class makes stratification impossible however few folds are asked
+#: for. Measured directly by `minority_class_count` (#450).
+MIN_STRATIFIABLE_CLASS_COUNT = 2
+
+
+def can_stratify(signals: ValidationSignals) -> bool:
+    """Whether a stratified split could execute against the measured target.
+
+    #450: `minority_class_count` is only measured for a classification task, so
+    a `None` here means the target is not one -- a continuous target, which
+    `type_of_target` refuses outright. A count of 1 means a class with a single
+    row, which no stratified splitter can place on both sides of a boundary.
+    Both are the same answer: this target cannot be stratified.
+    """
+    return (
+        signals.minority_class_count is not None
+        and signals.minority_class_count >= MIN_STRATIFIABLE_CLASS_COUNT
+    )
+
+
 def recommend_strategy(signals: ValidationSignals) -> SplitStrategy:
     """Return the minimum safe strategy under the documented precedence."""
     has_repeated_entity = bool(signals.repeated_entity_keys)
     has_multiple_periods = any(
         span.span_days >= MIN_TEMPORAL_SPAN_DAYS for span in signals.temporal_spans
     )
+    # #450: a target with a singleton class is imbalanced by any measure and
+    # cannot be stratified by any splitter, so recommending stratification set
+    # an unsatisfiable requirement: `validate_strategy_not_weaker` rejected
+    # every weaker proposal for omitting class balance, and the trial rejected
+    # the stratified one for being unexecutable. The agent could not answer,
+    # and the run reached a generic retry-budget escalation with nothing in it
+    # about the target. An imbalance that cannot be corrected by the split is
+    # a modelling problem, not a splitting one.
     is_imbalanced = (
         signals.minority_class_rate is not None
         and signals.minority_class_rate < IMBALANCE_STRATIFY_RATE
+        and can_stratify(signals)
     )
 
     if has_repeated_entity and has_multiple_periods:
@@ -350,6 +382,21 @@ def validation_signals_digest(signals: ValidationSignals) -> str:
             f"{signals.minority_class_count:,} rows "
             f"({signals.minority_class_rate:.2%})"
         )
+    # #450: the agent chose stratified for targets that cannot be stratified --
+    # a continuous rating, a 951-value genre string with singletons -- and
+    # nothing between the choice and the trial disagreed. Say it in the
+    # projection the agent actually reads, so a rejection is a last resort
+    # rather than the only signal.
+    if not can_stratify(signals):
+        lines.append(
+            "Stratification: NOT AVAILABLE for this target "
+            + (
+                f"(smallest class has {signals.minority_class_count} row(s); "
+                "a stratified split needs at least 2)"
+                if signals.minority_class_count is not None
+                else "(no class support measured; the target is not a classification target)"
+            )
+        )
     if signals.small_sample_warnings:
         lines.append("SMALL-SAMPLE WARNINGS:")
         lines.extend(f"  - {warning}" for warning in signals.small_sample_warnings)
@@ -362,10 +409,12 @@ __all__ = [
     "MIN_ENTITIES_PER_FOLD",
     "MIN_MINORITY_PER_FOLD",
     "MIN_ROWS_PER_FOLD",
+    "MIN_STRATIFIABLE_CLASS_COUNT",
     "MIN_TEMPORAL_SPAN_DAYS",
     "RepeatedEntitySignal",
     "TemporalSpanSignal",
     "ValidationSignals",
+    "can_stratify",
     "detect_validation_signals",
     "full_coverage_group_columns",
     "recommend_strategy",
