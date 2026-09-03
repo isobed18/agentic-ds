@@ -31,7 +31,7 @@ from ads.intake import (
     relationships_digest,
 )
 from ads.intake.keys import KeyDetectionOptions, measure_relationship, name_affinity
-from ads.intake.profiler import datacard_digest, infer_semantic_type
+from ads.intake.profiler import ProfileOptions, datacard_digest, infer_semantic_type
 
 # The identifier guard is the real consumer of these names. Importing it, rather
 # than restating its regex here, means the two cannot drift apart silently.
@@ -624,6 +624,97 @@ class TestKeyDetection:
         )
         keys = detect_primary_keys(card, frame)
         assert any(set(k.columns) == {"a_id", "b_id"} for k in keys)
+
+
+class TestCompositeKeysReachTheDataCard:
+    """#444: the composite key was detected and then thrown away.
+
+    `profile_table` built `candidate_primary_keys` from single columns only,
+    and `detect_primary_keys` -- which finds composites -- had no caller
+    anywhere in the profiling path: its two callers sit past intake and neither
+    writes to a card. So a fact table keyed on `(user_id, movie_id)` was
+    recorded as keyless permanently, in the API payload, in the artifact's
+    `n_candidate_keys`, and in the digest an agent reads.
+
+    That last one is the damaging part. `datacard_digest` omits the "candidate
+    keys" line when the list is empty, so the agent picking `base_table` for a
+    multi-table source was told the 100k-row fact table had no key while a
+    three-column id crosswalk had two -- and a crosswalk base leaves a target
+    picker offering nothing but identifiers, because that is all it has.
+    """
+
+    @staticmethod
+    def _ratings() -> pd.DataFrame:
+        # The reported shape: no column is unique alone, the pair is.
+        return pd.DataFrame(
+            {
+                "user_id": [1, 1, 2, 2, 3, 3],
+                "movie_id": [10, 11, 10, 12, 10, 11],
+                "rating": [3.5, 4.0, 2.0, 5.0, 1.0, 4.5],
+            }
+        )
+
+    def _card(self, frame: pd.DataFrame, detect_composite_keys: bool = True) -> DataCard:
+        return profile_table(
+            LoadedTable(name="ratings", frame=frame, source_uri="mem", source_format="csv"),
+            ProfileOptions(detect_composite_keys=detect_composite_keys),
+        )
+
+    def test_the_card_carries_the_composite_key(self) -> None:
+        card = self._card(self._ratings())
+
+        assert card.candidate_primary_keys == [["user_id", "movie_id"]]
+
+    def test_the_digest_an_agent_reads_names_it(self) -> None:
+        # The line was absent entirely, which reads as "measured, and there is
+        # no key" rather than "not measured".
+        digest = datacard_digest(self._card(self._ratings()))
+
+        assert "candidate keys: user_id+movie_id" in digest
+
+    def test_the_artifact_counts_it(self) -> None:
+        # `n_candidate_keys` is served from the same list, so it was zero too.
+        card = self._card(self._ratings())
+
+        assert card.summary()["n_candidate_keys"] == 1
+
+    def test_a_single_column_key_still_wins_and_is_not_duplicated(self) -> None:
+        # A table with a real primary key does not need a composite one, and
+        # the union must not append the same key twice.
+        frame = pd.DataFrame({"movie_id": [1, 2, 3], "title": ["a", "b", "c"]})
+        card = profile_table(
+            LoadedTable(name="movies", frame=frame, source_uri="mem", source_format="csv")
+        )
+
+        assert card.candidate_primary_keys == [["movie_id"], ["title"]]
+
+    def test_a_genuinely_keyless_table_is_still_keyless(self) -> None:
+        # The point is to stop under-reporting, not to start inventing keys:
+        # duplicate rows mean no subset identifies a row.
+        frame = pd.DataFrame({"a_id": [1, 1, 1], "b_id": [10, 10, 10], "v": [1.0, 1.0, 1.0]})
+        card = profile_table(
+            LoadedTable(name="dupes", frame=frame, source_uri="mem", source_format="csv")
+        )
+
+        assert card.candidate_primary_keys == []
+
+    def test_a_continuous_measurement_is_not_promoted_into_a_key(self) -> None:
+        # A distinct float is a coincidence of the sample, not an identifier --
+        # the rule the single-column loop already applied, kept by the merge.
+        frame = pd.DataFrame({"grp": [1, 1, 2, 2], "amount": [1.5, 2.5, 3.5, 4.5]})
+        card = profile_table(
+            LoadedTable(name="measures", frame=frame, source_uri="mem", source_format="csv")
+        )
+
+        assert all("amount" not in key for key in card.candidate_primary_keys)
+
+    def test_the_search_can_be_turned_off_for_a_frame_nobody_keys(self) -> None:
+        # The composite pass is bounded but not free, and it runs on every
+        # `profile_table` call -- including the derived modelling frames, whose
+        # primary key no reader consumes.
+        card = self._card(self._ratings(), detect_composite_keys=False)
+
+        assert card.candidate_primary_keys == []
 
 
 class TestRelationshipDetection:

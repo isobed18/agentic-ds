@@ -33,6 +33,7 @@ from ads.contracts.datacard import (
     TextStats,
     ValueCount,
 )
+from ads.intake.keys import detect_primary_keys
 from ads.intake.loaders import LoadedTable
 
 # Exact token phrases avoid substring failures such as ``license_plate_count``.
@@ -143,6 +144,17 @@ class ProfileOptions:
     """Include sample values for non-PII columns. PII is redacted regardless."""
     max_categorical_cardinality: int = _MAX_CATEGORICAL_CARDINALITY
     random_state: int = 17
+    detect_composite_keys: bool = True
+    """Search for a composite primary key when no single column is unique (#444).
+
+    On by default because a table recorded as keyless is not a missing detail:
+    it is read as evidence, by the agent that picks the base table and by
+    everything downstream of that choice. The search only runs when no
+    single-column key was found, and `ads.intake.keys` bounds it to pairs drawn
+    from at most twelve eligible columns -- but it is real work on a wide,
+    keyless, fully-sampled table, so a caller profiling a derived frame whose
+    key nobody consumes can turn it off.
+    """
 
 
 def _looks_like_identifier_name(name: str) -> bool:
@@ -609,7 +621,7 @@ def profile_table(table: LoadedTable, options: ProfileOptions | None = None) -> 
     if n_rows == 0:
         issues.append(_make_issue("error", "no_rows", "Table has no rows."))
 
-    return DataCard(
+    card = DataCard(
         table_name=table.name,
         source_uri=table.source_uri,
         source_format=table.source_format,
@@ -622,6 +634,30 @@ def profile_table(table: LoadedTable, options: ProfileOptions | None = None) -> 
         profiled_rows=int(len(working)),
         sampled=sampled,
     )
+    if not options.detect_composite_keys:
+        return card
+
+    # #444: `detect_primary_keys` finds the composite keys the loop above
+    # cannot -- `(user_id, movie_id)` on a ratings fact table -- and had no
+    # caller anywhere in the profiling path. Its two callers both sit past
+    # intake and neither writes to a card, so a table whose key is composite
+    # was recorded as keyless permanently.
+    #
+    # That is not merely a wrong count in the UI. `datacard_digest` omits the
+    # "candidate keys" line entirely when the list is empty, so the agent
+    # choosing `base_table` for a multi-table source was told a 100k-row fact
+    # table had no key while a three-column id crosswalk had two -- a direct
+    # steer to the wrong base, and from there to a target picker offering
+    # nothing but identifiers, because every column of that crosswalk is one.
+    #
+    # The single-column list above is kept as the floor rather than replaced.
+    # The two rules agree today; a union cannot regress a card that already had
+    # keys if they ever drift.
+    detected = [list(candidate.columns) for candidate in detect_primary_keys(card, working)]
+    merged = [*candidate_keys, *(key for key in detected if key not in candidate_keys)]
+    if merged == candidate_keys:
+        return card
+    return card.model_copy(update={"candidate_primary_keys": merged})
 
 
 def _make_issue(severity: str, code: str, detail: str):
