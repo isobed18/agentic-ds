@@ -398,6 +398,12 @@ export interface StageOutput {
   created_at: string;
   summary?: Record<string, unknown>;
   story?: Story;
+  /** #305/#424: whether this is an engineering record -- an agent audit, a
+   *  measurement bundle, an internal trial, an attempt diagnostic -- rather
+   *  than a result. The backend has always sent it on these entries; nothing
+   *  read it, so the stage inspector listed diagnostics whatever the
+   *  diagnostics toggle said. */
+  diagnostic?: boolean;
 }
 
 export interface StageAttempt {
