@@ -20,6 +20,7 @@ class _LLM:
     def __init__(self, actions: list[dict[str, Any]]) -> None:
         self.actions = actions
         self.calls = 0
+        self.prompts: list[str] = []
 
     def generate_structured(
         self,
@@ -29,7 +30,8 @@ class _LLM:
         json_schema: dict[str, Any],
         profile: ModelProfile,
     ) -> LLMResponse:
-        del system, prompt, json_schema
+        del system, json_schema
+        self.prompts.append(prompt)
         action = self.actions[self.calls]
         self.calls += 1
         return LLMResponse(
@@ -131,32 +133,33 @@ def test_failed_pydantic_ai_tool_attempt_consumes_ads_budget() -> None:
         "rationale_tr": "Varlıkları ayrık tut.",
     }
 
+    llm = _LLM(
+        [
+            {
+                "action": "call_tool",
+                "tool_id": "trial_validation_strategy",
+                "arguments": {"table": "missing", "proposal": proposal},
+                "reason": "Attempt a trial against an unavailable table.",
+            },
+            {
+                "action": "call_tool",
+                "tool_id": "trial_validation_strategy",
+                "arguments": {"table": "abt", "proposal": proposal},
+                "reason": "Retry with the measured analytical table.",
+            },
+            {
+                "action": "finish",
+                "reason": "Finish after the attempted strategy trials.",
+            },
+            {
+                "action": "abandon",
+                "reason": "No successful trial fits inside the configured budget.",
+            },
+        ]
+    )
     audit = investigate_validation_context(
         context=context,
-        llm=_LLM(
-            [
-                {
-                    "action": "call_tool",
-                    "tool_id": "trial_validation_strategy",
-                    "arguments": {"table": "missing", "proposal": proposal},
-                    "reason": "Attempt a trial against an unavailable table.",
-                },
-                {
-                    "action": "call_tool",
-                    "tool_id": "trial_validation_strategy",
-                    "arguments": {"table": "abt", "proposal": proposal},
-                    "reason": "Retry with the measured analytical table.",
-                },
-                {
-                    "action": "finish",
-                    "reason": "Finish after the attempted strategy trials.",
-                },
-                {
-                    "action": "abandon",
-                    "reason": "No successful trial fits inside the configured budget.",
-                },
-            ]
-        ),
+        llm=llm,
         runtime=ToolRuntime.from_sources(
             [card],
             {"abt": frame},
@@ -174,3 +177,9 @@ def test_failed_pydantic_ai_tool_attempt_consumes_ads_budget() -> None:
     assert audit.evidence_tools == []
     assert "tool_error:trial_validation_strategy" in failures
     assert "tool_call_budget_exhausted" in failures
+    # The retry message is the only feedback the model sees on its next turn.
+    # A bare "tool_error:<id>:<exception type>" gives it nothing to correct;
+    # this asserts the actual reason ("Unknown table 'missing'") reaches a
+    # later prompt, which is what lets a model fix a genuinely bad argument
+    # (a wrong table, a group column with nulls) instead of repeating it.
+    assert any("Unknown table 'missing'" in prompt for prompt in llm.prompts[1:])

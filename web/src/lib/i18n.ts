@@ -1236,6 +1236,8 @@ const TR: Record<string, string> = {
   "Approve at every stage": "Her aşamada onayla",
   "The agent decides each gate on its own signals unless you take that over.":
     "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",
+  "Stop and ask a human after any of these stages, even though the rest stays fully automatic.":
+    "Diğerleri tamamen otomatik kalsa bile, bu aşamalardan herhangi birinden sonra durup bir insana sor.",
   "Loading…": "Yükleniyor…",
   "Loading experiments…": "Deneyler yükleniyor…",
   "Loading models…": "Modeller yükleniyor…",
@@ -1464,6 +1466,12 @@ const TR: Record<string, string> = {
   "Execution scope": "Yürütme kapsamı",
   "No optional human checkpoints; hard safety gates still apply.":
     "İsteğe bağlı insan kontrol noktası yok; katı güvenlik kapıları yine de geçerlidir.",
+  // #447: a checkpoint could be asked of the planner and read off the plan
+  // summary, and that was all. These are the per-stage control.
+  "The run stops after this stage and waits for your decision.":
+    "Koşu bu aşamadan sonra durur ve kararınızı bekler.",
+  "Pauses for review": "İnceleme için duraklar",
+  "Runs through": "Durmadan geçer",
   "Review after {stage}": "{stage} sonrası incele",
   "Planner rationale": "Planlayıcı gerekçesi",
   "Run the established base pipeline through integration, analysis, training, evaluation, and reporting.":

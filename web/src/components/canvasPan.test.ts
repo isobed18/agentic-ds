@@ -69,13 +69,16 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
     expect(toolbar).toContain('type="checkbox"');
   });
 
-  it("still lets the checkbox drive the run mode it is there to choose", () => {
+  it("still lets the per-stage picker drive the run mode and checkpoints it is there to choose", () => {
     // The guard is only worth having because this control decides whether the
-    // run stops at every gate.
-    expect(GUIDED_SOURCE).toContain("setApproveEachStage(event.target.checked)");
-    // #244/#198: the run mode now travels alongside the chosen target column.
-    // #241: and the chosen problem kind, so a duplicate of this same invariant
-    // in GuidedPipeline.test.ts and here both name the three-argument call.
-    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
+    // run stops at specific gates -- or, if every group is picked, at all of
+    // them (sent as the same `manual` mode the blanket checkbox used to mean).
+    expect(GUIDED_SOURCE).toContain("toggleCheckpoint(stage)");
+    expect(GUIDED_SOURCE).toContain("checkpointSet.has(stage)");
+    // #244/#198/#447: the run mode now travels alongside the chosen target column
+    // and the specific stages picked as checkpoints.
+    expect(GUIDED_SOURCE).toContain("[...checkpointSet]");
+    // in GuidedPipeline.test.ts and here both name the four-argument call.
+    expect(GUIDED_SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])');
   });
 });

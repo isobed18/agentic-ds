@@ -68,7 +68,7 @@ from ads.contracts.documents import (
     aligned_turkish,
 )
 from ads.contracts.gates import BUILTIN_PROFILES
-from ads.contracts.integration import IntegrationPlan
+from ads.contracts.integration import IntegrationPlan, IntegrationTrial
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
 from ads.contracts.project import (
     PROJECT_VISIBILITIES,
@@ -2088,6 +2088,7 @@ class ControlPlane:
         return {
             "artifact_id": ref.artifact_id,
             "run_id": run_id,
+            "promoted_tables": self._promoted_document_table_summaries(run_id),
             **workspace.model_dump(
                 mode="json", exclude={"component_outputs", "recommended_plan"}
             ),
@@ -2096,6 +2097,31 @@ class ControlPlane:
             ),
             "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
         }
+
+    def _promoted_document_table_summaries(self, run_id: str) -> list[dict[str, Any]]:
+        """Human-promoted PDF tables for this run, computed live from the store.
+
+        A promotion never rewrites the immutable `StagingWorkspace` snapshot it
+        happened after (`promote_document_tables` only writes a `TableAsset`),
+        so this cannot be baked into that artifact. The guided UI needs it to
+        know a PDF-only source now has an ML-eligible table -- both to stop
+        refusing to start a run and to offer the promoted columns in the
+        target picker -- so it is computed fresh on every read instead.
+        """
+        summaries: list[dict[str, Any]] = []
+        for candidate in self.store.list(run_id, artifact_type=ArtifactType.TABLE_ASSET):
+            if candidate.stage_exec_id != "document-table-promotion":
+                continue
+            asset = self.store.load(candidate.artifact_id, TableAsset)
+            summaries.append(
+                {
+                    "name": candidate.name or candidate.artifact_id,
+                    "artifact_id": candidate.artifact_id,
+                    "row_count": asset.row_count,
+                    "columns": [column.name for column in asset.columns],
+                }
+            )
+        return summaries
 
     def apply_planner_override(self, run_id: str, proposal_id: str) -> dict[str, Any]:
         """Apply exactly one validated Planner proposal after a human click."""
@@ -3283,6 +3309,22 @@ class ControlPlane:
                 continue
             configuration.setdefault("base_table", integration_plan.base_table)
             configuration.setdefault("base_grain", integration_plan.base_grain)
+            # The target-column picker only ever showed the base table's own
+            # raw columns, so a column that only exists after the plan joins
+            # or aggregates other tables in (e.g. "avg_rating" from an
+            # AggregationStep over "ratings", when the base table is
+            # "links") was never clickable here -- even though problem
+            # discovery reasons over the same plan and can select it fine.
+            # The IntegrationTrial already measured the ABT's real,
+            # deterministic result columns; that is authoritative over
+            # trying to re-derive them from table names, which do not exist
+            # for an agent-invented aggregation output.
+            if integration_plan.trial_artifact_id:
+                try:
+                    trial = self.store.load(integration_plan.trial_artifact_id, IntegrationTrial)
+                    configuration.setdefault("available_columns", trial.result_columns)
+                except Exception:
+                    pass
             break
         configuration.setdefault("candidate_limit", 2)
         configuration.setdefault("n_folds", 5)
@@ -4242,7 +4284,7 @@ class ControlPlane:
                 if candidate_keys and "base_grain" not in plan_configuration:
                     first_key = candidate_keys[0]
                     plan_configuration["base_grain"] = (
-                        list(first_key) if isinstance(first_key, (list, tuple)) else [first_key]
+                        list(first_key) if isinstance(first_key, list | tuple) else [first_key]
                     )
             stage_directives = {
                 stage: [line.strip() for line in lines if line.strip()]
@@ -5739,13 +5781,32 @@ class ControlPlane:
                 for key, value in (configuration or {}).items()
                 if value not in (None, "")
             }
+            # #447: this overwrote `supervision` unconditionally, so the
+            # plan's checkpoints were the only ones a fully-auto run could ever
+            # have -- a person who unchecked "Review after eda" on the canvas
+            # watched the run go straight through it, and one who checked a
+            # stage the planner had not named got nothing. The plan is still
+            # the default; an explicit list from the caller is a decision and
+            # replaces it. Graph checkpoints are unioned in below either way,
+            # because those come from the saved blueprint rather than from
+            # this request.
+            requested_supervision = (configuration or {}).get("supervision")
+            stated_checkpoints = (
+                requested_supervision.get("checkpoint_stages")
+                if isinstance(requested_supervision, dict)
+                else None
+            )
             body = {
                 **body,
                 **plan.configuration,
                 **caller_overrides,
                 "run_mode": "fully_auto",
                 "supervision": {
-                    "checkpoint_stages": plan.checkpoint_stages,
+                    "checkpoint_stages": (
+                        list(stated_checkpoints)
+                        if isinstance(stated_checkpoints, list)
+                        else plan.checkpoint_stages
+                    ),
                     "auto_proceed_stages": plan.auto_proceed_stages,
                     "max_retries_by_stage": plan.max_retries_by_stage,
                 },

@@ -279,6 +279,56 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
         plane.start_staged_run(staged["run_id"])
 
 
+def test_starting_a_staged_run_after_a_restart_names_the_real_cause(
+    tmp_path: Path,
+) -> None:
+    """A restarted process reports an actionable message, not a bare "not staged".
+
+    `_cannot_stage_error` already turns an unknown run_id into "no longer
+    exists; choose the dataset again" (see test_staged_run.py). This proves
+    the same actionable message reaches the harder case: a run that really
+    was staged, whose disk snapshot still says so and whose `progress()`
+    still reports it -- just not resident in *this* process's memory, the
+    ordinary result of the process that finished staging not being the one
+    serving `/start`. Without this, the mismatch between a `staged` progress
+    view and a refused start reads as a product bug, not a call to restage.
+    """
+    plane = _plane(tmp_path)
+    pdf_path = tmp_path / "brief.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=400)
+    writer.add_metadata({"/Title": "Local briefing"})
+    with pdf_path.open("wb") as stream:
+        writer.write(stream)
+
+    uploaded = plane.upload("brief.pdf", pdf_path.read_bytes())
+    blueprint = plane.default_staging_pipeline(uploaded["source_id"])
+    document_node = next(
+        item for item in blueprint["components"] if item["id"] == "understand-documents"
+    )
+    document_node["settings"]["engine"] = "text_layer"
+    document_node["settings"]["ocr"] = "never"
+    plane.llm_factory = lambda: object()
+    staged = plane.stage_run(uploaded["source_id"], {"pipeline_blueprint": blueprint})
+    deadline = time.time() + 10
+    while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+    assert plane.progress(staged["run_id"])["status"] == "staged"
+
+    # A fresh ControlPlane over the same on-disk store/run-state, standing in
+    # for the new process a restart leaves behind: an empty `_runtime_runs`,
+    # the same persisted snapshot.
+    restarted = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"),
+        source_roots=(tmp_path / "sources",),
+        upload_root=tmp_path / "uploads",
+    )
+    assert restarted.progress(staged["run_id"])["status"] == "staged"
+
+    with pytest.raises(ValueError, match="no longer exists"):
+        restarted.start_staged_run(staged["run_id"])
+
+
 def test_identical_document_content_reuses_extraction_across_uploads(
     tmp_path: Path, monkeypatch
 ) -> None:
