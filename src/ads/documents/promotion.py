@@ -14,6 +14,7 @@ from ads.contracts.documents import (
     ExtractedTableCandidate,
 )
 from ads.dataflow import persist_table_asset
+from ads.intake import normalize_columns
 from ads.store import ArtifactRef, ArtifactStore
 
 
@@ -87,7 +88,17 @@ def _candidate_frame(candidate: ExtractedTableCandidate) -> pd.DataFrame:
     columns = candidate.columns or [f"column_{index + 1}" for index in range(width)]
     if len(columns) != width:
         raise CandidateNotPromotable("schema_mismatch", candidate)
-    return pd.DataFrame(candidate.rows, columns=columns)
+    frame = pd.DataFrame(candidate.rows, columns=columns)
+    # A PDF table extracted from merged/multi-row headers routinely produces
+    # blank or duplicate column labels (two sub-columns collapsing to the same
+    # header text, an empty merged cell). Parquet -- unlike pandas itself --
+    # rejects duplicate column names outright, so promotion crashed opaquely
+    # on exactly the kind of real-world table this review step exists to let
+    # a human accept. Apply the same normalization CSV/Excel intake already
+    # does, so a promoted document table is cleaned exactly like an uploaded
+    # file, not held to a stricter standard.
+    normalized, _ = normalize_columns(frame)
+    return normalized
 
 
 def promote_reviewed_document_tables(
