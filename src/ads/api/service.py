@@ -91,7 +91,11 @@ from ads.contracts.staging import (
     StagingWorkspace,
 )
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
-from ads.discovery.support import compute_support, supervised_task_type_for
+from ads.discovery.support import (
+    UNSUPPORTED_UNSUPERVISED_FRAMING,
+    compute_support,
+    supervised_task_type_for,
+)
 from ads.documents import (
     PDF_SUFFIXES,
     CandidateNotPromotable,
@@ -5868,6 +5872,13 @@ class ControlPlane:
                 raise ValueError(
                     "problem_selection.kind must be 'predict_column' or 'flag_anomalies'"
                 )
+            # #466: refused at the door rather than accepted, planned, and fatal
+            # in `feature_pipeline_stage` four stages later. `compute_support`
+            # blocks the framing too, which is what catches an agent proposing
+            # it; this is so a person who names it is told now, by the request
+            # they made, instead of by a failed stage.
+            if kind == "flag_anomalies":
+                raise ValueError(UNSUPPORTED_UNSUPERVISED_FRAMING)
             target_column = problem_selection.get("target_column") or None
             if kind == "predict_column" and not target_column:
                 raise ValueError(
@@ -6435,6 +6446,10 @@ class ControlPlane:
             raise ValueError("this run is not stopped, so there is nothing to re-frame")
         if kind not in {"predict_column", "flag_anomalies"}:
             raise ValueError("kind must be 'predict_column' or 'flag_anomalies'")
+        # #466: re-entering the graph with a framing the spine cannot execute
+        # would spend a stage to arrive at the same answer.
+        if kind == "flag_anomalies":
+            raise ValueError(UNSUPPORTED_UNSUPERVISED_FRAMING)
         column = str(target_column).strip() if target_column else ""
         if kind == "predict_column" and not column:
             raise ValueError("target_column is required for 'predict_column'")
