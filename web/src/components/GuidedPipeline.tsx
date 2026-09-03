@@ -55,6 +55,11 @@ interface GuidedPipelineProps {
   // canvas needs the run re-read -- not just the workspace, which is still the
   // pre-promotion one when the promote call returns.
   onPromoted?: () => void;
+  // #465: pinning a target restarts the run server-side, and nothing told the
+  // page. The red banner kept its stale text, `runStatus` stayed `failed`, and
+  // both polls -- the page's and this component's, which re-arms off the
+  // `runStatus` prop -- stayed parked on the reading from before the pin.
+  onReframed?: () => void;
   // #244/#198: the run carries a chosen ML target column (or null to let
   // problem discovery propose one) so the guided flow can actually be aimed.
   // #241: `problemKind` set skips the planner conversation entirely -- the
@@ -94,7 +99,7 @@ function local(value: { en: string; tr: string }): string {
  * on screen. One canvas (`CanvasSurface`, which has zoom; `PanCanvas` did not),
  * one selection, one docked panel, one toolbar.
  */
-export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onPromoted, onRun, onPause, onRetry, onOpenPlanner, onAdvanced }: GuidedPipelineProps) {
+export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus, busy, onAccept, onWorkspaceUpdated, onPromoted, onReframed, onRun, onPause, onRetry, onOpenPlanner, onAdvanced }: GuidedPipelineProps) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [progress, setProgress] = useState<RunProgressSnapshot | null>(null);
   // One selection for both halves of the graph. Staging ids ("discovery",
@@ -318,8 +323,17 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     setPinning(true); setError(null);
     try {
       await api.pinProblemFraming(runId, { kind, target_column: kind === "predict_column" ? column : null, task_type: taskType || null });
+      // The stage detail describes the attempt that failed, and the run has
+      // left it.
       setDetail(null);
-      setProgress(await api.runProgress(runId));
+      // #465: this stored one snapshot and stopped. The poll below re-arms only
+      // from inside its own chain or when the `runStatus` prop changes, and
+      // that prop is the page's -- which nothing was updating. Telling the page
+      // sets the status to `resuming`, which is active, so both polls start
+      // again and the canvas shows the re-framed run advancing. A caller that
+      // supplies no callback keeps the single snapshot it had.
+      if (onReframed) onReframed();
+      else setProgress(await api.runProgress(runId));
     }
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { setPinning(false); }

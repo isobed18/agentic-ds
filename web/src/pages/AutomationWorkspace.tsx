@@ -74,6 +74,21 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   const [busy, setBusy] = useState(false);
   const [advancedGraph, setAdvancedGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #465: the banner is fed from the run in two places and both wrote it
+  // conditionally -- `if (message) setError(message)` -- so an error that had
+  // *gone away* on the server could not clear it. Pinning a target restarts the
+  // run and clears `runtime.error`, and the red box stayed exactly as it was
+  // until a page refresh.
+  //
+  // Cleared only when the banner is still showing the run's own last error.
+  // A blanket `setError(message || null)` would also wipe a client-side failure
+  // -- a pause that was refused, an artifact that would not load -- two seconds
+  // after it appeared, which is the opposite defect.
+  const shownRunError = useRef<string | null>(null);
+  function applyRunError(message: string) {
+    setError((current) => (message ? message : current === shownRunError.current ? null : current));
+    shownRunError.current = message || null;
+  }
 
   const refreshAutomation = useCallback(async () => {
     const [record, history] = await Promise.all([
@@ -104,7 +119,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       if (!previous) { setRunId(null); setRunStatus(null); setWorkspace(null); setBlueprint(automation.pipeline_blueprint ?? null); return; }
       setRunId(previous.run_id); setRunStatus(previous.status);
       const progress = await api.runProgress(previous.run_id).catch(() => null);
-      if (!cancelled) { const message = runErrorText(progress?.error); if (message) setError(message); }
+      if (!cancelled) applyRunError(runErrorText(progress?.error) ?? "");
       const saved = await api.stagingWorkspace(previous.run_id).catch(() => null);
       if (!cancelled && saved) applyWorkspace(saved);
     }).catch((caught) => setError(messageOf(caught))).finally(() => { if (!cancelled) setBusy(false); });
@@ -113,7 +128,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
 
   useEffect(() => {
     if (!runId || !isRunActive(runStatus)) return;
-    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); const message = runErrorText(progress.error); if (message) setError(message); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
+    const timer = window.setInterval(() => { void api.runProgress(runId).then(async (progress) => { setRunStatus(String(progress.status ?? runStatus)); setPendingQuestion((progress.pending_question as GateDecision | null) ?? null); applyRunError(runErrorText(progress.error) ?? ""); const saved = await api.stagingWorkspace(runId).catch(() => null); if (saved) applyWorkspace(saved); }).catch((caught) => setError(messageOf(caught))); }, 2200);
     return () => window.clearInterval(timer);
   }, [runId, runStatus]);
 
@@ -159,12 +174,20 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   // branching on the returned string: the run's own status is the truth, and a
   // client that reasons about the string breaks the moment a new outcome is
   // added server-side.
-  const onPromoted = useCallback(async () => {
+  //
+  // #465: pinning a target is the same shape of event -- the server clears the
+  // run's error, sets it `resuming` and re-enters the graph at
+  // `problem_discovery` -- and had the same three failures: nothing told this
+  // component, so the banner kept its stale text, `runStatus` stayed `failed`,
+  // and both polls stayed parked. One function, used by both, named for what it
+  // does rather than for one of the two things that cause it.
+  const refreshRun = useCallback(async () => {
     if (!runId) return;
     const progress = await api.runProgress(runId).catch(() => null);
     if (progress) {
       setRunStatus(String(progress.status ?? ""));
       setPendingQuestion((progress.pending_question as GateDecision | null) ?? null);
+      applyRunError(runErrorText(progress.error) ?? "");
     }
     const saved = await api.stagingWorkspace(runId).catch(() => null);
     if (saved) applyWorkspace(saved);
@@ -387,7 +410,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       {/* #378: the Planner docks beside whatever the workspace is showing, for
           every lifecycle state, rather than only beside the guided canvas. */}
       <div className="flex min-h-0 flex-1">
-      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} onPromoted={() => void onPromoted()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} onPromoted={() => void onPromoted()} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind, checkpointStages) => void runAcceptedWorkflow(runMode, target, problemKind, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} onPromoted={() => void refreshRun()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} onPromoted={() => void refreshRun()} onReframed={() => void refreshRun()} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, problemKind, checkpointStages) => void runAcceptedWorkflow(runMode, target, problemKind, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
       {plannerOpen && <div className="min-h-0 w-[min(390px,94vw)] shrink-0"><DockedPanel><PlannerPanel runId={runId} sourceId={sourceId || profile?.source_id || null} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={applyWorkspace} starterPrompts={plannerPrompts} /></DockedPanel></div>}
       </div>
       {/* One opener, one place on screen, whatever the workspace is doing. The
