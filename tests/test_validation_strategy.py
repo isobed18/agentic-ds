@@ -21,6 +21,7 @@ from ads.agents.validation_strategy import (
     validate_group_column_repeats,
     validate_holdout_cutoff,
     validate_strategy_not_weaker,
+    validate_stratification_is_executable,
     validate_temporal_column_spans_periods,
 )
 from ads.contracts.problem import TaskType
@@ -33,9 +34,11 @@ from ads.contracts.validation import (
 )
 from ads.discovery.validation_signals import (
     ValidationSignals,
+    can_stratify,
     detect_validation_signals,
     full_coverage_group_columns,
     recommend_strategy,
+    validation_signals_digest,
 )
 from ads.intake.loaders import LoadedTable
 from ads.intake.profiler import profile_table
@@ -586,3 +589,213 @@ class TestProtectionDominance:
             SplitStrategy.STRATIFIED,
         ):
             assert missing_protections(SplitStrategy.RANDOM, recommended)
+
+
+def _stratified_proposal(**overrides: object) -> ValidationStrategyProposal:
+    payload: dict[str, object] = {
+        "strategy": "stratified",
+        "n_folds": 3,
+        "test_size": 0.2,
+        "rationale": "Preserve the measured class balance across train and holdout.",
+        "rationale_tr": "Ölçülen sınıf dengesini eğitim ve tutulan küme arasında koru.",
+    }
+    payload.update(overrides)
+    return ValidationStrategyProposal.model_validate(payload)
+
+
+class TestStratificationMustBeExecutable:
+    """#450 (split from #440): nothing checked that a strategy can run.
+
+    The proposal was validated for column presence and for not being weaker
+    than the measured signals, and never for whether the strategy it names can
+    execute against the target it is paired with. `STRATIFIED` is the strategy
+    that needs it and the one with no check, so on the MovieLens suite it was
+    proposed, trialled, failed, escalated generically, approved by a person
+    shown no reason, and crashed five stages later in `splitting_stage`.
+    """
+
+    @staticmethod
+    def _context(frame: pd.DataFrame, target: str, task: TaskType):
+        card = _card(frame)
+        signals = detect_validation_signals(
+            card, frame, target_column=target, task_type=task, n_folds=3
+        )
+        return build_context(card, signals), signals
+
+    def test_a_continuous_target_cannot_be_stratified(self) -> None:
+        # `ratings.csv target=rating`: a float over 0.5..5.0, which
+        # `type_of_target` calls continuous and `StratifiedKFold` refuses --
+        # "Supported target types are: ('binary', 'multiclass')".
+        frame = pd.DataFrame(
+            {
+                "user_id": [1, 1, 2, 2, 3, 3, 4, 4],
+                "rating": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.5, 5.0],
+            }
+        )
+        context, _ = self._context(frame, "rating", TaskType.REGRESSION)
+
+        failures = validate_stratification_is_executable(_stratified_proposal(), context)
+
+        assert [failure.code for failure in failures] == ["stratify_non_classification_target"]
+        assert "rating" in failures[0].detail
+
+    def test_a_singleton_class_cannot_be_stratified(self) -> None:
+        # `movies.csv target=genres` (951 distinct) and `tags.csv target=tag`
+        # (1,589): high-cardinality categoricals have singletons by nature, and
+        # the outer holdout alone needs two rows of every class.
+        frame = pd.DataFrame({"movie_id": range(6), "genres": ["a", "a", "b", "b", "c", "d"]})
+        context, _ = self._context(frame, "genres", TaskType.MULTICLASS_CLASSIFICATION)
+
+        failures = validate_stratification_is_executable(_stratified_proposal(), context)
+
+        assert [failure.code for failure in failures] == ["stratify_singleton_class"]
+        assert "smallest class has 1 row" in failures[0].detail
+
+    def test_a_null_in_the_target_is_fatal_on_its_own(self) -> None:
+        # `links.csv target=tmdb_id` is 0.1% null: "Input y contains NaN".
+        frame = pd.DataFrame(
+            {"movie_id": range(6), "tmdb_id": ["x", "x", "y", "y", "z", None]}
+        )
+        context, _ = self._context(frame, "tmdb_id", TaskType.MULTICLASS_CLASSIFICATION)
+
+        failures = validate_stratification_is_executable(_stratified_proposal(), context)
+
+        assert [failure.code for failure in failures] == ["stratify_target_has_nulls"]
+
+    def test_a_stratifiable_target_passes(self) -> None:
+        # The point is to reject what cannot run, not to reject stratification.
+        frame = pd.DataFrame({"row": range(8), "label": ["a", "a", "a", "a", "b", "b", "b", "b"]})
+        context, _ = self._context(frame, "label", TaskType.BINARY_CLASSIFICATION)
+
+        assert validate_stratification_is_executable(_stratified_proposal(), context) == []
+
+    def test_every_other_strategy_is_left_alone(self) -> None:
+        # Only stratification reads the target's classes; a grouped or temporal
+        # split does not care what shape it is.
+        frame = pd.DataFrame(
+            {
+                "user_id": [1, 1, 2, 2, 3, 3, 4, 4],
+                "rating": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.5, 5.0],
+            }
+        )
+        context, _ = self._context(frame, "rating", TaskType.REGRESSION)
+
+        for strategy in ("random", "grouped"):
+            proposal = _stratified_proposal(
+                strategy=strategy,
+                **({"group_column": "user_id"} if strategy == "grouped" else {}),
+            )
+            assert validate_stratification_is_executable(proposal, context) == []
+
+    def test_the_rejection_names_a_strategy_that_can_run(self) -> None:
+        # A description of the problem sends the agent back to guess. The issue
+        # asks for a repair suggestion, and on this data `random` passes.
+        frame = pd.DataFrame({"row": range(6), "rating": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]})
+        context, _ = self._context(frame, "rating", TaskType.REGRESSION)
+
+        failures = validate_stratification_is_executable(_stratified_proposal(), context)
+
+        assert failures[0].repair_suggestion == SplitStrategy.RANDOM.value
+
+    def test_the_suggestion_is_never_weaker_than_the_measurements_require(self) -> None:
+        # `validate_strategy_not_weaker` has veto power for a reason. Suggesting
+        # `random` where entities repeat would swap one rejection for another,
+        # and the second one is a leak rather than a crash. The suggestion is
+        # the recommendation, and falls back to `random` only when the
+        # recommendation is the stratification that cannot run.
+        frame = pd.DataFrame({"row": range(6), "genres": ["a", "a", "b", "b", "c", "d"]})
+        card = _card(frame)
+        measured = detect_validation_signals(
+            card,
+            frame,
+            target_column="genres",
+            task_type=TaskType.MULTICLASS_CLASSIFICATION,
+            n_folds=3,
+        )
+        signals = measured.model_copy(
+            update={
+                "repeated_entity_keys": _crossing_identifier_signals().repeated_entity_keys[:1]
+            }
+        )
+        assert recommend_strategy(signals) is SplitStrategy.GROUPED
+        context = build_context(card, signals)
+
+        failures = validate_stratification_is_executable(_stratified_proposal(), context)
+
+        assert failures[0].code == "stratify_singleton_class"
+        assert failures[0].repair_suggestion == SplitStrategy.GROUPED.value
+
+    def test_it_is_wired_into_the_agent(self) -> None:
+        # A validator nothing runs is a comment.
+        assert validate_stratification_is_executable in build_spec().validators
+
+
+class TestTheRecommendationStaysSatisfiable:
+    """#450: a measured imbalance could steer the agent to an impossible split.
+
+    `validate_strategy_not_weaker` rejects any proposal that omits a protection
+    the recommendation names, and it says so out loud -- "the measured class
+    imbalance requires stratification", with `repair_suggestion="stratified"`.
+    On a target with a singleton class that requirement cannot be met by any
+    split: every weaker proposal is rejected for omitting class balance, and the
+    stratified one cannot execute. The agent had no answer to give, and the run
+    reached a generic retry-budget escalation carrying nothing about the target.
+    """
+
+    def test_a_singleton_class_is_not_a_reason_to_stratify(self) -> None:
+        frame = pd.DataFrame({"row": range(6), "label": ["a", "a", "a", "a", "b", "c"]})
+        card = _card(frame)
+        signals = detect_validation_signals(
+            card, frame, target_column="label", task_type=TaskType.MULTICLASS_CLASSIFICATION,
+            n_folds=3,
+        )
+
+        # Measurably imbalanced -- and measurably unstratifiable.
+        assert signals.minority_class_rate is not None
+        assert signals.minority_class_rate < 0.20
+        assert can_stratify(signals) is False
+        assert recommend_strategy(signals) is SplitStrategy.RANDOM
+
+    def test_the_digest_says_so_where_the_agent_reads_it(self) -> None:
+        # A rejection is a last resort; the projection the agent actually reads
+        # should have told it already.
+        frame = pd.DataFrame({"row": range(6), "label": ["a", "a", "a", "a", "b", "c"]})
+        card = _card(frame)
+        signals = detect_validation_signals(
+            card,
+            frame,
+            target_column="label",
+            task_type=TaskType.MULTICLASS_CLASSIFICATION,
+            n_folds=3,
+        )
+
+        digest = validation_signals_digest(signals)
+
+        assert "Stratification: NOT AVAILABLE for this target" in digest
+        assert "smallest class has 1 row(s)" in digest
+
+    def test_an_imbalance_that_can_be_stratified_still_recommends_it(self) -> None:
+        # The rule is unchanged where it was always satisfiable.
+        frame = pd.DataFrame({"row": range(12), "label": ["a"] * 10 + ["b", "b"]})
+        card = _card(frame)
+        signals = detect_validation_signals(
+            card, frame, target_column="label", task_type=TaskType.BINARY_CLASSIFICATION,
+            n_folds=2,
+        )
+
+        assert can_stratify(signals) is True
+        assert recommend_strategy(signals) is SplitStrategy.STRATIFIED
+
+    def test_a_regression_target_was_never_a_reason_to_stratify(self) -> None:
+        # `minority_class_count` is measured only for a classification task, so
+        # a continuous target could not reach the imbalance branch. Pinned
+        # because `can_stratify` now depends on that being true.
+        frame = pd.DataFrame({"row": range(6), "amount": [1.5, 2.5, 3.5, 4.5, 5.5, 6.5]})
+        card = _card(frame)
+        signals = detect_validation_signals(
+            card, frame, target_column="amount", task_type=TaskType.REGRESSION, n_folds=3
+        )
+
+        assert signals.minority_class_count is None
+        assert can_stratify(signals) is False
+        assert recommend_strategy(signals) is SplitStrategy.RANDOM
