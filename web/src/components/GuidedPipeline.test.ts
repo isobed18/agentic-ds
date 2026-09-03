@@ -225,14 +225,16 @@ describe("re-run control (#247, #378)", () => {
 });
 
 describe("target-column picker (#244/#198)", () => {
-  it("offers a dropdown of the base table's profiled columns before the run starts", () => {
+  it("offers a dropdown of profiled columns before the run starts", () => {
     // The guided flow had no way to choose the ML target, and the free-text gate
-    // box was never read. The picker is a real <select> of the base table's
-    // columns, shown only before the run starts (canStart, no current stage).
-    expect(SOURCE).toContain("const targetColumns = baseTable?.columns ?? [];");
+    // box was never read. The picker is a real <select> of profiled columns,
+    // shown only before the run starts (canStart, no current stage). It read the
+    // base table's columns alone until #448 widened it; the requirement here is
+    // that there is a real picker of real columns, which still holds.
+    expect(SOURCE).toContain("const targetColumns = useMemo(() => targetGroups.flatMap");
     expect(SOURCE).toContain("canStart && !currentStage && targetColumns.length > 0");
     expect(SOURCE).toContain("<select value={targetColumn}");
-    expect(SOURCE).toContain("targetColumns.map((column) =>");
+    expect(SOURCE).toContain("group.columns.map((column) =>");
     expect(SOURCE).toContain('t("Let the agent decide")');
   });
 
@@ -248,7 +250,10 @@ describe("target-column picker (#244/#198)", () => {
     // which one they were in in neither. Under "Ask the planner" the column is
     // prose for the agent to rank first and may not be what it proposes; under
     // "Predict a column" it is built and measured as given.
-    expect(SOURCE).toContain('problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")');
+    // #448 extended the second half: the picker offers columns from every
+    // profiled table now, and a column outside the base table needs the plan's
+    // joins to bring it in. The two-mode requirement is unchanged.
+    expect(SOURCE).toContain('problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given. A column from a table other than the base needs the plan\'s joins to bring it in.")');
     expect(CATALOGUE).toContain("Ajanın ilk sıraya koyması için bir ipucu, bir karar değil");
     expect(CATALOGUE).toContain("Model bu sütunu tahmin eder.");
   });
@@ -623,5 +628,40 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
     for (const key of ["Accepted ML plan", "Base ML pipeline", "What will run", "Stage details"]) {
       expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
     }
+  });
+});
+
+
+describe("the target picker reaches past the base table (#448)", () => {
+  it("offers every profiled table's columns, not just the base table's", () => {
+    // On a multi-table source the fact table's measure was unreachable: the
+    // agent could propose predicting `rating`, the planner could be asked for
+    // it in chat, and the one control named "Target" could not offer it,
+    // because `ratings` is not the base table.
+    expect(SOURCE).not.toContain("const targetColumns = baseTable?.columns ?? [];");
+    expect(SOURCE).toContain("...profile.tables.filter((table) => table.name !== baseTable?.name)");
+  });
+
+  it("says which table each column came from", () => {
+    // A bare column name is not enough to tell `movies.title` from `tags.tag`
+    // once the list spans four files.
+    expect(SOURCE).toContain("<optgroup key={group.table} label={group.table}>");
+  });
+
+  it("puts the base table first and lets it win a shared name", () => {
+    // The value sent is the bare column name, which is what the integrated ABT
+    // will call it -- and the base table's column is the one a join resolves
+    // that name to. Offering the same name twice would be two options that do
+    // the same thing.
+    expect(SOURCE).toContain("...(baseTable ? [baseTable] : []),");
+    expect(SOURCE).toContain("const claimed = new Set<string>();");
+    expect(SOURCE).toContain("(table.columns ?? []).filter((column) => !claimed.has(column.name))");
+  });
+
+  it("keeps the flat list the rest of the panel reads", () => {
+    // The default pick and the failure notice's column list both take
+    // `targetColumns`; splitting the picker into groups must not strand them.
+    expect(SOURCE).toContain("targetGroups.flatMap((group) => group.columns)");
+    expect(SOURCE).toContain("columns={targetColumns}");
   });
 });

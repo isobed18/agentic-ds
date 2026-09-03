@@ -112,7 +112,36 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   const planConfig = (workspace.recommended_plan?.configuration ?? {}) as Record<string, unknown>;
   const baseTableName = String(planConfig.base_table ?? profile.tables[0]?.name ?? "");
   const baseTable = profile.tables.find((table) => table.name === baseTableName) ?? profile.tables[0];
-  const targetColumns = baseTable?.columns ?? [];
+  // #448: this was `baseTable?.columns ?? []`, so on a multi-table source the
+  // fact table's measure was unreachable -- on MovieLens the agent could
+  // propose predicting `rating` and the planner could be asked for it in chat,
+  // and the one control named "Target" could not offer it, because `ratings` is
+  // not the base table. Everything the source profiled is offered instead,
+  // grouped by the table it came from so a bare column name is not the only
+  // thing distinguishing `movies.title` from `tags.tag`.
+  //
+  // Base table first, and a name already claimed is not offered twice: the
+  // value sent is the bare column name, which is what the integrated ABT will
+  // call it, and the base table's column is the one a join resolves that name
+  // to. A column that the accepted joins do not actually bring into the ABT is
+  // refused with measured blocking reasons rather than silently mis-aimed
+  // (#427), which is a far better answer than not being able to ask.
+  const targetGroups = useMemo(() => {
+    const ordered = [
+      ...(baseTable ? [baseTable] : []),
+      ...profile.tables.filter((table) => table.name !== baseTable?.name),
+    ];
+    const claimed = new Set<string>();
+    const groups: Array<{ table: string; columns: ProfiledColumn[] }> = [];
+    for (const table of ordered) {
+      const columns = (table.columns ?? []).filter((column) => !claimed.has(column.name));
+      for (const column of columns) claimed.add(column.name);
+      if (columns.length) groups.push({ table: table.name, columns });
+    }
+    return groups;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.tables, baseTable?.name]);
+  const targetColumns = useMemo(() => targetGroups.flatMap((group) => group.columns), [targetGroups]);
   const [targetColumn, setTargetColumn] = useState<string>(String(planConfig.target_column ?? ""));
   // #241: the common problem shapes named straight from the selector, skipping
   // the planner conversation. "ask_planner" is the pre-existing behaviour --
@@ -369,11 +398,13 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           // agent as prose to rank first, which the agent may still not
           // propose -- so a person whose run then failed on a different
           // framing had no way to tell their choice had been advisory.
-          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")}>
+          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given. A column from a table other than the base needs the plan's joins to bring it in.")}>
             <span className="text-ink-faint">{t("Target")}</span>
             <select value={targetColumn} onChange={(event) => setTargetColumn(event.target.value)} className="max-w-[11.25rem] bg-transparent text-2xs font-medium text-ink outline-none">
               {problemKind === "ask_planner" && <option value="">{t("Let the agent decide")}</option>}
-              {targetColumns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.candidate_target ? " ★" : ""}</option>)}
+              {/* One group per table. A single-table source has exactly one, so
+                  the picker looks as it always did there. */}
+              {targetGroups.map((group) => <optgroup key={group.table} label={group.table}>{group.columns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.candidate_target ? " ★" : ""}</option>)}</optgroup>)}
             </select>
           </label>
         )}
