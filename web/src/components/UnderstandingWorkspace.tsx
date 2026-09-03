@@ -24,6 +24,7 @@ import {
   type StagingOutcome,
   type StagingRoutingState,
 } from "./stagingRoutingState";
+import { uniqueIds } from "./artifactReveal";
 import { SchemaDiagram } from "./SchemaDiagram";
 import { Badge, Chevron, Empty, Spinner, cx } from "./ui";
 import { GROUPS } from "./mlPipelineGroups";
@@ -311,7 +312,11 @@ export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArt
   // promised artifacts existed and led to a panel that could not open them
   // (#45). Carrying the ids means the node itself is the way in.
   const outputIds = (componentIds: string[]) => (workspace?.component_outputs ?? []).filter((output) => componentIds.includes(output.component_id)).flatMap((output) => output.artifact_ids);
-  const measuredIds = [...(workspace?.intake_artifact_ids ?? []), ...(workspace?.schema_artifact_ids ?? [])];
+  // #446: two lists concatenated with nothing checking for overlap, and both
+  // are content-addressed -- intake and schema discovery re-emitting identical
+  // content emit the same id. A repeat can never be revealed, so the node's
+  // pending placeholder pulsed forever.
+  const measuredIds = uniqueIds([...(workspace?.intake_artifact_ids ?? []), ...(workspace?.schema_artifact_ids ?? [])]);
   const documentIds = (workspace?.document_extractions ?? []).map((item) => item.artifact_id).filter((id): id is string => Boolean(id));
   const reportIds = outputIds(["structured-brief", "document-brief", "understanding-synthesis"]);
   return (
@@ -321,7 +326,7 @@ export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArt
       <PhaseNode title={t("Intake")} subtitle={t("Discover, classify, and route")} status={routing.discovery} onClick={() => onSelect("discovery")} artifactIds={measuredIds} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onOpenArtifact={onOpenArtifact} compact />
       <ForkConnector branches={branches.length} status={branchStatus} />
       <div className="flex flex-col gap-4">
-        {branches.map((branch) => <BranchNode key={branch.id} title={branch.title} files={branch.files} steps={branch.steps} artifactIds={branch.id === "structured" ? [...measuredIds, ...outputIds(["structured-brief"])] : branch.id === "documents" ? [...documentIds, ...outputIds(["document-brief"])] : []} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onClick={() => onSelect(branch.id)} onOpenArtifact={onOpenArtifact} />)}
+        {branches.map((branch) => <BranchNode key={branch.id} title={branch.title} files={branch.files} steps={branch.steps} artifactIds={branch.id === "structured" ? uniqueIds([...measuredIds, ...outputIds(["structured-brief"])]) : branch.id === "documents" ? uniqueIds([...documentIds, ...outputIds(["document-brief"])]) : []} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onClick={() => onSelect(branch.id)} onOpenArtifact={onOpenArtifact} />)}
       </div>
       <MergeConnector branches={branches.length} status={routing.synthesis} />
       <PhaseNode title={t("Synthesize")} subtitle={t("Bring findings together")} status={routing.synthesis} onClick={() => onSelect("synthesis")} artifactIds={reportIds} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onOpenArtifact={onOpenArtifact} compact />

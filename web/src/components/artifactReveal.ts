@@ -35,3 +35,33 @@ export function nextToReveal(shown: string[], reported: string[]): string | unde
 export function revealDelay(shownCount: number, intervalMs: number): number {
   return shownCount === 0 ? 0 : intervalMs;
 }
+
+/** The reported ids with repeats removed, first occurrence winning.
+ *
+ * #446: artifact ids are content-addressed, so a stage that is retried and
+ * produces identical content produces the *same id* -- and several id lists
+ * flatten across attempts or stages without a `set()`. A duplicate could never
+ * be revealed (`nextToReveal` skips anything already shown, and the hook's own
+ * `includes` guard would refuse it), so `shown.length` could never reach
+ * `ids.length`, and the pending placeholder rendered on every frame with no
+ * timer left to schedule. Not slow -- stopped.
+ *
+ * Deduping at every caller was the other half of the fix and is also done, but
+ * the reveal has to be unable to stall on whatever it is handed: a rendering
+ * artifact that outlives its data is worse than a duplicate row.
+ */
+export function uniqueIds(ids: string[]): string[] {
+  return ids.length === new Set(ids).size ? ids : [...new Set(ids)];
+}
+
+/** Whether more artifacts are still waiting to be revealed.
+ *
+ * The component compared `shown.length` against the raw `ids` it was given.
+ * Besides the duplicate stall, that was wrong for a second reason after #431:
+ * `ids` is the unfiltered list, and diagnostics are filtered out of what is
+ * actually revealed -- so with diagnostics hidden the placeholder pulsed
+ * forever on any node holding one.
+ */
+export function revealPending(shown: string[], reported: string[]): boolean {
+  return nextToReveal(shown, reported) !== undefined;
+}

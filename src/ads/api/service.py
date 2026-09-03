@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import threading
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -3390,18 +3390,24 @@ class ControlPlane:
         pending = previous.pending_override if previous else None
         if pending_override is not None:
             pending = pending_override
-        intake_ids = [
+        # #446: these flatten every attempt of the stage. Artifact ids are
+        # content-addressed, so a retry that re-emits identical content emits
+        # the *same id* -- one retry was enough to list an artifact twice, and
+        # the client's reveal could never show the repeat, so its "one more is
+        # coming" placeholder pulsed forever. Deduped in first-seen order:
+        # the order is the arrival record the canvas renders.
+        intake_ids = _distinct(
             artifact_id
             for attempt in runtime.state.attempts
             if attempt.stage_id == "intake"
             for artifact_id in attempt.artifact_ids
-        ]
-        schema_ids = [
+        )
+        schema_ids = _distinct(
             artifact_id
             for attempt in runtime.state.attempts
             if attempt.stage_id == "schema_discovery"
             for artifact_id in attempt.artifact_ids
-        ]
+        )
         relationships = (
             list(previous.relationship_explanations)
             if previous
@@ -8106,6 +8112,16 @@ class ControlPlane:
             raise ValueError(f"artifact {artifact_id!r} is not a final report")
         removed = self.store.delete_artifact(artifact_id)
         return {"artifact_id": artifact_id, **removed}
+
+
+def _distinct(values: Iterable[str]) -> list[str]:
+    """Repeats removed, first occurrence keeping its place (#446).
+
+    `dict.fromkeys` rather than a `set` because these lists are rendered in
+    order: the sequence artifacts arrived in is a record of when work happened,
+    and a set would scramble it.
+    """
+    return list(dict.fromkeys(values))
 
 
 def _run_error_text(exc: BaseException) -> dict[str, str]:
