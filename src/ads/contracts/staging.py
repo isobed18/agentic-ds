@@ -17,6 +17,7 @@ from pydantic import Field, field_validator, model_validator
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.documents import DocumentExtractionSummary
 from ads.contracts.registry import canonical_contract_id
+from ads.turkish_style import house_turkish
 
 
 class LocalizedText(FrozenModel):
@@ -24,6 +25,17 @@ class LocalizedText(FrozenModel):
 
     en: str = Field(min_length=1, max_length=20_000)
     tr: str = Field(min_length=1, max_length=20_000)
+
+    # #406: the Turkish half is written by a model, so it is not fixable the way
+    # a catalogue entry is -- and the models render "document corpus" as "belge
+    # külliyatı", which no Turkish speaker says. The prompts now say not to, but
+    # an instruction only governs runs that have not happened yet, and this
+    # class is the one boundary every piece of agent-authored bilingual prose
+    # crosses. See `ads.turkish_style` for what the rewrite is and is not.
+    @field_validator("tr")
+    @classmethod
+    def _house_turkish(cls, value: str) -> str:
+        return house_turkish(value)
 
 
 class StagingMessage(FrozenModel):
@@ -302,6 +314,24 @@ class RuntimeConfigurationPlan(FrozenModel):
     pipeline_recommendation: Literal["create_pipeline", "defer_pipeline", "no_pipeline"] = (
         "create_pipeline"
     )
+    #: What must resolve for a `defer_pipeline` to lift. Empty otherwise.
+    #:
+    #: #430: a deferral used to say only that it existed. Nothing re-evaluated
+    #: it, so the state sustained itself -- no timer, no re-check, no event,
+    #: and a later planner turn that named no recommendation inherited the
+    #: block and re-asserted it. A deferral has to name the precondition it is
+    #: waiting on so the precondition can be checked; the two below are the
+    #: only ones this product can observe resolving.
+    #:
+    #: * `document_table_review` -- extracted PDF table candidates are waiting
+    #:   on a human decision (#316). Lifts when a review is recorded.
+    #: * `planner_decision` -- the planner has not stated one yet, so nothing
+    #:   has been decided. Lifts on a turn that states one.
+    #:
+    #: A review the ML pipeline performs itself is deliberately not here: those
+    #: are its own stages, so waiting for one means running the pipeline to
+    #: that stage rather than refusing to start.
+    deferred_on: Literal["", "document_table_review", "planner_decision"] = ""
     decision_summary: LocalizedText | None = None
     configuration: dict[str, Any] = Field(default_factory=dict)
     stage_directives: dict[str, list[str]] = Field(default_factory=dict)
@@ -309,10 +339,65 @@ class RuntimeConfigurationPlan(FrozenModel):
     auto_proceed_stages: list[str] = Field(default_factory=list)
     max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
     rationale: list[LocalizedText] = Field(default_factory=list)
+    #: The record of a person overriding a deferral by naming the target
+    #: themselves, with what the measurement said about their choice.
+    #:
+    #: #429: the panel's closing line promised "the override is the Planner",
+    #: but the Planner is a chat box, not an override control -- so a deferred
+    #: plan whose target was measurably viable had no way forward at all. An
+    #: override is a human decision about someone else's recommendation, so it
+    #: is kept beside the recommendation rather than replacing it: the
+    #: planner's `decision_summary` still says what it wanted, and this says
+    #: what the person did instead and on what evidence.
+    human_override: LocalizedText | None = None
     # Retained for old artifacts/API clients while ``status`` becomes authoritative.
     accepted: bool = False
     accepted_at: datetime | None = None
     accepted_by: Literal["human"] | None = None
+
+
+class PlannerOverrideProposal(FrozenModel):
+    """Validated Planner changes that still require one explicit human click."""
+
+    proposal_id: str = Field(default_factory=lambda: f"override-{uuid4().hex[:12]}")
+    configuration_patch: dict[str, Any] = Field(default_factory=dict)
+    stage_directives: dict[str, list[str]] = Field(default_factory=dict)
+    checkpoint_stages: list[str] = Field(default_factory=list)
+    auto_proceed_stages: list[str] = Field(default_factory=list)
+    max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
+    pipeline_blueprint: PipelineBlueprint | None = None
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(
+            self.configuration_patch
+            or self.stage_directives
+            or self.checkpoint_stages
+            or self.auto_proceed_stages
+            or self.max_retries_by_stage
+            or self.pipeline_blueprint is not None
+        )
+
+
+class PromotedDocumentTable(FrozenModel):
+    """One extracted PDF table a person accepted and promoted into the run.
+
+    Promotion writes a ``TableAsset`` and nothing else, so the only record that
+    it happened lived in the artifact store. The plan panel reads the workspace
+    and the source profile, and the profile is built by walking the uploaded
+    files on disk -- a promoted table is not a file, so it could never appear
+    there. The panel therefore kept saying "no trusted structured input is
+    selected" after a successful promotion, and reloading did not help because
+    there was nothing new to read (#361). Recorded here instead, beside the
+    extraction it came from.
+    """
+
+    candidate_id: str = Field(pattern=r"^[a-zA-Z0-9_.:-]+$")
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_file: str
+    page_number: int | None = Field(default=None, ge=1)
+    row_count: int = Field(ge=0)
+    column_count: int = Field(ge=0)
 
 
 class StagingWorkspace(Artifact):
@@ -330,7 +415,12 @@ class StagingWorkspace(Artifact):
     pipeline_layout: PipelineLayout = Field(default_factory=PipelineLayout)
     component_outputs: list[PipelineOutputReference] = Field(default_factory=list)
     document_extractions: list[DocumentExtractionSummary] = Field(default_factory=list)
+    #: Candidates from those extractions that a person promoted (#361). Every
+    #: entry is already an ML input; the remaining candidates are the ones the
+    #: review dialog still has to offer.
+    promoted_document_tables: list[PromotedDocumentTable] = Field(default_factory=list)
     recommended_plan: RuntimeConfigurationPlan | None = None
+    pending_override: PlannerOverrideProposal | None = None
     chat_history: list[StagingMessage] = Field(default_factory=list)
     planner_model: str | None = None
     planner_error: str | None = None
@@ -348,6 +438,7 @@ class StagingWorkspace(Artifact):
                 output.status == "ready" for output in self.component_outputs
             ),
             "document_extractions": len(self.document_extractions),
+            "promoted_document_tables": len(self.promoted_document_tables),
             "messages": len(self.chat_history),
             "plan_ready": self.recommended_plan is not None,
             "plan_accepted": bool(self.recommended_plan and self.recommended_plan.accepted),
@@ -366,7 +457,9 @@ __all__ = [
     "PipelineNodeLayout",
     "PipelineLayout",
     "PipelineOutputReference",
+    "PlannerOverrideProposal",
     "PipelinePort",
+    "PromotedDocumentTable",
     "RelationshipExplanation",
     "RuntimeConfigurationPlan",
     "StagingMessage",

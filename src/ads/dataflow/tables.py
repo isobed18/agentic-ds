@@ -86,7 +86,29 @@ def persist_table_asset(
 
 
 def load_table_asset(store: ArtifactStore, artifact_id: str) -> tuple[TableAsset, pd.DataFrame]:
-    """Verify the content-addressed blob before returning a fresh DataFrame."""
+    """Verify the content-addressed blob before returning a fresh DataFrame.
+
+    #390 measured that this has no production caller, and traced why a promoted
+    document table therefore never reaches the analytical base table:
+
+    * ``intake_stage`` builds the source frames from ``load_directory`` over the
+      uploaded directory alone, and ``integration_stage`` joins whatever intake
+      left on the blackboard. Neither looks in the artifact store for a
+      ``TableAsset``.
+    * The guided run continues the *staging* run rather than starting a new one,
+      but it resumes at the stage after ``schema_discovery``
+      (``ControlPlane.STAGE_UNTIL``), so intake does not run again after a
+      person promotes anything.
+    * Even if it did, the ``IntegrationPlan`` was authored by schema discovery
+      before the promoted table existed, so it could not reference it.
+
+    So promotion is durable and consequential -- it writes this asset with full
+    provenance, records the human decision, and settles the review gate that can
+    defer a pipeline -- but it does not add training rows. The review dialog said
+    it did; that copy is corrected. Wiring promoted assets into the ABT means
+    re-opening schema discovery after a promotion, which is a design change
+    rather than a missing call, and is deliberately not attempted here.
+    """
     asset = store.load(artifact_id, TableAsset)
     path = store.blob_dir(artifact_id) / asset.blob.filename
     if not path.exists():

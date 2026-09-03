@@ -17,7 +17,7 @@ from ads.contracts.comprehension import ComprehensionBrief
 from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import BUILTIN_PROFILES, GateVerdict
 from ads.contracts.integration import IntegrationPlan
-from ads.contracts.problem import ProblemCandidateSet, ProblemDefinition
+from ads.contracts.problem import Metric, ProblemCandidateSet, ProblemDefinition, TaskType
 from ads.contracts.validation import ValidationStrategy
 from ads.gates import GatePolicy
 from ads.llm import LLMResponse, ModelProfile
@@ -30,6 +30,7 @@ from ads.pipeline import (
     build_pipeline_rubrics,
     configure_full_pipeline_state,
 )
+from ads.pipeline.stages import QUICK_PROBLEM_KEY
 from ads.store import ArtifactStore
 
 
@@ -388,6 +389,175 @@ def test_full_agent_backed_spec_runs_end_to_end_without_ollama(
     assert problem.excluded_columns == ["total_comp_ytd"]
     assert strategy.strategy.value == "temporal"
     assert final.markdown == state.blackboard[FINAL_MARKDOWN_KEY]
+
+
+def test_quick_problem_selection_confirms_a_target_without_calling_the_llm(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """#241: a person can name the problem directly from a quick-pick selector,
+    and problem_discovery must confirm it without ever asking the LLM."""
+    llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-predict")
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+    }
+
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="problem_discovery",
+    )
+
+    assert len(llm.calls) == len(_schema_actions()) + 1, "problem_discovery must not call the LLM"
+    candidates = state.require(ArtifactType.PROBLEM_CANDIDATES, ProblemCandidateSet)
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    assert len(candidates.candidates) == 1
+    assert problem.confirmed_by == "human"
+    assert problem.target_column == "annual_comp"
+    assert problem.task_type is TaskType.REGRESSION
+    assert problem.source_candidate_id == candidates.candidates[0].candidate_id
+
+
+def test_quick_problem_selection_flags_anomalies_with_no_target(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-anomalies")
+    state.blackboard[QUICK_PROBLEM_KEY] = {"kind": "flag_anomalies", "target_column": None}
+
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="problem_discovery",
+    )
+
+    assert len(llm.calls) == len(_schema_actions()) + 1
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    assert problem.task_type is TaskType.ANOMALY_DETECTION
+    assert problem.target_column is None
+    assert problem.confirmed_by == "human"
+
+
+def test_a_rejected_quick_pick_falls_back_to_the_full_agent_conversation(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """A retry (a non-None correction) means the gate rejected the quick-picked
+    framing, so reproposing the identical deterministic candidate would not be
+    a rework -- the full agent path must run instead (#241)."""
+    setup_llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(setup_llm)
+    state = _state(tmp_path, sample_dir, "quick-problem-retry")
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+    }
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="integration",
+    )
+
+    from ads.pipeline.agent_stages import make_problem_discovery_stage
+
+    retry_llm = FakeLLM([_problem_response()])
+    stage = make_problem_discovery_stage(retry_llm)
+
+    stage(state, correction=["Use a different framing than the quick pick."])
+
+    assert len(retry_llm.calls) == 1, "a rejected quick pick must fall back to the agent"
+
+
+def test_a_pinned_framing_outranks_the_correction_that_asked_for_it(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """#428: a framing pinned after a failure is a constraint, not a hint.
+
+    The retry fallback above exists because a gate that rejected the
+    deterministic framing would only be handed the same one again. But when a
+    person names the column *after* watching problem discovery fail, that pin
+    is the correction -- falling back to the agent conversation would be
+    ignoring the only new information the run has. `pinned` distinguishes the
+    two, so #241's selection stays advisory on retry and this one does not.
+    """
+    setup_llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(setup_llm)
+    state = _state(tmp_path, sample_dir, "pinned-problem-retry")
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="integration",
+    )
+
+    from ads.pipeline.agent_stages import make_problem_discovery_stage
+
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+        "task_type": None,
+        "pinned": True,
+    }
+    retry_llm = FakeLLM([])
+    stage = make_problem_discovery_stage(retry_llm)
+
+    result = stage(state, correction=["The agent could not frame this."])
+
+    assert not retry_llm.calls, "a pinned framing must not reopen the agent conversation"
+    problem = next(
+        artifact for artifact in result.artifacts if isinstance(artifact, ProblemDefinition)
+    )
+    assert problem.target_column == "annual_comp"
+    assert problem.confirmed_by == "human"
+
+
+def test_a_pinned_task_type_overrides_what_the_column_shape_infers(
+    tmp_path: Path, sample_dir: Path
+) -> None:
+    """#428: inference reads the column's measured shape, which is the right
+    default -- but it cannot tell a 0/1 label from a 0/1 quantity, and the
+    person looking at their own data can. An explicit choice wins."""
+    llm = FakeLLM([*_schema_actions(), {"items": []}])
+    spec, registry = build_full_spec(llm)
+    state = _state(tmp_path, sample_dir, "pinned-task-type")
+    state.blackboard[QUICK_PROBLEM_KEY] = {
+        "kind": "predict_column",
+        "target_column": "annual_comp",
+        "task_type": "multiclass_classification",
+        "pinned": True,
+    }
+
+    run_workflow(
+        spec,
+        registry,
+        state,
+        policy=GatePolicy.load(),
+        rubrics=build_pipeline_rubrics(),
+        stop_after="problem_discovery",
+    )
+
+    problem = state.require(ArtifactType.PROBLEM_DEFINITION, ProblemDefinition)
+    # Inference calls this column regression; the stated task type is honoured,
+    # and its metric follows from the task rather than from the inference.
+    assert problem.task_type is TaskType.MULTICLASS_CLASSIFICATION
+    assert problem.primary_metric is Metric.BALANCED_ACCURACY
+    # And the framing is still *measured*: whether it is viable is
+    # `compute_support`'s answer, recorded on the candidate either way.
+    candidates = state.require(ArtifactType.PROBLEM_CANDIDATES, ProblemCandidateSet)
+    assert candidates.candidates[0].support is not None
 
 
 @pytest.mark.parametrize("failure_type", [ConnectionError, ValueError])

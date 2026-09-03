@@ -25,10 +25,12 @@ from ads.contracts.eda import (
     TargetDistribution,
     TargetRelationship,
 )
+from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.gates import DecisionOption, GateDecision, GateVerdict, HumanPrompt
 from ads.contracts.staging import StagingWorkspace
 from ads.documents.pdf import PdfDocument, PdfPage
 from ads.llm import LLMResponse, ModelProfile
+from ads.pipeline.workflow import build_default_spec
 from ads.staging import build_default_blueprint
 from ads.store import ArtifactStore
 
@@ -111,6 +113,9 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
         "leakage_audit",
         "feature_pipeline",
         "splitting",
+        # After the split on purpose: it sends training rows only, so the
+        # external feature search cannot see the holdout.
+        "rl_feature_engineering",
         "training",
         "evaluation",
         "report",
@@ -131,12 +136,14 @@ def test_workflow_graph_shows_complete_agentic_spec_before_run(tmp_path: Path) -
     )
 
 
-def test_manual_mode_graph_matches_the_nine_executed_stages(tmp_path: Path) -> None:
+def test_manual_mode_graph_matches_the_executed_stages(tmp_path: Path) -> None:
     client = TestClient(create_app(plane=_plane(tmp_path)))
     graph = client.get("/api/workflow", params={"mode": "manual"}).json()
 
     assert graph["workflow"] == "deterministic-default"
-    assert len(graph["nodes"]) == 9
+    # Held to the spec rather than to a literal count, so adding a stage updates
+    # this in one place instead of leaving a number nobody can tie to anything.
+    assert [node["id"] for node in graph["nodes"]] == list(build_default_spec().stage_ids())
     assert not any(node["kind"] == "planner_agent" for node in graph["nodes"])
 
 
@@ -829,19 +836,17 @@ WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     """Upload, understanding, proposal, and graph remain one progressive route."""
-    workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
-
-    for region in ("PipelineRail", "StageWorkspace", "PlannerPanel"):
-        assert f"<{region}" in workflows, f"the main screen does not render {region}"
+    # #434: `Workflows.tsx`, `StageWorkspace.tsx` and `Explore.tsx` -- the pages
+    # this test used to read for these guarantees -- were unreachable dead code
+    # (retired at #111/#214 but never deleted) and are gone. The measured-graph
+    # picture they were checked for, `<SchemaMap`/`<SchemaDiagram`, now hangs
+    # off `UnderstandingWorkspace` instead; `AgentBriefing` and
+    # `DocumentUnderstanding` were already gone from the live tree, checked
+    # only against a page nothing could reach.
 
     # Branching must stay legible rather than being flattened into a line.
     rail = (WEB_SRC / "components" / "PipelineRail.tsx").read_text(encoding="utf-8")
     assert "branch_of" in rail
-
-    # Stage output is rendered from measured structures, not dumped as JSON.
-    workspace = (WEB_SRC / "components" / "StageWorkspace.tsx").read_text(encoding="utf-8")
-    for structure in ("warnings", "model_comparison", "holdout_metrics"):
-        assert structure in workspace, f"{structure} has no renderer"
 
     # Analyses are a horizontal strip of chart thumbnails that expand on click,
     # not a vertical stack of collapsed headings a reader has to open one by one.
@@ -849,7 +854,6 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert "overflow-x-auto" in strip
     assert "Key insights" in strip
     assert "Summary statistics" in strip
-    assert "<AnalysisStrip" in workspace
 
     # Charts are drawn in-bundle: the deployment target is air-gapped, so a
     # chart library loaded from a CDN would render nothing at all.
@@ -858,14 +862,10 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
         assert f'case "{kind}"' in charts, f"no renderer for a {kind} chart"
 
     # The schema must be legible to a person, not only to the agent.
-    assert "<SchemaMap" in workspace
-
-    # Source understanding is a real pre-pipeline workspace. It uses the same
-    # measured graph and connects its planner to both the source and staged run.
-    explore = (WEB_SRC / "pages" / "Explore.tsx").read_text(encoding="utf-8")
-    for feature in ("<SchemaDiagram", "<AgentBriefing", "<DocumentUnderstanding", "starterPrompts"):
-        assert feature in explore, f"the data-understanding screen is missing {feature}"
-    assert "sourceId={currentRun?.dataset ?? null}" in workflows
+    understanding = (
+        WEB_SRC / "components" / "UnderstandingWorkspace.tsx"
+    ).read_text(encoding="utf-8")
+    assert "<SchemaDiagram" in understanding
 
     shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
     app = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
@@ -897,7 +897,11 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert "<UnderstandingAndProposal" not in one_page
     assert "api.upload" in project_page
     assert "<AutomationInputSelector" in one_page
-    assert "<PlannerPanel" in guided
+    # #378: the Planner opener and its panel moved out of GuidedPipeline and
+    # onto the automation workspace, so it stays reachable in every lifecycle
+    # state instead of only the guided canvas.
+    assert "<PlannerPanel" in one_page
+    assert "onOpenPlanner" in guided
     assert "<PlannerPanel" in builder
     for control in ("pause_after", "gate_handler", "max_retries", "ArtifactPreview"):
         assert control in builder
@@ -1190,3 +1194,39 @@ def test_a_refused_graph_edit_costs_the_edit_and_not_the_answer(
     assert "plan-validation" in rejected
     assert "integrated_table" in rejected
     assert "pipeline_connections" in rejected
+
+
+def test_stage_detail_outputs_carry_the_diagnostic_flag(tmp_path: Path) -> None:
+    """#424: the stage inspector needs the same closed set the chips filter on.
+
+    `StageEvidence` rendered `detail["outputs"]` straight from this endpoint,
+    so the panel that opens from a node listed the engineering records that
+    node's own chips had just hidden -- the same run, two artifact lists, one
+    click apart. The flag is already on the artifact index; assert it survives
+    into the stage payload so the client filters on the backend's answer rather
+    than re-deriving which kinds count as diagnostics.
+    """
+    plane = _plane(tmp_path)
+    plane.store.put(
+        ProblemDefinition(
+            task_type=TaskType.REGRESSION,
+            target_column="churned",
+            primary_metric=Metric.RMSE,
+            title="Forecast customer churn score",
+            description="Prioritise retention outreach using pre-outcome evidence.",
+            confirmed_by="auto",
+        ),
+        run_id="flagged-run",
+        stage_exec_id="problem_discovery",
+    )
+    plane.store.put(
+        MeasurementBundle(scope="problem_discovery"),
+        run_id="flagged-run",
+        stage_exec_id="problem_discovery",
+    )
+
+    outputs = plane.stage_detail("flagged-run", "problem_discovery")["outputs"]
+    by_type = {item["type"]: item["diagnostic"] for item in outputs}
+
+    assert by_type["problem_definition"] is False
+    assert by_type["measurement_bundle"] is True

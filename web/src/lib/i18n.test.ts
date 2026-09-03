@@ -18,6 +18,8 @@ import SHELL_SOURCE from "../components/Shell.tsx?raw";
 import STAGING_ROUTING_SOURCE from "../components/stagingRoutingState.ts?raw";
 import UNDERSTANDING_WORKSPACE_SOURCE from "../components/UnderstandingWorkspace.tsx?raw";
 import SOURCE from "./i18n.ts?raw";
+import { ARTIFACT_TYPE_LABELS } from "../components/artifactTypeLabel";
+import { COUNT_UNITS } from "../components/collectionUnit";
 import { GROUPS } from "../components/mlPipelineGroups";
 import { LANGUAGES, localizedList, t } from "./i18n";
 
@@ -78,6 +80,14 @@ describe("labels the scanner cannot see", () => {
     expect(missing, "stage titles and descriptions reaching t() through variables").toEqual([]);
   });
 
+  it("translates every unit an artifact collection count can carry", () => {
+    // #297: the count phrase is chosen by the collection's key and reaches t()
+    // through a variable, so the literal scan cannot see any of these. An
+    // untranslated one would ship a Turkish artifact dialog saying "42 columns".
+    const known = new Set(catalogueKeys());
+    expect(COUNT_UNITS.filter((phrase) => !known.has(phrase))).toEqual([]);
+  });
+
   it("pins the top-level navigation labels the scanner cannot see", () => {
     // NAV reaches t() through `label`, so the literal scanner cannot see these
     // destinations at all (#77). #111 reduces the top level to Home, Projects
@@ -86,6 +96,24 @@ describe("labels the scanner cannot see", () => {
     expect(SHELL_SOURCE).toContain('{ to: "/", label: "Home"');
     expect(SHELL_SOURCE).toContain('{ to: "/projects", label: "Projects"');
     expect(SHELL_SOURCE).toContain('{ to: "/settings", label: "Settings"');
+  });
+
+  it("translates every artifact kind a card or modal can name", () => {
+    // #366: `artifactTitle()` derives the label from the artifact's type code
+    // and hands it to t() through a variable, so the literal scan never saw any
+    // of these -- 29 of the kinds shipped in English on a Turkish screen while
+    // this suite stayed green. `ArtifactType` is a closed vocabulary, so the
+    // list is enumerable; `tests/test_artifact_type_labels.py` holds it to the
+    // Python enum so a newly added kind cannot slip past this either.
+    const known = new Set(catalogueKeys());
+    expect(ARTIFACT_TYPE_LABELS.length, "no artifact labels to check").toBeGreaterThan(30);
+    expect(ARTIFACT_TYPE_LABELS.filter((label) => !known.has(label))).toEqual([]);
+  });
+
+  it("translates the artifact modal's type eyebrow", () => {
+    // The eyebrow above the artifact title rendered the raw type code with no
+    // t() call at all, so catalogue entries alone would not have reached it.
+    expect(UNDERSTANDING_WORKSPACE_SOURCE).toContain("{t(artifactTypeLabel(preview.artifact_type))}");
   });
 
   it("translates every staging progress label and detail", () => {

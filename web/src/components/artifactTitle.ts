@@ -1,4 +1,5 @@
 import type { ArtifactPreview } from "../lib/api";
+import { artifactTypeLabel } from "./artifactTypeLabel";
 
 /** The one-line label for an artifact, chosen the same way the full modal chooses it.
  *
@@ -22,6 +23,5 @@ export function artifactTitle(
   // Generic previews have no authored title, but the indexed type is still a
   // truthful, useful name. Falling back to "Artifact details" made every such
   // row and modal indistinguishable even after the backend exposed its type.
-  const words = preview.artifact_type.replaceAll("_", " ");
-  return translate(words.charAt(0).toLocaleUpperCase() + words.slice(1));
+  return translate(artifactTypeLabel(preview.artifact_type));
 }

@@ -54,19 +54,40 @@ def create_document_table_review(
     )
 
 
+class CandidateNotPromotable(ValueError):
+    """An accepted candidate cannot become a table.
+
+    Raised with a code and the candidate's own provenance rather than a
+    finished sentence, because the promote endpoint answers with the exception
+    text and the reader saw it verbatim: an English message with the internal
+    candidate id inside it (#310). The words are chosen at the edge, where the
+    request's language is known -- see `ads.api.i18n`.
+    """
+
+    def __init__(self, code: str, candidate: ExtractedTableCandidate) -> None:
+        super().__init__(f"{code}: {candidate.candidate_id}")
+        self.code = code
+        self.candidate_id = candidate.candidate_id
+        #: How the review dialog named this table, not how the store keys it.
+        self.title = candidate.title
+        self.source_file = candidate.source_file
+        self.page_number = candidate.page_number
+
+
 def _candidate_frame(candidate: ExtractedTableCandidate) -> pd.DataFrame:
+    # `rows` defaults to an empty list, so extraction can produce a candidate
+    # with headers and no data at all. It looks promotable in the review dialog,
+    # which reads the preview and never sees rows.
     if not candidate.rows:
-        raise ValueError(f"accepted candidate {candidate.candidate_id!r} has no rows")
+        raise CandidateNotPromotable("no_rows", candidate)
     width = max(len(row) for row in candidate.rows)
     if width == 0:
-        raise ValueError(f"accepted candidate {candidate.candidate_id!r} has no columns")
+        raise CandidateNotPromotable("no_columns", candidate)
     if any(len(row) != width for row in candidate.rows):
-        raise ValueError(f"accepted candidate {candidate.candidate_id!r} has ragged rows")
+        raise CandidateNotPromotable("ragged_rows", candidate)
     columns = candidate.columns or [f"column_{index + 1}" for index in range(width)]
     if len(columns) != width:
-        raise ValueError(
-            f"accepted candidate {candidate.candidate_id!r} schema does not match rows"
-        )
+        raise CandidateNotPromotable("schema_mismatch", candidate)
     frame = pd.DataFrame(candidate.rows, columns=columns)
     # A PDF table extracted from merged/multi-row headers routinely produces
     # blank or duplicate column labels (two sub-columns collapsing to the same
@@ -123,4 +144,8 @@ def promote_reviewed_document_tables(
     return promoted
 
 
-__all__ = ["create_document_table_review", "promote_reviewed_document_tables"]
+__all__ = [
+    "CandidateNotPromotable",
+    "create_document_table_review",
+    "promote_reviewed_document_tables",
+]

@@ -435,6 +435,64 @@ def test_delete_run_requires_exact_confirmation_and_preserves_shared_payload(
     assert not snapshot.exists()
 
 
+def test_delete_run_detaches_automation_history_and_unlocks_input_changes(
+    tmp_path: Path,
+) -> None:
+    """#334: deleting the artifacts alone left a ghost execution id on the
+    automation, so its run count stayed non-zero and its input binding could
+    never be changed again."""
+    plane = _plane(tmp_path)
+    automation = plane.automation_store.create("Reusable analysis")
+    attached = plane.automation_store.attach_execution(
+        automation.automation_id,
+        run_id="old-run",
+        source_id="upload:original",
+    )
+    card = DataCard(
+        table_name="customers",
+        source_uri="fixture://customers.csv",
+        source_format="csv",
+        n_rows=1,
+        n_columns=0,
+        columns=[],
+        profiled_rows=1,
+    )
+    plane.store.put(card, run_id="old-run", stage_exec_id="intake")
+    snapshot = plane._run_state_root / "old-run.json"  # noqa: SLF001
+    snapshot.write_text(
+        json.dumps(
+            {
+                "run_id": "old-run",
+                "configuration": {"mode": "manual"},
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T01:00:00+00:00",
+                "status": "completed",
+                "current_stage": None,
+                "events": [],
+                "attempts": [],
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    deleted = TestClient(create_app(plane=plane)).post(
+        "/api/runs/old-run/delete",
+        json={"confirmation": "old-run"},
+    )
+
+    assert deleted.status_code == 200, deleted.text
+    detached = plane.automation_store.get(automation.automation_id)
+    assert detached.execution_ids == ()
+    rebound = plane.automation_store.update(
+        automation.automation_id,
+        expected_revision=detached.revision,
+        changes={"source_id": "upload:replacement"},
+    )
+    assert rebound.source_id == "upload:replacement"
+    assert attached.execution_ids == ("old-run",)
+
+
 WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 
@@ -573,10 +631,15 @@ def test_run_deletion_asks_before_it_destroys() -> None:
     single stray click.
     """
     api_client = (WEB_SRC / "lib" / "api.ts").read_text(encoding="utf-8")
-    workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
+    # #434: Workflows.tsx, the page this test used to read, was unreachable
+    # dead code and is gone; the live delete control is the one on the
+    # automation workspace, guarding `deleteRun` with a native confirm.
+    automation_workspace = (
+        WEB_SRC / "pages" / "AutomationWorkspace.tsx"
+    ).read_text(encoding="utf-8")
 
     assert "confirmation: id" in api_client
-    assert "setConfirming" in workflows
+    assert "window.confirm(" in automation_workspace
 
 
 def _snapshot(plane: ControlPlane, run_id: str, status: str) -> Path:

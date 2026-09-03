@@ -44,8 +44,9 @@ interface TableNodeData extends Record<string, unknown> {
 
 type TableFlowNode = Node<TableNodeData, "table">;
 
-const NODE_WIDTH = 250;
-const NODE_HEIGHT = 118;
+// #380: px handed to the elk layout, grown 10% with the text inside them.
+const NODE_WIDTH = 275;
+const NODE_HEIGHT = 130;
 
 function TableNode({ data, selected }: NodeProps<TableFlowNode>) {
   const { table, joinColumns } = data;
@@ -54,15 +55,15 @@ function TableNode({ data, selected }: NodeProps<TableFlowNode>) {
   return (
     <div
       className={cx(
-        "h-[118px] w-[250px] rounded-xl border bg-surface px-3.5 py-3 shadow-card transition-shadow",
+        "h-[7.375rem] w-[15.625rem] rounded-xl border bg-surface px-3.5 py-3 shadow-card transition-shadow",
         selected ? "border-brand-500 shadow-pop ring-2 ring-brand-100" : "border-line",
       )}
       aria-label={`${table.name}, ${table.rows.toLocaleString()} ${t("rows")}, ${table.columns_count} ${t("columns")}`}
     >
       <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-2 !border-white !bg-brand-500" />
       <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-2 !border-white !bg-brand-500" />
-      <p className="truncate text-[13px] font-semibold text-ink" title={table.name}>{table.name}</p>
-      <p className="mt-0.5 text-[10px] text-ink-mute">
+      <p className="truncate text-2xs font-semibold text-ink" title={table.name}>{table.name}</p>
+      <p className="mt-0.5 text-3xs text-ink-mute">
         {table.rows.toLocaleString()} {t("rows")} · {table.columns_count} {t("columns")}
       </p>
       <div className="mt-2 flex min-h-5 flex-wrap gap-1">
@@ -70,7 +71,7 @@ function TableNode({ data, selected }: NodeProps<TableFlowNode>) {
         {personal > 0 && <Badge tone="warn">{personal} {t("personal")}</Badge>}
       </div>
       {joinColumns.length > 0 && (
-        <p className="mt-1.5 truncate font-mono text-[9.5px] text-ink-faint" title={joinColumns.join(", ")}>
+        <p className="mt-1.5 truncate font-mono text-4xs text-ink-faint" title={joinColumns.join(", ")}>
           {t("joins")}: {joinColumns.join(", ")}
         </p>
       )}
@@ -137,7 +138,8 @@ async function layoutGraph(
       target: relationship.from_table,
       type: "smoothstep",
       label: `${displayCardinality(relationship.cardinality)} · ${(relationship.overlap_rate * 100).toFixed(0)}%`,
-      labelStyle: { fill: lossy ? "#b45309" : "#475569", fontSize: 10, fontWeight: 600 },
+      // #380: an SVG edge label, in user units rather than rem -- bumped with the rest.
+      labelStyle: { fill: lossy ? "#b45309" : "#475569", fontSize: 11, fontWeight: 600 },
       labelBgStyle: { fill: "#ffffff", fillOpacity: 0.94 },
       labelBgPadding: [5, 3],
       labelBgBorderRadius: 5,
@@ -193,19 +195,19 @@ export function SchemaDiagram({ tables, relationships }: Props) {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="mr-auto">
           <p className="text-xs font-medium text-ink">{t("Reference entities flow left to right into dependent tables")}</p>
-          <p className="mt-0.5 text-[11px] text-ink-faint">{t("Select a table or connection to inspect its measured evidence.")}</p>
+          <p className="mt-0.5 text-2xs text-ink-faint">{t("Select a table or connection to inspect its measured evidence.")}</p>
         </div>
         {relationships.length > backbone.length && (
           <div className="inline-flex rounded-lg border border-line bg-surface-sunken p-0.5" role="group" aria-label={t("Relationship density")}>
             <button
               onClick={() => setShowAll(false)}
-              className={cx("rounded-md px-2.5 py-1 text-[11px] font-medium", !showAll ? "bg-surface text-ink shadow-card" : "text-ink-mute")}
+              className={cx("rounded-md px-2.5 py-1 text-2xs font-medium", !showAll ? "bg-surface text-ink shadow-card" : "text-ink-mute")}
             >
               {t("Clear view")} · {backbone.length}
             </button>
             <button
               onClick={() => setShowAll(true)}
-              className={cx("rounded-md px-2.5 py-1 text-[11px] font-medium", showAll ? "bg-surface text-ink shadow-card" : "text-ink-mute")}
+              className={cx("rounded-md px-2.5 py-1 text-2xs font-medium", showAll ? "bg-surface text-ink shadow-card" : "text-ink-mute")}
             >
               {t("All measured")} · {relationships.length}
             </button>
@@ -213,7 +215,7 @@ export function SchemaDiagram({ tables, relationships }: Props) {
         )}
       </div>
 
-      <div className="h-[500px] min-h-[420px] w-full overflow-hidden rounded-xl border border-line bg-surface-sunken">
+      <div className="h-[31.25rem] min-h-[26.25rem] w-full overflow-hidden rounded-xl border border-line bg-surface-sunken">
         {layoutError ? (
           <p className="m-4 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{layoutError}</p>
         ) : nodes.length === 0 ? (
@@ -245,7 +247,7 @@ export function SchemaDiagram({ tables, relationships }: Props) {
         )}
       </div>
 
-      <div className="mt-3 min-h-[74px] rounded-lg border border-line bg-surface px-3.5 py-3">
+      <div className="mt-3 min-h-[4.625rem] rounded-lg border border-line bg-surface px-3.5 py-3">
         {selectedRelationship ? (
           <div className="flex flex-wrap items-start gap-x-5 gap-y-2 text-xs">
             <div className="min-w-0 flex-1">
@@ -270,7 +272,7 @@ export function SchemaDiagram({ tables, relationships }: Props) {
             </p>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-ink-faint">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-2xs text-ink-faint">
             <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-ink-faint" />{t("Measured relationship (evidence)")}</span>
             <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-warn-500" />{t("Lossy relationship (drops rows)")}</span>
             <span>{t("The clear view removes redundant cycles only; all evidence remains available.")}</span>

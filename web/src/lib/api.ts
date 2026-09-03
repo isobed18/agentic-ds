@@ -29,6 +29,14 @@ export interface WorkflowNode {
   ended_at?: string | null;
   branch_of?: string | null;
   label?: string;
+  /**
+   * A short line the canvas card shows under its description, already
+   * translated, with the tone it should read in. Composed on the server for the
+   * same reason panel severity is: whether something is a warning is a judgment
+   * about the run, and the two sides disagreeing about it is worse than either
+   * being slightly wrong.
+   */
+  note?: { text: string; tone: "neutral" | "warn" } | null;
 }
 
 export interface Workflow {
@@ -153,6 +161,7 @@ export interface DatasetSummary {
   documents?: number;
   document_pages?: number;
   document_summaries?: { name: string; format: string; pages: number }[];
+  file_summaries?: FileProfileSummary[];
   privacy?: string;
 }
 
@@ -178,6 +187,23 @@ export interface ModelSummary {
   saved: boolean;
   candidate_count: number;
   training_rows: number;
+  /**
+   * The same run's model refit on externally engineered features, when there is
+   * one. It shares this card rather than getting its own: one run produced both,
+   * and two cards would read as two unrelated models.
+   */
+  enhanced?: EnhancedModelSummary | null;
+}
+
+export interface EnhancedModelSummary {
+  artifact_id: string;
+  display_name: string;
+  estimator: string;
+  holdout_score: number | null;
+  /** Oriented so positive always means better, whichever way the metric runs. */
+  score_delta: number | null;
+  generated_feature_count: number;
+  saved: boolean;
 }
 
 export interface ReportSummary {
@@ -364,6 +390,29 @@ export interface Story {
   }[];
 }
 
+/** One column a deferred plan could be aimed at (#429). */
+export interface DeferredPlanTarget {
+  name: string;
+  table: string;
+  semantic_type?: string;
+  /** `is_usable_target`: the product's own pre-filter on plausible targets. */
+  candidate_target: boolean;
+  null_rate?: number;
+  unique_rate?: number;
+}
+
+/** What naming a target did. A `viable: false` reply carries the measured
+ *  reasons that column cannot carry that task and changes nothing. */
+export interface DeferredPlanOverride extends Partial<StagingWorkspace> {
+  run_id: string;
+  artifact_id: string;
+  viable: boolean;
+  target_column: string;
+  task_type: string;
+  blocking_reasons: string[];
+  warnings: string[];
+}
+
 export interface StageOutput {
   artifact_id: string;
   type: string;
@@ -372,6 +421,12 @@ export interface StageOutput {
   created_at: string;
   summary?: Record<string, unknown>;
   story?: Story;
+  /** #305/#424: whether this is an engineering record -- an agent audit, a
+   *  measurement bundle, an internal trial, an attempt diagnostic -- rather
+   *  than a result. The backend has always sent it on these entries; nothing
+   *  read it, so the stage inspector listed diagnostics whatever the
+   *  diagnostics toggle said. */
+  diagnostic?: boolean;
 }
 
 export interface StageAttempt {
@@ -393,7 +448,16 @@ export interface StageAttempt {
 export interface StageCritique {
   rubric_version?: string;
   unmet_criteria?: string[];
-  findings?: { check_id: string; severity: string; evidence?: string | null }[];
+  findings?: {
+    check_id: string;
+    severity: string;
+    evidence?: string | null;
+    /** #427: the measured facts behind the failure -- which candidate framing
+     *  was rejected and why, which validator fired on which column. Separate
+     *  from `evidence`, which is a sentence about the check itself and gets
+     *  translated through `CHECK_TEXT`. */
+    measurements?: string[] | null;
+  }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */
@@ -449,22 +513,31 @@ export interface MeasuredRelationship {
   rationale?: string;
 }
 
+/** A bounded, row-free explanation of one physical input file. */
+export interface FileProfileSummary {
+  name: string;
+  format: string;
+  route: "structured" | "documents" | "unsupported" | "needs_review";
+  reason?: LocalizedText;
+  table_names?: string[];
+  /** Profile measurements only; source row values never enter this text. */
+  insight?: LocalizedText;
+  origin?: "measured";
+  rows?: number;
+  tables?: number;
+  candidate_keys?: string[];
+  quality_issues?: number;
+  schema_role?: LocalizedText;
+  detected_flow?: string;
+  detection_deterministic?: boolean;
+  detection_evidence?: string;
+  detection_reason?: string;
+  detection_conflicts_with_extension?: boolean;
+}
+
 export interface SourceProfile {
   source_id: string;
-  source_files?: Array<{
-    name: string;
-    format: string;
-    route: "structured" | "documents" | "unsupported";
-    reason: LocalizedText;
-    table_names: string[];
-    // Measured from content by ads.file_detection, not from the extension. Optional
-    // because the extra may not be installed, in which case the API omits it.
-    detected_flow?: string;
-    detection_deterministic?: boolean;
-    detection_evidence?: string;
-    detection_reason?: string;
-    detection_conflicts_with_extension?: boolean;
-  }>;
+  source_files?: FileProfileSummary[];
   tables: ProfiledTable[];
   documents?: ProfiledDocument[];
   relationships?: MeasuredRelationship[];
@@ -648,13 +721,55 @@ export interface DocumentExtractionSummary {
   }>;
 }
 
+/** An extracted PDF table a person accepted and promoted (#361).
+ *
+ * Promotion only ever wrote a table asset, so the plan panel -- which reads the
+ * workspace and the source profile -- had nothing new to show afterwards. The
+ * profile is a walk of the uploaded files and a promoted table is not a file,
+ * so a reload did not help either. The workspace carries the record now.
+ */
+export interface PromotedDocumentTable {
+  candidate_id: string;
+  artifact_id: string;
+  source_file: string;
+  page_number?: number | null;
+  row_count: number;
+  column_count: number;
+}
+
 export interface RunProgressSnapshot {
   status?: string;
   current_stage?: string | null;
   events?: Array<Record<string, unknown>>;
   attempts?: Array<Record<string, unknown>>;
   pause_requested?: boolean;
+  /** #305: ids of this run's diagnostic artifacts, hidden from the default view. */
+  diagnostic_artifact_ids?: string[];
   [key: string]: unknown;
+}
+
+/** One tool call an agent made, as the run was making it (#411). */
+export interface ToolActivityEvent {
+  seq: number;
+  /** The agent spec's own id, e.g. "eda_investigator". */
+  agent: string;
+  /** The registry's tool id, e.g. "profile_table". */
+  tool: string;
+  /** The broker's own vocabulary: "allowed", "denied", or "failed". */
+  decision: string;
+  at: string;
+  detail?: string | null;
+}
+
+export interface ToolActivitySnapshot {
+  run_id: string;
+  events: ToolActivityEvent[];
+  /** Pass back as `after` on the next poll. */
+  cursor: number;
+  /** The feed is a bounded ring; true when it wrapped past the last cursor. */
+  dropped: boolean;
+  /** False once the run is finished — the signal to stop polling. */
+  active: boolean;
 }
 
 export interface ArtifactPreview {
@@ -717,11 +832,16 @@ export interface StagingWorkspace {
   /** Human-promoted PDF tables for this run, computed live (never baked into
    * this otherwise-immutable snapshot, since promotion happens after it). */
   promoted_tables?: { name: string; artifact_id: string; row_count: number; columns: string[] }[];
+  promoted_document_tables?: PromotedDocumentTable[];
   recommended_plan?: {
     proposal_id: string;
     status: "proposed" | "accepted" | "rejected" | "superseded";
     mode: "fully_auto";
     pipeline_recommendation?: "create_pipeline" | "defer_pipeline" | "no_pipeline";
+    /** #430: what would lift a deferral. A deferral used to say only that it
+     *  existed, and nothing re-evaluated it, so the state sustained itself.
+     *  Empty on any other recommendation. */
+    deferred_on?: "" | "document_table_review" | "planner_decision";
     decision_summary?: LocalizedText | null;
     configuration: Record<string, unknown>;
     stage_directives: Record<string, string[]>;
@@ -729,10 +849,16 @@ export interface StagingWorkspace {
     auto_proceed_stages: string[];
     max_retries_by_stage: Record<string, number>;
     rationale: LocalizedText[];
+    /** #429: set when a person answered a deferral by naming the target, with
+     *  what the measurement said about their choice. The Planner's
+     *  `decision_summary` still says what it wanted; this says what was done
+     *  instead and on what evidence. */
+    human_override?: LocalizedText | null;
     accepted: boolean;
     accepted_at?: string | null;
     accepted_by?: "human" | null;
   } | null;
+  pending_override?: PlannerOverrideProposal | null;
   chat_history: {
     role: "user" | "planner";
     content: LocalizedText;
@@ -740,6 +866,24 @@ export interface StagingWorkspace {
   }[];
   planner_model?: string | null;
   planner_error?: string | null;
+}
+
+export interface PlannerOverrideProposal {
+  proposal_id: string;
+  configuration_patch: Record<string, unknown>;
+  stage_directives: Record<string, string[]>;
+  checkpoint_stages: string[];
+  auto_proceed_stages: string[];
+  max_retries_by_stage: Record<string, number>;
+  pipeline_blueprint?: PipelineBlueprint | null;
+}
+
+export interface PlannerChatResponse {
+  reply?: string;
+  message?: string;
+  graph_edit_rejected?: string;
+  override_proposal?: PlannerOverrideProposal;
+  problem_recommendations?: unknown[];
 }
 
 /**
@@ -821,6 +965,42 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/**
+ * Artifact previews already fetched this session, keyed by artifact and language.
+ *
+ * #368: the only cache in this path was a `useRef` inside `ArtifactNodes`, so
+ * switching project sections -- which unmounts the section's whole subtree --
+ * threw it away. Coming back re-issued one `preview` request per expanded
+ * artifact and put every title back through "Loading…" on a run that finished
+ * hours ago.
+ *
+ * Caching it is not a guess about how often previews change: `ads.contracts.base`
+ * makes artifact immutability a contract invariant -- a stage produces a new
+ * artifact rather than mutating an existing one -- so a repeat fetch for the
+ * same id is guaranteed to return what it returned before.
+ *
+ * Language is part of the key because `request()` appends `?lang=` and a preview
+ * carries server-composed prose alongside its `{en, tr}` titles. Keying on the
+ * id alone would serve one language's wording after a switch to the other.
+ *
+ * Two maps rather than one: the promise map deduplicates concurrent and later
+ * callers, and the settled map answers synchronously so a remounting component
+ * can render a known title on its first frame. A rejection is cached by
+ * neither.
+ */
+const previewCache = new Map<string, Promise<ArtifactPreview>>();
+const settledPreviews = new Map<string, ArtifactPreview>();
+
+function previewKey(artifactId: string): string {
+  return `${activeLanguage()}:${artifactId}`;
+}
+
+/** Empty the preview cache. For tests; nothing in the app invalidates it. */
+export function clearArtifactPreviewCache(): void {
+  previewCache.clear();
+  settledPreviews.clear();
 }
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
@@ -1057,6 +1237,17 @@ export const api = {
     request<AutomationContents>(`/api/automations/${encodeURIComponent(id)}/contents`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),
   runProgress: (id: string) => request<RunProgressSnapshot>(`/api/runs/${id}/progress`),
+  /**
+   * Tool calls a run has made since `after` (#411). Tool use was only ever
+   * visible after the fact, as a count on a finished stage's artifact; this is
+   * the same information while it is happening, and naming the tool.
+   *
+   * `cursor` is what to pass as `after` next time, and `active` is the signal
+   * to stop polling -- an in-memory feed for a run that ended answers forever
+   * otherwise. An unknown run is not an error: it answers empty and inactive.
+   */
+  toolActivity: (id: string, after = 0) =>
+    request<ToolActivitySnapshot>(`/api/runs/${id}/tool-activity?after=${after}`),
   stage: (runId: string, stageId: string) => request<StageDetail>(`/api/runs/${runId}/stages/${stageId}`),
   createRun: (body: RunRequest) => request<RunSummary>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   /**
@@ -1070,6 +1261,42 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+  /** #428: pin an ML framing on a stopped run and re-run problem discovery.
+   *
+   * Not a new run: the intake, schema discovery and integration this run
+   * already did were not what failed, so they are kept. The named column is a
+   * constraint, not a ranking hint -- the candidate is built and measured
+   * directly, and an unviable one comes back as blocking reasons for that
+   * column rather than as another unexplained failure. */
+  pinProblemFraming: (
+    id: string,
+    body: { kind: "predict_column" | "flag_anomalies"; target_column: string | null; task_type?: string | null },
+  ) =>
+    request<{ run_id: string; status: string; stage_id: string; target_column: string | null; task_type: string | null }>(
+      `/api/runs/${id}/problem/pin`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** #429: the columns a person can name to answer a deferred plan.
+   *
+   * Read off the base table's profile, so the names match what the pipeline
+   * will see -- the profiler snake-cases headers, and a picker offering the
+   * original casing would produce a target the validators reject. */
+  deferredPlanTargets: (runId: string) =>
+    request<{ run_id: string; columns: DeferredPlanTarget[] }>(
+      `/api/runs/${runId}/staging/plan/targets`,
+    ),
+  /** #429: answer a deferral by naming the target.
+   *
+   * `viable: false` is the measurement's answer, not a failure: the blocking
+   * reasons are for that column and the plan is left as it was. */
+  overrideDeferredPlan: (
+    runId: string,
+    body: { base_artifact_id: string; target_column: string; task_type?: string | null },
+  ) =>
+    request<DeferredPlanOverride>(`/api/runs/${runId}/staging/plan/override`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   deleteModel: (artifactId: string) =>
     request<{ artifact_id: string; index_entries: number }>(
       `/api/models/${encodeURIComponent(artifactId)}`,
@@ -1184,8 +1411,35 @@ export const api = {
     ),
   runDocumentUnderstanding: (runId: string) =>
     request<StagingWorkspace>(`/api/runs/${runId}/staging/documents/run`, { method: "POST" }),
-  artifactPreview: (artifactId: string) =>
-    request<ArtifactPreview>(`/api/artifacts/${encodeURIComponent(artifactId)}/preview`),
+  /** One artifact's preview, fetched at most once per session and language.
+   *
+   * See {@link previewCache}. `cachedArtifactPreview` is the synchronous read
+   * of the same cache, for a component that wants to render a known title on
+   * its first frame instead of passing through "Loading…" again. */
+  artifactPreview: (artifactId: string) => {
+    const key = previewKey(artifactId);
+    const inFlight = previewCache.get(key);
+    if (inFlight) return inFlight;
+    const pending = request<ArtifactPreview>(
+      `/api/artifacts/${encodeURIComponent(artifactId)}/preview`,
+    )
+      .then((preview) => {
+        settledPreviews.set(key, preview);
+        return preview;
+      })
+      .catch((error) => {
+        // A failed preview is not a fact about the artifact. Forget it so a
+        // later expand can try again, rather than caching the failure for the
+        // rest of the session.
+        previewCache.delete(key);
+        throw error;
+      });
+    previewCache.set(key, pending);
+    return pending;
+  },
+  /** The preview for an artifact already fetched this session, or undefined. */
+  cachedArtifactPreview: (artifactId: string): ArtifactPreview | undefined =>
+    settledPreviews.get(previewKey(artifactId)),
   /** Amend a staged run's configuration. Accepted while it is still staging. */
   updateStaged: (runId: string, configuration: Record<string, unknown>) =>
     request<{ configuration: Record<string, unknown> }>(`/api/runs/${runId}/staged`, {
@@ -1275,7 +1529,7 @@ export const api = {
   hardening: () => request<Hardening>("/api/hardening"),
   /** Move a column between pii and internal before the classification is used. */
   overrideSensitivity: (runId: string, columns: Record<string, "pii" | "internal">) =>
-    request<{ applied: Record<string, string> }>(`/api/runs/${runId}/sensitivity`, {
+    request<{ applied: Record<string, "pii" | "internal"> }>(`/api/runs/${runId}/sensitivity`, {
       method: "POST",
       body: JSON.stringify({ columns }),
     }),
@@ -1290,6 +1544,14 @@ export const api = {
   directives: (runId: string) =>
     request<{ directives: Record<string, string[]> }>(`/api/runs/${runId}/directives`),
 
-  plannerChat: (body: unknown) => request<{ reply?: string; message?: string; [k: string]: unknown }>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }, 120_000),
+  plannerChat: (body: unknown) => request<PlannerChatResponse>("/api/planner/chat", { method: "POST", body: JSON.stringify(body) }, 120_000),
+  applyPlannerOverride: (runId: string, proposalId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/planner-overrides/${proposalId}/apply`, {
+      method: "POST",
+    }),
+  discardPlannerOverride: (runId: string, proposalId: string) =>
+    request<StagingWorkspace>(`/api/runs/${runId}/planner-overrides/${proposalId}/discard`, {
+      method: "POST",
+    }),
   artifact: (id: string) => request<Record<string, unknown>>(`/api/artifacts/${id}`),
 };

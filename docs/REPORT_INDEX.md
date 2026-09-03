@@ -7,6 +7,14 @@
 - [`PRODUCT_DELIVERY_REPORT.md`](PRODUCT_DELIVERY_REPORT.md) — current delivered behavior,
   verification, known gaps, and recommended next delivery.
 
+## Presentation
+
+- [`sunum.html`](sunum.html) — architecture walkthrough for a technical audience. A single
+  self-contained HTML deck: the whole pipeline is drawn once and the slides move a camera over it,
+  zooming into each stage and its internal modules. Open it in a browser; there is no build step.
+  Content lives in the `NODES` / `EDGES` / `SLIDES` arrays near the top of the script, so a stage's
+  wording is a one-line edit and nobody touches SVG coordinates.
+
 ## Supporting evidence and research
 
 - [`assurance-benchmark-report.md`](assurance-benchmark-report.md) — product differentiation and

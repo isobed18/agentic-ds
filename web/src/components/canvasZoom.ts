@@ -36,8 +36,10 @@ export const CANVAS_MAX_STEP = 3;
  * box was scaled as a whole, so the overflow scaled with it and the proportion
  * never changed.
  */
-export const CANVAS_BASE_WIDTH = 1500;
-export const CANVAS_BASE_HEIGHT = 860;
+// #380: the floor the scroll box reserves for the graph, in px. The graph it
+// has to contain is 10% wider and taller now, so this is too.
+export const CANVAS_BASE_WIDTH = 1650;
+export const CANVAS_BASE_HEIGHT = 946;
 
 export function clampStep(step: number): number {
   if (!Number.isFinite(step)) return 0;

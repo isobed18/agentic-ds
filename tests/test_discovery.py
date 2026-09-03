@@ -30,6 +30,7 @@ from ads.contracts import (
     Sensitivity,
     TaskType,
 )
+from ads.contracts.datacard import MAX_TARGET_CLASSES
 from ads.discovery import MIN_MINORITY_COUNT, compute_support, usable_feature_columns
 from ads.intake import LoadedTable, profile_table
 
@@ -63,6 +64,120 @@ def abt() -> pd.DataFrame:
             "balanced_flag": (rng.random(n) < 0.4).astype(int),
         }
     )
+
+
+class TestWhichColumnsAreOfferedAsTargets:
+    """#427: the pre-filter and the measurement have to agree.
+
+    `is_usable_target` only excluded the structurally impossible -- identifier,
+    constant, empty, unknown, PII, mostly-null -- so the "Candidate targets"
+    digest handed to the agent listed framings `compute_support` was then
+    guaranteed to block. On the reported 100k-row file that included a
+    free-text claim description with 97,219 distinct values and a raw
+    timestamp. The agent proposed one, the measurement rejected it, and the
+    stage failed with nothing viable and no readable reason.
+    """
+
+    def test_free_text_is_not_offered(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "claim_description": [
+                    f"lower back strain incident {i} on site" for i in range(200)
+                ],
+                "cost": np.linspace(100.0, 9000.0, 200),
+            }
+        )
+        card = _card(frame)
+
+        description = card.column("claim_description")
+        assert description is not None
+        assert description.semantic_type is SemanticType.TEXT
+        assert not description.is_usable_target
+        assert "claim_description" not in {c.name for c in card.candidate_targets()}
+
+    def test_a_raw_timestamp_is_not_offered(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "accident_at": pd.date_range("2020-01-01", periods=200, freq="D"),
+                "cost": np.linspace(100.0, 9000.0, 200),
+            }
+        )
+        card = _card(frame)
+
+        accident_at = card.column("accident_at")
+        assert accident_at is not None
+        assert accident_at.semantic_type is SemanticType.DATETIME
+        assert not accident_at.is_usable_target
+
+    def test_the_two_are_exactly_what_the_measurement_blocks(self) -> None:
+        """Proof the pre-filter and `compute_support` now agree: the columns
+        just excluded are the ones the measurement rejects outright."""
+        frame = pd.DataFrame(
+            {
+                "claim_description": [
+                    f"lower back strain incident {i} on site" for i in range(200)
+                ],
+                "accident_at": pd.date_range("2020-01-01", periods=200, freq="D"),
+                "cost": np.linspace(100.0, 9000.0, 200),
+            }
+        )
+        card = _card(frame)
+
+        for column, task in (
+            ("claim_description", TaskType.MULTICLASS_CLASSIFICATION),
+            ("accident_at", TaskType.REGRESSION),
+        ):
+            support = compute_support(card, frame, target_column=column, task_type=task)
+            assert not support.is_viable, f"{column} should be blocked by the measurement"
+
+    def test_a_numeric_target_keeps_its_cardinality(self) -> None:
+        """The near-unique rule is about classification levels. A 200-distinct
+        numeric column is a perfectly good regression target and must not be
+        filtered out with the text ones."""
+        frame = pd.DataFrame(
+            {
+                "cost": np.linspace(100.0, 9000.0, 200),
+                "region": ["tr"] * 100 + ["de"] * 100,
+            }
+        )
+        card = _card(frame)
+
+        cost = card.column("cost")
+        assert cost is not None
+        assert cost.n_unique == 200
+        assert cost.is_usable_target
+        assert compute_support(
+            card, frame, target_column="cost", task_type=TaskType.REGRESSION
+        ).is_viable
+
+    def test_a_near_unique_categorical_is_not_offered(self) -> None:
+        # Beyond the class limit, `too_many_classes` blocks it outright, so
+        # offering it as a target only invites a framing that cannot run.
+        frame = pd.DataFrame(
+            {
+                "case_code": [f"C{i:04d}-{i % 7}" for i in range(200)],
+                "cost": np.linspace(100.0, 9000.0, 200),
+            }
+        )
+        card = _card(frame)
+
+        case_code = card.column("case_code")
+        assert case_code is not None
+        assert case_code.n_unique > MAX_TARGET_CLASSES
+        assert not case_code.is_usable_target
+
+    def test_a_two_level_flag_is_still_offered(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "churned": [0, 1] * 100,
+                "spend": np.linspace(10.0, 900.0, 200),
+            }
+        )
+        card = _card(frame)
+
+        churned = card.column("churned")
+        assert churned is not None
+        assert churned.is_usable_target
 
 
 class TestFeatureSelection:
