@@ -889,7 +889,12 @@ const TR: Record<string, string> = {
   "Completed stages": "Tamamlanan aşamalar",
   "Complete": "Tamamlandı",
   "Last activity": "Son etkinlik",
-  "Select a completed node in the Editor to inspect its readable artifacts and evidence.": "Okunabilir artifact'ları ve kanıtları incelemek için Düzenleyici'de tamamlanmış bir düğüm seçin.",
+  // #443: the panel used to end by telling the reader to select a node in the
+  // Editor while offering no way to point the Editor at the run it described.
+  // It has one now, so the sentence names it instead.
+  "Open in the Editor": "Düzenleyici'de aç",
+  "Open this execution in the Editor": "Bu çalışmayı Düzenleyici'de aç",
+  "Open this execution to draw its graph, artifacts and evidence in the Editor.": "Grafiğini, artifact'larını ve kanıtlarını Düzenleyici'de görmek için bu çalışmayı açın.",
   "Uploaded data": "Yüklenen veri",
   "Uploaded files": "Yüklenen dosyalar",
   "{count} files": "{count} dosya",
