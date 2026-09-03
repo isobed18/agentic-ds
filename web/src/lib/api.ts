@@ -425,7 +425,16 @@ export interface StageAttempt {
 export interface StageCritique {
   rubric_version?: string;
   unmet_criteria?: string[];
-  findings?: { check_id: string; severity: string; evidence?: string | null }[];
+  findings?: {
+    check_id: string;
+    severity: string;
+    evidence?: string | null;
+    /** #427: the measured facts behind the failure -- which candidate framing
+     *  was rejected and why, which validator fired on which column. Separate
+     *  from `evidence`, which is a sentence about the check itself and gets
+     *  translated through `CHECK_TEXT`. */
+    measurements?: string[] | null;
+  }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */

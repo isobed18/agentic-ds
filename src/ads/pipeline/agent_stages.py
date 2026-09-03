@@ -142,6 +142,23 @@ def _validation_failure_count(result: AgentPanelResult[Any]) -> int:
     return len(result.all_failures)
 
 
+def _validation_failure_details(result: AgentPanelResult[Any]) -> list[str]:
+    """Which validators fired, for a reader rather than for a rule (#427).
+
+    The count alone cannot be acted on: `unknown_target` on a column named in
+    the original casing and `task_target_mismatch` on a datetime are both "1
+    validation failure", and they call for opposite corrections.
+    """
+    seen: list[str] = []
+    for failure in result.all_failures:
+        line = f"{failure.layer}/{failure.code}: {failure.detail}"
+        if failure.field_path:
+            line = f"{line} (at {failure.field_path})"
+        if line not in seen:
+            seen.append(line)
+    return seen
+
+
 def _agent_audit(
     stage_id: str,
     spec: AgentSpec[Any],
@@ -186,7 +203,10 @@ def _failed_result(result: AgentPanelResult[Any], audit: AgentAudit) -> StageRes
     return StageResult(
         artifacts=[audit],
         names={0: "agent_audit"},
-        signals=QualitySignals(validation_failures=_validation_failure_count(result)),
+        signals=QualitySignals(
+            validation_failures=_validation_failure_count(result),
+            validation_failure_details=_validation_failure_details(result),
+        ),
         digest=detail[:1500],
     )
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ads.contracts.datacard import (
+    MAX_TARGET_CLASSES,
     ColumnProfile,
     DataCard,
     SemanticType,
@@ -36,7 +37,9 @@ MIN_ROWS_PER_FEATURE = 5.0
 #: Warn (not block) below this positive rate.
 IMBALANCE_WARN_RATE = 0.05
 #: A multiclass target with more levels than this is really something else.
-MAX_CLASSES = 50
+#: Aliases the contract's limit so `is_usable_target` cannot offer the agent a
+#: target this function will then block (#427).
+MAX_CLASSES = MAX_TARGET_CLASSES
 
 #: Semantic types that can never serve as a model feature.
 _UNUSABLE_FEATURE_TYPES = frozenset(

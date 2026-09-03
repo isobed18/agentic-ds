@@ -19,6 +19,13 @@ from pydantic import Field, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 
+#: A classification target with more levels than this is really something
+#: else. Defined here rather than in `ads.discovery.support` because
+#: `is_usable_target` has to apply the same limit the measurement does, and
+#: contracts cannot import from discovery; `support.MAX_CLASSES` aliases it so
+#: there is one number (#427).
+MAX_TARGET_CLASSES = 50
+
 
 class SemanticType(StrEnum):
     """Inferred meaning of a column, beyond its storage dtype.
@@ -192,17 +199,51 @@ class ColumnProfile(FrozenModel):
         Deliberately conservative and deterministic; the ProblemDiscoveryAgent
         proposes targets, but this pre-filter keeps it from proposing something
         structurally impossible (all-null, constant, or an identifier).
+
+        #427: it used to stop there, so the "Candidate targets" digest handed to
+        the agent offered framings `compute_support` was then guaranteed to
+        block -- a free-text claim description with 97,219 distinct values in
+        100,000 rows, and a raw timestamp, both listed as targets. The agent
+        proposed one, the measurement rejected it, and the stage failed with
+        nothing viable. The pre-filter and the measurement have to agree, so
+        this excludes exactly what `_check_task_target_compatibility` cannot
+        admit: a supervised target is numeric (regression) or has between 2 and
+        `MAX_TARGET_CLASSES` levels (classification), which leaves out text,
+        datetime, and any near-unique non-numeric column.
         """
         if self.sensitivity is Sensitivity.PII:
             return False
-        if self.semantic_type in (
-            SemanticType.IDENTIFIER,
-            SemanticType.CONSTANT,
-            SemanticType.EMPTY,
-            SemanticType.UNKNOWN,
-        ):
+        if self.semantic_type in _UNUSABLE_TARGET_TYPES:
             return False
-        return self.null_rate < 0.5
+        if self.null_rate >= 0.5:
+            return False
+        # Numeric targets are regression candidates whatever their cardinality;
+        # a 100,000-level numeric column is a perfectly good one. Everything
+        # else can only be a classification target, and beyond the class limit
+        # `too_many_classes` blocks it outright.
+        if self.semantic_type in (
+            SemanticType.NUMERIC_CONTINUOUS,
+            SemanticType.NUMERIC_DISCRETE,
+        ):
+            return True
+        return 2 <= self.n_unique <= MAX_TARGET_CLASSES
+
+
+#: Semantic types no supervised target can have. Identifier, constant and
+#: empty are structurally impossible; unknown means the profiler could not say
+#: what the column is. Text and datetime are here because
+#: `_check_task_target_compatibility` blocks both -- regression needs a numeric
+#: target and classification needs countable classes (#427).
+_UNUSABLE_TARGET_TYPES = frozenset(
+    {
+        SemanticType.IDENTIFIER,
+        SemanticType.CONSTANT,
+        SemanticType.EMPTY,
+        SemanticType.UNKNOWN,
+        SemanticType.TEXT,
+        SemanticType.DATETIME,
+    }
+)
 
 
 class LoadIssue(FrozenModel):

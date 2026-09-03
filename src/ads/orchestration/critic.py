@@ -65,6 +65,21 @@ class Criterion:
     description: str
     check: Check | None = None
     severity: Severity = Severity.WARN
+    #: What to say when the check does not hold.
+    #:
+    #: #427: `description` states the condition that *should* hold, and a
+    #: failure used to be rendered as `"Mechanical check failed: " +
+    #: description` -- so the panel printed the success sentence with "failed:"
+    #: glued to the front and both bullets read as assertions that everything
+    #: was fine. Every criterion states its own failure; a criterion that
+    #: somehow has none reports its id rather than the inverted sentence.
+    failure: str | None = None
+    #: Measured detail for a failure, read from the same context the check saw.
+    #:
+    #: The reason a framing is not viable is already computed and already
+    #: specific; without this it stays in the artifact while the panel shows a
+    #: tautology (#427).
+    evidence: Callable[[CritiqueContext], list[str]] | None = None
 
     @property
     def is_deterministic(self) -> bool:
@@ -159,8 +174,15 @@ def critique_stage(
                 Finding(
                     check_id=criterion.id,
                     severity=criterion.severity,
-                    evidence=f"Mechanical check failed: {criterion.description}",
+                    # #427: never `"failed: " + <the thing that should be
+                    # true>`. The criterion's own failure wording, or its id --
+                    # a bare code is a worse read than a sentence but an
+                    # honest one, where the inverted sentence was neither.
+                    evidence=criterion.failure or f"{criterion.id}: this check did not hold.",
                     suggested_fix=None,
+                    measurements=(
+                        criterion.evidence(context)[:20] if criterion.evidence else []
+                    ),
                 )
             )
 
