@@ -13,8 +13,10 @@ from ads.documents.pdf import (
     pdf_prompt_context,
 )
 from ads.documents.promotion import (
+    PROMOTED_SOURCE_FORMAT,
     CandidateNotPromotable,
     create_document_table_review,
+    load_promoted_document_tables,
     promote_reviewed_document_tables,
 )
 
@@ -26,7 +28,9 @@ __all__ = [
     "load_pdf",
     "load_pdf_directory",
     "pdf_prompt_context",
+    "PROMOTED_SOURCE_FORMAT",
     "create_document_table_review",
+    "load_promoted_document_tables",
     "promote_reviewed_document_tables",
     "document_extraction_prompt_context",
     "extract_document_directory",

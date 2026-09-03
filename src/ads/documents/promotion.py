@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import pandas as pd
 
+from ads.contracts.base import ArtifactType
 from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
     DocumentExtraction,
@@ -13,8 +14,8 @@ from ads.contracts.documents import (
     DocumentTableReview,
     ExtractedTableCandidate,
 )
-from ads.dataflow import persist_table_asset
-from ads.intake import normalize_columns
+from ads.dataflow import load_table_asset, persist_table_asset
+from ads.intake import LoadedTable, normalize_columns
 from ads.store import ArtifactRef, ArtifactStore
 
 
@@ -144,8 +145,83 @@ def promote_reviewed_document_tables(
     return promoted
 
 
+#: The component id every promotion writes into its asset's provenance. It is
+#: what distinguishes a promoted PDF table from every other `TableAsset` a run
+#: writes -- the integrated ABT is one too.
+PROMOTION_COMPONENT_ID = "document-table-promotion"
+
+#: The `source_format` a promoted table carries into profiling. PDF-derived rows
+#: entering the ABT stay distinguishable from uploaded ones: the DataCard, the
+#: digest an agent reads, and the source-profile payload all show this rather
+#: than "csv" (#445).
+PROMOTED_SOURCE_FORMAT = "document_table"
+
+
+def _table_name(asset_name: str | None, artifact_id: str) -> str:
+    """A SQL-safe table name for a promoted candidate.
+
+    `promote_reviewed_document_tables` names the artifact after the candidate
+    id, which is `report.pdf:table:1` -- dots and colons that the integration
+    executor would have to quote and that read badly in a plan. The candidate id
+    is still on the `PromotedDocumentTable` record and in the asset provenance,
+    so nothing is lost by making this readable.
+    """
+    raw = asset_name or artifact_id
+    cleaned = "".join(character if character.isalnum() else "_" for character in raw).strip("_")
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return f"doc_{cleaned.lower()}" if cleaned else f"doc_{artifact_id[:12]}"
+
+
+def load_promoted_document_tables(store: ArtifactStore, run_id: str) -> list[LoadedTable]:
+    """Every promoted document table for a run, as tables intake can profile.
+
+    #445 (the follow-up #390 said was tracked separately and was not): promotion
+    was a durable, consequential record that changed no training data. It wrote
+    a Parquet-backed `TableAsset` with full provenance, recorded the human
+    decision and settled the review gate -- and `load_table_asset` had no
+    production caller, so nothing read it back.
+
+    Returned oldest first so a re-promotion of the same run is stable, and so
+    the order the person accepted candidates in is the order the plan sees them.
+    Provenance is preserved rather than flattened: `source_uri` keeps the
+    `file#page=N` the promotion recorded, and `source_format` says these rows
+    came out of a document.
+    """
+    tables: list[LoadedTable] = []
+    seen: set[str] = set()
+    for reference in reversed(store.list(run_id, artifact_type=ArtifactType.TABLE_ASSET)):
+        if reference.artifact_id in seen:
+            continue
+        try:
+            asset, frame = load_table_asset(store, reference.artifact_id)
+        except (FileNotFoundError, ValueError):
+            # A blob that fails its own integrity check is not silently mixed
+            # into training data. The promotion record stays; the rows do not.
+            continue
+        if asset.provenance.producer_component_id != PROMOTION_COMPONENT_ID:
+            continue
+        seen.add(reference.artifact_id)
+        tables.append(
+            LoadedTable(
+                name=_table_name(reference.name, reference.artifact_id),
+                frame=frame,
+                source_uri=(
+                    asset.provenance.source_uris[0]
+                    if asset.provenance.source_uris
+                    else f"artifact:{reference.artifact_id}"
+                ),
+                source_format=PROMOTED_SOURCE_FORMAT,
+            )
+        )
+    return tables
+
+
 __all__ = [
+    "PROMOTED_SOURCE_FORMAT",
+    "PROMOTION_COMPONENT_ID",
     "CandidateNotPromotable",
     "create_document_table_review",
+    "load_promoted_document_tables",
     "promote_reviewed_document_tables",
 ]
