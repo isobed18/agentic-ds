@@ -528,7 +528,15 @@ function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: St
   return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
     {failure.error && <p className="mt-2 break-words text-xs leading-relaxed text-stop-800">{failure.error}</p>}
-    {failure.checks.length > 0 && <ul className="mt-2 space-y-1">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}</li>)}</ul>}
+    {/* #427: the sentence, and under it the measurements that explain it. The
+        panel used to show only the first, and only as the server's English
+        "Mechanical check failed: <the condition that should hold>" -- so the
+        reason a framing was rejected stayed in the artifact while the reader
+        was shown a tautology. `measurements` are recorded facts about this
+        run, so they render as they are rather than through the catalogue. */}
+    {failure.checks.length > 0 && <ul className="mt-2 space-y-1.5">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}
+      {check.measurements.length > 0 && <ul className="mt-1 space-y-0.5 pl-3">{check.measurements.map((measurement) => <li key={measurement} className="break-words font-mono text-3xs leading-snug text-stop-800">{measurement}</li>)}</ul>}
+    </li>)}</ul>}
     {stageId === "problem_discovery" && onPin && <ProblemReframe columns={columns ?? []} busy={busy ?? false} onPin={onPin} />}
   </section>;
 }

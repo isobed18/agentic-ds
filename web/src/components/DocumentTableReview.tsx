@@ -166,6 +166,34 @@ export function DocumentTableReview({
     }
   }
 
+  async function decline() {
+    // #316 reopened: this was wired straight to `onClose`, so declining
+    // recorded nothing at all. No `DocumentTableReview` artifact means
+    // `_document_tables_await_review` stays true forever and the pipeline can
+    // never be un-deferred -- so the one named exit from the dialog, the exit
+    // #403 added precisely to let a person run off the CSV alone, was the
+    // outcome that guaranteed a permanent block.
+    //
+    // Rejecting every candidate is a completed decision, which is what
+    // `_document_tables_await_review`'s own docstring says. It is recorded as
+    // one.
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const inputs: DocumentTableDecisionInput[] = candidates
+        .filter((candidate) => !alreadyPromoted.has(candidate.candidateId))
+        .map((candidate) => ({ candidate_id: candidate.candidateId, decision: "rejected" }));
+      await api.reviewDocumentTables(runId, inputs);
+      // Same re-read as a promotion: the decision lifts the gate, and the
+      // panel behind this dialog is showing the state before it.
+      onPromoted();
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/30 p-4" role="dialog" aria-modal="true">
       {/* #388: the header used to sit inside the scrolling container, so
@@ -288,9 +316,11 @@ export function DocumentTableReview({
                 {/* #403: declining every candidate is a legitimate outcome --
                     promoted tables never join the ML training table anyway --
                     but the only way to reach it was the header ×, which reads
-                    as abandoning the dialog rather than as a decision. This is
-                    the same close, named for what it means. */}
-                {acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={onClose} disabled={busy}>{t("Continue without these tables")}</button>}
+                    as abandoning the dialog rather than as a decision.
+                    #316: and it was still the same close, so it decided
+                    nothing. It records the rejection now, which is what makes
+                    it a decision rather than a name for one. */}
+                {acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={() => void decline()} disabled={busy}>{busy ? t("Recording…") : t("Continue without these tables")}</button>}
                 {/* #389: with nothing left undecided there is nothing to nag
                     about -- "check at least one" would be asking for a click
                     that no longer exists. */}

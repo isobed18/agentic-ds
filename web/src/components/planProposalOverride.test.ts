@@ -24,14 +24,20 @@ describe("the blocked plan panel (#187)", () => {
 
   it("says where the override is, not just that one exists", () => {
     // "A human must override" with no target sends the reader hunting for a
-    // control that was not on the screen.
-    expect(BLOCKED).toContain("The override is the Planner");
+    // control that was not on the screen. #187 answered that by naming the
+    // Planner; #429 found the answer was wrong -- the Planner is a chat box,
+    // and pointing at it left the panel a dead end for a deferral whose target
+    // was measurably viable. The override is on this panel now, so the same
+    // requirement is met by the control itself rather than by a sentence
+    // describing one somewhere else.
+    expect(BLOCKED).toContain("<DeferredPlanOverride");
+    expect(BLOCKED).not.toContain("The override is the Planner");
   });
 
   it("translates both new strings", () => {
     for (const key of [
       "Ask the Planner to reconsider",
-      "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.",
+      "The Planner can also be asked to reconsider: tell it what it is missing and it can propose a pipeline itself.",
     ]) {
       expect(CATALOGUE.includes(`"${key}":`), `no Turkish entry for ${key}`).toBe(true);
     }

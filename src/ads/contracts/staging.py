@@ -314,6 +314,24 @@ class RuntimeConfigurationPlan(FrozenModel):
     pipeline_recommendation: Literal["create_pipeline", "defer_pipeline", "no_pipeline"] = (
         "create_pipeline"
     )
+    #: What must resolve for a `defer_pipeline` to lift. Empty otherwise.
+    #:
+    #: #430: a deferral used to say only that it existed. Nothing re-evaluated
+    #: it, so the state sustained itself -- no timer, no re-check, no event,
+    #: and a later planner turn that named no recommendation inherited the
+    #: block and re-asserted it. A deferral has to name the precondition it is
+    #: waiting on so the precondition can be checked; the two below are the
+    #: only ones this product can observe resolving.
+    #:
+    #: * `document_table_review` -- extracted PDF table candidates are waiting
+    #:   on a human decision (#316). Lifts when a review is recorded.
+    #: * `planner_decision` -- the planner has not stated one yet, so nothing
+    #:   has been decided. Lifts on a turn that states one.
+    #:
+    #: A review the ML pipeline performs itself is deliberately not here: those
+    #: are its own stages, so waiting for one means running the pipeline to
+    #: that stage rather than refusing to start.
+    deferred_on: Literal["", "document_table_review", "planner_decision"] = ""
     decision_summary: LocalizedText | None = None
     configuration: dict[str, Any] = Field(default_factory=dict)
     stage_directives: dict[str, list[str]] = Field(default_factory=dict)
@@ -321,6 +339,17 @@ class RuntimeConfigurationPlan(FrozenModel):
     auto_proceed_stages: list[str] = Field(default_factory=list)
     max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
     rationale: list[LocalizedText] = Field(default_factory=list)
+    #: The record of a person overriding a deferral by naming the target
+    #: themselves, with what the measurement said about their choice.
+    #:
+    #: #429: the panel's closing line promised "the override is the Planner",
+    #: but the Planner is a chat box, not an override control -- so a deferred
+    #: plan whose target was measurably viable had no way forward at all. An
+    #: override is a human decision about someone else's recommendation, so it
+    #: is kept beside the recommendation rather than replacing it: the
+    #: planner's `decision_summary` still says what it wanted, and this says
+    #: what the person did instead and on what evidence.
+    human_override: LocalizedText | None = None
     # Retained for old artifacts/API clients while ``status`` becomes authoritative.
     accepted: bool = False
     accepted_at: datetime | None = None

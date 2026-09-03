@@ -66,6 +66,16 @@ class Finding(FrozenModel):
     severity: Severity
     evidence: str = Field(max_length=500, description="Must cite the artifact under review.")
     suggested_fix: str | None = Field(default=None, max_length=300)
+    #: The measured facts behind the failure, one per line, already specific.
+    #:
+    #: #427: `evidence` is one sentence about the check, and a reader was given
+    #: nothing else -- so a problem discovery that failed because every
+    #: proposed framing was blocked reported only that no framing was viable,
+    #: while `ProblemSupport.blocking_reasons` sat in the artifact saying which
+    #: column was rejected and why. Kept separate from `evidence` because the
+    #: sentence is a code the client translates and these are measurements it
+    #: renders as they are.
+    measurements: list[str] = Field(default_factory=list)
 
 
 class CritiqueResult(Artifact):
@@ -179,6 +189,13 @@ class QualitySignals(FrozenModel):
 
     # Process
     validation_failures: int = Field(default=0, ge=0)
+    #: Which validators fired, as `layer/code: detail` lines.
+    #:
+    #: #427: `validation_failures` is a count, so a stage that failed its
+    #: contract check told the reader only that something was invalid --
+    #: never which validator fired or on what column. Diagnosing the reported
+    #: run was impossible from the product for exactly this reason.
+    validation_failure_details: list[str] = Field(default_factory=list)
     missing_required_artifacts: list[str] = Field(default_factory=list)
     tool_errors: int = Field(default=0, ge=0)
     pii_columns_in_context: int = Field(default=0, ge=0)

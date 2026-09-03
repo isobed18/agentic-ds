@@ -390,6 +390,29 @@ export interface Story {
   }[];
 }
 
+/** One column a deferred plan could be aimed at (#429). */
+export interface DeferredPlanTarget {
+  name: string;
+  table: string;
+  semantic_type?: string;
+  /** `is_usable_target`: the product's own pre-filter on plausible targets. */
+  candidate_target: boolean;
+  null_rate?: number;
+  unique_rate?: number;
+}
+
+/** What naming a target did. A `viable: false` reply carries the measured
+ *  reasons that column cannot carry that task and changes nothing. */
+export interface DeferredPlanOverride extends Partial<StagingWorkspace> {
+  run_id: string;
+  artifact_id: string;
+  viable: boolean;
+  target_column: string;
+  task_type: string;
+  blocking_reasons: string[];
+  warnings: string[];
+}
+
 export interface StageOutput {
   artifact_id: string;
   type: string;
@@ -425,7 +448,16 @@ export interface StageAttempt {
 export interface StageCritique {
   rubric_version?: string;
   unmet_criteria?: string[];
-  findings?: { check_id: string; severity: string; evidence?: string | null }[];
+  findings?: {
+    check_id: string;
+    severity: string;
+    evidence?: string | null;
+    /** #427: the measured facts behind the failure -- which candidate framing
+     *  was rejected and why, which validator fired on which column. Separate
+     *  from `evidence`, which is a sentence about the check itself and gets
+     *  translated through `CHECK_TEXT`. */
+    measurements?: string[] | null;
+  }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */
@@ -803,6 +835,10 @@ export interface StagingWorkspace {
     status: "proposed" | "accepted" | "rejected" | "superseded";
     mode: "fully_auto";
     pipeline_recommendation?: "create_pipeline" | "defer_pipeline" | "no_pipeline";
+    /** #430: what would lift a deferral. A deferral used to say only that it
+     *  existed, and nothing re-evaluated it, so the state sustained itself.
+     *  Empty on any other recommendation. */
+    deferred_on?: "" | "document_table_review" | "planner_decision";
     decision_summary?: LocalizedText | null;
     configuration: Record<string, unknown>;
     stage_directives: Record<string, string[]>;
@@ -810,6 +846,11 @@ export interface StagingWorkspace {
     auto_proceed_stages: string[];
     max_retries_by_stage: Record<string, number>;
     rationale: LocalizedText[];
+    /** #429: set when a person answered a deferral by naming the target, with
+     *  what the measurement said about their choice. The Planner's
+     *  `decision_summary` still says what it wanted; this says what was done
+     *  instead and on what evidence. */
+    human_override?: LocalizedText | null;
     accepted: boolean;
     accepted_at?: string | null;
     accepted_by?: "human" | null;
@@ -1232,6 +1273,27 @@ export const api = {
       `/api/runs/${id}/problem/pin`,
       { method: "POST", body: JSON.stringify(body) },
     ),
+  /** #429: the columns a person can name to answer a deferred plan.
+   *
+   * Read off the base table's profile, so the names match what the pipeline
+   * will see -- the profiler snake-cases headers, and a picker offering the
+   * original casing would produce a target the validators reject. */
+  deferredPlanTargets: (runId: string) =>
+    request<{ run_id: string; columns: DeferredPlanTarget[] }>(
+      `/api/runs/${runId}/staging/plan/targets`,
+    ),
+  /** #429: answer a deferral by naming the target.
+   *
+   * `viable: false` is the measurement's answer, not a failure: the blocking
+   * reasons are for that column and the plan is left as it was. */
+  overrideDeferredPlan: (
+    runId: string,
+    body: { base_artifact_id: string; target_column: string; task_type?: string | null },
+  ) =>
+    request<DeferredPlanOverride>(`/api/runs/${runId}/staging/plan/override`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   deleteModel: (artifactId: string) =>
     request<{ artifact_id: string; index_entries: number }>(
       `/api/models/${encodeURIComponent(artifactId)}`,
