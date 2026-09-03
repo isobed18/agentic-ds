@@ -1313,6 +1313,10 @@ const TR: Record<string, string> = {
     "Çalışma, veri anlama aşamasının sonuna ulaştı ve hiçbir öneri üretmedi; bir sebep de kaydetmedi. Kendiliğinden başka bir şey olmayacak.",
   "Files understood: {files}": "Anlaşılan dosyalar: {files}",
   "Inspect understanding": "Veri anlayışını incele",
+  // #409: opens the Proposed-plan panel, which holds the whole decision summary
+  // and rationale the banner can only show the first few lines of.
+  "See the full reason": "Gerekçenin tamamını gör",
+  "+{count} more reasons": "+{count} gerekçe daha",
 
   // Guided pipeline
   "Data understood": "Veri anlaşıldı",

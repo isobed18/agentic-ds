@@ -122,6 +122,14 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
   // run that moves on to a different outcome speaks up instead of staying quiet.
   const [dismissed, setDismissed] = useState<StagingOutcome["kind"] | null>(null);
   const outcome = routing.outcome && routing.outcome.kind !== dismissed ? routing.outcome : null;
+  // #409: when the Planner deferred or declined, it recorded why -- and the
+  // full account of that reason is already written, in the Proposed-plan
+  // panel: the unsliced decision summary, the whole rationale list, and "Ask
+  // the Planner to reconsider". The banner routed past it to the synthesis
+  // node, so the four bullets it truncates to were everything a person could
+  // read about the risk it was warning them of. `no_plan` is not included:
+  // there is no plan record behind it to open, which is the whole point of it.
+  const explainsDecision = outcome?.kind === "deferred" || outcome?.kind === "declined";
   return (
     <CanvasSurface docked={selection !== null} overlay={<>
       {routing.error && <div role="alert" className="fixed left-1/2 top-[4.5rem] z-20 w-[min(42.5rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-stop-300 bg-stop-50 px-4 py-3 shadow-pop"><div className="flex items-start gap-3"><StatusMark status="failed" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold text-stop-700">{t("Staging stopped")}</p><p className="mt-1 break-words text-2xs leading-relaxed text-stop-700">{routing.error}</p></div><button type="button" className="shrink-0 text-3xs font-semibold text-stop-700 hover:underline" onClick={() => setSelection(routing.documents.some((step) => step.status === "failed" && step.id !== "explain") ? "documents" : "synthesis")}>{t("Inspect failure")}</button></div></div>}
@@ -133,8 +141,10 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
           two boxes could actually answer it, since only one of them could. The
           card is the one that can, so the banner is gone. */}
       {!routing.error && outcome && <OutcomeNotice outcome={outcome} files={routing.files.map((file) => file.name)} onDismiss={() => setDismissed(outcome.kind)}
-        actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")}
-        onInspect={() => (canReviewTables ? setReviewing(true) : setSelection("synthesis"))} />}
+        actionLabel={canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : explainsDecision ? t("See the full reason") : t("Inspect understanding")}
+        onInspect={() => (canReviewTables ? setReviewing(true) : explainsDecision ? setSelection("proposal") : setSelection("synthesis"))}
+        secondaryLabel={canReviewTables && explainsDecision ? t("See the full reason") : undefined}
+        onSecondary={() => setSelection("proposal")} />}
       {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
@@ -160,7 +170,14 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
  * true: understanding finished, no plan came out of it, and these are the files
  * it was working on.
  */
-export function OutcomeNotice({ outcome, files, actionLabel, onInspect, onDismiss }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void; onDismiss: () => void }) {
+export function OutcomeNotice({ outcome, files, actionLabel, onInspect, onDismiss, secondaryLabel, onSecondary }: { outcome: StagingOutcome; files: string[]; actionLabel: string; onInspect: () => void; onDismiss: () => void;
+  /** #409: a second way out of the notice, for when the primary action is
+   *  already spoken for. With PDF table candidates present the primary action
+   *  is the table review (#388), and the reason the Planner deferred would
+   *  otherwise have nowhere to be reached from. */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+}) {
   const declined = outcome.kind === "declined";
   const unexplained = outcome.kind === "no_plan";
   const tone = unexplained
@@ -190,6 +207,12 @@ export function OutcomeNotice({ outcome, files, actionLabel, onInspect, onDismis
               {outcome.rationale.slice(0, 4).map((reason) => (
                 <li key={reason.en} className={cx("break-words text-2xs leading-relaxed", tone.body)}>{local(reason)}</li>
               ))}
+              {/* #409: the slice was silent, so a banner showing four of nine
+                  reasons looked like the whole account. The action beside it
+                  opens the panel that lists them all. */}
+              {outcome.rationale.length > 4 && (
+                <li className={cx("break-words text-2xs leading-relaxed", tone.body)}>{t("+{count} more reasons", { count: outcome.rationale.length - 4 })}</li>
+              )}
             </ul>
           )}
           {/* Naming the files is the point: the reported stall was per-file,
@@ -202,6 +225,7 @@ export function OutcomeNotice({ outcome, files, actionLabel, onInspect, onDismis
             </p>
           )}
         </div>
+        {secondaryLabel && onSecondary && <button type="button" className={cx("shrink-0 text-3xs font-semibold hover:underline", tone.body)} onClick={onSecondary}>{secondaryLabel}</button>}
         <button type="button" className={cx("shrink-0 text-3xs font-semibold hover:underline", tone.head)} onClick={onInspect}>{actionLabel}</button>
         {/* #384: all three variants of this notice are the same fixed overlay,
             so all three get the ×. It closes the banner and nothing else. */}
