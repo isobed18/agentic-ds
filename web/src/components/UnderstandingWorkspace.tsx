@@ -32,6 +32,7 @@ import { artifactTitle } from "./artifactTitle";
 import { artifactTypeLabel } from "./artifactTypeLabel";
 import { isCanvasPanBlocked, releaseCanvasPointer } from "./canvasPan";
 import { useOverlayDismiss } from "./overlayDismiss";
+import { PanelResizeHandle, PanelResizeProvider, usePanelWidth } from "./panelResize";
 import { ResizableNode } from "./ResizableNode";
 import { DocumentTableReview } from "./DocumentTableReview";
 import { FileInsight } from "./FileInsight";
@@ -689,8 +690,13 @@ export function CanvasSurface({ children, overlay, docked = false }: { children:
   // so the canvas only ever gives up width for its own inspector. #48 still
   // holds by construction: the two panels are in different grids and cannot
   // overlay one another.
-  const gridTemplateColumns = docked ? "minmax(0, 1fr) min(27.5rem, 94vw)" : "minmax(0, 1fr)";
-  return <div className="relative grid h-full min-h-[30rem] overflow-hidden" style={{ gridTemplateColumns, gridTemplateRows }}>
+  // #407: this column used to be the constant `min(27.5rem, 94vw)`, so a long
+  // rationale or relationship list scrolled in a narrow column with empty
+  // canvas beside it. The width is state now, dragged from the panel's own left
+  // edge and clamped to what the viewport can spare; `panelResize` holds both.
+  const panelResize = usePanelWidth();
+  const gridTemplateColumns = docked ? `minmax(0, 1fr) ${panelResize.width}px` : "minmax(0, 1fr)";
+  return <PanelResizeProvider value={panelResize}><div className="relative grid h-full min-h-[30rem] overflow-hidden" style={{ gridTemplateColumns, gridTemplateRows }}>
     <div ref={viewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan} onLostPointerCapture={lostPanCapture} className={cx("h-full min-w-0 overflow-auto bg-surface-sunken bg-[radial-gradient(#d9e0ea_1px,transparent_1px)] [background-size:20px_20px]", panning ? "cursor-grabbing select-none" : "cursor-grab")}>
       <div style={scaledBox(step, contentBox)}>
         {/* `width: max-content` with the base box as a floor, so the box always
@@ -711,7 +717,7 @@ export function CanvasSurface({ children, overlay, docked = false }: { children:
         <ZoomControl label={t("Zoom in")} disabled={step >= CANVAS_MAX_STEP} onClick={() => setStep((current) => clampStep(current + 1))}>+</ZoomControl>
       </div>
     </div>
-  </div>;
+  </div></PanelResizeProvider>;
 }
 
 /** Every selectable level, so the control can offer them directly rather than
@@ -731,7 +737,9 @@ export function Inspector({ title, eyebrow, onClose, children }: { title: string
   // workspace itself is the dismissal, and a press that begins inside the panel
   // is never one however far it travels.
   const panel = useOverlayDismiss<HTMLElement>(onClose);
-  return <aside ref={panel} className="z-20 flex h-full min-h-0 w-full flex-col border-l border-line bg-surface shadow-2xl"><header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-3xs font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header>{/* Scroll only the body: overflow used to sit on the aside, so the header
+  // #407: `relative` so the drag strip can sit on the panel's own left edge.
+  // The handle renders nothing when this panel is not a resizable grid column.
+  return <aside ref={panel} className="relative z-20 flex h-full min-h-0 w-full flex-col border-l border-line bg-surface shadow-2xl"><PanelResizeHandle /><header className="flex items-start gap-3 border-b border-line px-5 pb-4 pt-5"><div className="min-w-0 flex-1"><p className="text-3xs font-semibold uppercase tracking-[0.12em] text-brand-600">{eyebrow}</p><h2 className="mt-1 text-base font-semibold text-ink">{title}</h2></div><button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close inspector")} onClick={onClose}>×</button></header>{/* Scroll only the body: overflow used to sit on the aside, so the header
     and its × scrolled out of reach on a long panel (#75). */}<div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5"><div className="mt-5">{children}</div></div></aside>;
 }
 export function DockedPanel({ children }: { children: React.ReactNode }) { return <div data-docked-panel className="z-30 flex h-full min-h-0 min-w-0 w-full overflow-hidden border-l border-line bg-surface shadow-2xl [&>aside]:!w-full">{children}</div>; }
