@@ -139,6 +139,17 @@ describe("checkbox selection (#360)", () => {
     expect(CATALOGUE).toContain('"Unselect all": "Tümünün seçimini kaldır"');
     expect(CATALOGUE).toContain('"Accept all {count} tables":');
     expect(CATALOGUE).toContain('"Unchecked tables are recorded as rejected.":');
-    expect(CATALOGUE).toContain('"Check at least one table to promote.":');
+    expect(CATALOGUE).toContain('"Nothing here is required — the structured files can run on their own.":');
+  });
+
+  // #403: promoting nothing is a supported outcome -- promoted tables never
+  // join the ML training table -- but the only way to reach it was the header
+  // ×, and the copy beside the disabled Promote button stated a
+  // requirement ("Check at least one table to promote.") that does not exist.
+  it("offers an explicit way to decline every candidate (#403)", () => {
+    expect(SOURCE).toContain('{acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={onClose}');
+    expect(SOURCE).toContain('t("Continue without these tables")');
+    expect(SOURCE).not.toContain("Check at least one table to promote.");
+    expect(CATALOGUE).toContain('"Continue without these tables": "Bu tablolar olmadan devam et"');
   });
 });

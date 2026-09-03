@@ -852,8 +852,11 @@ const TR: Record<string, string> = {
   "Accept all {count} tables": "{count} tablonun tümünü kabul et",
   "Unchecked tables are recorded as rejected.":
     "İşaretlenmemiş tablolar reddedilmiş olarak kaydedilir.",
-  "Check at least one table to promote.":
-    "Veriye almak için en az bir tabloyu işaretleyin.",
+  // #403: declining every candidate is a real outcome, not an unfinished
+  // dialog -- promoted tables never enter the ML training table anyway.
+  "Nothing here is required — the structured files can run on their own.":
+    "Burada zorunlu bir şey yok — yapılandırılmış dosyalar tek başına çalışabilir.",
+  "Continue without these tables": "Bu tablolar olmadan devam et",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   // #361: how a promoted table is named in the ML inputs list.
   "{file} · page {page}": "{file} · sayfa {page}",
