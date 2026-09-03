@@ -680,6 +680,11 @@ const TR: Record<string, string> = {
   "Resize node": "Düğümü yeniden boyutlandır",
   // #407: the same drag on the docked inspector, whose width used to be fixed.
   "Resize panel": "Paneli yeniden boyutlandır",
+  // #441: and on the gate approval card, whose height was whatever its content
+  // happened to be -- which on a leakage gate was most of the viewport.
+  "Resize the approval card": "Onay kartını yeniden boyutlandır",
+  "Drag to set the height; double-click to fit the content.":
+    "Yüksekliği ayarlamak için sürükleyin; içeriğe sığdırmak için çift tıklayın.",
   "attempt": "deneme",
   "This stage has not run yet": "Bu aşama henüz çalışmadı",
   "No output recorded": "Kaydedilmiş çıktı yok",
