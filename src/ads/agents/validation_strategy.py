@@ -27,6 +27,7 @@ from ads.discovery.validation_signals import (
 from ads.intake.profiler import datacard_digest
 from ads.llm.client import LARGE
 from ads.skills import render_skills, select_skills
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 SYSTEM_PROMPT = """\
 You are a senior data scientist designing an honest evaluation split for an \
@@ -70,6 +71,13 @@ cannot combine class stratification with entity or temporal protection. If the d
 imbalanced AND has repeated entities or a multi-period span, you must choose entity/time \
 protection and say explicitly that class balance across folds is not guaranteed.\
 """
+
+# #406: a reader flagged "belge külliyatı" -- the models' literal rendering
+# of "document corpus", and not a phrase Turkish speakers use. Every prompt that
+# asks for `_tr` prose carries the same correction; `house_turkish` cleans up the
+# runs that were written before it.
+SYSTEM_PROMPT += f"\n{TURKISH_PROSE_INSTRUCTION}\n"
+
 
 # Each strategy is described by *which leaks it prevents*, not by a rank.
 # Safety is a subset test over these sets, which is a partial order: `grouped`
