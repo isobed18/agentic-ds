@@ -24,6 +24,7 @@ from ads.intake.keys import relationships_digest
 from ads.intake.profiler import datacard_digest
 from ads.llm.client import LARGE
 from ads.skills import render_skills, select_skills
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 SYSTEM_PROMPT = """\
 You are a data integration specialist working on messy enterprise data.
@@ -65,6 +66,13 @@ above 1% on a join.
 
 Be concise. Every rationale must cite the measured evidence it relies on.\
 """
+
+# #406: a reader flagged "belge külliyatı" -- the models' literal rendering
+# of "document corpus", and not a phrase Turkish speakers use. Every prompt that
+# asks for `_tr` prose carries the same correction; `house_turkish` cleans up the
+# runs that were written before it.
+SYSTEM_PROMPT += f"\n{TURKISH_PROSE_INSTRUCTION}\n"
+
 
 
 def build_context(

@@ -17,6 +17,7 @@ from pydantic import Field, field_validator, model_validator
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
 from ads.contracts.documents import DocumentExtractionSummary
 from ads.contracts.registry import canonical_contract_id
+from ads.turkish_style import house_turkish
 
 
 class LocalizedText(FrozenModel):
@@ -24,6 +25,17 @@ class LocalizedText(FrozenModel):
 
     en: str = Field(min_length=1, max_length=20_000)
     tr: str = Field(min_length=1, max_length=20_000)
+
+    # #406: the Turkish half is written by a model, so it is not fixable the way
+    # a catalogue entry is -- and the models render "document corpus" as "belge
+    # külliyatı", which no Turkish speaker says. The prompts now say not to, but
+    # an instruction only governs runs that have not happened yet, and this
+    # class is the one boundary every piece of agent-authored bilingual prose
+    # crosses. See `ads.turkish_style` for what the rewrite is and is not.
+    @field_validator("tr")
+    @classmethod
+    def _house_turkish(cls, value: str) -> str:
+        return house_turkish(value)
 
 
 class StagingMessage(FrozenModel):
