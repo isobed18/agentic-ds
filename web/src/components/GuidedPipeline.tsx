@@ -271,6 +271,11 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {groups.map((group, index) => {
       const status = groupStatuses[index];
       const groupArtifactIds = group.stages.flatMap((stage) => visibleArtifactIdsByStage.get(stage) ?? []);
+      // #408: "Show diagnostics" used to change only which ids this list would
+      // hold if somebody expanded it -- and the pill is collapsed by default,
+      // on a node that may be off screen. Every card that actually gained rows
+      // opens itself, so the toolbar button has an effect a person can see.
+      const revealsDiagnostics = showDiagnostics && groupArtifactIds.some((id) => diagnosticIds.has(id));
       // #194: an accepted-but-unstarted pipeline showed every group as
       // "pending" -- identical to a running pipeline's unreached stages. Mark
       // the group the run will start with as "waiting to start" so it points
@@ -285,7 +290,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       // "the service was unreachable" is otherwise invisible until they open
       // the panel.
       const note = group.nodes.find((node) => node.note)?.note ?? undefined;
-      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} checkpointStages={checkpointStages} footer={footer} note={note} artifactIds={groupArtifactIds} activeArtifactId={preview?.artifact_id ?? null} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
+      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} checkpointStages={checkpointStages} footer={footer} note={note} artifactIds={groupArtifactIds} activeArtifactId={preview?.artifact_id ?? null} revealed={revealsDiagnostics} diagnosticIds={diagnosticIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
     })}
   </>;
 
@@ -454,7 +459,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
 
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-3xs font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file, index) => <Badge key={`${file}-${index}`} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-3xs text-warn-700">{empty}</p>}</div>; }
 
-function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, checkpointStages, footer, note, artifactIds, activeArtifactId, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; checkpointStages: string[]; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; activeArtifactId?: string | null; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, checkpointStages, footer, note, artifactIds, activeArtifactId, revealed = false, diagnosticIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; checkpointStages: string[]; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; activeArtifactId?: string | null; revealed?: boolean; diagnosticIds?: ReadonlySet<string>; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   // #194: a group waiting to be started reads distinctly -- a dashed brand ring
   // and its own "Waiting to start" badge -- instead of the neutral "pending"
   // it shares with stages a running pipeline simply has not reached. A running
@@ -462,7 +467,7 @@ function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, 
   // #214: `dimmed` is the pre-acceptance state. The node is on the canvas and
   // still opens its panel -- it is the pipeline that will run -- but it reads
   // as not-yet-live so the row says "this is next", not "this is happening".
-  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}{checkpointStages.length > 0 && <div className="mt-2"><Badge tone="warn" title={checkpointStages.map(stageName).join(", ")}>{t("Human approval")}</Badge></div>}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-3xs leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-3xs font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-3xs font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact} /></ResizableNode>;
+  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}{checkpointStages.length > 0 && <div className="mt-2"><Badge tone="warn" title={checkpointStages.map(stageName).join(", ")}>{t("Human approval")}</Badge></div>}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-3xs leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-3xs font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-3xs font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} revealed={revealed} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 // The head tracks the line: once #196 made `bg-ok-300` a real class, a
