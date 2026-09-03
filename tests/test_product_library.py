@@ -631,10 +631,15 @@ def test_run_deletion_asks_before_it_destroys() -> None:
     single stray click.
     """
     api_client = (WEB_SRC / "lib" / "api.ts").read_text(encoding="utf-8")
-    workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
+    # #434: Workflows.tsx, the page this test used to read, was unreachable
+    # dead code and is gone; the live delete control is the one on the
+    # automation workspace, guarding `deleteRun` with a native confirm.
+    automation_workspace = (
+        WEB_SRC / "pages" / "AutomationWorkspace.tsx"
+    ).read_text(encoding="utf-8")
 
     assert "confirmation: id" in api_client
-    assert "setConfirming" in workflows
+    assert "window.confirm(" in automation_workspace
 
 
 def _snapshot(plane: ControlPlane, run_id: str, status: str) -> Path:

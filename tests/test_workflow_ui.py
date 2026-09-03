@@ -836,19 +836,17 @@ WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
 
 def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     """Upload, understanding, proposal, and graph remain one progressive route."""
-    workflows = (WEB_SRC / "pages" / "Workflows.tsx").read_text(encoding="utf-8")
-
-    for region in ("PipelineRail", "StageWorkspace", "PlannerPanel"):
-        assert f"<{region}" in workflows, f"the main screen does not render {region}"
+    # #434: `Workflows.tsx`, `StageWorkspace.tsx` and `Explore.tsx` -- the pages
+    # this test used to read for these guarantees -- were unreachable dead code
+    # (retired at #111/#214 but never deleted) and are gone. The measured-graph
+    # picture they were checked for, `<SchemaMap`/`<SchemaDiagram`, now hangs
+    # off `UnderstandingWorkspace` instead; `AgentBriefing` and
+    # `DocumentUnderstanding` were already gone from the live tree, checked
+    # only against a page nothing could reach.
 
     # Branching must stay legible rather than being flattened into a line.
     rail = (WEB_SRC / "components" / "PipelineRail.tsx").read_text(encoding="utf-8")
     assert "branch_of" in rail
-
-    # Stage output is rendered from measured structures, not dumped as JSON.
-    workspace = (WEB_SRC / "components" / "StageWorkspace.tsx").read_text(encoding="utf-8")
-    for structure in ("warnings", "model_comparison", "holdout_metrics"):
-        assert structure in workspace, f"{structure} has no renderer"
 
     # Analyses are a horizontal strip of chart thumbnails that expand on click,
     # not a vertical stack of collapsed headings a reader has to open one by one.
@@ -856,7 +854,6 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
     assert "overflow-x-auto" in strip
     assert "Key insights" in strip
     assert "Summary statistics" in strip
-    assert "<AnalysisStrip" in workspace
 
     # Charts are drawn in-bundle: the deployment target is air-gapped, so a
     # chart library loaded from a CDN would render nothing at all.
@@ -865,14 +862,10 @@ def test_main_page_progressively_reveals_one_automation_workspace() -> None:
         assert f'case "{kind}"' in charts, f"no renderer for a {kind} chart"
 
     # The schema must be legible to a person, not only to the agent.
-    assert "<SchemaMap" in workspace
-
-    # Source understanding is a real pre-pipeline workspace. It uses the same
-    # measured graph and connects its planner to both the source and staged run.
-    explore = (WEB_SRC / "pages" / "Explore.tsx").read_text(encoding="utf-8")
-    for feature in ("<SchemaDiagram", "<AgentBriefing", "<DocumentUnderstanding", "starterPrompts"):
-        assert feature in explore, f"the data-understanding screen is missing {feature}"
-    assert "sourceId={currentRun?.dataset ?? null}" in workflows
+    understanding = (
+        WEB_SRC / "components" / "UnderstandingWorkspace.tsx"
+    ).read_text(encoding="utf-8")
+    assert "<SchemaDiagram" in understanding
 
     shell = (WEB_SRC / "components" / "Shell.tsx").read_text(encoding="utf-8")
     app = (WEB_SRC / "App.tsx").read_text(encoding="utf-8")
