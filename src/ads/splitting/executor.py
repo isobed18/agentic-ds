@@ -70,6 +70,29 @@ def _require_column(frame: pd.DataFrame, column: str | None, role: str) -> str:
     return column
 
 
+def _group_keys(frame: pd.DataFrame, column: str) -> pd.Series:
+    """Group-by keys for `column`, isolating null values from each other.
+
+    A null group key is not "no group" -- it is an unmeasured identity, and
+    two unmeasured identities are not the same entity. The alternative to
+    isolating them is refusing to group at all whenever the chosen column has
+    even one missing value, which made a column like `tmdb_id` (one row in a
+    few thousand missing an external id) permanently unusable for grouping no
+    matter how well-justified the choice was. Each null-keyed row becomes its
+    own singleton group instead: it can never share a group with another row,
+    so it cannot leak, and it is never excluded from a split for having an
+    unknown identity.
+    """
+    keys = frame[column]
+    if not keys.isna().any():
+        return keys
+    labels = keys.astype("string")
+    missing = labels.isna()
+    labels = labels.copy()
+    labels[missing] = [f"__ads_null_group_{position}__" for position in frame.index[missing]]
+    return labels
+
+
 def _resolve_target(
     strategy: ValidationStrategy, frame: pd.DataFrame, override: str | None = None
 ) -> str:
@@ -141,9 +164,7 @@ class _SklearnSplitter(Splitter):
                 raw_folds = self.fold_generator.split(frame, frame[target])
             elif kind is SplitStrategy.GROUPED:
                 group = _require_column(frame, self.strategy.group_column, "group")
-                if frame[group].isna().any():
-                    raise SplitError(f"Grouped splitting does not permit nulls in {group!r}.")
-                raw_folds = self.fold_generator.split(frame, groups=frame[group])
+                raw_folds = self.fold_generator.split(frame, groups=_group_keys(frame, group))
             else:
                 raw_folds = self.fold_generator.split(frame)
 
@@ -193,16 +214,12 @@ class _GroupedTemporalSplitter(Splitter):
         _validate_index(frame)
         group_column = _require_column(frame, self.strategy.group_column, "group")
         time_column = _require_column(frame, self.strategy.time_column, "time")
-        if frame[group_column].isna().any():
-            raise SplitError(
-                f"Grouped-temporal splitting does not permit nulls in {group_column!r}."
-            )
         dates = _datetimes(frame, time_column)
         eligible = pd.Series(True, index=frame.index)
         if self.strategy.holdout_cutoff:
             eligible &= dates < _cutoff_timestamp(self.strategy.holdout_cutoff)
 
-        groups = frame[group_column]
+        groups = _group_keys(frame, group_column)
         eligible_group_times = (
             pd.DataFrame({"group": groups[eligible], "date": dates[eligible]})
             .groupby("group", sort=False)["date"]
@@ -327,8 +344,6 @@ def _split_holdout(
 
     if kind is SplitStrategy.GROUPED:
         group_column = _require_column(frame, strategy.group_column, "group")
-        if frame[group_column].isna().any():
-            raise SplitError(f"Grouped splitting does not permit nulls in {group_column!r}.")
         generator = GroupShuffleSplit(
             n_splits=1,
             test_size=strategy.test_size,
@@ -336,7 +351,7 @@ def _split_holdout(
         )
         try:
             train_positions, holdout_positions = next(
-                generator.split(frame, groups=frame[group_column])
+                generator.split(frame, groups=_group_keys(frame, group_column))
             )
         except ValueError as exc:
             raise SplitError(f"Could not construct grouped holdout: {exc}") from exc
@@ -350,12 +365,9 @@ def _split_holdout(
 
     if kind is SplitStrategy.GROUPED_TEMPORAL:
         group_column = _require_column(frame, strategy.group_column, "group")
-        if frame[group_column].isna().any():
-            raise SplitError(
-                f"Grouped-temporal splitting does not permit nulls in {group_column!r}."
-            )
-        holdout_groups = frame.loc[holdout_mask, group_column]
-        train_mask &= ~frame[group_column].isin(holdout_groups)
+        groups = _group_keys(frame, group_column)
+        holdout_groups = groups.loc[holdout_mask]
+        train_mask &= ~groups.isin(holdout_groups)
 
     return _nonempty_split(frame.loc[train_mask], frame.loc[holdout_mask], strategy)
 
