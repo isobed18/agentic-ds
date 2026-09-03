@@ -16,6 +16,7 @@ import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
 import { Badge, Empty, Pause, Play, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
+import { uniqueIds } from "./artifactReveal";
 import { DocumentTableReview } from "./DocumentTableReview";
 import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
@@ -346,7 +347,11 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       // given the diagnostic set and does the hiding, the marking and the
       // #408 self-opening in one place, for this card and for every other
       // artifact list on the canvas alike (#424).
-      const groupArtifactIds = group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []);
+      // #446: `artifactIdsByStage` dedupes within one stage and this flattens
+      // across the stages of a group, so the guard stopped one level short. A
+      // stage that produced the same content as its neighbour listed the id
+      // twice, and the second copy could never be revealed.
+      const groupArtifactIds = uniqueIds(group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []));
       // #194: an accepted-but-unstarted pipeline showed every group as
       // "pending" -- identical to a running pipeline's unreached stages. Mark
       // the group the run will start with as "waiting to start" so it points

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArtifactPreview } from "../lib/api";
 import { useShowDiagnostics } from "../lib/diagnostics";
 import { activeLanguage, t } from "../lib/i18n";
-import { keepRevealed, nextToReveal, revealDelay } from "./artifactReveal";
+import { keepRevealed, nextToReveal, revealDelay, revealPending, uniqueIds } from "./artifactReveal";
 import { artifactTitle } from "./artifactTitle";
 import { cx } from "./ui";
 
@@ -21,15 +21,23 @@ import { cx } from "./ui";
  */
 export function useSequentialReveal(ids: string[], intervalMs = 420): string[] {
   const key = ids.join("|");
+  // #446: a repeated id can never be revealed -- `nextToReveal` skips what is
+  // already shown and the `includes` guard below would refuse it anyway -- so
+  // `shown` settled one short and the caller's "more are coming" placeholder
+  // pulsed on every frame with no timer left to schedule. Deduping here rather
+  // than trusting every caller: this hook has to be unable to stall on whatever
+  // it is handed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const reported = useMemo(() => uniqueIds(ids), [key]);
   const [shown, setShown] = useState<string[]>([]);
 
   useEffect(() => {
-    setShown((current) => keepRevealed(current, ids));
+    setShown((current) => keepRevealed(current, reported));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
   useEffect(() => {
-    const next = nextToReveal(shown, ids);
+    const next = nextToReveal(shown, reported);
     if (next === undefined) return;
     const timer = window.setTimeout(() => {
       setShown((current) => (current.includes(next) ? current : [...current, next]));
@@ -125,7 +133,8 @@ export function ArtifactNodes({ ids, activeId = null, onOpen, diagnosticIds }: {
   // closes again when they go away, unless the viewer has since taken the pill
   // over by clicking it; their own choice outranks the toolbar's.
   const visibleIds = useMemo(
-    () => (showDiagnostics || !diagnosticIds ? ids : ids.filter((id) => !diagnosticIds.has(id))),
+    () =>
+      uniqueIds(showDiagnostics || !diagnosticIds ? ids : ids.filter((id) => !diagnosticIds.has(id))),
     [ids, diagnosticIds, showDiagnostics],
   );
   const revealed = showDiagnostics && ids.some((id) => diagnosticIds?.has(id) ?? false);
@@ -154,7 +163,10 @@ export function ArtifactNodes({ ids, activeId = null, onOpen, diagnosticIds }: {
           aria-expanded={open}
           className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-3xs font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
         >
-          {t("Artifacts ({count})", { count: shown.length })}
+          {/* #446: this counted `shown`, so a stalled reveal reported one
+              fewer artifact than the node had, permanently. The pill is the
+              node's summary; the list below it is the arrival order. */}
+          {t("Artifacts ({count})", { count: visibleIds.length })}
         </button>
       </div>
       {open && (
@@ -191,11 +203,25 @@ export function ArtifactNodes({ ids, activeId = null, onOpen, diagnosticIds }: {
             </li>
             );
           })}
-          {shown.length < ids.length && (
-            <li aria-hidden="true" className="flex items-center gap-2">
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-dashed border-line">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
-              </span>
+          {/* #446: this compared against `ids`, the unfiltered list, so after
+              #431 a node holding a diagnostic pulsed forever whenever
+              diagnostics were hidden -- independently of the duplicate stall.
+              Ask the reveal whether it has anything left instead of inferring
+              it from two lengths that are not measuring the same thing. */}
+          {revealPending(shown, visibleIds) && (
+            <li aria-hidden="true" className="flex items-center justify-center gap-1 py-1">
+              {/* Not a numbered circle. It borrowed the row geometry and sat in
+                  the ordered list, so even while it was behaving correctly it
+                  read as an artifact that had failed to load rather than as
+                  "more are coming". Three dots is the ordinary vocabulary for
+                  that, and it cannot be mistaken for an entry. */}
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-300"
+                  style={{ animationDelay: `${dot * 160}ms` }}
+                />
+              ))}
             </li>
           )}
         </ol>
