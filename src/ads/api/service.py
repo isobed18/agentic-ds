@@ -5624,13 +5624,32 @@ class ControlPlane:
                 for key, value in (configuration or {}).items()
                 if value not in (None, "")
             }
+            # #447: this overwrote `supervision` unconditionally, so the
+            # plan's checkpoints were the only ones a fully-auto run could ever
+            # have -- a person who unchecked "Review after eda" on the canvas
+            # watched the run go straight through it, and one who checked a
+            # stage the planner had not named got nothing. The plan is still
+            # the default; an explicit list from the caller is a decision and
+            # replaces it. Graph checkpoints are unioned in below either way,
+            # because those come from the saved blueprint rather than from
+            # this request.
+            requested_supervision = (configuration or {}).get("supervision")
+            stated_checkpoints = (
+                requested_supervision.get("checkpoint_stages")
+                if isinstance(requested_supervision, dict)
+                else None
+            )
             body = {
                 **body,
                 **plan.configuration,
                 **caller_overrides,
                 "run_mode": "fully_auto",
                 "supervision": {
-                    "checkpoint_stages": plan.checkpoint_stages,
+                    "checkpoint_stages": (
+                        list(stated_checkpoints)
+                        if isinstance(stated_checkpoints, list)
+                        else plan.checkpoint_stages
+                    ),
                     "auto_proceed_stages": plan.auto_proceed_stages,
                     "max_retries_by_stage": plan.max_retries_by_stage,
                 },
