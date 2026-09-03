@@ -285,6 +285,12 @@ export function DocumentTableReview({
                 <button type="button" className="btn-primary text-xs" onClick={() => void promote()} disabled={busy || acceptedCount === 0}>
                   {busy ? t("Promoting…") : t("Promote {count} accepted", { count: acceptedCount })}
                 </button>
+                {/* #403: declining every candidate is a legitimate outcome --
+                    promoted tables never join the ML training table anyway --
+                    but the only way to reach it was the header ×, which reads
+                    as abandoning the dialog rather than as a decision. This is
+                    the same close, named for what it means. */}
+                {acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={onClose} disabled={busy}>{t("Continue without these tables")}</button>}
                 {/* #389: with nothing left undecided there is nothing to nag
                     about -- "check at least one" would be asking for a click
                     that no longer exists. */}
@@ -292,7 +298,10 @@ export function DocumentTableReview({
                   ? <span className="text-3xs text-ink-faint">{t("Unchecked tables are recorded as rejected.")}</span>
                   : selectable.length === 0
                     ? <span className="text-3xs text-ink-faint">{t("Every table here has already been promoted.")}</span>
-                    : <span className="text-3xs font-medium text-warn-700">{t("Check at least one table to promote.")}</span>}
+                    // #403: this used to read "Check at least one table to
+                    // promote." in warning yellow, which stated a requirement
+                    // that does not exist. Promoting nothing is fine.
+                    : <span className="text-3xs text-ink-faint">{t("Nothing here is required — the structured files can run on their own.")}</span>}
               </div>
             )}
           </>

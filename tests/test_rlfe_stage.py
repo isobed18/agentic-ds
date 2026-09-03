@@ -133,7 +133,9 @@ def _applicable_client(generated: list[dict[str, Any]] | None = None):
     )
 
 
-def _ready_state(tmp_path: Path) -> tuple[RunState, pd.DataFrame]:
+def _ready_state(
+    tmp_path: Path, *, strategy: ValidationStrategy | None = None
+) -> tuple[RunState, pd.DataFrame]:
     """A run that has reached the point just before RL feature engineering."""
     frame = pd.DataFrame(
         {
@@ -141,6 +143,7 @@ def _ready_state(tmp_path: Path) -> tuple[RunState, pd.DataFrame]:
             "age": [20.0 + index % 50 for index in range(120)],
             "tenure": [1.0 + index % 7 for index in range(120)],
             "segment": ["a", "b", "c"] * 40,
+            "event_time": pd.date_range("2024-01-01", periods=120, freq="D"),
             "target": [float(index % 17) for index in range(120)],
         }
     )
@@ -162,7 +165,8 @@ def _ready_state(tmp_path: Path) -> tuple[RunState, pd.DataFrame]:
         stage_id="problem_discovery",
     )
     state.put(
-        ValidationStrategy(
+        strategy
+        or ValidationStrategy(
             strategy=SplitStrategy.RANDOM,
             rationale="No ordering or repeated entity signal is present.",
         ),
@@ -323,6 +327,37 @@ def test_applicable_search_adds_a_second_model_bound_to_the_first(tmp_path: Path
     assert base.model_blob is not None
     assert enhanced.model_blob is not None
     assert enhanced.model_blob.artifact_id != base.model_blob.artifact_id
+
+
+def test_temporal_split_keeps_its_routing_column_out_of_the_rl_feature_set(
+    tmp_path: Path,
+) -> None:
+    """A temporal run still produces its enhanced model.
+
+    The sidecar deliberately never sees datetime columns. Dropping the temporal
+    routing column from the enhanced frame made ``train_candidates`` fail while
+    deriving the same split, and the best-effort fallback silently discarded
+    the enhanced model even though the search returned generated features.
+    """
+    state, _ = _ready_state(
+        tmp_path,
+        strategy=ValidationStrategy(
+            strategy=SplitStrategy.TEMPORAL,
+            time_column="event_time",
+            holdout_cutoff="2024-04-06",
+            rationale="Later observations simulate deployment after the cutoff.",
+        ),
+    )
+    client, recorder = _applicable_client()
+    state.blackboard[RLFE_CLIENT_KEY] = client
+
+    result = _run_through_training(state)
+
+    assert "event_time" not in recorder.uploaded_csv().splitlines()[0]
+    assert [type(item) for item in result.artifacts] == [
+        TrainingReport,
+        EnhancedTrainingReport,
+    ]
 
 
 def test_selection_without_any_generated_feature_adds_no_second_model(
