@@ -1440,6 +1440,9 @@ const TR: Record<string, string> = {
   // #305: the diagnostics affordance on the run toolbar.
   "Show diagnostics ({count})": "Tanılamayı göster ({count})",
   "Hide diagnostics": "Tanılamayı gizle",
+  // #408: marks the rows the toggle above just added, so a longer list is a
+  // visible answer to what the button did rather than an unexplained change.
+  "Diagnostic": "Tanılama",
   "Workflow": "İş akışı",
   "Accepted data science workflow": "Kabul edilen veri bilimi iş akışı",
   "Preparing workflow…": "İş akışı hazırlanıyor…",

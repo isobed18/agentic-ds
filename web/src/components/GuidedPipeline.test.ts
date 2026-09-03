@@ -306,6 +306,24 @@ describe("diagnostics are hidden from the default artifact chips (#305)", () => 
     expect(CATALOGUE).toContain('"Hide diagnostics": "Tanılamayı gizle"');
     expect(CATALOGUE).toContain('"Show diagnostics ({count})": "Tanılamayı göster ({count})"');
   });
+
+  // #408: the toggle changed only which ids a collapsed, possibly off-screen
+  // pill would hold once expanded, so from the toolbar it looked like it did
+  // nothing at all.
+  it("opens the cards that actually gained rows", () => {
+    expect(SOURCE).toContain(
+      "const revealsDiagnostics = showDiagnostics && groupArtifactIds.some((id) => diagnosticIds.has(id))",
+    );
+    expect(SOURCE).toContain("revealed={revealsDiagnostics}");
+    // A card with no diagnostic in it is left alone rather than being opened
+    // for a change it did not receive.
+    expect(SOURCE).toContain("groupArtifactIds.some((id) => diagnosticIds.has(id))");
+  });
+
+  it("says which rows are the diagnostics", () => {
+    expect(SOURCE).toContain("diagnosticIds={diagnosticIds}");
+    expect(CATALOGUE).toContain('"Diagnostic": "Tanılama"');
+  });
 });
 
 describe("EDA analysis charts reach the guided stage inspector (#304)", () => {
