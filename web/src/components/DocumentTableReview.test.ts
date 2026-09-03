@@ -147,9 +147,53 @@ describe("checkbox selection (#360)", () => {
   // ×, and the copy beside the disabled Promote button stated a
   // requirement ("Check at least one table to promote.") that does not exist.
   it("offers an explicit way to decline every candidate (#403)", () => {
-    expect(SOURCE).toContain('{acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={onClose}');
+    expect(SOURCE).toContain('{acceptedCount === 0 && selectable.length > 0 && <button type="button" className="btn-ghost text-xs" onClick={() => void decline()}');
     expect(SOURCE).toContain('t("Continue without these tables")');
     expect(SOURCE).not.toContain("Check at least one table to promote.");
     expect(CATALOGUE).toContain('"Continue without these tables": "Bu tablolar olmadan devam et"');
+  });
+});
+
+/** The `decline` handler's own source, so an assertion about it cannot be
+ *  satisfied by identical code somewhere else in the component. */
+function declineBody(): string {
+  const start = SOURCE.indexOf("async function decline() {");
+  expect(start, "decline() should exist").toBeGreaterThan(-1);
+  return SOURCE.slice(start, SOURCE.indexOf("  return (", start));
+}
+
+describe("declining is a decision, not a close (#316)", () => {
+  it("records the rejection instead of just closing the dialog", () => {
+    // It was wired straight to `onClose`, so it recorded nothing at all -- no
+    // `DocumentTableReview` artifact, so `_document_tables_await_review` stays
+    // true forever and the pipeline can never be un-deferred. The one named
+    // exit from the dialog was the outcome that guaranteed a permanent block,
+    // which is exactly what #403 added it to avoid.
+    expect(SOURCE).toContain("async function decline() {");
+    expect(SOURCE).toContain("await api.reviewDocumentTables(runId, inputs);");
+    expect(SOURCE).toContain('decision: "rejected" }));');
+  });
+
+  it("rejects every candidate still open, and none already promoted", () => {
+    // Promotion mints an immutable asset per accepted candidate; re-deciding
+    // one that a previous round promoted would rewrite a settled record.
+    const body = declineBody();
+    expect(body).toContain("filter((candidate) => !alreadyPromoted.has(candidate.candidateId))");
+    expect(body).not.toContain("accepted.has(");
+  });
+
+  it("re-reads the workspace, then closes", () => {
+    // Same re-read a promotion does: the decision lifts the gate, and the
+    // panel behind the dialog is showing the state before it.
+    const body = declineBody();
+    expect(body.indexOf("onPromoted();")).toBeLessThan(body.indexOf("onClose();"));
+  });
+
+  it("shows that it is doing something, and stays open if it fails", () => {
+    // It writes to the server now, so it has the two states a write has.
+    expect(SOURCE).toContain('{busy ? t("Recording…") : t("Continue without these tables")}');
+    expect(CATALOGUE).toContain('"Recording…": "Kaydediliyor…"');
+    const body = declineBody();
+    expect(body).toContain("setError(caught instanceof Error ? caught.message : String(caught));");
   });
 });
