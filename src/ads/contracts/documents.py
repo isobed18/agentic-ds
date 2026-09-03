@@ -15,6 +15,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import Field, model_validator
 
 from ads.contracts.base import Artifact, ArtifactType, FrozenModel
+from ads.turkish_style import house_turkish
 
 DocumentEngineId = Literal["docling", "unstructured", "marker", "mineru", "text_layer"]
 
@@ -26,9 +27,13 @@ def aligned_turkish(warnings: list[str], warnings_tr: list[str]) -> list[str]:
     before the Turkish half existed has only the English one. Padding with the
     English text keeps every index meaningful, so a reader on Turkish sees a
     real sentence rather than a blank line for an old run.
+
+    #406: document warnings are the other place agent-authored Turkish reaches a
+    reader without passing through `LocalizedText`, so the same house-Turkish
+    correction is applied here.
     """
     return [
-        warnings_tr[index] if index < len(warnings_tr) else warning
+        house_turkish(warnings_tr[index]) if index < len(warnings_tr) else warning
         for index, warning in enumerate(warnings)
     ]
 
