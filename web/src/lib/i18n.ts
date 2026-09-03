@@ -1451,9 +1451,11 @@ const TR: Record<string, string> = {
 
   // Advanced / Experimental graph editor
   "Advanced editor · Experimental": "Gelişmiş düzenleyici · Deneysel",
-  // #305: the diagnostics affordance on the run toolbar.
-  "Show diagnostics ({count})": "Tanılamayı göster ({count})",
-  "Hide diagnostics": "Tanılamayı gizle",
+  // #305: the diagnostics affordance on the run toolbar. #423 replaced the
+  // button whose label flipped between "göster" and "gizle" with a checkbox,
+  // so one fixed label carries the count in both states.
+  "Diagnostics ({count})": "Tanılama ({count})",
+  "Engineering records — agent audits and measurement bundles — kept out of the run view by default.": "Mühendislik kayıtları — ajan denetimleri ve ölçüm paketleri — varsayılan olarak çalıştırma görünümünün dışında tutulur.",
   // #408: marks the rows the toggle above just added, so a longer list is a
   // visible answer to what the button did rather than an unexplained change.
   "Diagnostic": "Tanılama",
