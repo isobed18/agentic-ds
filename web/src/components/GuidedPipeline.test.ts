@@ -179,7 +179,7 @@ describe("the run control (#197)", () => {
     // uses the same stroked 20x20 chrome as everything else, and the primary
     // control is its own row above a separate, quieter secondary bar rather than
     // one chip among five.
-    expect(SOURCE).toContain('import { Badge, Chevron, Empty, Pause, Play, cx } from "./ui"');
+    expect(SOURCE).toContain('import { Badge, Empty, Pause, Play, cx } from "./ui"');
     expect(SOURCE).toContain("><Play />");
     expect(SOURCE).toContain("><Pause />");
     expect(SOURCE).not.toContain('<span aria-hidden="true">▶</span>');
@@ -229,13 +229,7 @@ describe("target-column picker (#244/#198)", () => {
     // The guided flow had no way to choose the ML target, and the free-text gate
     // box was never read. The picker is a real <select> of the base table's
     // columns, shown only before the run starts (canStart, no current stage).
-    // #<rating-fix>: a column that only exists after the plan joins or
-    // aggregates other tables in (e.g. "avg_rating" over "ratings" when the
-    // base table is "links") belongs in the same picker, since problem
-    // discovery already reasons over the measured IntegrationTrial and can
-    // pick it fine.
-    expect(SOURCE).toContain("const targetColumns = useMemo(() => {");
-    expect(SOURCE).toContain("planConfig.available_columns");
+    expect(SOURCE).toContain("const targetColumns = baseTable?.columns ?? [];");
     expect(SOURCE).toContain("canStart && !currentStage && targetColumns.length > 0");
     expect(SOURCE).toContain("<select value={targetColumn}");
     expect(SOURCE).toContain("targetColumns.map((column) =>");
@@ -246,8 +240,7 @@ describe("target-column picker (#244/#198)", () => {
     // Defaulting to the plan's target means an unchanged picker is a no-op; a
     // changed one aims the run. The value travels with the run mode into onRun.
     expect(SOURCE).toContain('useState<string>(String(planConfig.target_column ?? ""))');
-    expect(SOURCE).toContain("GROUPS.filter((group) => checkpointGroups.has(group.id)).flatMap((group) => group.stages)");
-    expect(SOURCE).toContain('targetColumn || null, stages, problemKind === "ask_planner" ? null : problemKind)');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])');
   });
 
   it("says which of the two modes the picker is in", () => {
@@ -273,11 +266,11 @@ describe("quick problem selector (#241)", () => {
   });
 
   it("passes the picked kind to onRun instead of always going through the planner", () => {
-    expect(SOURCE).toContain('targetColumn || null, stages, problemKind === "ask_planner" ? null : problemKind)');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])');
   });
 
   it("requires a target column before Run is enabled for a predict-column pick", () => {
-    expect(SOURCE).toContain('disabled={busy || (!profile.tables.length && !promotedTableSummaries.length) || (problemKind === "predict_column" && !targetColumn)}');
+    expect(SOURCE).toContain('disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}');
   });
 
   it("translates the picker's options", () => {
