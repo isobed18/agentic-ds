@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactDialog, BranchNode, CanvasSurface, DockedPanel, Inspector, OutcomeNotice, RoutingDetails, SourceOverview, SourceSummary } from "./UnderstandingWorkspace";
+// #407: the docked column is a dragged width now; 27.5rem is its starting value.
+import { PANEL_DEFAULT_WIDTH } from "./panelResize";
 import type { SourceProfile } from "../lib/api";
 import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
@@ -42,7 +44,7 @@ describe("the understanding inspector layout", () => {
       },
     ));
 
-    expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(27.5rem, 94vw)");
+    expect(markup).toContain(`grid-template-columns:minmax(0, 1fr) ${PANEL_DEFAULT_WIDTH}px`);
     expect(classNameFor(markup, "aside").split(" ")).toEqual(expect.arrayContaining(["h-full", "w-full"]));
     expect(classNameFor(markup, "aside").split(" ")).not.toContain("fixed");
   });
@@ -162,7 +164,7 @@ describe("the understanding inspector layout", () => {
       }),
     }));
 
-    expect(markup).toContain("grid-template-columns:minmax(0, 1fr) min(27.5rem, 94vw)");
+    expect(markup).toContain(`grid-template-columns:minmax(0, 1fr) ${PANEL_DEFAULT_WIDTH}px`);
     expect(markup).toContain("Inspector content");
 
     const panel = renderToStaticMarkup(createElement(DockedPanel, {
