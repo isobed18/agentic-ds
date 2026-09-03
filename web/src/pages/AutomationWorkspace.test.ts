@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import CATALOGUE from "../lib/i18n.ts?raw";
 import AUTOMATION_SOURCE from "./AutomationWorkspace.tsx?raw";
 import PROJECT_SOURCE from "./ProjectWorkspace.tsx?raw";
 import SHELL_SOURCE from "../components/Shell.tsx?raw";
@@ -144,5 +145,85 @@ describe("clearing the automation name is a cancelled edit (#425)", () => {
     // two pieces it has and this one did not.
     expect(PROJECT_SOURCE).toContain("if (!project || !trimmed || trimmed === project.name)");
     expect(PROJECT_SOURCE).toContain("setError(messageOf(caught)); setName(project.name);");
+  });
+});
+
+
+describe("opening a past execution in the workspace (#443)", () => {
+  /** The body of `openExecution`, so a match cannot come from elsewhere. */
+  function openBody(): string {
+    const start = AUTOMATION_SOURCE.indexOf("async function openExecution(");
+    expect(start).toBeGreaterThan(-1);
+    return AUTOMATION_SOURCE.slice(start, AUTOMATION_SOURCE.indexOf("async function deleteExecution("));
+  }
+
+  it("gives a completed run an action at all", () => {
+    // The detail panel's row was `{active && Pause}{retryable && Retry}`, and a
+    // completed run is neither -- so the most common case in the list rendered
+    // an empty action row. Every run has this one.
+    expect(AUTOMATION_SOURCE).toContain('onClick={() => onOpen(selected.run_id)}>{t("Open in the Editor")}');
+    const panel = AUTOMATION_SOURCE.slice(AUTOMATION_SOURCE.indexOf('t("Selected execution")'));
+    expect(panel.indexOf('t("Open in the Editor")')).toBeLessThan(panel.indexOf('t("Pause after current stage")'));
+  });
+
+  it("actually switches the workspace instead of only rewriting the URL", () => {
+    // The effect that resolves `params.get("run")` into a loaded run is keyed
+    // on `[automationId, sourceId, automation?.automation_id]`, so it does not
+    // re-run when the run param changes. Writing the param alone would change
+    // the link and nothing on screen.
+    const body = openBody();
+    expect(body).toContain("api.runProgress(targetRunId)");
+    expect(body).toContain("api.stagingWorkspace(targetRunId)");
+    expect(body).toContain("setRunId(targetRunId);");
+    expect(body).toContain("setWorkspace(saved);");
+    expect(body).toContain('setActiveView("editor");');
+  });
+
+  it("keeps #68's deep-link contract, writing the run param the same way", () => {
+    // An external `?view=runs&run=<id>` link and this button have to agree on
+    // which run the workspace is showing.
+    expect(openBody()).toContain(
+      'setParams({ ...automationParams(projectId, automationId, origin), run: targetRunId }, { replace: true });',
+    );
+  });
+
+  it("does not leave the previous run's state on the opened one", () => {
+    // The banner, the gate card and the advanced graph all belong to the run
+    // being left; carried over, they describe a run that is no longer shown.
+    const body = openBody();
+    expect(body).toContain("setError(runErrorText(progress?.error) || null);");
+    expect(body).toContain("setPendingQuestion(");
+    expect(body).toContain("setAdvancedGraph(false);");
+  });
+
+  it("resolves both fetches before touching state, so the graph never flashes", () => {
+    // Clearing first and filling in after would show an empty canvas labelled
+    // with the new run's id for as long as the round trip takes.
+    const body = openBody();
+    expect(body).toContain("const [progress, saved] = await Promise.all([");
+    expect(body.indexOf("Promise.all([")).toBeLessThan(body.indexOf("setRunId(targetRunId);"));
+  });
+
+  it("falls back to the row's own status when the run cannot be re-read", () => {
+    // A deleted or unreachable run should still open to whatever the history
+    // list already knows, rather than to a blank status.
+    expect(openBody()).toContain('setRunStatus(String(progress?.status ?? chosen?.status ?? ""));');
+  });
+
+  it("leaves the row click meaning what it meant", () => {
+    // Reading a run's facts and switching the whole workspace to it are
+    // different intentions; one click cannot mean both. The list gets its own
+    // affordance beside Delete instead.
+    expect(AUTOMATION_SOURCE).toContain("onClick={() => setSelected(item)}");
+    expect(AUTOMATION_SOURCE).toContain('aria-label={t("Open this execution in the Editor")}');
+    expect(AUTOMATION_SOURCE).toContain("onClick={() => onOpen(item.run_id)}");
+  });
+
+  it("stops telling the reader to do something the panel cannot do", () => {
+    // The footer said "select a completed node in the Editor" while giving no
+    // way to point the Editor at the run being described.
+    expect(AUTOMATION_SOURCE).not.toContain("Select a completed node in the Editor");
+    expect(CATALOGUE).toContain(`"Open in the Editor": "Düzenleyici'de aç"`);
+    expect(CATALOGUE).toContain('"Open this execution in the Editor"');
   });
 });
