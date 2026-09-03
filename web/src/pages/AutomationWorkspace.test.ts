@@ -77,7 +77,7 @@ describe("the project-first journey (#157, #165)", () => {
     // The guided run used to pass only the run mode, so a chosen target never
     // reached the pipeline. GuidedPipeline's onRun now hands back the column,
     // and runAcceptedWorkflow forwards it to startStaged as target_column.
-    expect(AUTOMATION_SOURCE).toContain("onRun={(runMode, target) => void runAcceptedWorkflow(runMode, target)}");
+    expect(AUTOMATION_SOURCE).toContain("onRun={(runMode, target, checkpointStages) => void runAcceptedWorkflow(runMode, target, checkpointStages)}");
     expect(AUTOMATION_SOURCE).toContain("targetColumn ? { target_column: targetColumn } : {}");
   });
 });

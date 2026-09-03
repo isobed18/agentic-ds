@@ -11,7 +11,7 @@ import {
 } from "../lib/api";
 import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
-import { Badge, Empty, Pause, Play, Reload, cx } from "./ui";
+import { Badge, Chevron, Empty, Pause, Play, Reload, cx } from "./ui";
 import { ArtifactNodes } from "./ArtifactNodes";
 import { GROUPS, ML_SELECTIONS } from "./mlPipelineGroups";
 import { NodeStatusHeader, StatusBadge, StatusMark } from "./NodeStatus";
@@ -46,7 +46,10 @@ interface GuidedPipelineProps {
   onWorkspaceUpdated: (workspace: StagingWorkspace) => void;
   // #244/#198: the run carries a chosen ML target column (or null to let
   // problem discovery propose one) so the guided flow can actually be aimed.
-  onRun: (runMode: "fully_auto" | "manual", targetColumn: string | null) => void;
+  // `checkpointStages` names the specific stages a human picked to review
+  // even while everything else stays fully_auto -- e.g. "stop after EDA" --
+  // distinct from `manual`, which stops after every stage.
+  onRun: (runMode: "fully_auto" | "manual", targetColumn: string | null, checkpointStages: string[]) => void;
   onPause: () => void;
   onRetry: () => void;
   // #247: runs the current automation again from its recorded seed as a new
@@ -83,9 +86,19 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // the same panel through the same piece of state (#214).
   const [selected, setSelected] = useState<string | null>(accepted ? "summary" : "synthesis");
   // #166 second path: before starting, a person may override the agent's gate
-  // authority and demand approval at every stage. `manual` declares every stage
-  // a checkpoint on the backend, so the run stops after each one for a human.
-  const [approveEachStage, setApproveEachStage] = useState(false);
+  // authority and demand approval at specific stages -- "stop after EDA so I
+  // can inspect it" -- without giving up fully_auto everywhere else. Picking
+  // every group is equivalent to (and sent as) the blanket `manual` mode; any
+  // other combination rides fully_auto with those stages added as checkpoints.
+  const [checkpointGroups, setCheckpointGroups] = useState<Set<string>>(new Set());
+  const [checkpointPickerOpen, setCheckpointPickerOpen] = useState(false);
+  function toggleCheckpointGroup(groupId: string) {
+    setCheckpointGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId); else next.add(groupId);
+      return next;
+    });
+  }
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
   // #97: the "Chat with Planner" panel existed only in the staging/proposal
@@ -100,9 +113,51 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // whatever target the plan already carries, shown before the run starts. Its
   // value is passed to the run as guidance for problem discovery.
   const planConfig = (workspace.recommended_plan?.configuration ?? {}) as Record<string, unknown>;
-  const baseTableName = String(planConfig.base_table ?? profile.tables[0]?.name ?? "");
+  // A PDF-only source has no tables of its own; a human-promoted candidate
+  // (DocumentTableReview) is exactly as trainable as an uploaded file, so it
+  // belongs in the same base-table/target picking as a structured table.
+  const promotedTables = workspace.promoted_tables ?? [];
+  const baseTableName = String(planConfig.base_table ?? profile.tables[0]?.name ?? promotedTables[0]?.name ?? "");
   const baseTable = profile.tables.find((table) => table.name === baseTableName) ?? profile.tables[0];
-  const targetColumns = baseTable?.columns ?? [];
+  // The picker used to offer only the base table's own raw columns, so a
+  // column that only exists after the plan joins or aggregates other tables
+  // in (e.g. "avg_rating", built by an AggregationStep over "ratings", when
+  // the base table is "links") was never clickable here -- even though
+  // problem discovery reasons over the same plan and picks it fine. There is
+  // no table to look this up on: an aggregation output is a name the agent
+  // invented, not a source table. `available_columns` is the ABT's real,
+  // deterministically measured result columns (IntegrationTrial), so it is
+  // authoritative over trying to reconstruct them from table names.
+  const availableColumnNames = Array.isArray(planConfig.available_columns)
+    ? planConfig.available_columns.map(String)
+    : null;
+  const targetColumns = useMemo(() => {
+    const candidateTargets = new Set(
+      profile.tables.flatMap((table) => table.columns).filter((column) => column.candidate_target).map((column) => column.name),
+    );
+    if (availableColumnNames) {
+      return availableColumnNames.map((name) => ({ name, candidate_target: candidateTargets.has(name) }));
+    }
+    // No measured trial yet (e.g. the plan has no joins/aggregations at all,
+    // or is still a proposal) -- fall back to the base table's own columns
+    // plus any promoted PDF table's, the previous behaviour, rather than
+    // offering nothing.
+    const seen = new Set<string>();
+    const columns: { name: string; candidate_target: boolean }[] = [];
+    for (const column of baseTable?.columns ?? []) {
+      if (seen.has(column.name)) continue;
+      seen.add(column.name);
+      columns.push(column);
+    }
+    for (const table of promotedTables) {
+      for (const name of table.columns) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        columns.push({ name, candidate_target: candidateTargets.has(name) });
+      }
+    }
+    return columns;
+  }, [availableColumnNames, baseTable, profile.tables, promotedTables]);
   const [targetColumn, setTargetColumn] = useState<string>(String(planConfig.target_column ?? ""));
   // Accepting is a state change on one canvas, not a navigation, so the panel
   // follows the plan it was reviewing into the summary of what will run.
@@ -241,12 +296,25 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           </label>
         )}
         {canStart && !currentStage && (
-          <label className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur" title={t("The agent decides each gate on its own signals unless you take that over.")}>
-            <input type="checkbox" checked={approveEachStage} onChange={(event) => setApproveEachStage(event.target.checked)} className="h-3.5 w-3.5" />
-            {t("Approve at every stage")}
-          </label>
+          <div data-no-pan className="relative">
+            <button type="button" className={cx("flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-[11px] font-medium text-ink-soft shadow-card backdrop-blur", checkpointGroups.size > 0 && "border-brand-300 text-brand-700")} onClick={() => setCheckpointPickerOpen((open) => !open)} aria-expanded={checkpointPickerOpen} title={t("The agent decides each gate on its own signals unless you take that over.")}>
+              {t("Human approval")}{checkpointGroups.size > 0 && ` (${checkpointGroups.size})`}
+              <Chevron open={checkpointPickerOpen} />
+            </button>
+            {checkpointPickerOpen && (
+              <div className="absolute left-0 top-full z-20 mt-1 w-64 rounded-lg border border-line bg-surface p-2 shadow-pop">
+                <p className="px-1 pb-1.5 text-[10px] text-ink-faint">{t("Stop and ask a human after any of these stages, even though the rest stays fully automatic.")}</p>
+                {GROUPS.map((group) => (
+                  <label key={group.id} className="flex items-center gap-2 rounded-md px-1.5 py-1.5 text-[11px] text-ink-soft hover:bg-surface-sunken">
+                    <input type="checkbox" className="h-3.5 w-3.5" checked={checkpointGroups.has(group.id)} onChange={() => toggleCheckpointGroup(group.id)} />
+                    {t(group.title)}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         )}
-        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null)} disabled={busy || !profile.tables.length}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => { const stages = GROUPS.filter((group) => checkpointGroups.has(group.id)).flatMap((group) => group.stages); onRun(stages.length === GROUPS.flatMap((group) => group.stages).length ? "manual" : "fully_auto", targetColumn || null, stages); }} disabled={busy || (!profile.tables.length && !promotedTables.length)}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {complete && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onOpenExecutions}>{t("Review results")}</button>}
@@ -268,10 +336,10 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     {/* One panel for the whole graph. A staging node opens the staging
         inspector, an ML node opens the stage panel, and both dock into the same
         column the canvas gives up for them (#40/#48/#214). */}
-    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} />}
+    {stagingSelected && <RoutingInspector selection={stagingSelected} profile={profile} workspace={workspace} routing={routing} onClose={() => setSelected(null)} onOpenArtifact={(id) => void openArtifact(id)} onAdvanced={onAdvanced} onOpenPlanner={() => setPlannerOpen(true)} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
     {mlSelected && <Inspector eyebrow={t(mlSelected === "summary" ? "Accepted ML plan" : "Base ML pipeline")} title={t(mlSelected === "summary" ? "What will run" : selectedGroup?.title ?? "Stage details")} onClose={() => setSelected(null)}>
       {mlSelected === "summary"
-        ? <PlanSummary profile={profile} workspace={workspace} structured={structured.map((file) => file.name)} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
+        ? <PlanSummary profile={profile} workspace={workspace} structured={[...structured.map((file) => file.name), ...promotedTables.map((table) => table.name)]} documents={documents.map((file) => file.name)} candidateTables={candidateTables} />
         : selectedGroup?.nodes.length
           ? <div className="space-y-4">{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</div>
           : <Empty title={t("Not started yet")} hint={accepted ? t(selectedGroup?.description ?? "") : t("This stage runs once the plan is accepted.")} />}
@@ -313,7 +381,7 @@ function PlanSummary({ profile, workspace, structured, documents, candidateTable
   const config = plan.configuration;
   const target = String(config.target_column ?? "");
   const objective = String(config.problem_title ?? (target ? t("Model {target}", { target }) : t("The objective will be finalized during problem discovery")));
-  const baseTable = String(config.base_table ?? profile.tables[0]?.name ?? "—");
+  const baseTable = String(config.base_table ?? profile.tables[0]?.name ?? workspace.promoted_tables?.[0]?.name ?? "—");
   const baseGrain = Array.isArray(config.base_grain) ? config.base_grain.map(String).join(", ") : "—";
   return <div className="space-y-5">
     <section className="rounded-xl border border-ok-200 bg-ok-50/50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wide text-ok-700">{t("ML inputs")}</p><p className="mt-2 text-sm font-semibold text-ink">{baseTable}</p><p className="mt-1 text-[11px] text-ink-mute">{t("Grain")}: {baseGrain}</p><FileRoles title={t("Enters ML now")} files={structured} tone="ok" empty={t("No trusted structured input is selected.")} /></section>

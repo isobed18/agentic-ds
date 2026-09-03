@@ -57,6 +57,7 @@ from ads.automation import (
 )
 from ads.contracts.automation_definition import AutomationInputFile
 from ads.contracts.base import ArtifactType
+from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
     DocumentExtraction,
     DocumentExtractionSummary,
@@ -64,7 +65,7 @@ from ads.contracts.documents import (
     aligned_turkish,
 )
 from ads.contracts.gates import BUILTIN_PROFILES
-from ads.contracts.integration import IntegrationPlan
+from ads.contracts.integration import IntegrationPlan, IntegrationTrial
 from ads.contracts.problem import METRICS_BY_TASK, Metric, ProblemDefinition, TaskType
 from ads.contracts.project import (
     PROJECT_VISIBILITIES,
@@ -1837,9 +1838,35 @@ class ControlPlane:
         return {
             "artifact_id": ref.artifact_id,
             "run_id": run_id,
+            "promoted_tables": self._promoted_document_table_summaries(run_id),
             **workspace.model_dump(mode="json", exclude={"component_outputs"}),
             "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
         }
+
+    def _promoted_document_table_summaries(self, run_id: str) -> list[dict[str, Any]]:
+        """Human-promoted PDF tables for this run, computed live from the store.
+
+        A promotion never rewrites the immutable `StagingWorkspace` snapshot it
+        happened after (`promote_document_tables` only writes a `TableAsset`),
+        so this cannot be baked into that artifact. The guided UI needs it to
+        know a PDF-only source now has an ML-eligible table -- both to stop
+        refusing to start a run and to offer the promoted columns in the
+        target picker -- so it is computed fresh on every read instead.
+        """
+        summaries: list[dict[str, Any]] = []
+        for candidate in self.store.list(run_id, artifact_type=ArtifactType.TABLE_ASSET):
+            if candidate.stage_exec_id != "document-table-promotion":
+                continue
+            asset = self.store.load(candidate.artifact_id, TableAsset)
+            summaries.append(
+                {
+                    "name": candidate.name or candidate.artifact_id,
+                    "artifact_id": candidate.artifact_id,
+                    "row_count": asset.row_count,
+                    "columns": [column.name for column in asset.columns],
+                }
+            )
+        return summaries
 
     def _branch_component_outputs(
         self, parent_run_id: str, workspace: StagingWorkspace
@@ -2606,6 +2633,27 @@ class ControlPlane:
                         continue
                     plan_configuration.setdefault("base_table", integration_plan.base_table)
                     plan_configuration.setdefault("base_grain", integration_plan.base_grain)
+                    # The target-column picker only ever showed the base
+                    # table's own raw columns, so a column that only exists
+                    # after the plan joins or aggregates other tables in
+                    # (e.g. "avg_rating" from an AggregationStep over
+                    # "ratings", when the base table is "links") was never
+                    # clickable here -- even though problem discovery reasons
+                    # over the same plan and can select it fine. The
+                    # IntegrationTrial already measured the ABT's real,
+                    # deterministic result columns; that is authoritative
+                    # over trying to re-derive them from table names, which
+                    # do not exist for an agent-invented aggregation output.
+                    if integration_plan.trial_artifact_id:
+                        try:
+                            trial = self.store.load(
+                                integration_plan.trial_artifact_id, IntegrationTrial
+                            )
+                            plan_configuration.setdefault(
+                                "available_columns", trial.result_columns
+                            )
+                        except Exception:
+                            pass
                     break
                 plan_configuration.setdefault("candidate_limit", 2)
                 plan_configuration.setdefault("n_folds", 5)
