@@ -359,6 +359,28 @@ def _translated(text: str, language: str, **params: Any) -> str:
         return i18n.t(text, **params)
 
 
+#: Enough of a note to measure it; a source file is never read further than
+#: this, and no line of it ever enters the payload.
+_PROSE_SCAN_LIMIT = 256_000
+
+
+def _prose_line_count(path: Path) -> int | None:
+    """How many non-empty lines of prose a file holds, or None if it is not text.
+
+    A `.txt` that fails the delimited loader is usually a note written for a
+    person -- the e-commerce benchmark ships `operations_note.txt` beside its
+    CSVs. Routing it to `needs_review` stopped it killing the source, but the
+    only account of it was the parser's own complaint. Counting its lines is
+    the smallest honest measurement that lets the file be described as what it
+    is; the text itself is never returned.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="strict")[:_PROSE_SCAN_LIMIT]
+    except (OSError, UnicodeDecodeError):
+        return None
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
 def _file_profile_insights(
     source_files: list[dict[str, Any]],
     tables: list[dict[str, Any]],
@@ -487,6 +509,37 @@ def _file_profile_insights(
                     "tables": 0,
                     "candidate_keys": [],
                     "quality_issues": len(document.get("issues") or []),
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        elif isinstance(item.get("prose_lines"), int):
+            # A note that is not a table is still evidence. Saying only that
+            # the delimited loader failed described the parser, not the file,
+            # and left a person with nothing to review -- the file appeared in
+            # the list solely as an error. Describe it as the context it is.
+            lines = int(item["prose_lines"])
+            role = {
+                language: _translated("document context", language)
+                for language in ("en", "tr")
+            }
+            insight = {
+                language: _translated(
+                    "{lines} {line_unit} of prose · {role} · kept as context, not trained on",
+                    language,
+                    lines=lines,
+                    line_unit=_translated("line" if lines == 1 else "lines", language),
+                    role=role[language],
+                )
+                for language in ("en", "tr")
+            }
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": 0,
+                    "tables": 0,
+                    "candidate_keys": [],
+                    "quality_issues": 0,
                     "schema_role": role,
                     "insight": insight,
                 }
@@ -5174,6 +5227,7 @@ class ControlPlane:
                     if suffix
                     else "Bu dosya türü için kayıtlı bir hazırlama bağdaştırıcısı yok."
                 )
+            prose_lines: int | None = None
             if name in unreadable:
                 # It has a supported extension and still could not be read --
                 # most often prose in a .txt, which the delimited loader is
@@ -5182,15 +5236,17 @@ class ControlPlane:
                 route = "needs_review"
                 reason_en = f"Could not be read as tabular data: {unreadable[name]}"
                 reason_tr = f"Tablo verisi olarak okunamadı: {unreadable[name]}"
-            source_files.append(
-                {
-                    "name": name,
-                    "format": suffix.lstrip(".") or "unknown",
-                    "route": route,
-                    "reason": {"en": reason_en, "tr": reason_tr},
-                    "table_names": tables_by_file.get(name, []),
-                }
-            )
+                prose_lines = _prose_line_count(path)
+            entry = {
+                "name": name,
+                "format": suffix.lstrip(".") or "unknown",
+                "route": route,
+                "reason": {"en": reason_en, "tr": reason_tr},
+                "table_names": tables_by_file.get(name, []),
+            }
+            if prose_lines is not None:
+                entry["prose_lines"] = prose_lines
+            source_files.append(entry)
         detection_summary = _measure_file_detection(
             source_root, source_files, detection_env, detection_error
         )
@@ -5254,6 +5310,33 @@ class ControlPlane:
             if card.table_name not in karantina
         ]
         profile_documents = [document.public_summary() for document in documents]
+        # A file reaches `needs_review` two ways -- the delimited loader failed
+        # on it, or the measured content disagreed with the extension -- and on
+        # the e-commerce benchmark `operations_note.txt` takes the second. Both
+        # end with a person being shown a file and told only what went wrong
+        # with it.
+        #
+        # There is a third, worse road, and it is the one the deployment takes:
+        # when the extension is not claiming a route, a deterministic detection
+        # *supplies* one, and a prose `.txt` measures as a document. The file is
+        # then routed to `documents` -- where the extraction engine handles PDFs
+        # and nothing else -- so it is described with "A PDF will be sent to the
+        # selected document understanding engine", is never extracted, and never
+        # reaches anything. That is `operations_note.txt` on the e-commerce
+        # benchmark: a file the product says it will read and then does not.
+        #
+        # Measure any of these that is readable text, so the insight describes
+        # the file rather than the machinery's guess about it.
+        document_names = {str(item.get("name") or "") for item in profile_documents}
+        for satir in source_files:
+            route = satir.get("route")
+            if "prose_lines" in satir or route == "structured":
+                continue
+            if route == "documents" and satir["name"] in document_names:
+                continue  # a real document, described from its own profile
+            lines = _prose_line_count(source_root / satir["name"])
+            if lines:
+                satir["prose_lines"] = lines
         source_files = _file_profile_insights(
             source_files, profile_table_payloads, profile_documents, relationships
         )
@@ -5363,6 +5446,39 @@ class ControlPlane:
                 current_stage="document_understanding",
             )
             self._record_source_discovery(runtime, profile)
+            # A document-only run is still a real run, and once a person has
+            # promoted an extracted table it has training data (#445). It never
+            # got the `resume` tuple the structured path builds, though, so
+            # `/start` always refused it with "did not survive a restart" --
+            # a message about a restart that had not happened, for a run that
+            # had never been startable. Build the same pipeline state here so
+            # the promoted tables can reach intake.
+            try:
+                document_llm: StructuredLLM | None = (
+                    self.llm_factory() if self.llm_factory else OllamaClient()
+                )
+            except Exception:  # noqa: BLE001 - staging must survive a missing model
+                document_llm = None
+            if document_llm is not None:
+                try:
+                    document_spec, document_registry = build_full_spec(document_llm, panel_size=1)
+                    sandbox_root = self.store.root.parent / "sandbox" / run_id
+                    (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+                    (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+                    configure_full_pipeline_state(
+                        state,
+                        source_path=source_path,
+                        execution_backend=SandboxManager(
+                            SandboxConfig(
+                                data_dir=sandbox_root / "data",
+                                artifacts_dir=sandbox_root / "artifacts",
+                            )
+                        ),
+                        agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+                    )
+                    runtime.resume = (document_spec, document_registry, state, document_llm)
+                except Exception:  # noqa: BLE001 - staging must survive a missing model
+                    runtime.resume = None
             with self._lock:
                 self._runtime_runs[run_id] = runtime
             self._persist_runtime(runtime)
@@ -5911,6 +6027,13 @@ class ControlPlane:
         runner = self.workflow_runner or run_workflow
         resume_from = prior_pause or self.STAGE_UNTIL
         resume_at = spec.next_stage(resume_from, EdgeCondition.ON_PROCEED)
+        # A document-only run stopped after *document understanding*, not after
+        # schema discovery: intake never ran, so resuming past it would leave
+        # the blackboard with no tables at all and the promoted PDF tables --
+        # the only training data such a run has -- unread. Start at the top so
+        # intake profiles them (`load_promoted_document_tables`, #445).
+        if not prior_pause and bool(runtime.configuration.get("document_only")):
+            resume_at = spec.entry
 
         def execute() -> None:
             try:
