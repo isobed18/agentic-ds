@@ -188,13 +188,21 @@ def test_a_prose_note_says_what_it_is_not_just_that_parsing_failed(
     profile = plane.source_profile("shop")
 
     note = next(item for item in profile["source_files"] if item["name"] == "operations_note.txt")
-    assert note["route"] == "needs_review"
+    # The route this takes is host-dependent -- whether content detection
+    # speaks deterministically decides between `needs_review` and a detection-
+    # supplied `documents`, and libmagic is not present everywhere. What must
+    # not be host-dependent is that the file gets described.
+    assert note["route"] != "structured"
 
     insight = note["insight"]
     for language in ("en", "tr"):
         assert insight[language], f"the note has no {language} insight"
         assert "Could not be read as tabular data" not in insight[language], (
             "a parser complaint is not an insight about the file"
+        )
+        assert "PDF" not in insight[language], (
+            "a .txt routed to documents was described as a PDF that will be "
+            "extracted; the engine handles PDFs only, so it never is"
         )
     # Measured, not guessed: the note has 4 non-empty lines (the blank one
     # between the heading and the body is not prose).
@@ -232,7 +240,7 @@ def test_a_note_quarantined_by_content_detection_is_described_too(tmp_path: Path
     profile = plane.source_profile("shop")
 
     note = next(item for item in profile["source_files"] if item["name"] == "operations_note.txt")
-    assert note["route"] == "needs_review"
+    assert note["route"] != "structured"
     # Whichever road it took, it must describe the file.
     assert "prose" in note["insight"]["en"]
     assert "3" in note["insight"]["en"]

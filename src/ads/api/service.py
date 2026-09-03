@@ -5314,11 +5314,26 @@ class ControlPlane:
         # on it, or the measured content disagreed with the extension -- and on
         # the e-commerce benchmark `operations_note.txt` takes the second. Both
         # end with a person being shown a file and told only what went wrong
-        # with it. Measure any of them that is readable text so the insight can
-        # describe the file instead of the detection.
+        # with it.
+        #
+        # There is a third, worse road, and it is the one the deployment takes:
+        # when the extension is not claiming a route, a deterministic detection
+        # *supplies* one, and a prose `.txt` measures as a document. The file is
+        # then routed to `documents` -- where the extraction engine handles PDFs
+        # and nothing else -- so it is described with "A PDF will be sent to the
+        # selected document understanding engine", is never extracted, and never
+        # reaches anything. That is `operations_note.txt` on the e-commerce
+        # benchmark: a file the product says it will read and then does not.
+        #
+        # Measure any of these that is readable text, so the insight describes
+        # the file rather than the machinery's guess about it.
+        document_names = {str(item.get("name") or "") for item in profile_documents}
         for satir in source_files:
-            if satir.get("route") != "needs_review" or "prose_lines" in satir:
+            route = satir.get("route")
+            if "prose_lines" in satir or route == "structured":
                 continue
+            if route == "documents" and satir["name"] in document_names:
+                continue  # a real document, described from its own profile
             lines = _prose_line_count(source_root / satir["name"])
             if lines:
                 satir["prose_lines"] = lines
