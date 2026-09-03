@@ -1033,6 +1033,9 @@ const TR: Record<string, string> = {
   "Approve at every stage": "Her aşamada onayla",
   "The agent decides each gate on its own signals unless you take that over.":
     "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",
+  "Human approval": "İnsan onayı",
+  "Stop and ask a human after any of these stages, even though the rest stays fully automatic.":
+    "Diğerleri tamamen otomatik kalsa bile, bu aşamalardan herhangi birinden sonra durup bir insana sor.",
   "Loading…": "Yükleniyor…",
   "Loading experiments…": "Deneyler yükleniyor…",
   "Loading models…": "Modeller yükleniyor…",
