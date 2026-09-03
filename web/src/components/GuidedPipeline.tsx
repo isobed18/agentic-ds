@@ -71,7 +71,7 @@ interface GuidedPipelineProps {
   onRun: (
     runMode: "fully_auto" | "manual",
     targetColumn: string | null,
-    problemKind: "predict_column" | "flag_anomalies" | null,
+    problemKind: "predict_column" | null,
     checkpointStages: string[],
   ) => void;
   onPause: () => void;
@@ -156,7 +156,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // #241: the common problem shapes named straight from the selector, skipping
   // the planner conversation. "ask_planner" is the pre-existing behaviour --
   // the column above is only a hint the agent may take or leave.
-  const [problemKind, setProblemKind] = useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner");
+  const [problemKind, setProblemKind] = useState<"ask_planner" | "predict_column">("ask_planner");
   // Accepting is a state change on one canvas, not a navigation, so the panel
   // follows the plan it was reviewing into the summary of what will run.
   useEffect(() => { if (accepted) setSelected("summary"); }, [accepted]);
@@ -319,7 +319,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // re-enters the graph at problem discovery with the person's column pinned,
   // keeping every artifact the run already produced.
   const [pinning, setPinning] = useState(false);
-  async function pinProblem(kind: "predict_column" | "flag_anomalies", column: string, taskType: string) {
+  async function pinProblem(kind: "predict_column", column: string, taskType: string) {
     setPinning(true); setError(null);
     try {
       await api.pinProblemFraming(runId, { kind, target_column: kind === "predict_column" ? column : null, task_type: taskType || null });
@@ -411,11 +411,19 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
             <select value={problemKind} onChange={(event) => setProblemKind(event.target.value as typeof problemKind)} className="max-w-[10rem] bg-transparent text-2xs font-medium text-ink outline-none">
               <option value="ask_planner">{t("Ask the planner")}</option>
               {targetColumns.length > 0 && <option value="predict_column">{t("Predict a column")}</option>}
-              <option value="flag_anomalies">{t("Flag unusual rows")}</option>
+              {/* #466: "Flag unusual rows" was offered here and in the manual
+                  reframe picker, and could not run. `feature_pipeline_stage`
+                  raises on a null target, `default_candidates` has no
+                  unsupervised menu, and `training_stage` raises on the same
+                  condition -- so an anomaly framing was selectable, accepted,
+                  planned, and then fatal four stages in. It is refused at
+                  problem discovery now (`UNSUPPORTED_UNSUPERVISED_FRAMING`),
+                  and offering a choice whose only outcome is that refusal is
+                  worse than not offering it. */}
             </select>
           </label>
         )}
-        {canStart && !currentStage && targetColumns.length > 0 && problemKind !== "flag_anomalies" && (
+        {canStart && !currentStage && targetColumns.length > 0 && (
           // #428: the two modes treat this picker differently and the control
           // used to say so nowhere. Under "Predict a column" the choice is
           // built and measured directly; under "Ask the planner" it reaches the
@@ -609,7 +617,7 @@ function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: St
   stageId?: string | null;
   columns?: ProfiledColumn[];
   busy?: boolean;
-  onPin?: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void;
+  onPin?: (kind: "predict_column", column: string, taskType: string) => void;
 }) {
   return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
@@ -637,38 +645,35 @@ function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: St
  * directly and measured, so an unviable column comes back as the blocking
  * reasons for *that* column, which is an answer somebody can act on.
  */
-function ProblemReframe({ columns, busy, onPin }: { columns: ProfiledColumn[]; busy: boolean; onPin: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void }) {
-  const [kind, setKind] = useState<"predict_column" | "flag_anomalies">("predict_column");
+function ProblemReframe({ columns, busy, onPin }: { columns: ProfiledColumn[]; busy: boolean; onPin: (kind: "predict_column", column: string, taskType: string) => void }) {
   // Empty means "read it off the column's measured shape", which is the right
   // default. It is offered because inference cannot tell a 0/1 label from a
   // 0/1 quantity and the person looking at their own data can.
   const [taskType, setTaskType] = useState("");
   const [column, setColumn] = useState(() => (columns.find((item) => item.candidate_target) ?? columns[0])?.name ?? "");
-  const ready = kind === "flag_anomalies" || Boolean(column);
+  // #466: the kind picker offered "Predict a column" and "Flag unusual rows",
+  // and the second one had no executable pipeline behind it. With one kind left
+  // there is nothing to pick, so the control goes rather than becoming a select
+  // with a single option -- and `ready` is just "a column is chosen".
+  const ready = Boolean(column);
   return <div className="mt-4 border-t border-stop-200 pt-3">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Name the problem yourself")}</p>
     <p className="mt-1 text-3xs leading-relaxed text-stop-700">{t("This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.")}</p>
     <div className="mt-3 flex flex-wrap items-end gap-2">
-      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Problem")}
-        <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
-          <option value="predict_column">{t("Predict a column")}</option>
-          <option value="flag_anomalies">{t("Flag unusual rows")}</option>
-        </select>
-      </label>
-      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Target")}
+      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Target")}
         <select value={column} onChange={(event) => setColumn(event.target.value)} className="max-w-[11.25rem] rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
           {columns.map((item) => <option key={item.name} value={item.name}>{item.name}{item.candidate_target ? " ★" : ""}</option>)}
         </select>
-      </label>}
-      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Task type")}
+      </label>
+      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Task type")}
         <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
           <option value="">{t("From the column's shape")}</option>
           <option value="regression">{t("Regression")}</option>
           <option value="binary_classification">{t("Binary classification")}</option>
           <option value="multiclass_classification">{t("Multiclass classification")}</option>
         </select>
-      </label>}
-      <button type="button" className="btn-primary text-xs" disabled={busy || !ready} onClick={() => onPin(kind, column, taskType)}>{busy ? t("Working…") : t("Re-run problem discovery")}</button>
+      </label>
+      <button type="button" className="btn-primary text-xs" disabled={busy || !ready} onClick={() => onPin("predict_column", column, taskType)}>{busy ? t("Working…") : t("Re-run problem discovery")}</button>
     </div>
   </div>;
 }

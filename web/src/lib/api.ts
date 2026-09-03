@@ -1282,7 +1282,11 @@ export const api = {
    * column rather than as another unexplained failure. */
   pinProblemFraming: (
     id: string,
-    body: { kind: "predict_column" | "flag_anomalies"; target_column: string | null; task_type?: string | null },
+    // #466: the server still knows `flag_anomalies` -- the task type and its
+    // metric stay legal contracts -- but it refuses one, because the ML spine
+    // cannot execute an unsupervised framing. Nothing in the client should be
+    // able to construct a request whose only outcome is that refusal.
+    body: { kind: "predict_column"; target_column: string | null; task_type?: string | null },
   ) =>
     request<{ run_id: string; status: string; stage_id: string; target_column: string | null; task_type: string | null }>(
       `/api/runs/${id}/problem/pin`,
