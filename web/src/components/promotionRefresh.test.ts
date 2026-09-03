@@ -6,9 +6,15 @@ import PIPELINE_SOURCE from "./GuidedPipeline.tsx?raw";
 import ROUTING_SOURCE from "./stagingRoutingState.ts?raw";
 import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 
-/** The body of the page's promotion callback, so a match cannot come from elsewhere. */
+/** The body of the page's run re-read, so a match cannot come from elsewhere.
+ *
+ * #465 renamed this from `onPromoted`: pinning a target is the same shape of
+ * event -- the server re-enters the graph and the client has to pick the status
+ * back up -- so the two share one implementation, named for what it does rather
+ * than for one of the two things that cause it.
+ */
 function promotionCallback(): string {
-  const start = WORKSPACE_PAGE.indexOf("const onPromoted = useCallback(");
+  const start = WORKSPACE_PAGE.indexOf("const refreshRun = useCallback(");
   expect(start).toBeGreaterThan(-1);
   return WORKSPACE_PAGE.slice(start, WORKSPACE_PAGE.indexOf("const onGateAnswered = useCallback("));
 }
@@ -62,7 +68,7 @@ describe("the canvas catches up after a promotion (#462)", () => {
     expect(UNDERSTANDING_SOURCE).not.toContain("const afterPromotion = () => undefined;");
     expect(UNDERSTANDING_SOURCE).toContain("if (onPromoted) { onPromoted(); return; }");
     expect(WORKSPACE_PAGE).toContain("<UnderstandingProgress");
-    expect(WORKSPACE_PAGE).toContain("onPromoted={() => void onPromoted()}");
+    expect(WORKSPACE_PAGE).toContain("onPromoted={() => void refreshRun()}");
   });
 
   it("threads the same callback to the panels that did refresh, but too early", () => {
