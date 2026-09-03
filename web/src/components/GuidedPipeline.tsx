@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type ArtifactPreview,
+  type ProfiledColumn,
   type PromotedDocumentTable,
   type RunProgressSnapshot,
   type SourceProfile,
@@ -10,6 +11,7 @@ import {
   type Workflow,
   type WorkflowNode,
 } from "../lib/api";
+import { diagnosticIdsOf, setShowDiagnostics, useShowDiagnostics, withoutDiagnostics } from "../lib/diagnostics";
 import { activeLanguage, t } from "../lib/i18n";
 import { elapsedLabel, isActive, isAttention, isSucceeded, statusLabel, isRunActive } from "../lib/status";
 import { Badge, Empty, Pause, Play, cx } from "./ui";
@@ -166,19 +168,19 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // the raw artifact chips were mostly engineering records a person has to read
   // past to find their data, model, or report. Hide the diagnostic ids by
   // default; the toolbar toggle brings them back for anyone who wants them.
-  const diagnosticIds = useMemo(() => new Set(progress?.diagnostic_artifact_ids ?? []), [progress]);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const diagnosticCount = useMemo(() => {
-    let seen = 0;
-    for (const ids of artifactIdsByStage.values()) seen += ids.filter((id) => diagnosticIds.has(id)).length;
-    return seen;
-  }, [artifactIdsByStage, diagnosticIds]);
-  const visibleArtifactIdsByStage = useMemo(() => {
-    if (showDiagnostics) return artifactIdsByStage;
-    const map = new Map<string, string[]>();
-    for (const [stage, ids] of artifactIdsByStage) map.set(stage, ids.filter((id) => !diagnosticIds.has(id)));
-    return map;
-  }, [artifactIdsByStage, diagnosticIds, showDiagnostics]);
+  const diagnosticIds = useMemo(() => diagnosticIdsOf(progress), [progress]);
+  // #424: the preference is the view's, not this component's. It was local
+  // state here, so the six ML cards below were the only artifact list in the
+  // app that could see it -- including the stage inspector one click away,
+  // which listed the diagnostics this canvas had just filtered out of the very
+  // node that opened it. `ArtifactNodes` and the inspector read the shared
+  // store now, so the toggle reaches every surface that draws artifacts.
+  const showDiagnostics = useShowDiagnostics();
+  // The whole run's diagnostics, not the ML stages' share of them. The count
+  // used to be taken over ML stage attempts alone while the staging half of
+  // this same canvas drew diagnostics of its own, so the number on the control
+  // described neither what was hidden nor what pressing it would reveal.
+  const diagnosticCount = diagnosticIds.size;
   const nodesById = useMemo(() => new Map((workflow?.nodes ?? []).map((node) => [node.id, node])), [workflow]);
   const groups = GROUPS.map((group) => ({ ...group, nodes: group.stages.map((stage) => nodesById.get(stage)).filter(Boolean) as WorkflowNode[] }));
   const checkpointSet = new Set(workspace.recommended_plan?.checkpoint_stages ?? []);
@@ -247,6 +249,24 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
   }
 
+  // #428: when problem discovery fails there is exactly one thing to do about
+  // it -- "Retry from Intake" -- which starts a whole new run from the
+  // beginning with no target guidance, so it fails the same way. Nothing about
+  // intake, schema discovery or integration was wrong; the framing was. This
+  // re-enters the graph at problem discovery with the person's column pinned,
+  // keeping every artifact the run already produced.
+  const [pinning, setPinning] = useState(false);
+  async function pinProblem(kind: "predict_column" | "flag_anomalies", column: string, taskType: string) {
+    setPinning(true); setError(null);
+    try {
+      await api.pinProblemFraming(runId, { kind, target_column: kind === "predict_column" ? column : null, task_type: taskType || null });
+      setDetail(null);
+      setProgress(await api.runProgress(runId));
+    }
+    catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+    finally { setPinning(false); }
+  }
+
   async function inspectStage(stageId: string) {
     setError(null);
     try { setDetail(await api.stage(runId, stageId)); }
@@ -270,12 +290,11 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     <Arrow active={arrowActive[0]} complete={accepted} dimmed={!accepted} />
     {groups.map((group, index) => {
       const status = groupStatuses[index];
-      const groupArtifactIds = group.stages.flatMap((stage) => visibleArtifactIdsByStage.get(stage) ?? []);
-      // #408: "Show diagnostics" used to change only which ids this list would
-      // hold if somebody expanded it -- and the pill is collapsed by default,
-      // on a node that may be off screen. Every card that actually gained rows
-      // opens itself, so the toolbar button has an effect a person can see.
-      const revealsDiagnostics = showDiagnostics && groupArtifactIds.some((id) => diagnosticIds.has(id));
+      // Every id the group produced, diagnostics included. `ArtifactNodes` is
+      // given the diagnostic set and does the hiding, the marking and the
+      // #408 self-opening in one place, for this card and for every other
+      // artifact list on the canvas alike (#424).
+      const groupArtifactIds = group.stages.flatMap((stage) => artifactIdsByStage.get(stage) ?? []);
       // #194: an accepted-but-unstarted pipeline showed every group as
       // "pending" -- identical to a running pipeline's unreached stages. Mark
       // the group the run will start with as "waiting to start" so it points
@@ -290,7 +309,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
       // "the service was unreachable" is otherwise invisible until they open
       // the panel.
       const note = group.nodes.find((node) => node.note)?.note ?? undefined;
-      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} checkpointStages={checkpointStages} footer={footer} note={note} artifactIds={groupArtifactIds} activeArtifactId={preview?.artifact_id ?? null} revealed={revealsDiagnostics} diagnosticIds={diagnosticIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
+      return <div key={group.id} className="contents"><GuidedNode title={t(group.title)} subtitle={t(group.description)} status={status} waiting={waiting} dimmed={!accepted} checkpointStages={checkpointStages} footer={footer} note={note} artifactIds={groupArtifactIds} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} onClick={() => void inspectGroup(group.id)} onOpenArtifact={(id) => void openArtifact(id)} />{index < groups.length - 1 && <Arrow active={arrowActive[index + 1]} complete={isSucceeded(status)} dimmed={!accepted} />}</div>;
     })}
   </>;
 
@@ -321,7 +340,13 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           </label>
         )}
         {canStart && !currentStage && targetColumns.length > 0 && problemKind !== "flag_anomalies" && (
-          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={t("Choose which column the model should predict, or let problem discovery propose one.")}>
+          // #428: the two modes treat this picker differently and the control
+          // used to say so nowhere. Under "Predict a column" the choice is
+          // built and measured directly; under "Ask the planner" it reaches the
+          // agent as prose to rank first, which the agent may still not
+          // propose -- so a person whose run then failed on a different
+          // framing had no way to tell their choice had been advisory.
+          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")}>
             <span className="text-ink-faint">{t("Target")}</span>
             <select value={targetColumn} onChange={(event) => setTargetColumn(event.target.value)} className="max-w-[11.25rem] bg-transparent text-2xs font-medium text-ink outline-none">
               {problemKind === "ask_planner" && <option value="">{t("Let the agent decide")}</option>}
@@ -353,7 +378,18 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           {!accepted && profile.tables.length > 0 && <button type="button" className="btn-ghost inline-flex items-center gap-1.5 text-xs" aria-expanded={sensitivitySelected} onClick={() => setSelected((current) => (current === "sensitivity" ? null : "sensitivity"))}>{t("Review personal data")}{personalColumns > 0 && <Badge tone="warn">{personalColumns}</Badge>}</button>}
           {/* #305: only offered when there is something to reveal, so the normal
               run has no developer affordance cluttering its toolbar at all. */}
-          {diagnosticCount > 0 && <button type="button" className="btn-ghost text-xs" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics((open) => !open)}>{showDiagnostics ? t("Hide diagnostics") : t("Show diagnostics ({count})", { count: diagnosticCount })}</button>}
+          {/* #423: this used to be a ghost button whose label swapped between
+              "show" and "hide", so the control read as ambiguous -- the text
+              could be the current state or the action -- it resized the
+              toolbar under the pointer on every press, and the count vanished
+              in one of the two states. It is a view preference, not an action,
+              so it takes the same labelled-checkbox shape as "Approve at every
+              stage": a fixed label carrying the count, with the state in the
+              switch rather than in the wording. */}
+          {diagnosticCount > 0 && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2 text-xs font-medium text-ink-soft transition-colors hover:bg-surface-sunken" title={t("Engineering records — agent audits and measurement bundles — kept out of the run view by default.")}>
+            <input type="checkbox" checked={showDiagnostics} onChange={(event) => setShowDiagnostics(event.target.checked)} className="h-3.5 w-3.5" />
+            {t("Diagnostics ({count})", { count: diagnosticCount })}
+          </label>}
           <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
         </div>
       </div>
@@ -380,9 +416,9 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         : <div className="space-y-4">
             {/* #295: the diagnosis leads. Below it the stage rows still hold
                 the full attempt history for anyone who wants it. */}
-            {selectedFailure && <FailureNotice failure={selectedFailure} />}
+            {selectedFailure && <FailureNotice failure={selectedFailure} stageId={detail?.stage.id ?? selectedGroup?.nodes.find((node) => isAttention(node.status))?.id ?? null} columns={targetColumns} busy={busy || pinning} onPin={pinProblem} />}
             {selectedGroup?.nodes.length
-              ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={visibleArtifactIdsByStage.get(node.id) ?? []} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
+              ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} diagnosticIds={diagnosticIds} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
               : selectedFailure
                 ? null
                 : isAttention(selectedGroupStatus)
@@ -401,7 +437,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   </>}>
     {/* Once the plan is accepted the plan node opens the summary of what will
         run, not the proposal it no longer is. */}
-    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} activeArtifactId={preview?.artifact_id ?? null} trailing={mlPipeline} />
+    <RoutingGraph routing={routing} workspace={workspace} onSelect={(selection) => setSelected(selection === "proposal" && accepted ? "summary" : selection)} proposal={routing.proposal === "failed" ? "blocked" : accepted ? "accepted" : "ready"} onOpenArtifact={(id) => void openArtifact(id)} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} trailing={mlPipeline} />
   </CanvasSurface>;
 }
 
@@ -459,7 +495,7 @@ function PlanSummary({ runId, profile, workspace, structured, documents, promote
 
 function FileRoles({ title, files, tone, empty }: { title: string; files: string[]; tone: "ok" | "neutral"; empty: string }) { return <div className="mt-3"><p className="text-3xs font-medium text-ink-mute">{title}</p>{files.length ? <div className="mt-2 flex flex-wrap gap-1.5">{files.map((file, index) => <Badge key={`${file}-${index}`} tone={tone} title={file} truncate>{file}</Badge>)}</div> : <p className="mt-1 text-3xs text-warn-700">{empty}</p>}</div>; }
 
-function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, checkpointStages, footer, note, artifactIds, activeArtifactId, revealed = false, diagnosticIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; checkpointStages: string[]; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; activeArtifactId?: string | null; revealed?: boolean; diagnosticIds?: ReadonlySet<string>; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, checkpointStages, footer, note, artifactIds, activeArtifactId, diagnosticIds, onClick, onOpenArtifact }: { title: string; subtitle: string; status: WorkflowNode["status"]; waiting?: boolean; dimmed?: boolean; checkpointStages: string[]; footer?: string; note?: NonNullable<WorkflowNode["note"]>; artifactIds: string[]; activeArtifactId?: string | null; diagnosticIds?: ReadonlySet<string>; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   // #194: a group waiting to be started reads distinctly -- a dashed brand ring
   // and its own "Waiting to start" badge -- instead of the neutral "pending"
   // it shares with stages a running pipeline simply has not reached. A running
@@ -467,7 +503,7 @@ function GuidedNode({ title, subtitle, status, waiting = false, dimmed = false, 
   // #214: `dimmed` is the pre-acceptance state. The node is on the canvas and
   // still opens its panel -- it is the pipeline that will run -- but it reads
   // as not-yet-live so the row says "this is next", not "this is happening".
-  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}{checkpointStages.length > 0 && <div className="mt-2"><Badge tone="warn" title={checkpointStages.map(stageName).join(", ")}>{t("Human approval")}</Badge></div>}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-3xs leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-3xs font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-3xs font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} revealed={revealed} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} /></ResizableNode>;
+  return <ResizableNode className={cx("relative shrink-0", dimmed && "opacity-60")} defaultWidth={205}><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", dimmed && "border-dashed", isActive(status) && "border-brand-400 ring-4 ring-brand-50", isAttention(status) && "border-stop-300", waiting && "border-dashed border-brand-400 ring-2 ring-brand-100")}>{waiting ? <div className="flex items-center justify-between gap-3"><StatusMark status="pending" /><Badge tone="brand">{t("Waiting to start")}</Badge></div> : <NodeStatusHeader status={status} />}{checkpointStages.length > 0 && <div className="mt-2"><Badge tone="warn" title={checkpointStages.map(stageName).join(", ")}>{t("Human approval")}</Badge></div>}<p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 min-h-[2rem] text-3xs leading-relaxed text-ink-mute">{subtitle}</p>{(waiting || footer) && <p className="mt-2 text-3xs font-medium text-brand-700">{waiting ? t("Press Run above to start") : footer}</p>}{note && <p className={cx("mt-2 text-3xs font-medium", note.tone === "warn" ? "text-warn-700" : "text-ink-soft")}>{note.text}</p>}</button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} /></ResizableNode>;
 }
 
 // The head tracks the line: once #196 made `bg-ok-300` a real class, a
@@ -482,15 +518,84 @@ function Arrow({ active, complete, dimmed = false }: { active: boolean; complete
  * specific answer -- "the plan failed a trial execution against the real
  * tables" says what to change, where a stack trace does not.
  */
-function FailureNotice({ failure }: { failure: StageFailure }) {
+function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: StageFailure;
+  /** Which stage failed, so the box can offer the correction that stage takes. */
+  stageId?: string | null;
+  columns?: ProfiledColumn[];
+  busy?: boolean;
+  onPin?: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void;
+}) {
   return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
     {failure.error && <p className="mt-2 break-words text-xs leading-relaxed text-stop-800">{failure.error}</p>}
-    {failure.checks.length > 0 && <ul className="mt-2 space-y-1">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}</li>)}</ul>}
+    {/* #427: the sentence, and under it the measurements that explain it. The
+        panel used to show only the first, and only as the server's English
+        "Mechanical check failed: <the condition that should hold>" -- so the
+        reason a framing was rejected stayed in the artifact while the reader
+        was shown a tautology. `measurements` are recorded facts about this
+        run, so they render as they are rather than through the catalogue. */}
+    {failure.checks.length > 0 && <ul className="mt-2 space-y-1.5">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}
+      {check.measurements.length > 0 && <ul className="mt-1 space-y-0.5 pl-3">{check.measurements.map((measurement) => <li key={measurement} className="break-words font-mono text-3xs leading-snug text-stop-800">{measurement}</li>)}</ul>}
+    </li>)}</ul>}
+    {stageId === "problem_discovery" && onPin && <ProblemReframe columns={columns ?? []} busy={busy ?? false} onPin={onPin} />}
   </section>;
 }
 
-function StageRow({ node, artifactIds, onInspect, onOpenArtifact }: { node: WorkflowNode; artifactIds: string[]; onInspect: () => void; onOpenArtifact: (id: string) => void }) { return <section className="rounded-xl border border-line p-3"><button type="button" className="flex w-full items-start gap-3 text-left" onClick={onInspect}><StatusMark status={node.status} /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-ink">{stageName(node.id)}</span><span className="mt-1 block text-3xs text-ink-mute">{statusLabel(node.status)}{elapsedLabel(node.elapsed_seconds) ? ` · ${elapsedLabel(node.elapsed_seconds)}` : ""}</span></span></button>{artifactIds.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">{artifactIds.map((id, index) => <button type="button" key={id} onClick={() => onOpenArtifact(id)} className="rounded-md bg-brand-50 px-2 py-1 text-4xs font-semibold text-brand-700">▣ {t("Artifact {number}", { number: index + 1 })}</button>)}</div>}</section>; }
+/** Name the framing a failed problem discovery could not find on its own.
+ *
+ * #428: the Target picker exists on the toolbar, gated on `canStart`, which is
+ * false for a failed run -- so the control was present in the state where
+ * nothing had gone wrong yet and absent in the one where a person knows
+ * exactly what to fix. The column is pinned as a constraint rather than passed
+ * as prose the agent may rank first and then ignore: the candidate is built
+ * directly and measured, so an unviable column comes back as the blocking
+ * reasons for *that* column, which is an answer somebody can act on.
+ */
+function ProblemReframe({ columns, busy, onPin }: { columns: ProfiledColumn[]; busy: boolean; onPin: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void }) {
+  const [kind, setKind] = useState<"predict_column" | "flag_anomalies">("predict_column");
+  // Empty means "read it off the column's measured shape", which is the right
+  // default. It is offered because inference cannot tell a 0/1 label from a
+  // 0/1 quantity and the person looking at their own data can.
+  const [taskType, setTaskType] = useState("");
+  const [column, setColumn] = useState(() => (columns.find((item) => item.candidate_target) ?? columns[0])?.name ?? "");
+  const ready = kind === "flag_anomalies" || Boolean(column);
+  return <div className="mt-4 border-t border-stop-200 pt-3">
+    <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Name the problem yourself")}</p>
+    <p className="mt-1 text-3xs leading-relaxed text-stop-700">{t("This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.")}</p>
+    <div className="mt-3 flex flex-wrap items-end gap-2">
+      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Problem")}
+        <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          <option value="predict_column">{t("Predict a column")}</option>
+          <option value="flag_anomalies">{t("Flag unusual rows")}</option>
+        </select>
+      </label>
+      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Target")}
+        <select value={column} onChange={(event) => setColumn(event.target.value)} className="max-w-[11.25rem] rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          {columns.map((item) => <option key={item.name} value={item.name}>{item.name}{item.candidate_target ? " ★" : ""}</option>)}
+        </select>
+      </label>}
+      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Task type")}
+        <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          <option value="">{t("From the column's shape")}</option>
+          <option value="regression">{t("Regression")}</option>
+          <option value="binary_classification">{t("Binary classification")}</option>
+          <option value="multiclass_classification">{t("Multiclass classification")}</option>
+        </select>
+      </label>}
+      <button type="button" className="btn-primary text-xs" disabled={busy || !ready} onClick={() => onPin(kind, column, taskType)}>{busy ? t("Working…") : t("Re-run problem discovery")}</button>
+    </div>
+  </div>;
+}
 
-function StageEvidence({ detail, onOpenArtifact }: { detail: StageDetail; onOpenArtifact: (id: string) => void }) { const outputs = detail.outputs ?? []; const panels = (detail.panels ?? []) as AnalysisPanel[]; return <section className="rounded-xl bg-surface-sunken p-4"><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Inspection")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{detail.stage.description}</p>{/* #304: the measured analysis charts -- distributions, missingness, a correlation heatmap, target relationships -- shown here in the guided stage inspector, not only on the retired workflows screen. */}{panels.length > 0 && <div className="mt-3"><AnalysisStrip panels={panels} /></div>}{outputs.length ? <div className="mt-3 space-y-2">{outputs.map((output) => <button type="button" key={output.artifact_id} onClick={() => onOpenArtifact(output.artifact_id)} className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-left text-3xs font-semibold text-brand-700">{output.name || output.type} · {t("Open artifact")}</button>)}</div> : <p className="mt-3 text-3xs text-ink-faint">{t("No artifacts produced yet.")}</p>}</section>; }
+/** #424: the per-stage chips inside the docked group panel, filtered against
+ *  the same preference as the canvas node above them. */
+function StageRow({ node, artifactIds, diagnosticIds, onInspect, onOpenArtifact }: { node: WorkflowNode; artifactIds: string[]; diagnosticIds: ReadonlySet<string>; onInspect: () => void; onOpenArtifact: (id: string) => void }) { const showDiagnostics = useShowDiagnostics(); const visible = withoutDiagnostics(artifactIds, (id) => diagnosticIds.has(id), showDiagnostics); return <section className="rounded-xl border border-line p-3"><button type="button" className="flex w-full items-start gap-3 text-left" onClick={onInspect}><StatusMark status={node.status} /><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-ink">{stageName(node.id)}</span><span className="mt-1 block text-3xs text-ink-mute">{statusLabel(node.status)}{elapsedLabel(node.elapsed_seconds) ? ` · ${elapsedLabel(node.elapsed_seconds)}` : ""}</span></span></button>{visible.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">{visible.map((id, index) => <button type="button" key={id} onClick={() => onOpenArtifact(id)} className="rounded-md bg-brand-50 px-2 py-1 text-4xs font-semibold text-brand-700">▣ {t("Artifact {number}", { number: index + 1 })}</button>)}</div>}</section>; }
+
+/** #424: the panel that opens when you click the node whose chips were just
+ *  filtered. It rendered `detail.outputs` straight from the API, so the same
+ *  run showed two different artifact lists one click apart -- and the toggle
+ *  looked broken from the surface most likely to be read after pressing it.
+ *  Same preference, same closed set: the backend already marks each output
+ *  `diagnostic`, so nothing here re-derives which kinds those are. */
+function StageEvidence({ detail, onOpenArtifact }: { detail: StageDetail; onOpenArtifact: (id: string) => void }) { const showDiagnostics = useShowDiagnostics(); const outputs = withoutDiagnostics(detail.outputs ?? [], (output) => output.diagnostic === true, showDiagnostics); const panels = (detail.panels ?? []) as AnalysisPanel[]; return <section className="rounded-xl bg-surface-sunken p-4"><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Inspection")}</p><p className="mt-2 text-xs leading-relaxed text-ink-mute">{detail.stage.description}</p>{/* #304: the measured analysis charts -- distributions, missingness, a correlation heatmap, target relationships -- shown here in the guided stage inspector, not only on the retired workflows screen. */}{panels.length > 0 && <div className="mt-3"><AnalysisStrip panels={panels} /></div>}{outputs.length ? <div className="mt-3 space-y-2">{outputs.map((output) => <button type="button" key={output.artifact_id} onClick={() => onOpenArtifact(output.artifact_id)} className={cx("w-full rounded-lg border bg-surface px-3 py-2 text-left text-3xs font-semibold text-brand-700", output.diagnostic ? "border-dashed border-slate-300" : "border-line")}>{output.name || output.type} · {t("Open artifact")}{output.diagnostic && <span className="ml-1 font-medium text-ink-faint">· {t("Diagnostic")}</span>}</button>)}</div> : <p className="mt-3 text-3xs text-ink-faint">{t("No artifacts produced yet.")}</p>}</section>; }
 

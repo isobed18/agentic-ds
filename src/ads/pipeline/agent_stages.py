@@ -142,6 +142,23 @@ def _validation_failure_count(result: AgentPanelResult[Any]) -> int:
     return len(result.all_failures)
 
 
+def _validation_failure_details(result: AgentPanelResult[Any]) -> list[str]:
+    """Which validators fired, for a reader rather than for a rule (#427).
+
+    The count alone cannot be acted on: `unknown_target` on a column named in
+    the original casing and `task_target_mismatch` on a datetime are both "1
+    validation failure", and they call for opposite corrections.
+    """
+    seen: list[str] = []
+    for failure in result.all_failures:
+        line = f"{failure.layer}/{failure.code}: {failure.detail}"
+        if failure.field_path:
+            line = f"{line} (at {failure.field_path})"
+        if line not in seen:
+            seen.append(line)
+    return seen
+
+
 def _agent_audit(
     stage_id: str,
     spec: AgentSpec[Any],
@@ -186,7 +203,10 @@ def _failed_result(result: AgentPanelResult[Any], audit: AgentAudit) -> StageRes
     return StageResult(
         artifacts=[audit],
         names={0: "agent_audit"},
-        signals=QualitySignals(validation_failures=_validation_failure_count(result)),
+        signals=QualitySignals(
+            validation_failures=_validation_failure_count(result),
+            validation_failure_details=_validation_failure_details(result),
+        ),
         digest=detail[:1500],
     )
 
@@ -624,7 +644,20 @@ def _quick_problem_proposal(selection: dict[str, Any], card: DataCard) -> Proble
     if kind == "predict_column":
         target_column = str(selection.get("target_column") or "")
         profile = card.column(target_column)
-        task_type = _infer_supervised_task_type(profile) if profile else TaskType.REGRESSION
+        # #428: a person correcting a failed problem discovery may name the task
+        # type as well as the column. Inference reads the column's measured
+        # shape, which is the right default, but it cannot know that a 0/1
+        # integer is a label rather than a quantity -- and the person looking at
+        # their own data does. An explicit choice wins; `compute_support` still
+        # measures whether it is viable and names the blocking reasons if not.
+        stated = selection.get("task_type")
+        task_type = (
+            TaskType(str(stated))
+            if stated
+            else _infer_supervised_task_type(profile)
+            if profile
+            else TaskType.REGRESSION
+        )
         return ProblemCandidateProposal(
             title=f"Predict {target_column}"[:120],
             title_tr=f"{target_column} sütununu tahmin et"[:120],
@@ -656,7 +689,13 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
         # is only set then) -- reproposing the same deterministic framing would
         # not be a rework, and the person clearly wants something else.
         quick_selection = state.blackboard.get(QUICK_PROBLEM_KEY)
-        if quick_selection is not None and correction is None:
+        # #428: a framing pinned after a failure is a constraint, not a ranking
+        # hint, so it is honoured even though a correction is present -- that
+        # correction *is* the pin. #241's selection stays advisory on retry for
+        # the reason it always was: a gate that rejected the deterministic
+        # framing would only be handed the same one again.
+        pinned = bool(quick_selection and quick_selection.get("pinned"))
+        if quick_selection is not None and (pinned or correction is None):
             candidates = attach_support(
                 ProblemDiscoveryProposal(
                     candidates=[_quick_problem_proposal(quick_selection, card)]

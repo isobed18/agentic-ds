@@ -1,3 +1,4 @@
+import { useShowDiagnostics, withoutDiagnostics } from "../lib/diagnostics";
 import { t } from "../lib/i18n";
 /**
  * Centre workspace for one stage.
@@ -67,6 +68,7 @@ export function StageWorkspace({
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const showDiagnostics = useShowDiagnostics();
 
   useEffect(() => {
     if (!runId || !node) { setDetail(null); return; }
@@ -85,6 +87,12 @@ export function StageWorkspace({
   }
 
   const outputs = detail?.outputs ?? [];
+  // #424: the outputs the reader is shown, and the closed diagnostic set the
+  // counts below are measured against. `outputs` itself stays whole -- the
+  // derivations under it read data cards and story choices, which is a
+  // question about kinds, not about what is on screen.
+  const visibleOutputs = withoutDiagnostics(outputs, (o) => o.diagnostic === true, showDiagnostics);
+  const diagnosticIds: ReadonlySet<string> = new Set(outputs.filter((o) => o.diagnostic).map((o) => o.artifact_id));
   const candidates = outputs.flatMap((o) => o.story?.choices ?? []);
   // Intake emits one data card per source table; the override needs their
   // columns, and this is the same payload the panel above already renders.
@@ -184,10 +192,10 @@ export function StageWorkspace({
         <AnalysisStrip panels={detail.panels as AnalysisPanel[]} />
       )}
 
-      {outputs.map((o) => <OutputBlock key={o.artifact_id} output={o} />)}
+      {visibleOutputs.map((o) => <OutputBlock key={o.artifact_id} output={o} />)}
 
       {detail && detail.attempts.length > 0 && (
-        <Attempts attempts={detail.attempts} />
+        <Attempts attempts={detail.attempts} diagnosticIds={diagnosticIds} />
       )}
 
       {/* Gate internals -- reason codes, rule ids, artifact hashes -- are
@@ -546,7 +554,14 @@ function collectAttention(detail: StageDetail | null): AttentionItem[] {
  * critique the whole time and was never rendered -- the person watching had no
  * way to tell a slow stage from a broken one.
  */
-function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
+function Attempts({ attempts, diagnosticIds }: { attempts: StageDetail["attempts"];
+  /** #424: the per-attempt count said "{n} artifacts" over every id the
+   *  attempt wrote, agent audits and measurement bundles included -- so on a
+   *  stage whose chips the diagnostics toggle had just emptied, this still
+   *  claimed four. It counts what the default view actually shows. */
+  diagnosticIds: ReadonlySet<string> }) {
+  const showDiagnostics = useShowDiagnostics();
+  const visibleCount = (ids: string[]) => (showDiagnostics ? ids.length : ids.filter((id) => !diagnosticIds.has(id)).length);
   const unfinished = attempts.some((a) => !a.ended_at);
   return (
     <Disclosure
@@ -579,9 +594,9 @@ function Attempts({ attempts }: { attempts: StageDetail["attempts"] }) {
                     {elapsedLabel(seconds)}
                   </span>
                 )}
-                {attempt.artifact_ids.length > 0 && (
+                {visibleCount(attempt.artifact_ids) > 0 && (
                   <span className="text-2xs text-ink-faint">
-                    {attempt.artifact_ids.length} {t("artifacts")}
+                    {visibleCount(attempt.artifact_ids)} {t("artifacts")}
                   </span>
                 )}
               </div>

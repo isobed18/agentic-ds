@@ -197,8 +197,16 @@ const TR: Record<string, string> = {
   "Every stage stops for your approval.": "Her aşama onayınız için durur.",
   "Leave empty to let the agent discover the problem from the data.": "Ajanın problemi veriden keşfetmesi için boş bırakın.",
   "Let the agent decide": "Ajan karar versin",
-  "Choose which column the model should predict, or let problem discovery propose one.":
-    "Modelin tahmin edeceği sütunu seçin ya da problem keşfinin önermesine izin verin.",
+  // #428: one tooltip per mode. The old single string ("choose the column, or
+  // let problem discovery propose one") described both at once and so said
+  // which of the two was happening in neither.
+  "A hint for the agent to rank first, not a decision — it may still propose another framing.": (
+    "Ajanın ilk sıraya koyması için bir ipucu, bir karar değil — yine de başka bir " +
+    "çerçeveleme önerebilir."
+  ),
+  "The model predicts this column. The choice is used as given.": (
+    "Model bu sütunu tahmin eder. Seçim verildiği gibi kullanılır."
+  ),
   "State the ML problem directly, or ask the planner to propose one.":
     "ML problemini doğrudan belirtin ya da planlayıcının önermesini isteyin.",
   "Problem": "Problem",
@@ -250,6 +258,57 @@ const TR: Record<string, string> = {
   "The plan declared no base grain.": "Plan temel granülerliği bildirmedi.",
   "The plan did not pass the relationship and fan-out validators.": "Plan, ilişki ve fan-out doğrulayıcılarından geçemedi.",
   "The plan failed a trial execution against the real tables.": "Plan, gerçek tablolar üzerinde denenince başarısız oldu.",
+  // #427: CHECK_TEXT reaches t() through a variable, so the literal scanner
+  // cannot see any of these -- and it held the three schema.* ids only, which
+  // is why a failed problem discovery rendered the server's untranslated
+  // English. `stageFailure.test.ts` pins the whole map against the catalogue
+  // so a newly added check cannot ship in English past a green suite.
+  "The executed table has more than one row per base-grain row, so the join fanned out.": (
+    "Çalıştırılan tabloda temel granülerlik satırı başına birden fazla satır var, " +
+    "yani birleştirme çoğalttı."
+  ),
+  "None of the proposed ML problems is viable against this data.": (
+    "Önerilen ML problemlerinin hiçbiri bu veriyle uygulanabilir değil."
+  ),
+  "A proposed problem named a column the analytical base table does not have, or a task its target's shape contradicts.": (
+    "Önerilen bir problem, analitik temel tabloda olmayan bir sütun adı verdi ya da " +
+    "hedefinin şekliyle çelişen bir görev seçti."
+  ),
+  "The proposed split strategy contradicts the measured signals, or no strategy was produced.": (
+    "Önerilen bölme stratejisi ölçülen sinyallerle çelişiyor ya da hiç strateji üretilmedi."
+  ),
+  "The selected split strategy failed its trial execution.": (
+    "Seçilen bölme stratejisi deneme çalıştırmasında başarısız oldu."
+  ),
+  "The analysis did not report the target's distribution.": (
+    "Analiz, hedefin dağılımını raporlamadı."
+  ),
+  "Some features were left out of the analysis.": "Bazı öznitelikler analizin dışında kaldı.",
+  "Missing values were not quantified for every column analysed.": (
+    "Analiz edilen her sütun için eksik değerler ölçülmedi."
+  ),
+  "Some input columns have no feature route, or more than one.": (
+    "Bazı girdi sütunlarının öznitelik yolu yok ya da birden fazla."
+  ),
+  "Preprocessing statistics were learned outside the training fold, which leaks the evaluation data.": (
+    "Ön işleme istatistikleri eğitim katmanının dışında öğrenildi, bu da " +
+    "değerlendirme verisini sızdırır."
+  ),
+  "The saved model was never verified as fitted.": (
+    "Kaydedilen modelin eğitilmiş olduğu hiç doğrulanmadı."
+  ),
+  "Fitting touched holdout rows, so the reported scores are optimistic.": (
+    "Eğitim, ayrılmış satırlara dokundu; bu yüzden raporlanan skorlar iyimser."
+  ),
+  "Model selection ran without exactly one naive baseline to compare against.": (
+    "Model seçimi, karşılaştırılacak tam bir naif referans modeli olmadan çalıştı."
+  ),
+  "No metric was reported on the untouched holdout.": (
+    "Dokunulmamış ayrılmış küme üzerinde hiçbir metrik raporlanmadı."
+  ),
+  "The comparison has no naive baseline in it.": (
+    "Karşılaştırmada naif bir referans modeli yok."
+  ),
   "artifacts": "artefakt",
   "Zoom level": "Yakınlaştırma düzeyi",
   "Zoom in": "Yakınlaştır",
@@ -1037,6 +1096,18 @@ const TR: Record<string, string> = {
   "Not started yet": "Henüz başlamadı",
   "This stage runs once the plan is accepted.": "Bu aşama, plan kabul edildikten sonra çalışır.",
   "Why it failed": "Neden başarısız oldu",
+  // #428: naming the framing a failed problem discovery could not find, from
+  // the failure box itself, instead of restarting the whole run from Intake.
+  "Name the problem yourself": "Problemi kendiniz adlandırın",
+  "This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.": (
+    "Bu, seçiminiz sabitlenmiş olarak problem keşfini bu çalıştırmada yeniden çalıştırır. " +
+    "Alım, şema keşfi ve entegrasyon korunur."
+  ),
+  "Re-run problem discovery": "Problem keşfini yeniden çalıştır",
+  "From the column's shape": "Sütunun şeklinden",
+  "Regression": "Regresyon",
+  "Binary classification": "İkili sınıflandırma",
+  "Multiclass classification": "Çok sınıflı sınıflandırma",
   "This stage failed": "Bu aşama başarısız oldu",
   "No error was recorded for it.": "Bunun için bir hata kaydedilmedi.",
   "Accepted ML plan": "Kabul edilen ML planı",
@@ -1451,9 +1522,11 @@ const TR: Record<string, string> = {
 
   // Advanced / Experimental graph editor
   "Advanced editor · Experimental": "Gelişmiş düzenleyici · Deneysel",
-  // #305: the diagnostics affordance on the run toolbar.
-  "Show diagnostics ({count})": "Tanılamayı göster ({count})",
-  "Hide diagnostics": "Tanılamayı gizle",
+  // #305: the diagnostics affordance on the run toolbar. #423 replaced the
+  // button whose label flipped between "göster" and "gizle" with a checkbox,
+  // so one fixed label carries the count in both states.
+  "Diagnostics ({count})": "Tanılama ({count})",
+  "Engineering records — agent audits and measurement bundles — kept out of the run view by default.": "Mühendislik kayıtları — ajan denetimleri ve ölçüm paketleri — varsayılan olarak çalıştırma görünümünün dışında tutulur.",
   // #408: marks the rows the toggle above just added, so a longer list is a
   // visible answer to what the button did rather than an unexplained change.
   "Diagnostic": "Tanılama",

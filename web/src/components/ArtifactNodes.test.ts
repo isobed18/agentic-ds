@@ -1,8 +1,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ArtifactNodes } from "./ArtifactNodes";
+import { setShowDiagnostics } from "../lib/diagnostics";
 import SOURCE from "./ArtifactNodes.tsx?raw";
 import GUIDED from "./GuidedPipeline.tsx?raw";
 import UNDERSTANDING from "./UnderstandingWorkspace.tsx?raw";
@@ -12,6 +13,8 @@ Object.defineProperty(globalThis, "localStorage", {
   value: { getItem: () => null },
   configurable: true,
 });
+
+afterEach(() => setShowDiagnostics(false));
 
 describe("the artifacts opener under a node", () => {
   it("renders one straddling opener, collapsed, instead of always-on chips", () => {
@@ -65,27 +68,41 @@ describe("the artifacts opener under a node", () => {
   });
 });
 
-describe("a caller can reveal the list it just changed (#408)", () => {
-  it("opens the list when the caller says it just gained rows", () => {
+describe("the list reveals what it just gained (#408)", () => {
+  it("opens itself when the preference turns diagnostics on", () => {
+    setShowDiagnostics(true);
     const markup = renderToStaticMarkup(
-      createElement(ArtifactNodes, { ids: ["a", "b"], revealed: true, onOpen: () => undefined }),
+      createElement(ArtifactNodes, {
+        ids: ["a", "b"],
+        diagnosticIds: new Set(["b"]),
+        onOpen: () => undefined,
+      }),
     );
 
     // The effect that opens it runs on mount, so static markup still shows the
     // collapsed pill -- what matters here is that the wiring exists and that
     // the viewer's own click takes the pill back off the caller.
     expect(markup).toContain("aria-expanded");
+    expect(SOURCE).toContain("const revealed = showDiagnostics && ids.some((id) => diagnosticIds?.has(id) ?? false)");
     expect(SOURCE).toContain("if (revealed) { auto.current = true; setOpen(true); }");
     expect(SOURCE).toContain("else if (auto.current) { auto.current = false; setOpen(false); }");
   });
 
+  it("leaves a list with no diagnostic in it alone", () => {
+    setShowDiagnostics(true);
+    // `some` rather than a bare preference read: a card that gained nothing
+    // must not pop open because a card elsewhere on the canvas did.
+    expect(SOURCE).toContain("ids.some((id) => diagnosticIds?.has(id) ?? false)");
+  });
+
   it("hands the pill back to whoever clicks it", () => {
-    // Clicking clears the auto flag, so turning the toolbar toggle off later
-    // does not close a list the viewer opened for themselves.
+    // Clicking clears the auto flag, so turning the toggle off later does not
+    // close a list the viewer opened for themselves.
     expect(SOURCE).toContain("onClick={() => { auto.current = false; setOpen((current) => !current); }}");
   });
 
   it("labels the rows that are diagnostics", () => {
+    setShowDiagnostics(true);
     const markup = renderToStaticMarkup(
       createElement(ArtifactNodes, {
         ids: ["a"],
@@ -100,5 +117,68 @@ describe("a caller can reveal the list it just changed (#408)", () => {
     expect(SOURCE).toContain("const diagnostic = diagnosticIds?.has(id) ?? false");
     expect(SOURCE).toContain('t("Diagnostic")');
     expect(SOURCE).toContain('diagnostic ? "border-dashed border-slate-300" : "border-line"');
+  });
+});
+
+describe("the node hides diagnostics itself (#424)", () => {
+  it("drops them from the list while the preference is off", () => {
+    // #305 filtered in one caller, so every other artifact list in the app --
+    // the stage inspector, the staging graph, the advanced editor -- listed
+    // diagnostics whatever the toggle said. Every canvas list comes through
+    // here, so the filter does too: give it the run's diagnostic ids and the
+    // node cannot leak one into the default view.
+    //
+    // A node holding nothing but diagnostics is the observable case: it
+    // disappears rather than keeping an opener onto an empty list. The guard
+    // used to be on `ids`, which counted the hidden ones.
+    expect(
+      renderToStaticMarkup(
+        createElement(ArtifactNodes, {
+          ids: ["audit"],
+          diagnosticIds: new Set(["audit"]),
+          onOpen: () => undefined,
+        }),
+      ),
+    ).toBe("");
+    expect(SOURCE).toContain("showDiagnostics || !diagnosticIds ? ids : ids.filter((id) => !diagnosticIds.has(id))");
+    expect(SOURCE).toContain("if (!visibleIds.length) return null;");
+  });
+
+  it("keeps them when the preference is on", () => {
+    setShowDiagnostics(true);
+    expect(
+      renderToStaticMarkup(
+        createElement(ArtifactNodes, {
+          ids: ["audit"],
+          diagnosticIds: new Set(["audit"]),
+          onOpen: () => undefined,
+        }),
+      ),
+    ).toContain("aria-expanded");
+    expect(SOURCE).toContain("const showDiagnostics = useShowDiagnostics();");
+  });
+
+  it("leaves the results alone either way", () => {
+    // Filtering is about the diagnostic ids only; a node that also holds a
+    // result keeps its opener with the preference off.
+    expect(
+      renderToStaticMarkup(
+        createElement(ArtifactNodes, {
+          ids: ["result", "audit"],
+          diagnosticIds: new Set(["audit"]),
+          onOpen: () => undefined,
+        }),
+      ),
+    ).toContain("aria-expanded");
+  });
+
+  it("hides nothing for a list with no run behind it", () => {
+    // Omitting `diagnosticIds` is the old behaviour: no run, no closed set,
+    // nothing to classify.
+    expect(
+      renderToStaticMarkup(
+        createElement(ArtifactNodes, { ids: ["a", "b"], onOpen: () => undefined }),
+      ),
+    ).toContain("aria-expanded");
   });
 });

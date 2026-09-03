@@ -398,6 +398,12 @@ export interface StageOutput {
   created_at: string;
   summary?: Record<string, unknown>;
   story?: Story;
+  /** #305/#424: whether this is an engineering record -- an agent audit, a
+   *  measurement bundle, an internal trial, an attempt diagnostic -- rather
+   *  than a result. The backend has always sent it on these entries; nothing
+   *  read it, so the stage inspector listed diagnostics whatever the
+   *  diagnostics toggle said. */
+  diagnostic?: boolean;
 }
 
 export interface StageAttempt {
@@ -419,7 +425,16 @@ export interface StageAttempt {
 export interface StageCritique {
   rubric_version?: string;
   unmet_criteria?: string[];
-  findings?: { check_id: string; severity: string; evidence?: string | null }[];
+  findings?: {
+    check_id: string;
+    severity: string;
+    evidence?: string | null;
+    /** #427: the measured facts behind the failure -- which candidate framing
+     *  was rejected and why, which validator fired on which column. Separate
+     *  from `evidence`, which is a sentence about the check itself and gets
+     *  translated through `CHECK_TEXT`. */
+    measurements?: string[] | null;
+  }[];
 }
 
 /** Whether this stage is waiting on a person, in the backend's own words. */
@@ -1215,6 +1230,21 @@ export const api = {
       body: JSON.stringify({ confirmation: id }),
     }),
   answer: (id: string, body: unknown) => request<unknown>(`/api/runs/${id}/answer`, { method: "POST", body: JSON.stringify(body) }),
+  /** #428: pin an ML framing on a stopped run and re-run problem discovery.
+   *
+   * Not a new run: the intake, schema discovery and integration this run
+   * already did were not what failed, so they are kept. The named column is a
+   * constraint, not a ranking hint -- the candidate is built and measured
+   * directly, and an unviable one comes back as blocking reasons for that
+   * column rather than as another unexplained failure. */
+  pinProblemFraming: (
+    id: string,
+    body: { kind: "predict_column" | "flag_anomalies"; target_column: string | null; task_type?: string | null },
+  ) =>
+    request<{ run_id: string; status: string; stage_id: string; target_column: string | null; task_type: string | null }>(
+      `/api/runs/${id}/problem/pin`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   deleteModel: (artifactId: string) =>
     request<{ artifact_id: string; index_entries: number }>(
       `/api/models/${encodeURIComponent(artifactId)}`,
