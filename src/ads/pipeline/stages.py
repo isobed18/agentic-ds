@@ -713,10 +713,23 @@ def _train_enhanced_model(
     if rl is None or rl.status != RLFE_APPLICABLE or problem.target_column is None:
         return None
     manifest = state.require(ArtifactType.SPLIT_MANIFEST, SplitManifest)
+    # ``train_candidates`` re-derives the split from the frame it receives. A
+    # temporal/group routing column may be absent from the sidecar's selected
+    # features (datetime columns are deliberately never sent), but it must
+    # remain present long enough for that split to be reproduced. Keep such
+    # columns as routing context and explicitly omit them from preprocessing so
+    # they do not become features the RL search never selected.
+    routing_columns = [
+        column
+        for column in (strategy.time_column, strategy.group_column)
+        if column
+        and column != problem.target_column
+        and column not in rl.selected_features
+    ]
     enhanced, skipped = build_enhanced_frame(
         frame,
         target_column=problem.target_column,
-        selected_features=rl.selected_features,
+        selected_features=[*rl.selected_features, *routing_columns],
         generated_features=rl.recipe(),
         impute_from=frame.index[list(manifest.outer_train.positions)],
     )
@@ -744,10 +757,10 @@ def _train_enhanced_model(
             enhanced,
             strategy,
             lambda: build_preprocessor(
-                card,
-                target_column=problem.target_column or "",
-                excluded_columns=set(),
-            ),
+            card,
+            target_column=problem.target_column or "",
+            excluded_columns=set(routing_columns),
+        ),
             candidates,
             target_column=problem.target_column,
             task_type=problem.task_type,
