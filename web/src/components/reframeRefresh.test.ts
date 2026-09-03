@@ -3,16 +3,16 @@ import { describe, expect, it } from "vitest";
 import WORKSPACE_PAGE from "../pages/AutomationWorkspace.tsx?raw";
 import SOURCE from "./GuidedPipeline.tsx?raw";
 
-/** The body of `pinProblem`, so a match cannot come from elsewhere. */
+/** The body of `afterPin`, so a match cannot come from elsewhere. */
 function pinBody(): string {
-  const start = SOURCE.indexOf("async function pinProblem(");
+  const start = SOURCE.indexOf("async function afterPin(");
   expect(start).toBeGreaterThan(-1);
   return SOURCE.slice(start, SOURCE.indexOf("async function inspectStage("));
 }
 
 describe("pinning a target looks like the run restarting (#465)", () => {
   it("tells the page, which owns the status both polls read", () => {
-    // `pinProblem` cleared only its own local `error` and `detail`. There was
+    // `afterPin` cleared only its own local `error` and `detail`. There was
     // no callback up to `AutomationWorkspace`, so the parent's `error` kept the
     // stale text and its `runStatus` stayed "failed" -- while the server had
     // already cleared `runtime.error`, set the run `resuming`, and re-entered

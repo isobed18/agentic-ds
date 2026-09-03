@@ -6483,6 +6483,28 @@ class ControlPlane:
         # back to the agent conversation whenever one is present. The pin is the
         # correction now, so the stale one goes.
         state.blackboard.pop(f"human_correction::{self.PROBLEM_STAGE}", None)
+        # #464, the open question: pinning from an *unanswered* gate left that
+        # escalation with no recorded answer. `resume_workflow` writes a
+        # `human_decisions` entry for every gate a person answers, and this path
+        # re-enters the graph directly, so the run's audit trail showed an
+        # escalation nobody replied to -- while a person had in fact replied, in
+        # the most specific way the product offers.
+        #
+        # Recorded in the same shape and with the same vocabulary: a pin re-runs
+        # the stage under a constraint, which is what `retry` means here, and
+        # the constraint travels as the instruction.
+        if runtime.status == "awaiting_human":
+            state.blackboard.setdefault("human_decisions", []).append(
+                {
+                    "stage_id": self.PROBLEM_STAGE,
+                    "decision": "retry",
+                    "instructions": [
+                        f"pinned problem framing: {kind}"
+                        + (f" target_column={column}" if column else "")
+                        + (f" task_type={task_type}" if task_type else "")
+                    ],
+                }
+            )
 
         mode = runtime.configuration.get("mode", "manual")
         llm: StructuredLLM | None = None

@@ -1157,6 +1157,15 @@ const TR: Record<string, string> = {
   // #428: naming the framing a failed problem discovery could not find, from
   // the failure box itself, instead of restarting the whole run from Intake.
   "Name the problem yourself": "Problemi kendiniz adlandırın",
+  // #464: the selector moved out of the red box into a dialog of its own, and
+  // is now offered on the gate card too -- the screen that actually asks the
+  // question. These are the button's own copy and the per-column evidence that
+  // makes a target choosable.
+  "Problem discovery could not frame this run on its own. You can name the target it should use.":
+    "Problem keşfi bu koşuyu kendi başına çerçeveleyemedi. Kullanacağı hedefi siz belirtebilirsiniz.",
+  "This run has no profiled columns to choose from.": "Bu koşuda seçilebilecek profillenmiş sütun yok.",
+  "{percent}% null": "%{percent} boş",
+  "{percent}% distinct": "%{percent} farklı",
   "This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.": (
     "Bu, seçiminiz sabitlenmiş olarak problem keşfini bu çalıştırmada yeniden çalıştırır. " +
     "Alım, şema keşfi ve entegrasyon korunur."
