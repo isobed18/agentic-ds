@@ -7,6 +7,10 @@ import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
 import CATALOGUE from "../lib/i18n.ts?raw";
 import PAGE_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
+import ARTIFACT_NODES_SOURCE from "./ArtifactNodes.tsx?raw";
+import STAGE_WORKSPACE_SOURCE from "./StageWorkspace.tsx?raw";
+import API_SOURCE from "../lib/api.ts?raw";
+import DIAGNOSTICS_SOURCE from "../lib/diagnostics.ts?raw";
 import SENSITIVITY_SOURCE from "./SensitivityOverride.tsx?raw";
 
 describe("staged sensitivity review (#330)", () => {
@@ -280,20 +284,9 @@ describe("quick problem selector (#241)", () => {
 describe("diagnostics are hidden from the default artifact chips (#305)", () => {
   it("reads the backend's diagnostic id set rather than re-deriving the kinds", () => {
     // The stage attempts carry artifact ids, not kinds, so only the backend can
-    // say which are engineering records. The chip filter reads that set.
-    expect(SOURCE).toContain("progress?.diagnostic_artifact_ids");
-    expect(SOURCE).toContain("const diagnosticIds = useMemo");
-  });
-
-  it("filters diagnostics out of the chips unless the toggle is on", () => {
-    expect(SOURCE).toContain("const [showDiagnostics, setShowDiagnostics] = useState(false)");
-    expect(SOURCE).toContain("if (showDiagnostics) return artifactIdsByStage;");
-    expect(SOURCE).toContain("ids.filter((id) => !diagnosticIds.has(id))");
-    // Both chip render sites read the filtered map, so neither the canvas nodes
-    // nor the stage inspector can leak a diagnostic back into the default view.
-    expect(SOURCE).not.toContain("artifactIds={artifactIdsByStage.get(node.id)");
-    expect(SOURCE).toContain("visibleArtifactIdsByStage.get(node.id)");
-    expect(SOURCE).toContain("visibleArtifactIdsByStage.get(stage)");
+    // say which are engineering records. The filter reads that set.
+    expect(SOURCE).toContain("const diagnosticIds = useMemo(() => diagnosticIdsOf(progress)");
+    expect(DIAGNOSTICS_SOURCE).toContain("progress?.diagnostic_artifact_ids");
   });
 
   it("offers the toggle only when there is a diagnostic to reveal", () => {
@@ -307,22 +300,93 @@ describe("diagnostics are hidden from the default artifact chips (#305)", () => 
     expect(CATALOGUE).toContain('"Show diagnostics ({count})": "Tanılamayı göster ({count})"');
   });
 
-  // #408: the toggle changed only which ids a collapsed, possibly off-screen
-  // pill would hold once expanded, so from the toolbar it looked like it did
-  // nothing at all.
-  it("opens the cards that actually gained rows", () => {
-    expect(SOURCE).toContain(
-      "const revealsDiagnostics = showDiagnostics && groupArtifactIds.some((id) => diagnosticIds.has(id))",
-    );
-    expect(SOURCE).toContain("revealed={revealsDiagnostics}");
-    // A card with no diagnostic in it is left alone rather than being opened
-    // for a change it did not receive.
-    expect(SOURCE).toContain("groupArtifactIds.some((id) => diagnosticIds.has(id))");
-  });
-
   it("says which rows are the diagnostics", () => {
     expect(SOURCE).toContain("diagnosticIds={diagnosticIds}");
     expect(CATALOGUE).toContain('"Diagnostic": "Tanılama"');
+  });
+});
+
+describe("the diagnostics toggle reaches every artifact surface (#424)", () => {
+  // #305 put `showDiagnostics` in `useState` inside GuidedPipeline, so the six
+  // ML group cards were the only artifact list in the app that could see it.
+  // Every other surface listed diagnostics unconditionally -- including the
+  // stage inspector, which opens from the very node whose chips had just been
+  // filtered, so the same run showed two different artifact lists one click
+  // apart and the control read as doing nothing.
+  it("keeps the preference in one module every surface can read", () => {
+    expect(DIAGNOSTICS_SOURCE).toContain("export function useShowDiagnostics(): boolean");
+    expect(DIAGNOSTICS_SOURCE).toContain("export function setShowDiagnostics(next: boolean): void");
+    expect(DIAGNOSTICS_SOURCE).toContain("useSyncExternalStore(subscribe, snapshot, snapshot)");
+    // And not back in one component's local state, which is the bug.
+    expect(SOURCE).not.toContain("const [showDiagnostics, setShowDiagnostics] = useState");
+    expect(SOURCE).toContain("const showDiagnostics = useShowDiagnostics();");
+  });
+
+  it("filters in the node every canvas artifact list already goes through", () => {
+    // Rather than in each caller, which is how one of them ended up being the
+    // only one that filtered. GuidedPipeline hands over the unfiltered ids and
+    // the closed set; ArtifactNodes does the hiding.
+    expect(ARTIFACT_NODES_SOURCE).toContain("const showDiagnostics = useShowDiagnostics();");
+    expect(ARTIFACT_NODES_SOURCE).toContain("ids.filter((id) => !diagnosticIds.has(id))");
+    expect(SOURCE).not.toContain("visibleArtifactIdsByStage");
+    expect(SOURCE).toContain("artifactIdsByStage.get(stage) ?? []");
+  });
+
+  it("filters the stage inspector, which opens from the node it disagreed with", () => {
+    // `StageEvidence` rendered `detail.outputs` straight from
+    // `api.stage(runId, stageId)` with no filter at all.
+    expect(SOURCE).toContain("withoutDiagnostics(detail.outputs ?? [], (output) => output.diagnostic === true, showDiagnostics)");
+    // Reading the backend's per-artifact flag, not re-deriving the kinds here.
+    expect(API_SOURCE).toContain("diagnostic?: boolean;");
+  });
+
+  it("filters the per-stage chips in the docked group panel", () => {
+    expect(SOURCE).toContain("withoutDiagnostics(artifactIds, (id) => diagnosticIds.has(id), showDiagnostics)");
+  });
+
+  it("gives the staging graph the set it never had", () => {
+    // `UnderstandingWorkspace` mounted ArtifactNodes with no diagnosticIds at
+    // all, so those pills listed engineering records unmarked with no way to
+    // hide them -- and that screen has no diagnostics control of its own.
+    expect(UNDERSTANDING_SOURCE).toContain("const diagnosticIds = useMemo(() => diagnosticIdsOf(progress)");
+    expect(UNDERSTANDING_SOURCE).toContain("diagnosticIds?: ReadonlySet<string>; trailing?: React.ReactNode }) {");
+    expect(UNDERSTANDING_SOURCE).toContain("<ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} />");
+    // And the guided canvas draws the same staging half, so it passes its own.
+    expect(SOURCE).toContain("activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} trailing={mlPipeline}");
+  });
+
+  it("filters the advanced editor's output list", () => {
+    // `PipelineBuilder` listed every `artifact_ids` entry per output port. It
+    // has a run id but no progress poller, so it asks for the ids once.
+    expect(BUILDER_SOURCE).toContain("const diagnosticIds = useDiagnosticIds(runId);");
+    expect(BUILDER_SOURCE).toContain("visibleIds(output.artifact_ids).map((artifactId)");
+    expect(BUILDER_SOURCE).toContain("!outputs.some((output) => visibleIds(output.artifact_ids).length)");
+    expect(DIAGNOSTICS_SOURCE).toContain("export function useDiagnosticIds(");
+  });
+
+  it("counts what the default view shows, in the attempt list too", () => {
+    // "{n} artifacts" per attempt counted the hidden diagnostics in.
+    expect(STAGE_WORKSPACE_SOURCE).toContain("const visibleCount = (ids: string[]) => (showDiagnostics ? ids.length : ids.filter((id) => !diagnosticIds.has(id)).length);");
+    expect(STAGE_WORKSPACE_SOURCE).toContain("{visibleCount(attempt.artifact_ids)} {t(\"artifacts\")}");
+    expect(STAGE_WORKSPACE_SOURCE).toContain("const visibleOutputs = withoutDiagnostics(outputs, (o) => o.diagnostic === true, showDiagnostics);");
+  });
+
+  it("counts the run's diagnostics, not the ML stages' share of them", () => {
+    // The number on the control was taken over ML stage attempts only, while
+    // the staging half of the same canvas drew diagnostics of its own -- so it
+    // described neither what was hidden nor what pressing it would reveal.
+    expect(SOURCE).toContain("const diagnosticCount = diagnosticIds.size;");
+    expect(SOURCE).not.toContain("for (const ids of artifactIdsByStage.values()) seen +=");
+  });
+
+  it("does not let a private window take an artifact list down with it", () => {
+    // Every storage access is guarded: the getter itself can throw.
+    expect(DIAGNOSTICS_SOURCE).toContain("globalThis.sessionStorage?.getItem(STORAGE_KEY)");
+    expect(DIAGNOSTICS_SOURCE).toContain('globalThis.sessionStorage?.setItem(STORAGE_KEY, next ? "1" : "0");');
+    // Both reads and both writes sit inside one, and a run whose progress
+    // lookup fails simply has no diagnostics to hide.
+    expect(DIAGNOSTICS_SOURCE.match(/} catch {/g) ?? []).toHaveLength(2);
+    expect(DIAGNOSTICS_SOURCE).toContain(".catch(() => {");
   });
 });
 
