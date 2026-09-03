@@ -244,9 +244,14 @@ describe("target-column picker (#244/#198)", () => {
     expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
   });
 
-  it("translates the picker's tooltip", () => {
-    expect(CATALOGUE).toContain("Choose which column the model should predict, or let problem discovery propose one.");
-    expect(CATALOGUE).toContain("Modelin tahmin edeceği sütunu seçin");
+  it("says which of the two modes the picker is in", () => {
+    // #428: one tooltip described both modes at once, so it told the reader
+    // which one they were in in neither. Under "Ask the planner" the column is
+    // prose for the agent to rank first and may not be what it proposes; under
+    // "Predict a column" it is built and measured as given.
+    expect(SOURCE).toContain('problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")');
+    expect(CATALOGUE).toContain("Ajanın ilk sıraya koyması için bir ipucu, bir karar değil");
+    expect(CATALOGUE).toContain("Model bu sütunu tahmin eder.");
   });
 });
 
@@ -278,6 +283,46 @@ describe("quick problem selector (#241)", () => {
   it("forwards the selection to startStaged as problem_selection", () => {
     expect(PAGE_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
     expect(PAGE_SOURCE).toContain("problem_selection: { kind: problemKind, target_column: targetColumn }");
+  });
+});
+
+describe("correcting a failed problem discovery (#428)", () => {
+  it("puts the picker in the failure box, where the toolbar's is gated out", () => {
+    // The Target dropdown is gated on `canStart`, which is
+    // `accepted && activeStatus === "staged"` -- false for a failed run. So the
+    // control existed in the state where nothing had gone wrong yet and was
+    // absent in the one where a person knows exactly what to fix, leaving
+    // "Retry from Intake" as the only action.
+    expect(SOURCE).toContain('stageId === "problem_discovery" && onPin && <ProblemReframe');
+    expect(SOURCE).toContain('t("Name the problem yourself")');
+    expect(SOURCE).toContain('t("Re-run problem discovery")');
+    // Offered only for the stage it corrects, not on every failure.
+    expect(SOURCE).toContain("stageId?: string | null;");
+  });
+
+  it("offers the task type as well as the column", () => {
+    // Inference reads the column's measured shape, which is the right default
+    // -- but it cannot tell a 0/1 label from a 0/1 quantity, and the person
+    // looking at their own data can.
+    expect(SOURCE).toContain(`<option value="">{t("From the column's shape")}</option>`);
+    expect(SOURCE).toContain('<option value="binary_classification">{t("Binary classification")}</option>');
+    expect(CATALOGUE).toContain(`"From the column's shape": "Sütunun şeklinden"`);
+  });
+
+  it("re-runs the stage on this run instead of starting a new one", () => {
+    // "Retry from Intake" re-runs everything from the beginning with no target
+    // guidance, so it fails the same way -- and nothing about intake, schema
+    // discovery or integration was wrong.
+    expect(SOURCE).toContain("await api.pinProblemFraming(runId, { kind, target_column: kind === \"predict_column\" ? column : null, task_type: taskType || null })");
+    expect(SOURCE).toContain("setProgress(await api.runProgress(runId));");
+    expect(API_SOURCE).toContain("`/api/runs/${id}/problem/pin`");
+    // And retrying from Intake stays available rather than being replaced.
+    expect(SOURCE).toContain('t("Retry from Intake")');
+  });
+
+  it("keeps anomaly detection from claiming a target column", () => {
+    expect(SOURCE).toContain('target_column: kind === "predict_column" ? column : null');
+    expect(SOURCE).toContain('const ready = kind === "flag_anomalies" || Boolean(column);');
   });
 });
 

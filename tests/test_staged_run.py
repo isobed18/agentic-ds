@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from ads.api.service import ControlPlane, _RunPauseRequested, create_app
 from ads.contracts.base import ArtifactType
+from ads.contracts.datacard import ColumnProfile, DataCard, SemanticType
 from ads.llm import LLMResponse, ModelProfile
 from ads.orchestration.runner import RunOutcome, RunStatus
 from ads.pipeline.stages import (
@@ -880,6 +881,159 @@ class TestQuickProblemSelection:
         )
 
         assert refused.status_code == 400
+
+
+class TestReframingAFailedProblemDiscovery:
+    """#428: naming the framing instead of restarting the whole run.
+
+    When problem discovery failed, the only action was "Retry from Intake",
+    which starts a fresh run from the beginning with no target guidance -- so
+    it fails the same way. Nothing about intake, schema discovery or
+    integration was wrong; the framing was. What `problem_discovery` then does
+    with the pinned selection is covered in tests/test_pipeline_agents.py.
+    """
+
+    @staticmethod
+    def _failed_with_a_profile(client: TestClient) -> str:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        # The recorder stands in for the runner, so nothing profiled anything.
+        # The pin is validated against the run's own ABT card, so give it one.
+        client.plane.store.put(
+            DataCard(
+                table_name="table",
+                source_uri="fixture://table.csv",
+                source_format="csv",
+                n_rows=3,
+                n_columns=2,
+                profiled_rows=3,
+                columns=[
+                    ColumnProfile(
+                        name=name,
+                        dtype="float64",
+                        semantic_type=SemanticType.NUMERIC_CONTINUOUS,
+                        null_count=0,
+                        null_rate=0.0,
+                        n_unique=3,
+                        unique_rate=1.0,
+                    )
+                    for name in ("physician_id", "tutar")
+                ],
+            ),
+            run_id=run_id,
+            stage_exec_id="intake",
+        )
+        runtime.status = "failed"
+        runtime.error = "problem discovery found no viable framing"
+        return run_id
+
+    def test_a_pinned_column_re_enters_the_graph_at_problem_discovery(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        pinned = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+        assert pinned.status_code == 200, pinned.text
+        assert pinned.json()["stage_id"] == "problem_discovery"
+        _settle(client, run_id, target="completed")
+
+        # Re-entered at problem discovery rather than from the top: the
+        # artifacts the run already produced are kept.
+        assert recorder.calls[-1]["start_at"] == "problem_discovery"
+        state = recorder.calls[-1]["state"]
+        assert state.run_id == run_id, "a re-frame must not create a second run"
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "predict_column",
+            "target_column": "tutar",
+            "task_type": None,
+            "pinned": True,
+        }
+
+    def test_a_stated_task_type_travels_with_the_pin(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        pinned = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={
+                "kind": "predict_column",
+                "target_column": "tutar",
+                "task_type": "binary_classification",
+            },
+        )
+
+        assert pinned.status_code == 200, pinned.text
+        assert pinned.json()["task_type"] == "binary_classification"
+
+    def test_the_stale_machine_correction_is_cleared(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        """The failed attempt left a critique behind, and the stage falls back
+        to the agent conversation whenever a correction is present. The pin is
+        the correction now."""
+        run_id = self._failed_with_a_profile(client)
+        state = client.plane._runtime_runs[run_id].state  # noqa: SLF001
+        state.blackboard["human_correction::problem_discovery"] = ["try again"]
+
+        client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+        _settle(client, run_id, target="completed")
+
+        assert "human_correction::problem_discovery" not in state.blackboard
+
+    def test_a_column_the_run_never_profiled_is_refused(self, client: TestClient) -> None:
+        # Refused here rather than surfacing as a second background failure
+        # with an "unknown target" critique the person has to go and read.
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "no_such_column"},
+        )
+
+        assert refused.status_code == 400
+        assert "analytical base table" in refused.json()["detail"]
+
+    def test_predict_column_without_a_column_is_refused(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin", json={"kind": "predict_column"}
+        )
+
+        assert refused.status_code == 400
+
+    def test_anomaly_detection_cannot_claim_a_target(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={
+                "kind": "predict_column",
+                "target_column": "tutar",
+                "task_type": "anomaly_detection",
+            },
+        )
+
+        assert refused.status_code == 400
+
+    def test_a_running_run_is_not_re_framed_underneath_itself(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        client.plane._runtime_runs[run_id].status = "running"  # noqa: SLF001
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+
+        assert refused.status_code == 400
+        assert "not stopped" in refused.json()["detail"]
 
 
 class TestConfiguringAndDiscarding:

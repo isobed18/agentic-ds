@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type ArtifactPreview,
+  type ProfiledColumn,
   type PromotedDocumentTable,
   type RunProgressSnapshot,
   type SourceProfile,
@@ -248,6 +249,24 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
   }
 
+  // #428: when problem discovery fails there is exactly one thing to do about
+  // it -- "Retry from Intake" -- which starts a whole new run from the
+  // beginning with no target guidance, so it fails the same way. Nothing about
+  // intake, schema discovery or integration was wrong; the framing was. This
+  // re-enters the graph at problem discovery with the person's column pinned,
+  // keeping every artifact the run already produced.
+  const [pinning, setPinning] = useState(false);
+  async function pinProblem(kind: "predict_column" | "flag_anomalies", column: string, taskType: string) {
+    setPinning(true); setError(null);
+    try {
+      await api.pinProblemFraming(runId, { kind, target_column: kind === "predict_column" ? column : null, task_type: taskType || null });
+      setDetail(null);
+      setProgress(await api.runProgress(runId));
+    }
+    catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+    finally { setPinning(false); }
+  }
+
   async function inspectStage(stageId: string) {
     setError(null);
     try { setDetail(await api.stage(runId, stageId)); }
@@ -321,7 +340,13 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           </label>
         )}
         {canStart && !currentStage && targetColumns.length > 0 && problemKind !== "flag_anomalies" && (
-          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={t("Choose which column the model should predict, or let problem discovery propose one.")}>
+          // #428: the two modes treat this picker differently and the control
+          // used to say so nowhere. Under "Predict a column" the choice is
+          // built and measured directly; under "Ask the planner" it reaches the
+          // agent as prose to rank first, which the agent may still not
+          // propose -- so a person whose run then failed on a different
+          // framing had no way to tell their choice had been advisory.
+          <label data-no-pan className="flex items-center gap-1.5 rounded-lg border border-line bg-surface/95 px-2.5 py-2 text-2xs font-medium text-ink-soft shadow-card backdrop-blur" title={problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")}>
             <span className="text-ink-faint">{t("Target")}</span>
             <select value={targetColumn} onChange={(event) => setTargetColumn(event.target.value)} className="max-w-[11.25rem] bg-transparent text-2xs font-medium text-ink outline-none">
               {problemKind === "ask_planner" && <option value="">{t("Let the agent decide")}</option>}
@@ -391,7 +416,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
         : <div className="space-y-4">
             {/* #295: the diagnosis leads. Below it the stage rows still hold
                 the full attempt history for anyone who wants it. */}
-            {selectedFailure && <FailureNotice failure={selectedFailure} />}
+            {selectedFailure && <FailureNotice failure={selectedFailure} stageId={detail?.stage.id ?? selectedGroup?.nodes.find((node) => isAttention(node.status))?.id ?? null} columns={targetColumns} busy={busy || pinning} onPin={pinProblem} />}
             {selectedGroup?.nodes.length
               ? <>{selectedGroup.nodes.map((node) => <StageRow key={node.id} node={node} artifactIds={artifactIdsByStage.get(node.id) ?? []} diagnosticIds={diagnosticIds} onInspect={() => void inspectStage(node.id)} onOpenArtifact={(id) => void openArtifact(id)} />)}{detail && <StageEvidence detail={detail} onOpenArtifact={(id) => void openArtifact(id)} />}</>
               : selectedFailure
@@ -493,12 +518,65 @@ function Arrow({ active, complete, dimmed = false }: { active: boolean; complete
  * specific answer -- "the plan failed a trial execution against the real
  * tables" says what to change, where a stack trace does not.
  */
-function FailureNotice({ failure }: { failure: StageFailure }) {
+function FailureNotice({ failure, stageId, columns, busy, onPin }: { failure: StageFailure;
+  /** Which stage failed, so the box can offer the correction that stage takes. */
+  stageId?: string | null;
+  columns?: ProfiledColumn[];
+  busy?: boolean;
+  onPin?: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void;
+}) {
   return <section className="rounded-xl border border-stop-200 bg-stop-50 p-4">
     <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Why it failed")}</p>
     {failure.error && <p className="mt-2 break-words text-xs leading-relaxed text-stop-800">{failure.error}</p>}
     {failure.checks.length > 0 && <ul className="mt-2 space-y-1">{failure.checks.map((check) => <li key={check.id} className="text-2xs leading-snug text-stop-700">· {t(checkText(check.id, check.evidence))}</li>)}</ul>}
+    {stageId === "problem_discovery" && onPin && <ProblemReframe columns={columns ?? []} busy={busy ?? false} onPin={onPin} />}
   </section>;
+}
+
+/** Name the framing a failed problem discovery could not find on its own.
+ *
+ * #428: the Target picker exists on the toolbar, gated on `canStart`, which is
+ * false for a failed run -- so the control was present in the state where
+ * nothing had gone wrong yet and absent in the one where a person knows
+ * exactly what to fix. The column is pinned as a constraint rather than passed
+ * as prose the agent may rank first and then ignore: the candidate is built
+ * directly and measured, so an unviable column comes back as the blocking
+ * reasons for *that* column, which is an answer somebody can act on.
+ */
+function ProblemReframe({ columns, busy, onPin }: { columns: ProfiledColumn[]; busy: boolean; onPin: (kind: "predict_column" | "flag_anomalies", column: string, taskType: string) => void }) {
+  const [kind, setKind] = useState<"predict_column" | "flag_anomalies">("predict_column");
+  // Empty means "read it off the column's measured shape", which is the right
+  // default. It is offered because inference cannot tell a 0/1 label from a
+  // 0/1 quantity and the person looking at their own data can.
+  const [taskType, setTaskType] = useState("");
+  const [column, setColumn] = useState(() => (columns.find((item) => item.candidate_target) ?? columns[0])?.name ?? "");
+  const ready = kind === "flag_anomalies" || Boolean(column);
+  return <div className="mt-4 border-t border-stop-200 pt-3">
+    <p className="text-3xs font-semibold uppercase tracking-wide text-stop-700">{t("Name the problem yourself")}</p>
+    <p className="mt-1 text-3xs leading-relaxed text-stop-700">{t("This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.")}</p>
+    <div className="mt-3 flex flex-wrap items-end gap-2">
+      <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Problem")}
+        <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          <option value="predict_column">{t("Predict a column")}</option>
+          <option value="flag_anomalies">{t("Flag unusual rows")}</option>
+        </select>
+      </label>
+      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Target")}
+        <select value={column} onChange={(event) => setColumn(event.target.value)} className="max-w-[11.25rem] rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          {columns.map((item) => <option key={item.name} value={item.name}>{item.name}{item.candidate_target ? " ★" : ""}</option>)}
+        </select>
+      </label>}
+      {kind === "predict_column" && <label className="flex flex-col gap-1 text-3xs font-medium text-stop-800">{t("Task type")}
+        <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="rounded-lg border border-stop-200 bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          <option value="">{t("From the column's shape")}</option>
+          <option value="regression">{t("Regression")}</option>
+          <option value="binary_classification">{t("Binary classification")}</option>
+          <option value="multiclass_classification">{t("Multiclass classification")}</option>
+        </select>
+      </label>}
+      <button type="button" className="btn-primary text-xs" disabled={busy || !ready} onClick={() => onPin(kind, column, taskType)}>{busy ? t("Working…") : t("Re-run problem discovery")}</button>
+    </div>
+  </div>;
 }
 
 /** #424: the per-stage chips inside the docked group panel, filtered against

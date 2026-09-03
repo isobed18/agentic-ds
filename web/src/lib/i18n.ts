@@ -197,8 +197,16 @@ const TR: Record<string, string> = {
   "Every stage stops for your approval.": "Her aşama onayınız için durur.",
   "Leave empty to let the agent discover the problem from the data.": "Ajanın problemi veriden keşfetmesi için boş bırakın.",
   "Let the agent decide": "Ajan karar versin",
-  "Choose which column the model should predict, or let problem discovery propose one.":
-    "Modelin tahmin edeceği sütunu seçin ya da problem keşfinin önermesine izin verin.",
+  // #428: one tooltip per mode. The old single string ("choose the column, or
+  // let problem discovery propose one") described both at once and so said
+  // which of the two was happening in neither.
+  "A hint for the agent to rank first, not a decision — it may still propose another framing.": (
+    "Ajanın ilk sıraya koyması için bir ipucu, bir karar değil — yine de başka bir " +
+    "çerçeveleme önerebilir."
+  ),
+  "The model predicts this column. The choice is used as given.": (
+    "Model bu sütunu tahmin eder. Seçim verildiği gibi kullanılır."
+  ),
   "State the ML problem directly, or ask the planner to propose one.":
     "ML problemini doğrudan belirtin ya da planlayıcının önermesini isteyin.",
   "Problem": "Problem",
@@ -1037,6 +1045,18 @@ const TR: Record<string, string> = {
   "Not started yet": "Henüz başlamadı",
   "This stage runs once the plan is accepted.": "Bu aşama, plan kabul edildikten sonra çalışır.",
   "Why it failed": "Neden başarısız oldu",
+  // #428: naming the framing a failed problem discovery could not find, from
+  // the failure box itself, instead of restarting the whole run from Intake.
+  "Name the problem yourself": "Problemi kendiniz adlandırın",
+  "This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.": (
+    "Bu, seçiminiz sabitlenmiş olarak problem keşfini bu çalıştırmada yeniden çalıştırır. " +
+    "Alım, şema keşfi ve entegrasyon korunur."
+  ),
+  "Re-run problem discovery": "Problem keşfini yeniden çalıştır",
+  "From the column's shape": "Sütunun şeklinden",
+  "Regression": "Regresyon",
+  "Binary classification": "İkili sınıflandırma",
+  "Multiclass classification": "Çok sınıflı sınıflandırma",
   "This stage failed": "Bu aşama başarısız oldu",
   "No error was recorded for it.": "Bunun için bir hata kaydedilmedi.",
   "Accepted ML plan": "Kabul edilen ML planı",
