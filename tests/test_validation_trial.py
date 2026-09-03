@@ -138,3 +138,60 @@ def test_splitting_rejects_strategy_changed_after_passing_trial(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="semantics changed after its trial"):
         splitting_stage(state)
+
+
+def test_splitting_reports_failure_reason_for_a_failed_trial_unrelated_to_leakage(
+    tmp_path: Path,
+) -> None:
+    """A trial measured before leakage_audit ran can fail for its own reasons.
+
+    Regression test for #440: the ValueError splitting_stage raises used to be a
+    bare, uninformative message that a reader could easily (and wrongly) pin on
+    whatever leakage-driven feature drop happened to run just before it. The
+    trial is realized on the full pre-exclusion ABT at the validation_strategy
+    stage, so its failure is never caused by a later leakage exclusion -- the
+    error must say so and surface the trial's actual failure_reason.
+    """
+    frame = _frame()
+    signals = _signals(frame)
+    # A grouped proposal over a group column that does not exist in this frame
+    # fails the trial deterministically (KeyError inside execute_validation_trial),
+    # independent of any leakage-driven column drop.
+    broken_proposal = ValidationStrategyProposal(
+        strategy=SplitStrategy.GROUPED,
+        n_folds=3,
+        test_size=0.2,
+        group_column="does_not_exist",
+        rationale="Group by a column the frame does not have.",
+        rationale_tr="Çerçevede bulunmayan bir sütuna göre grupla.",
+    )
+    trial = execute_validation_trial(frame, broken_proposal, signals)
+    assert trial.passed is False
+    assert trial.failure_reason
+
+    strategy = ValidationStrategy.from_proposal(
+        broken_proposal,
+        signals,
+        trial_artifact_id=compute_artifact_id(trial),
+    )
+    state = RunState(
+        run_id="failed-trial",
+        store=ArtifactStore(tmp_path / "artifacts"),
+        profile=BUILTIN_PROFILES["full_auto"],
+    )
+    state.blackboard[MODEL_FRAME_KEY] = frame
+    state.put(trial, stage_id="validation_strategy", name="validation_trial")
+    state.put(strategy, stage_id="validation_strategy", name="validation_strategy")
+    state.put(
+        ProblemDefinition(
+            task_type=TaskType.BINARY_CLASSIFICATION,
+            target_column="target",
+            primary_metric=Metric.ROC_AUC,
+            title="Target classification",
+            description="Predict the binary target.",
+        ),
+        stage_id="problem_discovery",
+    )
+
+    with pytest.raises(ValueError, match="unrelated to any leakage-driven feature exclusion"):
+        splitting_stage(state)

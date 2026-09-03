@@ -380,7 +380,17 @@ def splitting_stage(state: RunState, correction: list[str] | None = None) -> Sta
         if trial.proposal_fingerprint != validation_strategy_fingerprint(strategy.to_proposal()):
             raise ValueError("ValidationStrategy semantics changed after its trial.")
         if not trial.passed:
-            raise ValueError("ValidationStrategy references a failed split trial.")
+            # The trial was measured at the validation_strategy stage, on the
+            # full pre-leakage-exclusion ABT, before leakage_audit ever ran (see
+            # ads/pipeline/agent_stages.py). A leakage-driven feature drop can
+            # never be why this trial failed -- surface the real reason instead
+            # of a bare message that a reader will otherwise (wrongly) pin on
+            # whatever stage happened to run right before this one.
+            reason = trial.failure_reason or "no failure reason was recorded."
+            raise ValueError(
+                "ValidationStrategy references a failed split trial, unrelated to any "
+                f"leakage-driven feature exclusion (measured before leakage_audit ran): {reason}"
+            )
     if problem.target_column is None:
         labeled = frame
     else:
