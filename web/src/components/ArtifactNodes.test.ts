@@ -64,3 +64,41 @@ describe("the artifacts opener under a node", () => {
     expect(UNDERSTANDING).toContain("activeArtifactId={preview?.artifact_id ?? null}");
   });
 });
+
+describe("a caller can reveal the list it just changed (#408)", () => {
+  it("opens the list when the caller says it just gained rows", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ArtifactNodes, { ids: ["a", "b"], revealed: true, onOpen: () => undefined }),
+    );
+
+    // The effect that opens it runs on mount, so static markup still shows the
+    // collapsed pill -- what matters here is that the wiring exists and that
+    // the viewer's own click takes the pill back off the caller.
+    expect(markup).toContain("aria-expanded");
+    expect(SOURCE).toContain("if (revealed) { auto.current = true; setOpen(true); }");
+    expect(SOURCE).toContain("else if (auto.current) { auto.current = false; setOpen(false); }");
+  });
+
+  it("hands the pill back to whoever clicks it", () => {
+    // Clicking clears the auto flag, so turning the toolbar toggle off later
+    // does not close a list the viewer opened for themselves.
+    expect(SOURCE).toContain("onClick={() => { auto.current = false; setOpen((current) => !current); }}");
+  });
+
+  it("labels the rows that are diagnostics", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ArtifactNodes, {
+        ids: ["a"],
+        diagnosticIds: new Set(["a"]),
+        onOpen: () => undefined,
+      }),
+    );
+
+    // Collapsed on first render, so the marker is checked at the source: the
+    // row is dashed and captioned rather than silently lengthening the list.
+    expect(markup).toContain("aria-expanded");
+    expect(SOURCE).toContain("const diagnostic = diagnosticIds?.has(id) ?? false");
+    expect(SOURCE).toContain('t("Diagnostic")');
+    expect(SOURCE).toContain('diagnostic ? "border-dashed border-slate-300" : "border-line"');
+  });
+});

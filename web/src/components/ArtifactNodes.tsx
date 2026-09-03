@@ -105,9 +105,29 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
  * opening it (#66). The count still ticks up one per poll (`useSequentialReveal`),
  * which is the live-progress signal the old round nodes existed to give.
  */
-export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void }) {
+export function ArtifactNodes({ ids, activeId = null, onOpen, revealed = false, diagnosticIds }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void;
+  /** #408: the caller has just made these ids visible and wants them seen.
+   *
+   * "Show diagnostics" changed only which ids this list *would* contain if
+   * somebody expanded it -- on a node that is collapsed by default and may be
+   * off screen -- so pressing it produced no visible change anywhere and the
+   * button read as broken. A list opens when this turns on, and closes again
+   * when it turns off, unless the viewer has since taken the pill over by
+   * clicking it; their own choice outranks the toolbar's. */
+  revealed?: boolean;
+  /** Which of `ids` are diagnostics, so the rows that just appeared say why
+   *  they are there rather than silently lengthening the list. */
+  diagnosticIds?: ReadonlySet<string>;
+}) {
   const shown = useSequentialReveal(ids);
   const [open, setOpen] = useState(false);
+  // Whether `open` is the caller's doing or the viewer's. Set while `revealed`
+  // drives it, cleared the moment the pill itself is pressed.
+  const auto = useRef(false);
+  useEffect(() => {
+    if (revealed) { auto.current = true; setOpen(true); }
+    else if (auto.current) { auto.current = false; setOpen(false); }
+  }, [revealed]);
   const titles = useArtifactTitles(shown, open);
   if (!ids.length) return null;
   return (
@@ -120,7 +140,7 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
       <div className="-translate-y-1/2">
         <button
           type="button"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => { auto.current = false; setOpen((current) => !current); }}
           aria-expanded={open}
           className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-3xs font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
         >
@@ -131,6 +151,10 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
         <ol className="pointer-events-auto mt-2 flex w-full min-w-0 flex-col gap-2" aria-label={t("Artifacts")}>
           {shown.map((id, index) => {
             const active = id === activeId;
+            // #408: the rows the toggle just added say so. Without this the
+            // list simply got longer, which is not a visible answer to "what
+            // did that button do".
+            const diagnostic = diagnosticIds?.has(id) ?? false;
             return (
             <li key={id} className="flex min-w-0 items-center gap-2">
               {/* The numbered circle straddles the dashed line down the list,
@@ -149,8 +173,9 @@ export function ArtifactNodes({ ids, activeId = null, onOpen }: { ids: string[];
                 onClick={() => onOpen(id)}
                 title={titles[id]}
                 aria-current={active ? "true" : undefined}
-                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-3xs text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", active && "ring-2 ring-brand-400")}
+                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border bg-surface px-2.5 py-1.5 text-left text-3xs text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", diagnostic ? "border-dashed border-slate-300" : "border-line", active && "ring-2 ring-brand-400")}
               >
+                {diagnostic && <span className="mr-1.5 rounded bg-surface-sunken px-1 py-0.5 text-4xs font-semibold uppercase tracking-wide text-ink-faint">{t("Diagnostic")}</span>}
                 {titles[id]}
               </button>
             </li>
