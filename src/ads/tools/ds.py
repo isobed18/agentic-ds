@@ -165,7 +165,7 @@ def _join_columns(arguments: Mapping[str, Any], side: str) -> list[str]:
     if plural is not None:
         columns = (
             [str(column) for column in plural]
-            if isinstance(plural, (list, tuple))
+            if isinstance(plural, list | tuple)
             else [str(plural)]
         )
     else:

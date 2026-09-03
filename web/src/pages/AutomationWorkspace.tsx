@@ -183,7 +183,11 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     // #241: `problemKind` is a quick-pick, not a hint -- it makes
     // problem_discovery build the ProblemDefinition straight from it, with no
     // planner conversation, for the common shapes a person can just name.
-    try { if (!profile?.tables.length) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; } if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: runMode, ...(targetColumn ? { target_column: targetColumn } : {}), ...(problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}), ...(checkpointStages ? { supervision: { checkpoint_stages: checkpointStages } } : {}) }); setRunStatus("running"); } }
+    try {
+      const hasTrainableTables = Boolean(profile?.tables.length || workspace?.promoted_document_tables?.length);
+      if (!hasTrainableTables) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; }
+      if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: runMode, ...(targetColumn ? { target_column: targetColumn } : {}), ...(problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}), ...(checkpointStages ? { supervision: { checkpoint_stages: checkpointStages } } : {}) }); setRunStatus("running"); }
+    }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 

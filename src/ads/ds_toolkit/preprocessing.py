@@ -63,7 +63,7 @@ class RareCategoryBucketer(TransformerMixin, BaseEstimator):
     def fit(self, X: Any, y: Any = None) -> RareCategoryBucketer:
         """Learn categories whose training-fold frequency meets the threshold."""
         del y
-        if not isinstance(self.threshold, (int, float)) or isinstance(self.threshold, bool):
+        if not isinstance(self.threshold, int | float) or isinstance(self.threshold, bool):
             raise TypeError("threshold must be a number between 0 and 1.")
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1 inclusive.")

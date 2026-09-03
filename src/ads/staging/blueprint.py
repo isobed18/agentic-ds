@@ -625,7 +625,7 @@ def apply_component_updates(
                     raise ValueError(f"setting {key!r} is not allowed for {component.kind}")
                 if isinstance(rule, set) and value not in rule:
                     raise ValueError(f"invalid value for {component.id}.{key}")
-                if isinstance(rule, (type, tuple)) and not isinstance(value, rule):
+                if isinstance(rule, type | tuple) and not isinstance(value, rule):
                     raise ValueError(f"invalid type for {component.id}.{key}")
         enabled = raw.get("enabled", component.enabled)
         if not isinstance(enabled, bool):

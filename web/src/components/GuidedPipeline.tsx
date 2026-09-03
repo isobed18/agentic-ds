@@ -250,6 +250,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
   // records what was promoted, and the workspace *is* re-read on promotion, so
   // both the ML inputs list and the remaining-candidate count follow.
   const promotedTables = workspace.promoted_document_tables ?? [];
+  const hasTrainableTables = profile.tables.length > 0 || promotedTables.length > 0;
   const extractedCandidates = workspace.document_extractions?.reduce((sum, extraction) => sum + extraction.table_candidates, 0) ?? 0;
   const candidateTables = Math.max(0, extractedCandidates - promotedTables.length);
   // #197: right after Run is clicked the poll has not refetched, so `progress`
@@ -419,7 +420,7 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
             {t("Approve at every stage")}
           </label>
         )}
-        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])} disabled={busy || !profile.tables.length || (problemKind === "predict_column" && !targetColumn)}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
+        {canStart && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={() => onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])} disabled={busy || !hasTrainableTables || (problemKind === "predict_column" && !targetColumn)}><Play />{busy ? t("Working…") : t(currentStage ? "Continue" : "Run")}</button>}
         {active && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onPause} disabled={busy || Boolean(progress?.pause_requested)}><Pause />{progress?.pause_requested ? t("Pause requested…") : t("Pause")}</button>}
         {failed && <button type="button" className="btn-primary inline-flex items-center gap-2 shadow-pop" onClick={onRetry} disabled={busy}>{t("Retry from Intake")}</button>}
         {accepted && !canStart && !active && !failed && !complete && <StatusBadge status={activeStatus} />}
