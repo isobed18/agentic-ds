@@ -12,7 +12,13 @@ from ads.contracts.datacard import DataCard
 from ads.contracts.gates import PermissionTier
 from ads.contracts.problem import TaskType
 from ads.discovery import correlation_strength, detect_validation_signals
-from ads.intake import ProfileOptions, detect_primary_keys, measure_relationship, profile_column
+from ads.intake import (
+    ProfileOptions,
+    detect_primary_keys,
+    measure_composite_relationship,
+    measure_relationship,
+    profile_column,
+)
 from ads.tools.models import ToolPayload, ToolRuntime
 from ads.tools.registry import ToolDefinition, ToolHandler, ToolRegistry
 
@@ -146,19 +152,58 @@ def candidate_keys(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPa
     return ToolPayload(summary=_summary("candidate_keys", data), data=data)
 
 
+def _join_columns(arguments: Mapping[str, Any], side: str) -> list[str]:
+    """The columns on one side of a join, singular or plural (#381).
+
+    This tool took only `from_column`/`to_column`, so an agent that suspected a
+    composite join had no way to measure one -- it was told "no candidate
+    relationships found above the overlap threshold" and handed a tool that
+    could not check the thing it needed to check. Both spellings are accepted so
+    every existing call keeps working.
+    """
+    plural = arguments.get(f"{side}_columns")
+    if plural is not None:
+        columns = (
+            [str(column) for column in plural]
+            if isinstance(plural, (list, tuple))
+            else [str(plural)]
+        )
+    else:
+        columns = [str(arguments[f"{side}_column"])]
+    if not columns:
+        raise ValueError(f"{side}_columns must name at least one column.")
+    return columns
+
+
 def join_overlap(runtime: ToolRuntime, arguments: Mapping[str, Any]) -> ToolPayload:
     from_table = str(arguments["from_table"])
-    from_column = str(arguments["from_column"])
     to_table = str(arguments["to_table"])
-    to_column = str(arguments["to_column"])
-    result = measure_relationship(
-        from_table,
-        from_column,
-        _series(runtime, from_table, from_column),
-        to_table,
-        to_column,
-        _series(runtime, to_table, to_column),
-    )
+    from_columns = _join_columns(arguments, "from")
+    to_columns = _join_columns(arguments, "to")
+    if len(from_columns) != len(to_columns):
+        raise ValueError("A join must name the same number of columns on both sides.")
+    for column in from_columns:
+        _series(runtime, from_table, column)
+    for column in to_columns:
+        _series(runtime, to_table, column)
+    if len(from_columns) == 1:
+        result = measure_relationship(
+            from_table,
+            from_columns[0],
+            _series(runtime, from_table, from_columns[0]),
+            to_table,
+            to_columns[0],
+            _series(runtime, to_table, to_columns[0]),
+        )
+    else:
+        result = measure_composite_relationship(
+            from_table,
+            from_columns,
+            _table(runtime, from_table),
+            to_table,
+            to_columns,
+            _table(runtime, to_table),
+        )
     data = result.model_dump(mode="json")
     data["confidence"] = result.confidence
     return ToolPayload(summary=_summary("join_overlap", data), data=data)
@@ -235,13 +280,17 @@ _DS_TOOLS: tuple[tuple[str, PermissionTier, ToolHandler, str, dict[str, str]], .
         "join_overlap",
         PermissionTier.READ_DATA,
         join_overlap,
-        "Measure whether two columns in different tables actually join: row overlap, "
-        "distinct overlap and parent coverage.",
+        "Measure whether two tables actually join on a column or a set of columns: "
+        "row overlap, distinct overlap and parent coverage.",
         {
             "from_table": "left table name",
-            "from_column": "left join column",
+            "from_column": "left join column (one column)",
+            "from_columns": (
+                "left join columns, for a composite key (list; use instead of from_column)"
+            ),
             "to_table": "right table name",
-            "to_column": "right join column",
+            "to_column": "right join column (one column)",
+            "to_columns": "right join columns, same length as from_columns",
         },
     ),
     (

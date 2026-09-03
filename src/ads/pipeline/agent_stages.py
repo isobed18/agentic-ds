@@ -57,20 +57,25 @@ from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import QualitySignals
 from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal, IntegrationTrial
 from ads.contracts.problem import (
+    Metric,
+    ProblemCandidateProposal,
     ProblemDefinition,
     ProblemDiscoveryProposal,
+    TaskType,
 )
 from ads.contracts.validation import (
     ValidationSignals,
     ValidationStrategy,
     ValidationStrategyProposal,
 )
+from ads.discovery.support import supervised_task_type_for
 from ads.intake import detect_primary_keys, detect_relationships
 from ads.llm import StructuredLLM
 from ads.orchestration import RunState, StageResult
 from ads.pipeline.stages import (
     ABT_FRAME_KEY,
     EXECUTION_BACKEND_KEY,
+    QUICK_PROBLEM_KEY,
     SOURCE_CARDS_KEY,
     SOURCE_FRAMES_KEY,
     STAGE_DIRECTIVES_KEY,
@@ -137,6 +142,23 @@ def _validation_failure_count(result: AgentPanelResult[Any]) -> int:
     return len(result.all_failures)
 
 
+def _validation_failure_details(result: AgentPanelResult[Any]) -> list[str]:
+    """Which validators fired, for a reader rather than for a rule (#427).
+
+    The count alone cannot be acted on: `unknown_target` on a column named in
+    the original casing and `task_target_mismatch` on a datetime are both "1
+    validation failure", and they call for opposite corrections.
+    """
+    seen: list[str] = []
+    for failure in result.all_failures:
+        line = f"{failure.layer}/{failure.code}: {failure.detail}"
+        if failure.field_path:
+            line = f"{line} (at {failure.field_path})"
+        if line not in seen:
+            seen.append(line)
+    return seen
+
+
 def _agent_audit(
     stage_id: str,
     spec: AgentSpec[Any],
@@ -181,7 +203,10 @@ def _failed_result(result: AgentPanelResult[Any], audit: AgentAudit) -> StageRes
     return StageResult(
         artifacts=[audit],
         names={0: "agent_audit"},
-        signals=QualitySignals(validation_failures=_validation_failure_count(result)),
+        signals=QualitySignals(
+            validation_failures=_validation_failure_count(result),
+            validation_failure_details=_validation_failure_details(result),
+        ),
         digest=detail[:1500],
     )
 
@@ -228,23 +253,55 @@ def _single_table_schema_result(
     Schema interpretation is necessary when sources must be related. For one
     table there is no relationship judgment to make, so spending several model
     turns asking for a join plan adds latency and can only invent structure.
+    """
+    if len(cards) != 1 or len(frames) != 1:
+        return None
+    return _no_join_schema_result(state=state, card=cards[0], cards=cards, frames=frames)
+
+
+def _largest_card(cards: list[DataCard], frames: dict[str, pd.DataFrame]) -> DataCard | None:
+    """The widest usable table, by rows then columns then name.
+
+    Deterministic all the way down, because this choice ends up in an artifact:
+    two runs over the same files must pick the same base table.
+    """
+    usable = [
+        card
+        for card in cards
+        if (frame := frames.get(card.table_name)) is not None and not frame.empty
+    ]
+    if not usable:
+        return None
+    return max(
+        usable,
+        key=lambda card: (len(frames[card.table_name]), len(card.columns), card.table_name),
+    )
+
+
+def _no_join_schema_result(
+    *,
+    state: RunState,
+    card: DataCard,
+    cards: list[DataCard],
+    frames: dict[str, pd.DataFrame],
+    extra_warnings: tuple[list[str], list[str]] | None = None,
+) -> StageResult | None:
+    """A verified no-join plan over ``card``, with a row identity if needed.
 
     A source key is preferred and verified against the full frame. When none is
     clean, the executor adds a reserved row identity to its in-memory copy. The
     resulting ABT profiles that column as an identifier, which keeps it out of
     targets and model features while preserving exact row lineage.
     """
-    if len(cards) != 1 or len(frames) != 1:
-        return None
-    card = cards[0]
     frame = frames.get(card.table_name)
     if frame is None or frame.empty:
         return None
 
     candidates = detect_primary_keys(card, frame)
     grain = list(candidates[0].columns) if candidates else []
-    warnings: list[str] = []
-    warnings_tr: list[str] = []
+    base_warnings, base_warnings_tr = extra_warnings or ([], [])
+    warnings: list[str] = list(base_warnings)
+    warnings_tr: list[str] = list(base_warnings_tr)
 
     def proposal_for(columns: list[str]) -> IntegrationPlanProposal:
         return IntegrationPlanProposal(
@@ -282,12 +339,14 @@ def _single_table_schema_result(
         frames[card.table_name] = prepared
         state.blackboard[SOURCE_FRAMES_KEY] = frames
         warnings = [
+            *base_warnings,
             "No clean source key exists. The executor added an executor-owned row identity "
-            f"({row_id}) for lineage; it is excluded from model features."
+            f"({row_id}) for lineage; it is excluded from model features.",
         ]
         warnings_tr = [
+            *base_warnings_tr,
             "Temiz bir kaynak anahtarı yok. Yürütücü, veri soyunu izlemek için yürütücüye ait "
-            f"bir satır kimliği ({row_id}) ekledi; bu alan model özelliklerinden çıkarılır."
+            f"bir satır kimliği ({row_id}) ekledi; bu alan model özelliklerinden çıkarılır.",
         ]
         proposal = proposal_for([row_id])
         trial = _trial_plan(state=state, cards=cards, frames=frames, proposal=proposal)
@@ -301,8 +360,12 @@ def _single_table_schema_result(
         names={0: "integration_plan", 1: "integration_trial"},
         signals=QualitySignals(validation_failures=0),
         digest=(
-            "Single-table input requires no relationship inference. "
-            f"{plan.summary()}; deterministic trial: {trial.summary()}"
+            (
+                "Single-table input requires no relationship inference. "
+                if len(cards) == 1
+                else f"No join could be established; continuing on {card.table_name} alone. "
+            )
+            + f"{plan.summary()}; deterministic trial: {trial.summary()}"
         ),
     )
 
@@ -410,6 +473,65 @@ def make_schema_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
                 "; ".join(f"{failure.code}: {failure.detail}" for failure in failures)
                 or "The schema investigators returned no tested plan."
             )
+            # #381: this used to be the end of the road. The stage returned an
+            # audit and no integration_plan, and the next stage's declared input
+            # was missing, so the run stopped at the gate with "schema_discovery
+            # produced no integration_plan" and nothing to do but rework or stop
+            # -- for two files that each work perfectly well on their own.
+            #
+            # A single table already degrades to a verified no-join plan over a
+            # row identity. There is no reason several tables should not: falling
+            # back to the largest one and saying so leaves a person with a
+            # running pipeline and an explicit warning about what was left out,
+            # instead of a dead end. The warning is on the plan, so it reaches
+            # the review gate rather than only the logs.
+            #
+            # Only after the orchestrator has already sent this stage back once.
+            # The retry loop is the first and better answer -- a corrected
+            # attempt often does find the join -- and pre-empting it on the
+            # first failure would replace a recoverable investigation with a
+            # single-table plan nobody asked for. This is the floor under it,
+            # not a substitute for it.
+            base = _largest_card(cards, frames)
+            if base is not None and len(cards) > 1 and state.attempt_count("schema_discovery") > 1:
+                left_out = sorted(
+                    card.table_name for card in cards if card.table_name != base.table_name
+                )
+                fallback = _no_join_schema_result(
+                    state=state,
+                    card=base,
+                    cards=cards,
+                    frames=frames,
+                    extra_warnings=(
+                        [
+                            "No join between the uploaded tables could be established, so the "
+                            f"analysis continues on {base.table_name} alone. Left out: "
+                            f"{', '.join(left_out)}. Rework this stage if these tables should "
+                            "be related."
+                        ],
+                        [
+                            "Yüklenen tablolar arasında bir birleştirme kurulamadı; analiz "
+                            f"yalnızca {base.table_name} üzerinden sürüyor. Dışarıda kalan: "
+                            f"{', '.join(left_out)}. Bu tablolar ilişkilendirilmeliyse bu "
+                            "aşamayı yeniden çalıştırın."
+                        ],
+                    ),
+                )
+                if fallback is not None:
+                    return StageResult(
+                        artifacts=[*fallback.artifacts, audit],
+                        names={**fallback.names, len(fallback.artifacts): "agent_audit"},
+                        # No outstanding contract failure: the plan this stage
+                        # emits was built and trialled deterministically, the
+                        # same reasoning the recovered-member path above
+                        # applies. What the investigators failed to do is in the
+                        # audit, and what was left out is a warning on the plan
+                        # -- both of which reach the review gate. Counting the
+                        # failures here instead asks the gate to retry a stage
+                        # that has already produced a verified answer.
+                        signals=QualitySignals(validation_failures=0),
+                        digest=f"{detail[:1000]} | {fallback.digest}",
+                    )
             return StageResult(
                 artifacts=[audit],
                 names={0: "agent_audit"},
@@ -461,6 +583,83 @@ def _abt_frame(state: RunState) -> pd.DataFrame:
     return frame
 
 
+#: Deterministic per-task default, matched to what the ProblemDiscoveryAgent's
+#: own system prompt already tells the LLM to prefer -- an imbalance-aware
+#: metric over plain accuracy, and silhouette for the unsupervised case.
+_QUICK_METRIC_BY_TASK: dict[TaskType, Metric] = {
+    TaskType.REGRESSION: Metric.RMSE,
+    TaskType.BINARY_CLASSIFICATION: Metric.ROC_AUC,
+    TaskType.MULTICLASS_CLASSIFICATION: Metric.BALANCED_ACCURACY,
+    TaskType.ANOMALY_DETECTION: Metric.SILHOUETTE,
+}
+
+
+#: #429 moved the rule itself to `ads.discovery.support`, beside the
+#: measurement that has to agree with it. Kept as a name here because this
+#: module's readers know it by this one.
+_infer_supervised_task_type = supervised_task_type_for
+
+
+def _quick_problem_proposal(selection: dict[str, Any], card: DataCard) -> ProblemCandidateProposal:
+    """Build the one candidate a quick-pick selection names, with no LLM call.
+
+    Mirrors what the agent proposes for the same shape of target, so the
+    ``ProblemDefinition`` this produces is indistinguishable downstream from one
+    a human confirmed out of the agent's proposals (#241).
+    """
+    kind = selection.get("kind")
+    if kind == "flag_anomalies":
+        return ProblemCandidateProposal(
+            title="Flag unusual rows",
+            title_tr="Alışılmadık satırları işaretle",
+            task_type=TaskType.ANOMALY_DETECTION,
+            target_column=None,
+            business_rationale=(
+                "Surfaces rows that deviate from the rest of the measured data, for manual "
+                "review rather than a labelled prediction."
+            ),
+            business_rationale_tr=(
+                "Etiketli bir tahmin yerine, ölçülen verinin geri kalanından sapan satırları "
+                "manuel inceleme için ortaya çıkarır."
+            ),
+            evidence_columns=[],
+            primary_metric=Metric.SILHOUETTE,
+        )
+    if kind == "predict_column":
+        target_column = str(selection.get("target_column") or "")
+        profile = card.column(target_column)
+        # #428: a person correcting a failed problem discovery may name the task
+        # type as well as the column. Inference reads the column's measured
+        # shape, which is the right default, but it cannot know that a 0/1
+        # integer is a label rather than a quantity -- and the person looking at
+        # their own data does. An explicit choice wins; `compute_support` still
+        # measures whether it is viable and names the blocking reasons if not.
+        stated = selection.get("task_type")
+        task_type = (
+            TaskType(str(stated))
+            if stated
+            else _infer_supervised_task_type(profile)
+            if profile
+            else TaskType.REGRESSION
+        )
+        return ProblemCandidateProposal(
+            title=f"Predict {target_column}"[:120],
+            title_tr=f"{target_column} sütununu tahmin et"[:120],
+            task_type=task_type,
+            target_column=target_column,
+            business_rationale=(
+                f"Predicts {target_column} for each row so downstream decisions can act on it."
+            )[:800],
+            business_rationale_tr=(
+                f"Her satır için {target_column} sütununu tahmin ederek sonraki kararların "
+                "buna göre alınmasını sağlar."
+            )[:800],
+            evidence_columns=[target_column] if profile else [],
+            primary_metric=_QUICK_METRIC_BY_TASK[task_type],
+        )
+    raise ValueError(f"unknown quick problem selection kind {kind!r}")
+
+
 def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     """Create problem discovery plus deterministic support attachment/selection."""
     spec = _single_call(_require_evidence(build_problem_spec(), "column_profile", "null_rate"))
@@ -468,6 +667,51 @@ def make_problem_discovery_stage(llm: StructuredLLM, *, panel_size: int = 1):
     def stage(state: RunState, correction: list[str] | None = None) -> StageResult:
         card = state.require(ArtifactType.DATA_CARD, DataCard)
         frame = _abt_frame(state)
+        # #241: a problem stated through the quick-pick selector is honoured on
+        # the first attempt without ever calling the LLM. A rejected gate still
+        # falls back to the full agent conversation below on retry (`correction`
+        # is only set then) -- reproposing the same deterministic framing would
+        # not be a rework, and the person clearly wants something else.
+        quick_selection = state.blackboard.get(QUICK_PROBLEM_KEY)
+        # #428: a framing pinned after a failure is a constraint, not a ranking
+        # hint, so it is honoured even though a correction is present -- that
+        # correction *is* the pin. #241's selection stays advisory on retry for
+        # the reason it always was: a gate that rejected the deterministic
+        # framing would only be handed the same one again.
+        pinned = bool(quick_selection and quick_selection.get("pinned"))
+        if quick_selection is not None and (pinned or correction is None):
+            candidates = attach_support(
+                ProblemDiscoveryProposal(
+                    candidates=[_quick_problem_proposal(quick_selection, card)]
+                ),
+                card,
+                frame,
+                user_intent=state.user_intent,
+            )
+            selected = candidates.candidates[0]
+            problem = ProblemDefinition(
+                task_type=selected.task_type,
+                target_column=selected.target_column,
+                primary_metric=selected.primary_metric,
+                title=selected.title,
+                title_tr=selected.title_tr,
+                description=selected.business_rationale,
+                description_tr=selected.business_rationale_tr,
+                excluded_columns=[],
+                confirmed_by="human",
+                source_candidate_id=selected.candidate_id,
+            )
+            support = selected.support
+            return StageResult(
+                artifacts=[candidates, problem],
+                names={0: "problem_candidates", 1: "problem_definition"},
+                signals=QualitySignals(
+                    n_rows=support.n_rows,
+                    minority_class_count=support.minority_class_count,
+                    rows_per_feature=support.rows_per_feature,
+                ),
+                digest=str(candidates.summary()),
+            )
         context = _with_correction(
             build_problem_context(card, user_intent=state.user_intent), correction
         )

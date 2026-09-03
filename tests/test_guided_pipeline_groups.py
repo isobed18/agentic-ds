@@ -1,6 +1,6 @@
 """The guided page's stage groups, held to the workflow the runner executes.
 
-The guided pipeline shows seven friendly groups, and each group claims a set of
+The guided pipeline shows eight friendly groups, and each group claims a set of
 established workflow stages by id. Those ids are written by hand in TypeScript
 and were never checked against the Python spec, so they drifted: the "Analyze
 and validate" group asked for `exploratory_analysis` (an artifact type, not a
@@ -11,6 +11,11 @@ Nothing failed loudly. Both stages still executed and still wrote artifacts --
 they simply never matched the group, so their live status, stage inspection,
 and artifact count were missing from the only screen that shows them. That is
 the failure this file exists to prevent: a silently incomplete UI, not a crash.
+
+#212: that "Analyze and validate" group has since been split into one group per
+stage (`validation_strategy`, `eda`, `leakage_audit`), because folding three
+different things into one node was why EDA had no name anyone could find on
+the canvas -- the group id in the tests below now names what it always was.
 """
 
 from __future__ import annotations
@@ -62,12 +67,22 @@ def test_every_group_stage_is_a_real_workflow_stage() -> None:
     )
 
 
-@pytest.mark.parametrize("stage_id", ["eda", "leakage_audit"])
-def test_analysis_group_covers_the_two_stages_it_lost(stage_id: str) -> None:
-    """The exact regression: these two were named by the wrong id for long
-    enough to ship, so they get their own assertion rather than relying on the
-    set comparison above to notice."""
-    assert stage_id in _declared_groups()["analysis"]
+@pytest.mark.parametrize("stage_id", ["validation_strategy", "eda", "leakage_audit"])
+def test_each_former_analysis_stage_still_has_a_group(stage_id: str) -> None:
+    """#195/#212: `validation_strategy`, `eda` and `leakage_audit` used to share
+    one "analysis" group -- and two of them were named by the wrong id for long
+    enough to ship, which is why this got its own assertion rather than relying
+    on the set comparison above to notice. The group was later split so EDA (and
+    the other two) would each get a canvas node of their own (#212); each now
+    has its own group, named after the stage it holds."""
+    assert stage_id in _declared_groups()[stage_id]
+
+
+def test_eda_has_its_own_group_rather_than_sharing_one() -> None:
+    """#212: EDA had no node on the guided canvas because it was folded into a
+    three-stage "analysis" group with no name of its own. It must now be a
+    single-stage group so it gets a node the way every other stage does."""
+    assert _declared_groups()["eda"] == ["eda"]
 
 
 def test_no_established_stage_is_missing_from_every_group() -> None:

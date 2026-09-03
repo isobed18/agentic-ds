@@ -83,6 +83,12 @@ _TR: dict[str, str] = {
     "Split strategy": "Bölme stratejisi",
     "Feature pipeline": "Öznitelik hattı",
     # --- recurring sentences
+    # #425: what a person is told when a request violates a contract. The
+    # pydantic dump that used to be sent instead named the model, the field
+    # path and an errors.pydantic.dev link, all in English.
+    "Those settings are not valid, so nothing was changed.": (
+        "Bu ayarlar geçerli değil, bu yüzden hiçbir şey değiştirilmedi."
+    ),
     "Aggregates data from the holdout period": "Holdout dönemindeki veriyi de topluyor",
     "Candidate comparison and the diagnostics that say whether to trust it.": (
         "Aday karşılaştırması ve sonuca güvenilip güvenilmeyeceğini söyleyen tanılar."
@@ -97,7 +103,30 @@ _TR: dict[str, str] = {
         "Bu oranda doğruluk yanıltıcıdır — çoğunluğu tahmin eden bir model "
     ),
     # --- units and connectors that appear inside composed sentences
+    "row": "satır",
     "rows": "satır",
+    "table": "tablo",
+    "tables": "tablo",
+    "page": "sayfa",
+    "pages": "sayfa",
+    "multi-table source": "çok tablolu kaynak",
+    "joinable table": "birleştirilebilir tablo",
+    "keyed table": "anahtarlı tablo",
+    "analysis table": "analiz tablosu",
+    "document context": "belge bağlamı",
+    "key candidate: {keys}": "anahtar adayı: {keys}",
+    "key candidates: {keys}": "anahtar adayları: {keys}",
+    "no key candidate": "anahtar adayı yok",
+    "no quality notes": "kalite notu yok",
+    "{count} quality notes": "{count} kalite notu",
+    "text layer ready": "metin katmanı hazır",
+    "OCR or vision needed": "OCR veya görüntü işleme gerekli",
+    "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}": (
+        "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}"
+    ),
+    "{pages} {page_unit} · {role} · {readiness}": (
+        "{pages} {page_unit} · {role} · {readiness}"
+    ),
     "columns": "sütun",
     "of {column} is missing": "{column} sütununun {pct}'i eksik",
     "no candidate target measured": "ölçülmüş hedef adayı yok",
@@ -541,6 +570,142 @@ _TR.update(
         ),
         "Build the selected split and measure retained support.": (
             "Seçilen bölmeyi oluşturun ve elde tutulan desteği ölçün."
+        ),
+        # --- RL feature engineering
+        "Search externally for engineered features using training rows only.": (
+            "Yalnızca eğitim satırlarını kullanarak dış serviste üretilmiş öznitelik arar."
+        ),
+        "Feature engineering search": "Öznitelik mühendisliği araması",
+        "Features an external search added or removed, measured on training rows only.": (
+            "Dış bir aramanın eklediği veya çıkardığı öznitelikler; yalnızca eğitim "
+            "satırları üzerinde ölçülmüştür."
+        ),
+        "Model with engineered features": "Üretilmiş özniteliklerle model",
+        (
+            "The same candidates refit on engineered features and scored on the same "
+            "untouched holdout."
+        ): (
+            "Aynı adaylar üretilmiş öznitelikler üzerinde yeniden eğitilir ve aynı "
+            "dokunulmamış ayrık küme üzerinde puanlanır."
+        ),
+        "Features added": "Eklenen öznitelikler",
+        "Features removed": "Çıkarılan öznitelikler",
+        "Features kept": "Korunan öznitelikler",
+        "Improvement": "İyileşme",
+        "Feature engineering skipped": "Öznitelik mühendisliği atlandı",
+        "service unreachable": "servise ulaşılamadı",
+        (
+            "The feature engineering service could not be reached, so no enhanced "
+            "model was produced. The rest of the run is unaffected."
+        ): (
+            "Öznitelik mühendisliği servisine ulaşılamadı, bu yüzden geliştirilmiş bir "
+            "model üretilmedi. Koşunun geri kalanı bundan etkilenmez."
+        ),
+        "No data left this machine.": "Bu makineden hiçbir veri çıkmadı.",
+        "Feature engineering not applicable": "Öznitelik mühendisliği uygulanabilir değil",
+        "no enhanced model": "geliştirilmiş model yok",
+        (
+            "This dataset cannot support the external feature search, so only the "
+            "ordinary model was trained."
+        ): (
+            "Bu veri kümesi dış öznitelik aramasını destekleyemez, bu yüzden yalnızca "
+            "olağan model eğitildi."
+        ),
+        "No reason given.": "Gerekçe belirtilmedi.",
+        "Feature search result": "Öznitelik arama sonucu",
+        "Original features": "Özgün öznitelikler",
+        "Engineered features": "Üretilmiş öznitelikler",
+        "improved": "iyileşti",
+        "no improvement": "iyileşme yok",
+        (
+            "Measured by the feature engineering service on the training rows only, so "
+            "the holdout could not influence which features it chose. Compare models on "
+            "the holdout score, not on these numbers."
+        ): (
+            "Öznitelik mühendisliği servisi tarafından yalnızca eğitim satırları üzerinde "
+            "ölçülmüştür; bu yüzden ayrık küme, seçilen öznitelikleri etkileyemez. "
+            "Modelleri bu sayılarla değil, ayrık küme puanıyla karşılaştırın."
+        ),
+        "{metric} moved from {baseline} to {optimized}, a change of {delta}.": (
+            "{metric} {baseline} değerinden {optimized} değerine geçti; değişim {delta}."
+        ),
+        "{added} feature(s) added, {removed} removed.": (
+            "{added} öznitelik eklendi, {removed} çıkarıldı."
+        ),
+        "Features added and removed": "Eklenen ve çıkarılan öznitelikler",
+        "{count} change(s)": "{count} değişiklik",
+        (
+            "Every engineered feature is a formula over existing columns, so it can "
+            "be rebuilt on new data."
+        ): (
+            "Her üretilmiş öznitelik mevcut sütunlar üzerinde bir formüldür; bu yüzden "
+            "yeni veride yeniden kurulabilir."
+        ),
+        "Change": "Değişiklik",
+        # "Feature" already has an entry further down; the catalogue is one flat
+        # namespace and a second one is a duplicate-key error, not an override.
+        "Formula": "Formül",
+        "Added": "Eklendi",
+        "Removed": "Çıkarıldı",
+        "No target column was chosen, so there is nothing to optimise for.": (
+            "Hedef sütun seçilmedi, bu yüzden iyileştirilecek bir şey yok."
+        ),
+        "No column in this data works as a prediction target.": (
+            "Bu veride tahmin hedefi olarak çalışan bir sütun yok."
+        ),
+        "The chosen target column is not present in the data.": (
+            "Seçilen hedef sütun veride bulunmuyor."
+        ),
+        "The target never changes, so nothing can be learned from it.": (
+            "Hedef hiç değişmiyor, bu yüzden ondan bir şey öğrenilemez."
+        ),
+        "Too many rows are missing the target.": "Çok sayıda satırda hedef eksik.",
+        "The target looks like an identifier rather than an outcome.": (
+            "Hedef, bir sonuçtan çok tanımlayıcıya benziyor."
+        ),
+        "There are too few rows for a reliable feature search.": (
+            "Güvenilir bir öznitelik araması için satır sayısı çok az."
+        ),
+        "At least one target class has too few examples.": (
+            "En az bir hedef sınıfında yeterli örnek yok."
+        ),
+        "No column is usable as a model feature.": (
+            "Model özniteliği olarak kullanılabilir sütun yok."
+        ),
+        "There are too few rows to cross-validate.": (
+            "Çapraz doğrulama için satır sayısı çok az."
+        ),
+        "A baseline model could not be trained on this data.": (
+            "Bu veri üzerinde referans model eğitilemedi."
+        ),
+        "There are too many features to search over.": (
+            "Üzerinde arama yapılamayacak kadar çok öznitelik var."
+        ),
+        (
+            "Added {added} engineered feature(s) and removed {removed}; "
+            "{metric} moved by {delta} on training rows."
+        ): (
+            "{added} üretilmiş öznitelik eklendi, {removed} çıkarıldı; eğitim "
+            "satırlarında {metric} {delta} kadar değişti."
+        ),
+        "The feature engineering service was unreachable, so this step was skipped.": (
+            "Öznitelik mühendisliği servisine ulaşılamadı, bu yüzden bu adım atlandı."
+        ),
+        "This dataset cannot support the external feature search.": (
+            "Bu veri kümesi dış öznitelik aramasını destekleyemez."
+        ),
+        "Refit on {count} engineered feature(s) and scored on the same holdout.": (
+            "{count} üretilmiş öznitelik üzerinde yeniden eğitildi ve aynı ayrık küme "
+            "üzerinde puanlandı."
+        ),
+        "Feature engineering service unreachable; step skipped": (
+            "Öznitelik mühendisliği servisine ulaşılamadı; adım atlandı"
+        ),
+        "Feature engineering does not apply here": (
+            "Öznitelik mühendisliği burada uygulanamaz"
+        ),
+        "+{added} features, −{removed} · {metric} {delta}": (
+            "+{added} öznitelik, −{removed} · {metric} {delta}"
         ),
         (
             "Fit the deterministic candidate menu, then optionally run one isolated, "
@@ -1080,6 +1245,44 @@ _TR.update(
         "A required check did not pass": "Zorunlu bir kontrol geçmedi",
         "This step is high risk": "Bu adım yüksek riskli",
         "Nothing to flag": "İşaretlenecek bir şey yok",
+        # --- staged-run resume errors (#282)
+        "This run no longer exists; choose the dataset again.": (
+            "Bu koşu artık mevcut değil; veri setini yeniden seçin."
+        ),
+        "This run is waiting for your answer to a question, not for a restart.": (
+            "Bu koşu yeniden başlatılmayı değil, bir soruya cevabınızı bekliyor."
+        ),
+        "This run already finished and cannot be resumed.": (
+            "Bu koşu zaten tamamlandı ve devam ettirilemez."
+        ),
+        "This run was aborted and cannot be resumed.": (
+            "Bu koşu durduruldu ve devam ettirilemez."
+        ),
+        "This run failed and cannot be resumed; start a new run.": (
+            "Bu koşu başarısız oldu ve devam ettirilemez; yeni bir koşu başlatın."
+        ),
+        "This run is already in progress.": "Bu koşu zaten devam ediyor.",
+        "This run is not staged.": "Bu koşu evreleme aşamasında değil.",
+        # --- document table promotion refusals (#310). The candidate id used to
+        # appear in these; it is an internal key nobody has seen, so the table is
+        # named the way the review dialog named it instead.
+        "{name} (page {page})": "{name} (sayfa {page})",
+        "No rows were extracted from the table “{table}”, so it cannot become data.": (
+            "“{table}” tablosundan hiç satır çıkarılamadı, bu yüzden veriye dönüştürülemez."
+        ),
+        "No columns were extracted from the table “{table}”, so it cannot become data.": (
+            "“{table}” tablosundan hiç sütun çıkarılamadı, bu yüzden veriye dönüştürülemez."
+        ),
+        "The rows extracted from the table “{table}” do not all have the same "
+        "number of cells, so it cannot become data.": (
+            "“{table}” tablosundan çıkarılan satırların hücre sayıları aynı değil, "
+            "bu yüzden veriye dönüştürülemez."
+        ),
+        "The headers extracted from the table “{table}” do not match its rows, "
+        "so it cannot become data.": (
+            "“{table}” tablosundan çıkarılan başlıklar satırlarıyla uyuşmuyor, "
+            "bu yüzden veriye dönüştürülemez."
+        ),
     }
 )
 

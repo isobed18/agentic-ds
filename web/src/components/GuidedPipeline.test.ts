@@ -7,38 +7,153 @@ import PANEL_SOURCE from "./PlannerPanel.tsx?raw";
 import CATALOGUE from "../lib/i18n.ts?raw";
 import PAGE_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import UNDERSTANDING_SOURCE from "./UnderstandingWorkspace.tsx?raw";
+import ARTIFACT_NODES_SOURCE from "./ArtifactNodes.tsx?raw";
+import API_SOURCE from "../lib/api.ts?raw";
+import DIAGNOSTICS_SOURCE from "../lib/diagnostics.ts?raw";
+import SENSITIVITY_SOURCE from "./SensitivityOverride.tsx?raw";
 
-describe("planner access in the guided pipeline (#97)", () => {
+describe("staged sensitivity review (#330)", () => {
+  it("puts the existing PII override in the active guided workspace before plan acceptance", () => {
+    // The control already existed in the retired /workflows screen, which made
+    // its backend endpoint look complete while the product's real
+    // AutomationWorkspace path never mounted it. Keep the assertion on the
+    // active guided component so moving it back to a dead route fails here.
+    expect(SOURCE).toContain('import { SensitivityOverride } from "./SensitivityOverride"');
+    expect(SOURCE).toContain('t("Review personal data")');
+    expect(SOURCE).toContain("{sensitivitySelected && <Inspector");
+    expect(SOURCE).toContain("<SensitivityOverride runId={runId} tables={profile.tables}");
+    expect(SOURCE).toContain("!accepted && profile.tables.length > 0");
+  });
+
+  it("keeps an applied override visibly saved instead of snapping back to the machine value", () => {
+    // Before #330, clearing `changes` after a successful request would make the
+    // selected button fall back to the unchanged source profile. The saved
+    // baseline makes the immediate success feedback truthful while the backend
+    // classification is already updated for the pipeline.
+    expect(SENSITIVITY_SOURCE).toContain("const [applied, setApplied]");
+    expect(SENSITIVITY_SOURCE).toContain("setApplied((previous) => ({ ...previous, ...result.applied }))");
+    expect(SENSITIVITY_SOURCE).toContain("setChanges({})");
+  });
+});
+
+describe("planner access across the automation (#97, #378)", () => {
   it("mounts the planner chat, not just a read-only rationale block", () => {
     // The "Chat with Planner" entry point lived only in UnderstandingAndProposal
     // and was unmounted once a plan was accepted -- so once the pipeline was
     // running, and at the exact moment a gate escalated for human input, there
-    // was no way to consult the planner. The running view now imports and
-    // renders the same PlannerPanel the staging view uses.
-    expect(SOURCE).toContain('import { PlannerPanel } from "./PlannerPanel"');
-    expect(SOURCE).toContain("<PlannerPanel");
-    expect(SOURCE).toContain("runId={runId}");
+    // was no way to consult the planner. #378 moved the mount up again, from
+    // the guided canvas to the page, for the same reason one step earlier: the
+    // canvas itself only exists for two of five lifecycle states.
+    expect(PAGE_SOURCE).toContain('import { PlannerPanel } from "../components/PlannerPanel"');
+    expect(PAGE_SOURCE).toContain("<PlannerPanel");
+    expect(PAGE_SOURCE).toContain("runId={runId}");
+    // And it is not left behind on the canvas.
+    expect(SOURCE).not.toContain("<PlannerPanel");
   });
 
-  it("exposes a toggle in the run toolbar that opens the panel", () => {
-    // Reachable from the fixed run-control toolbar, gated on its own open state
-    // so it does not permanently occupy the canvas.
+  it("exposes a toggle that opens the panel", () => {
+    // Gated on its own open state so it does not permanently occupy the page.
     // #188: this test always called the control a toggle, but the handler it
     // pinned only ever opened the panel. Now it flips, so the assertion says so.
-    expect(SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
-    expect(SOURCE).toContain('t("Chat with Planner")');
-    expect(SOURCE).toContain("plannerOpen &&");
+    expect(PAGE_SOURCE).toContain('onClick={() => setPlannerOpen((open) => !open)}');
+    expect(PAGE_SOURCE).toContain('t("Chat with Planner")');
+    expect(PAGE_SOURCE).toContain("plannerOpen &&");
+  });
+
+  it("anchors the opener to the bottom centre, away from the run controls (#284)", () => {
+    // It is a persistent entry point rather than one of the run controls, so it
+    // gets the opposite edge to itself instead of a slot in the top toolbar.
+    expect(PAGE_SOURCE).toContain('className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2"');
+    // Exactly one opener in the whole automation workspace.
+    expect(PAGE_SOURCE.match(/t\("Chat with Planner"\)/g) ?? []).toHaveLength(1);
+    expect(SOURCE).not.toContain("Chat with Planner");
+  });
+
+  it("survives every lifecycle state, which is why it left the canvas (#378)", () => {
+    // The canvas is mounted for `proposal` and `guided_pipeline` only. The
+    // opener is rendered beside the whole lifecycle switch instead, so `empty`,
+    // `source` and `understanding` reach the Planner too -- and PlannerPanel
+    // already copes with a null runId.
+    const openerAt = PAGE_SOURCE.indexOf('t("Chat with Planner")');
+    const switchAt = PAGE_SOURCE.indexOf('lifecycle === "empty"');
+    expect(switchAt).toBeGreaterThan(-1);
+    expect(openerAt).toBeGreaterThan(switchAt);
+    expect(PANEL_SOURCE).toContain("runId = null");
+  });
+
+  it("keeps the opener outside any canvas transform so it cannot drift (#60)", () => {
+    // A `position: fixed` element inside a transformed ancestor is positioned
+    // against that ancestor, which is how this exact button once slid across
+    // the screen as the graph zoomed. On the page it has no transformed
+    // ancestor at all, and CanvasSurface still renders `overlay` outside its
+    // scaled content for everything that stayed behind.
+    expect(SOURCE).not.toContain("fixed bottom-6 left-1/2");
+    expect(UNDERSTANDING_SOURCE).toContain("{overlay}");
   });
 
   it("gives every ML planner mount the source and data-first prompts (#190)", () => {
-    expect(SOURCE).toContain("sourceId={profile.source_id}");
-    expect(SOURCE).toContain('t("What columns are in this data?")');
-    expect(SOURCE).toContain('t("Rank the best target columns and ML problems.")');
-    expect(SOURCE).not.toContain('t("What is this gate asking?")');
+    expect(PAGE_SOURCE).toContain("sourceId={sourceId || profile?.source_id || null}");
+    expect(PAGE_SOURCE).toContain('t("What columns are in this data?")');
+    expect(PAGE_SOURCE).toContain('t("Rank the best target columns and ML problems.")');
+    expect(PAGE_SOURCE).not.toContain('t("What is this gate asking?")');
     expect(BUILDER_SOURCE).toContain("sourceId?: string | null");
     expect(BUILDER_SOURCE).toContain("<PlannerPanel runId={runId} sourceId={sourceId}");
     expect(PANEL_SOURCE).toContain("problem_recommendations");
     expect(PANEL_SOURCE).toContain('t("Ranked ML opportunities")');
+  });
+
+  it("keeps the staging prompts until the plan is accepted", () => {
+    expect(PAGE_SOURCE).toContain('lifecycle === "guided_pipeline"');
+    expect(PAGE_SOURCE).toContain('t("Stop after EDA so I can inspect it.")');
+  });
+});
+
+describe("acting on extracted tables from the plan overview (#311)", () => {
+  it("offers the review dialog beside the note that says they are unpromoted", () => {
+    // The note told the reader the candidates "remain review-only until
+    // explicitly promoted" and gave them no way to promote one: the only
+    // Review button lived on the staging document panel, a canvas away.
+    expect(SOURCE).toContain('import { DocumentTableReview } from "./DocumentTableReview"');
+    expect(SOURCE).toContain('t("Review {count} extracted tables", { count: candidateTables })');
+    expect(SOURCE).toContain("candidateTables > 0 && extractionId");
+    expect(SOURCE).toContain("<DocumentTableReview runId={runId}");
+  });
+
+  it("re-reads the workspace after a promotion so the count is not stale", () => {
+    // Promoting turns candidates into real tables, so the candidate count and
+    // the ML inputs beside it both describe the state before the click.
+    expect(SOURCE).toContain("api.stagingWorkspace(runId).then(onWorkspaceUpdated)");
+  });
+
+  it("passes the plan overview what it needs to open the dialog", () => {
+    expect(SOURCE).toContain("<PlanSummary runId={runId}");
+    expect(SOURCE).toContain("workspace.document_extractions?.at(-1)?.artifact_id");
+  });
+});
+
+describe("what a finished run offers (#285)", () => {
+  it("does not push the reader to the Runs tab when the pipeline completes", () => {
+    // The completion state already shows what the run produced. A button
+    // offering to navigate somewhere else added a step and no information.
+    expect(SOURCE).not.toContain("onOpenExecutions");
+    expect(SOURCE).not.toContain('onClick={onOpenExecutions}');
+    expect(PAGE_SOURCE).not.toContain("onOpenExecutions");
+  });
+
+  it("keeps the report group's node title, which is not the removed button", () => {
+    // The issue guessed the "Review results" string and pipeline group might
+    // become dead with the button. Neither does: the string is the title of
+    // the report group's node on the canvas, rendered through t(group.title),
+    // and the catalogue entry is what translates it.
+    expect(GROUPS_SOURCE).toContain('title: "Review results"');
+    expect(CATALOGUE).toContain('"Review results": "Sonuçları incele"');
+  });
+
+  it("still reports a finished run's status where the control used to be", () => {
+    // `complete` is not dead either -- it is what suppresses the status badge
+    // while a run is live and lets it show once the run has ended.
+    expect(SOURCE).toContain("const complete = accepted && activeStatus === \"completed\"");
+    expect(SOURCE).toContain("!complete && <StatusBadge");
   });
 });
 
@@ -46,7 +161,7 @@ describe("the run control (#197)", () => {
   it("docks the control top-centre instead of floating at the bottom edge", () => {
     // Bottom-middle placement was easy to miss, so the whole workspace read as
     // stuck (#194). Top-centre is where the eye lands on the canvas.
-    expect(SOURCE).toContain("fixed top-[70px] left-1/2");
+    expect(SOURCE).toContain("fixed top-[4.375rem] left-1/2");
     expect(SOURCE).not.toContain("fixed bottom-4 left-1/2");
   });
 
@@ -64,7 +179,7 @@ describe("the run control (#197)", () => {
     // uses the same stroked 20x20 chrome as everything else, and the primary
     // control is its own row above a separate, quieter secondary bar rather than
     // one chip among five.
-    expect(SOURCE).toContain('import { Badge, Chevron, Empty, Pause, Play, Reload, cx } from "./ui"');
+    expect(SOURCE).toContain('import { Badge, Chevron, Empty, Pause, Play, cx } from "./ui"');
     expect(SOURCE).toContain("><Play />");
     expect(SOURCE).toContain("><Pause />");
     expect(SOURCE).not.toContain('<span aria-hidden="true">▶</span>');
@@ -82,14 +197,30 @@ describe("the run control (#197)", () => {
   });
 });
 
-describe("re-run control (#247)", () => {
-  it("exposes a vector reload icon that fires onRerun, not a text glyph or a route through Execution history", () => {
-    expect(SOURCE).toContain("onRerun: () => void;");
-    expect(SOURCE).toContain("onClick={onRerun}");
-    expect(SOURCE).toContain("><Reload /></button>");
+describe("re-run control (#247, #378)", () => {
+  it("exposes a vector reload icon that re-runs, not a text glyph or a route through Execution history", () => {
+    expect(PAGE_SOURCE).toContain("><Reload /></button>");
+    expect(PAGE_SOURCE).toContain("onClick={() => void rerunAutomation()}");
     expect(PAGE_SOURCE).toContain("async function rerunAutomation()");
     expect(PAGE_SOURCE).toContain("const staged = await api.rerun(runId);");
-    expect(PAGE_SOURCE).toContain("onRerun={() => void rerunAutomation()}");
+    // #378: it is an automation-level action, so it left the canvas entirely
+    // rather than being handed down as a prop.
+    expect(SOURCE).not.toContain("onRerun");
+    expect(SOURCE).not.toContain("<Reload />");
+  });
+
+  it("sits beside the automation name and is disabled, never hidden (#378)", () => {
+    // Gated on `accepted && !active` it was absent for the whole first half of
+    // an automation's life and again during every run. One predictable spot,
+    // with its own state explaining itself.
+    const nameField = PAGE_SOURCE.indexOf('aria-label={t("Automation name")}');
+    const rerun = PAGE_SOURCE.indexOf('aria-label={t("Re-run this automation")}');
+    const tabs = PAGE_SOURCE.indexOf('absolute left-1/2 flex -translate-x-1/2 rounded-lg');
+    expect(nameField).toBeGreaterThan(-1);
+    expect(rerun).toBeGreaterThan(nameField);
+    expect(rerun).toBeLessThan(tabs);
+    expect(PAGE_SOURCE).toContain("const canRerun = Boolean(runId) && !busy && !isRunActive(runStatus)");
+    expect(PAGE_SOURCE).toContain("disabled={!canRerun}");
   });
 });
 
@@ -116,11 +247,211 @@ describe("target-column picker (#244/#198)", () => {
     // changed one aims the run. The value travels with the run mode into onRun.
     expect(SOURCE).toContain('useState<string>(String(planConfig.target_column ?? ""))');
     expect(SOURCE).toContain("GROUPS.filter((group) => checkpointGroups.has(group.id)).flatMap((group) => group.stages)");
+    expect(SOURCE).toContain('targetColumn || null, stages, problemKind === "ask_planner" ? null : problemKind)');
   });
 
-  it("translates the picker's tooltip", () => {
-    expect(CATALOGUE).toContain("Choose which column the model should predict, or let problem discovery propose one.");
-    expect(CATALOGUE).toContain("Modelin tahmin edeceği sütunu seçin");
+  it("says which of the two modes the picker is in", () => {
+    // #428: one tooltip described both modes at once, so it told the reader
+    // which one they were in in neither. Under "Ask the planner" the column is
+    // prose for the agent to rank first and may not be what it proposes; under
+    // "Predict a column" it is built and measured as given.
+    expect(SOURCE).toContain('problemKind === "ask_planner" ? t("A hint for the agent to rank first, not a decision — it may still propose another framing.") : t("The model predicts this column. The choice is used as given.")');
+    expect(CATALOGUE).toContain("Ajanın ilk sıraya koyması için bir ipucu, bir karar değil");
+    expect(CATALOGUE).toContain("Model bu sütunu tahmin eder.");
+  });
+});
+
+describe("quick problem selector (#241)", () => {
+  it("offers a problem-kind picker that defaults to asking the planner", () => {
+    // Before this, an ordinary problem ("predict this column", "flag the odd
+    // ones") had no path but the planner conversation. "ask_planner" preserves
+    // that exact existing behaviour as the default.
+    expect(SOURCE).toContain('useState<"ask_planner" | "predict_column" | "flag_anomalies">("ask_planner")');
+    expect(SOURCE).toContain('<option value="ask_planner">{t("Ask the planner")}</option>');
+    expect(SOURCE).toContain('<option value="predict_column">{t("Predict a column")}</option>');
+    expect(SOURCE).toContain('<option value="flag_anomalies">{t("Flag unusual rows")}</option>');
+  });
+
+  it("passes the picked kind to onRun instead of always going through the planner", () => {
+    expect(SOURCE).toContain('targetColumn || null, stages, problemKind === "ask_planner" ? null : problemKind)');
+  });
+
+  it("requires a target column before Run is enabled for a predict-column pick", () => {
+    expect(SOURCE).toContain('disabled={busy || (!profile.tables.length && !promotedTableSummaries.length) || (problemKind === "predict_column" && !targetColumn)}');
+  });
+
+  it("translates the picker's options", () => {
+    expect(CATALOGUE).toContain('"Ask the planner": "Planlayıcıya sor"');
+    expect(CATALOGUE).toContain('"Predict a column": "Bir sütunu tahmin et"');
+    expect(CATALOGUE).toContain('"Flag unusual rows": "Alışılmadık satırları işaretle"');
+  });
+
+  it("forwards the selection to startStaged as problem_selection", () => {
+    expect(PAGE_SOURCE).toContain('problemKind: "predict_column" | "flag_anomalies" | null = null');
+    expect(PAGE_SOURCE).toContain("problem_selection: { kind: problemKind, target_column: targetColumn }");
+  });
+});
+
+describe("correcting a failed problem discovery (#428)", () => {
+  it("puts the picker in the failure box, where the toolbar's is gated out", () => {
+    // The Target dropdown is gated on `canStart`, which is
+    // `accepted && activeStatus === "staged"` -- false for a failed run. So the
+    // control existed in the state where nothing had gone wrong yet and was
+    // absent in the one where a person knows exactly what to fix, leaving
+    // "Retry from Intake" as the only action.
+    expect(SOURCE).toContain('stageId === "problem_discovery" && onPin && <ProblemReframe');
+    expect(SOURCE).toContain('t("Name the problem yourself")');
+    expect(SOURCE).toContain('t("Re-run problem discovery")');
+    // Offered only for the stage it corrects, not on every failure.
+    expect(SOURCE).toContain("stageId?: string | null;");
+  });
+
+  it("offers the task type as well as the column", () => {
+    // Inference reads the column's measured shape, which is the right default
+    // -- but it cannot tell a 0/1 label from a 0/1 quantity, and the person
+    // looking at their own data can.
+    expect(SOURCE).toContain(`<option value="">{t("From the column's shape")}</option>`);
+    expect(SOURCE).toContain('<option value="binary_classification">{t("Binary classification")}</option>');
+    expect(CATALOGUE).toContain(`"From the column's shape": "Sütunun şeklinden"`);
+  });
+
+  it("re-runs the stage on this run instead of starting a new one", () => {
+    // "Retry from Intake" re-runs everything from the beginning with no target
+    // guidance, so it fails the same way -- and nothing about intake, schema
+    // discovery or integration was wrong.
+    expect(SOURCE).toContain("await api.pinProblemFraming(runId, { kind, target_column: kind === \"predict_column\" ? column : null, task_type: taskType || null })");
+    expect(SOURCE).toContain("setProgress(await api.runProgress(runId));");
+    expect(API_SOURCE).toContain("`/api/runs/${id}/problem/pin`");
+    // And retrying from Intake stays available rather than being replaced.
+    expect(SOURCE).toContain('t("Retry from Intake")');
+  });
+
+  it("keeps anomaly detection from claiming a target column", () => {
+    expect(SOURCE).toContain('target_column: kind === "predict_column" ? column : null');
+    expect(SOURCE).toContain('const ready = kind === "flag_anomalies" || Boolean(column);');
+  });
+});
+
+describe("diagnostics are hidden from the default artifact chips (#305)", () => {
+  it("reads the backend's diagnostic id set rather than re-deriving the kinds", () => {
+    // The stage attempts carry artifact ids, not kinds, so only the backend can
+    // say which are engineering records. The filter reads that set.
+    expect(SOURCE).toContain("const diagnosticIds = useMemo(() => diagnosticIdsOf(progress)");
+    expect(DIAGNOSTICS_SOURCE).toContain("progress?.diagnostic_artifact_ids");
+  });
+
+  it("offers the toggle only when there is a diagnostic to reveal", () => {
+    expect(SOURCE).toContain("diagnosticCount > 0 &&");
+    expect(SOURCE).toContain('t("Diagnostics ({count})", { count: diagnosticCount })');
+  });
+
+  // #423: a button that renamed itself left the state readable only by pressing
+  // it, resized the toolbar under the pointer, and dropped the count in the
+  // "hide" state. The state belongs in a checkbox, and the label -- count and
+  // all -- stays put across both states.
+  it("carries the diagnostics state in a checkbox, not in the label", () => {
+    expect(SOURCE).not.toContain('t("Hide diagnostics")');
+    expect(SOURCE).not.toContain('t("Show diagnostics ({count})"');
+    expect(SOURCE).toContain('<input type="checkbox" checked={showDiagnostics} onChange={(event) => setShowDiagnostics(event.target.checked)}');
+  });
+
+  it("translates the diagnostics toggle", () => {
+    expect(CATALOGUE).toContain('"Diagnostics ({count})": "Tanılama ({count})"');
+    expect(CATALOGUE).not.toContain('"Hide diagnostics"');
+    expect(CATALOGUE).not.toContain('"Show diagnostics ({count})"');
+  });
+
+  it("says which rows are the diagnostics", () => {
+    expect(SOURCE).toContain("diagnosticIds={diagnosticIds}");
+    expect(CATALOGUE).toContain('"Diagnostic": "Tanılama"');
+  });
+});
+
+describe("the diagnostics toggle reaches every artifact surface (#424)", () => {
+  // #305 put `showDiagnostics` in `useState` inside GuidedPipeline, so the six
+  // ML group cards were the only artifact list in the app that could see it.
+  // Every other surface listed diagnostics unconditionally -- including the
+  // stage inspector, which opens from the very node whose chips had just been
+  // filtered, so the same run showed two different artifact lists one click
+  // apart and the control read as doing nothing.
+  it("keeps the preference in one module every surface can read", () => {
+    expect(DIAGNOSTICS_SOURCE).toContain("export function useShowDiagnostics(): boolean");
+    expect(DIAGNOSTICS_SOURCE).toContain("export function setShowDiagnostics(next: boolean): void");
+    expect(DIAGNOSTICS_SOURCE).toContain("useSyncExternalStore(subscribe, snapshot, snapshot)");
+    // And not back in one component's local state, which is the bug.
+    expect(SOURCE).not.toContain("const [showDiagnostics, setShowDiagnostics] = useState");
+    expect(SOURCE).toContain("const showDiagnostics = useShowDiagnostics();");
+  });
+
+  it("filters in the node every canvas artifact list already goes through", () => {
+    // Rather than in each caller, which is how one of them ended up being the
+    // only one that filtered. GuidedPipeline hands over the unfiltered ids and
+    // the closed set; ArtifactNodes does the hiding.
+    expect(ARTIFACT_NODES_SOURCE).toContain("const showDiagnostics = useShowDiagnostics();");
+    expect(ARTIFACT_NODES_SOURCE).toContain("ids.filter((id) => !diagnosticIds.has(id))");
+    expect(SOURCE).not.toContain("visibleArtifactIdsByStage");
+    expect(SOURCE).toContain("artifactIdsByStage.get(stage) ?? []");
+  });
+
+  it("filters the stage inspector, which opens from the node it disagreed with", () => {
+    // `StageEvidence` rendered `detail.outputs` straight from
+    // `api.stage(runId, stageId)` with no filter at all.
+    expect(SOURCE).toContain("withoutDiagnostics(detail.outputs ?? [], (output) => output.diagnostic === true, showDiagnostics)");
+    // Reading the backend's per-artifact flag, not re-deriving the kinds here.
+    expect(API_SOURCE).toContain("diagnostic?: boolean;");
+  });
+
+  it("filters the per-stage chips in the docked group panel", () => {
+    expect(SOURCE).toContain("withoutDiagnostics(artifactIds, (id) => diagnosticIds.has(id), showDiagnostics)");
+  });
+
+  it("gives the staging graph the set it never had", () => {
+    // `UnderstandingWorkspace` mounted ArtifactNodes with no diagnosticIds at
+    // all, so those pills listed engineering records unmarked with no way to
+    // hide them -- and that screen has no diagnostics control of its own.
+    expect(UNDERSTANDING_SOURCE).toContain("const diagnosticIds = useMemo(() => diagnosticIdsOf(progress)");
+    expect(UNDERSTANDING_SOURCE).toContain("diagnosticIds?: ReadonlySet<string>; trailing?: React.ReactNode }) {");
+    expect(UNDERSTANDING_SOURCE).toContain("<ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} />");
+    // And the guided canvas draws the same staging half, so it passes its own.
+    expect(SOURCE).toContain("activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} trailing={mlPipeline}");
+  });
+
+  it("filters the advanced editor's output list", () => {
+    // `PipelineBuilder` listed every `artifact_ids` entry per output port. It
+    // has a run id but no progress poller, so it asks for the ids once.
+    expect(BUILDER_SOURCE).toContain("const diagnosticIds = useDiagnosticIds(runId);");
+    expect(BUILDER_SOURCE).toContain("visibleIds(output.artifact_ids).map((artifactId)");
+    expect(BUILDER_SOURCE).toContain("!outputs.some((output) => visibleIds(output.artifact_ids).length)");
+    expect(DIAGNOSTICS_SOURCE).toContain("export function useDiagnosticIds(");
+  });
+
+  it("counts the run's diagnostics, not the ML stages' share of them", () => {
+    // The number on the control was taken over ML stage attempts only, while
+    // the staging half of the same canvas drew diagnostics of its own -- so it
+    // described neither what was hidden nor what pressing it would reveal.
+    expect(SOURCE).toContain("const diagnosticCount = diagnosticIds.size;");
+    expect(SOURCE).not.toContain("for (const ids of artifactIdsByStage.values()) seen +=");
+  });
+
+  it("does not let a private window take an artifact list down with it", () => {
+    // Every storage access is guarded: the getter itself can throw.
+    expect(DIAGNOSTICS_SOURCE).toContain("globalThis.sessionStorage?.getItem(STORAGE_KEY)");
+    expect(DIAGNOSTICS_SOURCE).toContain('globalThis.sessionStorage?.setItem(STORAGE_KEY, next ? "1" : "0");');
+    // Both reads and both writes sit inside one, and a run whose progress
+    // lookup fails simply has no diagnostics to hide.
+    expect(DIAGNOSTICS_SOURCE.match(/} catch {/g) ?? []).toHaveLength(2);
+    expect(DIAGNOSTICS_SOURCE).toContain(".catch(() => {");
+  });
+});
+
+describe("EDA analysis charts reach the guided stage inspector (#304)", () => {
+  it("renders the stage's analysis panels, not only artifact buttons", () => {
+    // The measured charts arrive on detail.panels; the inspector showed a list
+    // of "Open artifact" buttons and never drew them.
+    expect(SOURCE).toContain('import { AnalysisStrip, type AnalysisPanel } from "./AnalysisStrip"');
+    expect(SOURCE).toContain("const panels = (detail.panels ?? []) as AnalysisPanel[]");
+    expect(SOURCE).toContain("panels.length > 0 && <div");
+    expect(SOURCE).toContain("<AnalysisStrip panels={panels} />");
   });
 });
 
@@ -141,12 +472,21 @@ describe("live progress on the canvas (#194)", () => {
     expect(SOURCE).toContain('t("Press Run above to start")');
   });
 
-  it("animates the arrows into and out of the running stage", () => {
+  it("animates the arrow into the running stage, and only that one (#313)", () => {
     // The arrow into the first ML group was hardcoded inert. #214 deleted the
     // "Data understood" tile it used to leave; it leaves "Proposed plan" now.
+    //
+    // #313: this test used to pin the inter-group rule
+    // `status === "running" || … || groupStatuses[index + 1] === "running"`,
+    // which lit the arrow behind a running group as well as the one in front
+    // of it -- the defect itself, asserted. One rule now decides every arrow,
+    // and `pipelineArrows.test.ts` holds the behaviour.
     expect(SOURCE).not.toContain("<Arrow active={false} complete />");
-    expect(SOURCE).toContain('<Arrow active={groupStatuses[0] === "running"} complete={accepted}');
-    expect(SOURCE).toContain('groupStatuses[index + 1] === "running"');
+    expect(SOURCE).toContain('import { activeArrows } from "./pipelineArrows"');
+    expect(SOURCE).toContain("const arrowActive = activeArrows(groupStatuses)");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[0]} complete={accepted}");
+    expect(SOURCE).toContain("<Arrow active={arrowActive[index + 1]}");
+    expect(SOURCE).not.toContain('groupStatuses[index + 1] === "running"');
   });
 
   it("translates the new waiting strings", () => {
@@ -168,7 +508,9 @@ describe("guided pipeline node descriptions (#168)", () => {
       (match) => match[1],
     );
 
-    expect(descriptions).toHaveLength(6);
+    // #212 split the "Analyze and validate" group into one node each for
+    // validation_strategy, eda and leakage_audit, taking the count from 6 to 8.
+    expect(descriptions).toHaveLength(8);
     expect(descriptions.every((description) => description.endsWith("."))).toBe(true);
     expect(SOURCE).toContain("subtitle={t(group.description)}");
     expect(SOURCE).not.toContain("group.nodes.map((node) => t(node.label");
@@ -236,8 +578,8 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
 
   it("keeps one toolbar: Accept before acceptance, Run after", () => {
     const toolbar = SOURCE.slice(
-      SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]'),
-      SOURCE.indexOf("\n    </div>", SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]')),
+      SOURCE.indexOf('<div data-no-pan className="fixed top-[4.375rem]'),
+      SOURCE.indexOf("\n    </div>", SOURCE.indexOf('<div data-no-pan className="fixed top-[4.375rem]')),
     );
     expect(toolbar).toContain('{!accepted && <button');
     expect(toolbar).toContain('t("Accept and add base pipeline")');
@@ -250,7 +592,7 @@ describe("the understanding graph and the ML pipeline are one canvas (#214)", ()
     // The staging run is already "staged" while the plan is unaccepted, so
     // every run control has to be gated on the decision, not on the status.
     expect(SOURCE).toContain("const canStart = accepted && activeStatus ===");
-    expect(SOURCE).toContain('const active = accepted && ["running", "resuming"]');
+    expect(SOURCE).toContain("const active = accepted && isRunActive(activeStatus)");
     expect(SOURCE).toContain('const failed = accepted && ["failed", "interrupted", "aborted"]');
     expect(SOURCE).toContain('const complete = accepted && activeStatus === "completed"');
   });

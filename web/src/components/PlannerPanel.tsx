@@ -6,11 +6,16 @@
  * so the standing constraints are visible without scrolling.
  */
 import { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, type PlannerOverrideProposal, type ToolActivityEvent } from "../lib/api";
 import { t } from "../lib/i18n";
+import { mergeToolActivity, toolActivityLine } from "./toolActivity";
 import { Badge, Spinner, cx } from "./ui";
 
-interface Message { role: "assistant" | "user"; text: string; at: string }
+/** #411: "tool" is not a chat role -- nobody said it and there is nothing to
+ *  reply to. It is an interstitial status line, kept in the same list so it
+ *  lands in the transcript in the order it happened rather than in a second
+ *  column beside it, and rendered as light italic text rather than a bubble. */
+interface Message { role: "assistant" | "user" | "tool"; text: string; at: string }
 interface ProblemRecommendation {
   rank: number;
   problem_title: string;
@@ -27,6 +32,18 @@ const RULES = [
   "Keep answer leakage blocked",
   "Retry weak analysis once, then escalate",
 ];
+
+function overrideItems(proposal: PlannerOverrideProposal | null): string[] {
+  if (!proposal) return [];
+  return [
+    ...Object.entries(proposal.configuration_patch).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
+    ...Object.entries(proposal.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage.replaceAll("_", " ")} → ${value}`)),
+    ...proposal.checkpoint_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Human approval")}`),
+    ...proposal.auto_proceed_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Auto proceed")}`),
+    ...Object.entries(proposal.max_retries_by_stage).map(([stage, value]) => `${stage.replaceAll("_", " ")} → ${t("{count} retries", { count: value })}`),
+    ...(proposal.pipeline_blueprint ? [t("Pipeline graph revision {revision}", { revision: proposal.pipeline_blueprint.revision ?? 1 })] : []),
+  ];
+}
 
 export function PlannerPanel({
   runId = null, stageId = null, sourceId = null, open = true, onToggle,
@@ -47,6 +64,8 @@ export function PlannerPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [pendingOverride, setPendingOverride] = useState<PlannerOverrideProposal | null>(null);
+  const [overrideOutcome, setOverrideOutcome] = useState<string | null>(null);
   const [problemRecommendations, setProblemRecommendations] = useState<ProblemRecommendation[]>([]);
   // #246: a planner graph edit the runner would refuse is dropped server-side
   // (#231) with the reason in `graph_edit_rejected`. The panel used to ignore
@@ -58,25 +77,25 @@ export function PlannerPanel({
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
-    if (!runId) { setMessages([]); setRecommendations([]); setProblemRecommendations([]); setGraphEditRejected(null); return; }
+    if (!runId) { setMessages([]); setRecommendations([]); setPendingOverride(null); setOverrideOutcome(null); setProblemRecommendations([]); setGraphEditRejected(null); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loadWorkspace = async () => {
       try {
         const workspace = await api.stagingWorkspace(runId);
         if (cancelled) return;
-        setMessages(workspace.chat_history.map((item) => ({
+        // #411: the saved transcript replaces the chat turns, but the live
+        // tool lines are not in it and are not the server's to return. They
+        // are kept, after the history, because that is when they happened.
+        const saved: Message[] = workspace.chat_history.map((item) => ({
           role: (item.role === "planner" ? "assistant" : "user") as Message["role"],
           text: item.content.en,
           at: t("saved"),
-        })));
-        const plan = workspace.recommended_plan;
-        if (!plan) { setRecommendations([]); return; }
-        setRecommendations([
-          ...Object.entries(plan.configuration).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
-          ...Object.entries(plan.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage} → ${value}`)),
-          ...Object.entries(plan.max_retries_by_stage).map(([stage, value]) => `${stage} retries → ${value}`),
-        ]);
+        }));
+        setMessages((current) => [...saved, ...current.filter((item) => item.role === "tool")]);
+        const pending = workspace.pending_override ?? null;
+        setPendingOverride(pending);
+        setRecommendations(overrideItems(pending));
       } catch {
         // Intake and schema discovery may still be running. Retry until the
         // durable staging snapshot exists, then stop polling.
@@ -90,6 +109,58 @@ export function PlannerPanel({
     };
   }, [runId]);
 
+  /** #411: a live line each time an agent uses a tool.
+   *
+   * Tool use only ever reached the screen after the fact, as a "Tool calls: 7"
+   * fact on a finished stage's artifact -- never while it was happening, and
+   * never naming the tool. The broker publishes every call to an in-process
+   * feed as it makes it; this reads what is new since the last cursor and
+   * appends it to the transcript.
+   *
+   * Polling rather than streaming: the run already reports itself by polling,
+   * the feed is an in-memory read, and a dropped connection on a long-lived
+   * stream is a reconnection problem this does not need to have. `active` in
+   * the answer is the stop signal, so a finished run's panel goes quiet
+   * instead of asking forever.
+   */
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // The cursor advances only after the events behind it are on screen, so a
+    // failed request repeats a range rather than skipping it; `shown` is what
+    // makes that repeat harmless.
+    let cursor = 0;
+    let shown: ToolActivityEvent[] = [];
+    const poll = async () => {
+      let keepGoing = true;
+      try {
+        const feed = await api.toolActivity(runId, cursor);
+        if (cancelled) return;
+        const { events, added } = mergeToolActivity(shown, feed.events);
+        shown = events;
+        if (added.length > 0) {
+          const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          setMessages((current) => [
+            ...current,
+            ...added.map((event) => ({ role: "tool" as const, text: toolActivityLine(event), at })),
+          ]);
+        }
+        cursor = feed.cursor;
+        keepGoing = feed.active;
+      } catch {
+        // A blip is not a reason to stop narrating a run that is still going.
+        keepGoing = true;
+      }
+      if (!cancelled && keepGoing) timer = setTimeout(() => { void poll(); }, 2000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [runId]);
+
   async function send(text: string) {
     if (!text.trim() || busy) return;
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -97,6 +168,7 @@ export function PlannerPanel({
     setDraft("");
     setBusy(true);
     setError(null);
+    setOverrideOutcome(null);
     try {
       const res = await api.plannerChat({
         run_id: runId, stage_id: stageId, source_id: sourceId, message: text,
@@ -106,23 +178,9 @@ export function PlannerPanel({
       // this the reply's prose ("moving on to the ML stage") is all the person
       // sees, while the edit that would carry the run there was rejected.
       setGraphEditRejected(typeof res.graph_edit_rejected === "string" ? res.graph_edit_rejected : null);
-      const proposed: string[] = [];
-      const configuration = res.configuration_patch;
-      if (configuration && typeof configuration === "object" && !Array.isArray(configuration)) {
-        for (const [key, value] of Object.entries(configuration)) {
-          proposed.push(`${key} → ${JSON.stringify(value)}`);
-        }
-      }
-      const directives = res.stage_directives;
-      if (directives && typeof directives === "object" && !Array.isArray(directives)) {
-        for (const [stage, values] of Object.entries(directives)) {
-          if (Array.isArray(values)) values.forEach((value) => proposed.push(`${stage} → ${String(value)}`));
-        }
-      }
-      const retries = res.max_retries_by_stage;
-      if (retries && typeof retries === "object" && !Array.isArray(retries)) {
-        for (const [stage, value] of Object.entries(retries)) proposed.push(`${stage} retries → ${String(value)}`);
-      }
+      const pending = res.override_proposal ?? null;
+      setPendingOverride(pending);
+      setRecommendations(overrideItems(pending));
       const ranked = Array.isArray(res.problem_recommendations)
         ? res.problem_recommendations
             .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -138,20 +196,33 @@ export function PlannerPanel({
             .filter((item) => item.target_column && item.problem_title)
         : [];
       setProblemRecommendations(ranked);
-      setRecommendations(proposed);
       setMessages((m) => [...m, { role: "assistant", text: String(reply), at: now }]);
       if (runId) {
         const workspace = await api.stagingWorkspace(runId).catch(() => null);
         if (workspace) onWorkspaceUpdated?.(workspace);
-        const plan = workspace?.recommended_plan;
-        if (plan) {
-          setRecommendations([
-            ...Object.entries(plan.configuration).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
-            ...Object.entries(plan.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage} → ${value}`)),
-            ...Object.entries(plan.max_retries_by_stage).map(([stage, value]) => `${stage} retries → ${value}`),
-          ]);
-        }
+        const savedPending = workspace?.pending_override ?? pending;
+        setPendingOverride(savedPending);
+        setRecommendations(overrideItems(savedPending));
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resolveOverride(action: "apply" | "discard") {
+    if (!runId || !pendingOverride || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const workspace = action === "apply"
+        ? await api.applyPlannerOverride(runId, pendingOverride.proposal_id)
+        : await api.discardPlannerOverride(runId, pendingOverride.proposal_id);
+      setPendingOverride(workspace.pending_override ?? null);
+      setRecommendations(overrideItems(workspace.pending_override ?? null));
+      setOverrideOutcome(t(action === "apply" ? "Override applied" : "Override discarded"));
+      onWorkspaceUpdated?.(workspace);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -167,7 +238,7 @@ export function PlannerPanel({
         className="flex w-11 shrink-0 flex-col items-center gap-3 border-l border-line bg-surface py-4 hover:bg-surface-sunken"
       >
         <SparkIcon />
-        <span className="text-[11px] font-medium tracking-wide text-ink-mute [writing-mode:vertical-rl]">
+        <span className="text-2xs font-medium tracking-wide text-ink-mute [writing-mode:vertical-rl]">
           {t("Planner")}
         </span>
       </button>
@@ -177,9 +248,9 @@ export function PlannerPanel({
   return (
     <aside className={cx(
       "flex flex-col bg-surface",
-      onToggle ? "w-[340px] shrink-0 border-l border-line" : "h-[560px] rounded-xl border border-line",
+      onToggle ? "w-[21.25rem] shrink-0 border-l border-line" : "h-[35rem] rounded-xl border border-line",
     )}>
-      <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-line px-4">
+      <header className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-line px-4">
         <SparkIcon />
         <span className="flex-1 text-sm font-semibold">
           {sourceId && !runId ? t("Ask about this data") : t("Planner / Orchestrator")}
@@ -194,7 +265,7 @@ export function PlannerPanel({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+        <p className="mb-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
           {t("Remembered rules")}
         </p>
         <ul className="mb-4 space-y-1.5">
@@ -209,7 +280,7 @@ export function PlannerPanel({
         {graphEditRejected && (
           <section className="mb-4 rounded-lg border border-warn-300 bg-warn-50 px-3 py-2.5" role="alert">
             <div className="mb-1 flex items-start gap-2">
-              <p className="flex-1 text-[11px] font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
+              <p className="flex-1 text-2xs font-semibold text-warn-800">{t("The planner's pipeline change was not applied")}</p>
               <button
                 onClick={() => setGraphEditRejected(null)}
                 className="rounded p-0.5 text-warn-800/70 hover:bg-warn-100 hover:text-warn-800"
@@ -220,29 +291,35 @@ export function PlannerPanel({
                 </svg>
               </button>
             </div>
-            <p className="text-[10px] leading-relaxed text-warn-800">{graphEditRejected}</p>
+            <p className="text-3xs leading-relaxed text-warn-800">{graphEditRejected}</p>
           </section>
         )}
 
-        {recommendations.length > 0 && (
-          <section className="mb-4 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2.5">
+        {overrideOutcome && <p className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2 text-2xs font-semibold text-ok-700" role="status">{overrideOutcome}</p>}
+
+        {pendingOverride && recommendations.length > 0 && (
+          <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
             <div className="mb-2 flex items-center gap-2">
-              <p className="text-[11px] font-semibold text-ink">{t("Recommended pipeline overrides")}</p>
-              <Badge tone="brand">{t(runId ? "review / applied where possible" : "recommended, not applied")}</Badge>
+              <p className="text-2xs font-semibold text-ink">{t("Proposed pipeline override")}</p>
+              <Badge tone="warn">{t("Awaiting your approval")}</Badge>
             </div>
             <ul className="space-y-1">
-              {recommendations.map((item) => <li key={item} className="text-[10px] leading-relaxed text-ink-soft">· {item}</li>)}
+              {recommendations.map((item) => <li key={item} className="text-3xs leading-relaxed text-ink-soft">· {item}</li>)}
             </ul>
+            <div className="mt-3 flex justify-end gap-2 border-t border-brand-100 pt-3">
+              <button type="button" className="btn-ghost !py-1.5 text-xs" disabled={busy} onClick={() => void resolveOverride("discard")}>{t("Cancel")}</button>
+              <button type="button" className="btn-primary !py-1.5 text-xs" disabled={busy} onClick={() => void resolveOverride("apply")}>{busy ? t("Applying…") : t("Apply override")}</button>
+            </div>
           </section>
         )}
 
         {problemRecommendations.length > 0 && (
           <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
-            <p className="mb-2 text-[11px] font-semibold text-ink">{t("Ranked ML opportunities")}</p>
+            <p className="mb-2 text-2xs font-semibold text-ink">{t("Ranked ML opportunities")}</p>
             <ol className="space-y-2">
               {problemRecommendations.map((item) => (
-                <li key={`${item.rank}:${item.target_column}`} className="rounded-lg bg-surface px-2.5 py-2 text-[10px] text-ink-soft">
-                  <div className="flex items-start gap-2"><Badge tone="brand">#{item.rank}</Badge><div className="min-w-0"><p className="font-semibold text-ink">{item.problem_title}</p><p className="font-mono text-[9px] text-ink-mute">{item.target_column} · {item.task_type} · {item.primary_metric}</p></div></div>
+                <li key={`${item.rank}:${item.target_column}`} className="rounded-lg bg-surface px-2.5 py-2 text-3xs text-ink-soft">
+                  <div className="flex items-start gap-2"><Badge tone="brand">#{item.rank}</Badge><div className="min-w-0"><p className="font-semibold text-ink">{item.problem_title}</p><p className="font-mono text-4xs text-ink-mute">{item.target_column} · {item.task_type} · {item.primary_metric}</p></div></div>
                   <ul className="mt-2 space-y-1">{item.evidence.map((line) => <li key={line}>· {line}</li>)}</ul>
                   {item.caveats.map((line) => <p key={line} className="mt-1 text-warn-700">! {line}</p>)}
                 </li>
@@ -264,7 +341,7 @@ export function PlannerPanel({
                   <button
                     key={prompt}
                     onClick={() => void send(prompt)}
-                    className="rounded-full border border-line bg-surface px-2.5 py-1 text-left text-[11px] text-ink-soft hover:border-brand-200 hover:bg-brand-50"
+                    className="rounded-full border border-line bg-surface px-2.5 py-1 text-left text-2xs text-ink-soft hover:border-brand-200 hover:bg-brand-50"
                   >
                     {t(prompt)}
                   </button>
@@ -275,9 +352,13 @@ export function PlannerPanel({
         )}
 
         <div className="space-y-2.5">
-          {messages.map((m, i) => (
+          {messages.map((m, i) => (m.role === "tool" ? (
+            // No speaker line and no bubble: this is the run narrating itself,
+            // not a turn in the conversation.
+            <p key={i} className="px-1 text-3xs italic leading-relaxed text-ink-faint">{m.text}</p>
+          ) : (
             <div key={i} className={cx("flex flex-col gap-0.5", m.role === "user" && "items-end")}>
-              <span className="text-[10px] text-ink-faint">
+              <span className="text-3xs text-ink-faint">
                 {m.role === "assistant" ? t("Assistant") : t("You")} · {m.at}
               </span>
               <p className={cx(
@@ -287,7 +368,7 @@ export function PlannerPanel({
                 {m.text}
               </p>
             </div>
-          ))}
+          )))}
           {busy && <Spinner label={t("Planner is thinking…")} />}
           {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
           <div ref={endRef} />
@@ -312,7 +393,7 @@ export function PlannerPanel({
             </svg>
           </button>
         </div>
-        <p className="mt-2 text-[10px] leading-relaxed text-ink-faint">
+        <p className="mt-2 text-3xs leading-relaxed text-ink-faint">
           {t("Planner uses workspace rules and context from this workflow.")}
         </p>
       </div>

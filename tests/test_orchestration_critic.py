@@ -19,6 +19,13 @@ from tests.test_agents import FakeLLM
 
 from ads.contracts.base import ArtifactType
 from ads.contracts.gates import BUILTIN_PROFILES, CritiqueResult, QualitySignals
+from ads.contracts.problem import (
+    Metric,
+    ProblemCandidate,
+    ProblemCandidateSet,
+    ProblemSupport,
+    TaskType,
+)
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
 from ads.gates import GatePolicy, StageSpec
 from ads.orchestration import (
@@ -93,6 +100,233 @@ class TestDeterministicHalf:
 
     def test_critique_carries_no_confidence_field(self) -> None:
         assert "confidence" not in CritiqueResult.model_fields
+
+
+class TestHowAFailedCheckReads:
+    """#427: a failure said the opposite of what happened.
+
+    `Criterion.description` states the condition that *should* hold, and the
+    critic rendered a failure as `"Mechanical check failed: " + description` --
+    so the panel printed the success sentence with "failed:" glued to the
+    front. On the reported run both bullets read as assertions that everything
+    was fine: "Mechanical check failed: At least one proposed problem has
+    measured viable support."
+    """
+
+    def test_the_finding_states_the_failure_not_the_condition(self) -> None:
+        rubric = Rubric(
+            stage_id="eda",
+            version="v1",
+            criteria=(
+                Criterion(
+                    id="eda.produced_something",
+                    description="The stage produced at least one artifact.",
+                    failure="The stage produced no artifacts at all.",
+                    check=lambda ctx: bool(ctx.artifacts),
+                ),
+            ),
+        )
+
+        result = critique_stage(rubric, CritiqueContext(stage_id="eda", artifacts=[]))
+
+        finding = next(f for f in result.findings if f.check_id == "eda.produced_something")
+        assert finding.evidence == "The stage produced no artifacts at all."
+        assert "Mechanical check failed" not in finding.evidence
+        assert "produced at least one artifact" not in finding.evidence
+
+    def test_a_criterion_with_no_failure_wording_reports_its_id(self) -> None:
+        """A bare code is a worse read than a sentence, but an honest one --
+        where the inverted sentence was neither. `build_pipeline_rubrics` gives
+        every criterion wording, so this is the safety net, not the path."""
+        result = critique_stage(_rubric(), CritiqueContext(stage_id="eda", artifacts=[]))
+
+        finding = next(f for f in result.findings if f.check_id == "eda.produced_something")
+        assert finding.evidence.startswith("eda.produced_something:")
+        assert "Mechanical check failed" not in finding.evidence
+
+    def test_measured_evidence_reaches_the_finding(self) -> None:
+        """The reason is measured; without this it stays in the artifact while
+        the panel shows a tautology."""
+        rubric = Rubric(
+            stage_id="eda",
+            version="v1",
+            criteria=(
+                Criterion(
+                    id="eda.produced_something",
+                    description="The stage produced at least one artifact.",
+                    failure="The stage produced no artifacts at all.",
+                    check=lambda ctx: bool(ctx.artifacts),
+                    evidence=lambda ctx: ["the sandbox exited before writing anything"],
+                ),
+            ),
+        )
+
+        result = critique_stage(rubric, CritiqueContext(stage_id="eda", artifacts=[]))
+
+        finding = next(f for f in result.findings if f.check_id == "eda.produced_something")
+        assert finding.measurements == ["the sandbox exited before writing anything"]
+
+    def test_a_met_check_computes_no_evidence(self) -> None:
+        """Nothing to explain, and the evidence function may be expensive."""
+        calls: list[int] = []
+        rubric = Rubric(
+            stage_id="eda",
+            version="v1",
+            criteria=(
+                Criterion(
+                    id="eda.produced_something",
+                    description="The stage produced at least one artifact.",
+                    failure="The stage produced no artifacts at all.",
+                    check=lambda ctx: bool(ctx.artifacts),
+                    evidence=lambda ctx: calls.append(1) or ["never"],
+                ),
+            ),
+        )
+
+        result = critique_stage(rubric, CritiqueContext(stage_id="eda", artifacts=[_artifact()]))
+
+        assert result.unmet_criteria == []
+        assert calls == []
+
+    def test_every_pipeline_criterion_states_its_own_failure(self) -> None:
+        """The regression was one criterion short of a rendering bug; the fix
+        is only complete if none of them can fall back to the id."""
+        from ads.pipeline.rubrics import build_pipeline_rubrics
+
+        registry = build_pipeline_rubrics()
+        wordless = [
+            criterion.id
+            for rubric in registry.rubrics.values()
+            for criterion in rubric.deterministic()
+            if not criterion.failure
+        ]
+
+        assert wordless == []
+
+
+class TestTheProblemDiscoveryRubricExplainsItself:
+    """#427 part 2: the reason is measured, and then was discarded.
+
+    `compute_support` exists to turn "this framing is not viable" into facts
+    and writes them to `ProblemSupport.blocking_reasons` on every candidate.
+    Nothing surfaced them, so the panel showed a tautology while the actual
+    explanation sat in the artifact.
+    """
+
+    @staticmethod
+    def _candidates() -> ProblemCandidateSet:
+        def blocked(candidate_id: str, target: str, task: TaskType, reason: str):
+            return ProblemCandidate(
+                candidate_id=candidate_id,
+                title=f"Predict {target}",
+                task_type=task,
+                target_column=target,
+                business_rationale="because",
+                primary_metric=Metric.RMSE if task is TaskType.REGRESSION else Metric.ROC_AUC,
+                support=ProblemSupport(
+                    n_rows=100_000,
+                    target_null_rate=0.0,
+                    n_usable_features=12,
+                    rows_per_feature=8333.0,
+                    blocking_reasons=[reason],
+                ),
+            )
+
+        return ProblemCandidateSet(
+            candidates=[
+                blocked(
+                    "c1",
+                    "claim_description",
+                    TaskType.MULTICLASS_CLASSIFICATION,
+                    "too_many_classes: 'claim_description' has 97219 levels (limit 50)",
+                ),
+                blocked(
+                    "c2",
+                    "date_time_of_accident",
+                    TaskType.REGRESSION,
+                    "task_target_mismatch: regression needs a numeric target",
+                ),
+            ]
+        )
+
+    def _finding(self, candidates: ProblemCandidateSet | None):
+        from ads.pipeline.rubrics import build_pipeline_rubrics
+
+        rubric = build_pipeline_rubrics().get("problem_discovery")
+        assert rubric is not None
+        result = critique_stage(
+            rubric,
+            CritiqueContext(
+                stage_id="problem_discovery",
+                artifacts=[candidates] if candidates else [],
+                facts={"signals": QualitySignals(validation_failures=0)},
+            ),
+        )
+        return next(
+            f for f in result.findings if f.check_id == "problem.at_least_one_viable_candidate"
+        )
+
+    def test_each_rejected_framing_and_its_measured_reason_are_reported(self) -> None:
+        finding = self._finding(self._candidates())
+
+        assert finding.evidence == "None of the proposed ML problems is viable against this data."
+        assert len(finding.measurements) == 2
+        assert any("97219 levels" in line for line in finding.measurements)
+        assert any("needs a numeric target" in line for line in finding.measurements)
+        # The framing, not just the reason: two candidates can be blocked for
+        # the same reason on different columns.
+        assert any("claim_description" in line for line in finding.measurements)
+        assert any("date_time_of_accident" in line for line in finding.measurements)
+
+    def test_no_candidates_at_all_says_so_rather_than_going_quiet(self) -> None:
+        assert self._finding(None).measurements == ["No problem candidates were produced at all."]
+
+    def test_a_failed_contract_check_names_the_validators_that_fired(self) -> None:
+        """`_valid_contract` is a count, so a reader was told a contract check
+        failed and never which validator fired or on what column -- which is
+        why the reported run could not be diagnosed from the product."""
+        from ads.pipeline.rubrics import build_pipeline_rubrics
+
+        rubric = build_pipeline_rubrics().get("problem_discovery")
+        assert rubric is not None
+        result = critique_stage(
+            rubric,
+            CritiqueContext(
+                stage_id="problem_discovery",
+                artifacts=[self._candidates()],
+                facts={
+                    "signals": QualitySignals(
+                        validation_failures=1,
+                        validation_failure_details=[
+                            "semantic/unknown_target: Target 'UltimateIncurredClaimCost' is not "
+                            "a column of the ABT."
+                        ],
+                    )
+                },
+            ),
+        )
+
+        finding = next(f for f in result.findings if f.check_id == "problem.targets_exist")
+        assert "unknown_target" in finding.measurements[0]
+        assert "UltimateIncurredClaimCost" in finding.measurements[0]
+
+    def test_a_count_with_no_detail_still_says_how_many(self) -> None:
+        # Older records, and stages that report the count without the list.
+        from ads.pipeline.rubrics import build_pipeline_rubrics
+
+        rubric = build_pipeline_rubrics().get("problem_discovery")
+        assert rubric is not None
+        result = critique_stage(
+            rubric,
+            CritiqueContext(
+                stage_id="problem_discovery",
+                artifacts=[self._candidates()],
+                facts={"signals": QualitySignals(validation_failures=3)},
+            ),
+        )
+
+        finding = next(f for f in result.findings if f.check_id == "problem.targets_exist")
+        assert "3 deterministic validator failure(s)" in finding.measurements[0]
 
 
 class TestJudgmentHalf:

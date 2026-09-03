@@ -18,7 +18,7 @@ export function StatusMark({ status }: { status?: string | null }) {
   return (
     <span
       className={cx(
-        "relative grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[9px]",
+        "relative grid h-5 w-5 shrink-0 place-items-center rounded-full border text-4xs",
         tone === "complete" ? "border-ok-300 bg-ok-50 text-ok-700"
           : tone === "running" ? "border-brand-400 bg-brand-50 text-brand-700"
             : tone === "attention" ? "border-stop-300 bg-stop-50 text-stop-700"

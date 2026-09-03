@@ -8,8 +8,10 @@ LLM/deterministic split, a model that touched them would only add errors.
 from ads.intake.keys import (
     KeyDetectionOptions,
     TooManyTablesForPairwiseDetection,
+    composite_join_key,
     detect_primary_keys,
     detect_relationships,
+    measure_composite_relationship,
     measure_relationship,
     relationships_digest,
 )
@@ -51,6 +53,8 @@ __all__ = [
     "load_excel",
     "load_parquet",
     "load_path",
+    "composite_join_key",
+    "measure_composite_relationship",
     "measure_relationship",
     "normalize_columns",
     "profile_column",

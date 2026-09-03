@@ -18,6 +18,17 @@ export default {
         warn: { 50:"#fffbeb",100:"#fef3c7",200:"#fde68a",300:"#fcd34d",400:"#fbbf24",500:"#f59e0b",600:"#d97706",700:"#b45309",800:"#92400e",900:"#78350f" },
         stop: { 50:"#fef2f2",100:"#fee2e2",200:"#fecaca",300:"#fca5a5",400:"#f87171",500:"#ef4444",600:"#dc2626",700:"#b91c1c",800:"#991b1b",900:"#7f1d1d" },
       },
+      // #380: the 262 hardcoded 9/10/11px utilities were the smallest text on
+      // the site and the exact text this change is about, and an arbitrary
+      // `text-[10px]` does not follow the root. Named rem steps do, so the
+      // sweep was a find-and-replace rather than 262 judgement calls. Values
+      // are today's px over the old 16px root, so at the new 110% root each
+      // lands 10% larger: 11 -> 12.1, 10 -> 11, 9 -> 9.9.
+      fontSize: {
+        "2xs": "0.6875rem",
+        "3xs": "0.625rem",
+        "4xs": "0.5625rem",
+      },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],

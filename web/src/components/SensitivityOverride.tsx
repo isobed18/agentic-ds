@@ -22,9 +22,13 @@ export function SensitivityOverride({
 }: {
   runId: string;
   tables: ProfiledTable[];
-  onApplied?: (applied: Record<string, string>) => void;
+  onApplied?: (applied: Record<string, Choice>) => void;
 }) {
   const [changes, setChanges] = useState<Record<string, Choice>>({});
+  // The source profile prop is an immutable staging snapshot. Keep successful
+  // human corrections as the local baseline so the selected button and the
+  // success message agree immediately with what the backend will use next.
+  const [applied, setApplied] = useState<Record<string, Choice>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -34,8 +38,12 @@ export function SensitivityOverride({
   );
   if (!columns.length) return null;
 
+  function baseline(name: string, machine: string): Choice {
+    return applied[name] ?? (machine === "pii" ? "pii" : "internal");
+  }
+
   function current(name: string, machine: string): Choice {
-    return changes[name] ?? (machine === "pii" ? "pii" : "internal");
+    return changes[name] ?? baseline(name, machine);
   }
 
   function set(name: string, value: Choice) {
@@ -49,6 +57,8 @@ export function SensitivityOverride({
     setError(null);
     try {
       const result = await api.overrideSensitivity(runId, changes);
+      setApplied((previous) => ({ ...previous, ...result.applied }));
+      setChanges({});
       setSaved(true);
       onApplied?.(result.applied);
     } catch (e) {
@@ -60,7 +70,7 @@ export function SensitivityOverride({
 
   const pending = Object.entries(changes).filter(
     ([name, value]) =>
-      value !== (columns.find((c) => c.name === name)?.sensitivity === "pii" ? "pii" : "internal"),
+      value !== baseline(name, columns.find((c) => c.name === name)?.sensitivity ?? "internal"),
   ).length;
 
   return (
@@ -76,7 +86,7 @@ export function SensitivityOverride({
       <div className="max-h-72 overflow-y-auto rounded-lg border border-line">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-surface-sunken">
-            <tr className="text-[10px] uppercase tracking-wide text-ink-faint">
+            <tr className="text-3xs uppercase tracking-wide text-ink-faint">
               <th className="px-3 py-2 text-left font-medium">{t("Column")}</th>
               <th className="px-3 py-2 text-left font-medium">{t("Kind")}</th>
               <th className="px-3 py-2 text-right font-medium">{t("Distinct")}</th>
@@ -91,7 +101,7 @@ export function SensitivityOverride({
                 <tr key={`${column.table}.${column.name}`} className="border-t border-line-soft">
                   <td className="px-3 py-1.5">
                     <span className="font-medium text-ink">{column.name}</span>
-                    <span className="ml-1.5 text-[10px] text-ink-faint">{column.table}</span>
+                    <span className="ml-1.5 text-3xs text-ink-faint">{column.table}</span>
                     {changed && <Badge tone="brand">{t("changed")}</Badge>}
                   </td>
                   <td className="px-3 py-1.5 text-ink-mute">
@@ -107,7 +117,7 @@ export function SensitivityOverride({
                           key={value}
                           onClick={() => set(column.name, value)}
                           className={cx(
-                            "rounded px-2 py-0.5 text-[11px] font-medium transition-colors",
+                            "rounded px-2 py-0.5 text-2xs font-medium transition-colors",
                             choice === value
                               ? value === "pii"
                                 ? "bg-warn-500 text-white"

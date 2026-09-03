@@ -35,6 +35,7 @@ from ads.contracts.problem import (
 from ads.discovery.support import compute_support, support_digest
 from ads.intake.profiler import datacard_digest
 from ads.llm.client import LARGE
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 SYSTEM_PROMPT = """\
 You are a senior data scientist scoping ML projects on enterprise data.
@@ -71,6 +72,13 @@ you suspect the data is weak for it.
 
 Do not invent columns. Use exact names.\
 """
+
+# #406: a reader flagged "belge külliyatı" -- the models' literal rendering
+# of "document corpus", and not a phrase Turkish speakers use. Every prompt that
+# asks for `_tr` prose carries the same correction; `house_turkish` cleans up the
+# runs that were written before it.
+SYSTEM_PROMPT += f"\n{TURKISH_PROSE_INSTRUCTION}\n"
+
 
 
 def build_context(abt_card: DataCard, *, user_intent: str | None = None) -> AgentContext:

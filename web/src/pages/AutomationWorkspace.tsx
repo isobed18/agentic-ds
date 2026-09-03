@@ -4,13 +4,17 @@ import { PipelineBuilder } from "../components/PipelineBuilder";
 import { GuidedPipeline } from "../components/GuidedPipeline";
 import { ApprovalCard } from "../components/GateApproval";
 import { LanguagePicker } from "../components/Shell";
+import { Notifications } from "../components/Notifications";
 import {
+  DockedPanel,
   SourceSummary,
   UnderstandingProgress,
 } from "../components/UnderstandingWorkspace";
+import { PlannerPanel } from "../components/PlannerPanel";
 import { automationOrigin, automationParams, automationView, availableProjectViews, preferredExecution, projectReturnParams, projectView, type WorkspaceView } from "../components/automationWorkspaceState";
 import { ProjectContentsPanel } from "../components/ProjectContents";
-import { Badge, Empty, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { runErrorText } from "../components/stageFailure";
+import { Badge, Empty, NAME_FIELD_WIDTH, Reload, Spinner, cx } from "../components/ui";
 import {
   api,
   type AutomationContents,
@@ -22,24 +26,8 @@ import {
   type StagingWorkspace,
 } from "../lib/api";
 import { isRunActive } from "../lib/status";
-import { activeLanguage, t } from "../lib/i18n";
+import { t } from "../lib/i18n";
 import { AutomationInputSelector, ProjectLibrary, ProjectWorkspace } from "./ProjectWorkspace";
-
-/**
- * A run error is either plain text (older records, and errors we do not
- * recognise) or a bilingual object. Reading both is what let the message be
- * translated at all -- the red banner was English-only because this field was
- * a raw Python string (#263, #265).
- */
-function runErrorText(value: unknown): string | null {
-  if (typeof value === "string") return value || null;
-  if (value && typeof value === "object") {
-    const pair = value as { en?: string; tr?: string };
-    const chosen = activeLanguage() === "tr" ? (pair.tr ?? pair.en) : pair.en;
-    return chosen || null;
-  }
-  return null;
-}
 
 export function AutomationWorkspace() {
   const [params, setParams] = useSearchParams();
@@ -83,7 +71,6 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   const [pendingQuestion, setPendingQuestion] = useState<GateDecision | null>(null);
   const [workspace, setWorkspace] = useState<StagingWorkspace | null>(null);
   const [blueprint, setBlueprint] = useState<PipelineBlueprint | null>(null);
-  const [reuseCache, setReuseCache] = useState(false);
   const [busy, setBusy] = useState(false);
   const [advancedGraph, setAdvancedGraph] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,15 +144,25 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     void refreshAutomation().catch((caught) => setError(messageOf(caught)));
   }
 
+  // #425: an empty field is a cancelled edit, not a rename to "". Blurring it
+  // used to PUT `{ name: "" }`, which fails `min_length=1` on the contract, so
+  // the reader got a stringified pydantic error -- field path, error code and
+  // an errors.pydantic.dev link, in English, on a Turkish screen -- and the
+  // box stayed blank, hiding the automation's real name until a reload while
+  // every further click away fired the same failing request again. Restoring on
+  // failure covers the renames that do reach the server and are rejected
+  // there, for the same reason: the name on screen should never be one the
+  // automation does not have. `ProjectWorkspace.persistName` has both guards.
   async function persistName() {
-    if (!automation || name.trim() === automation.name) { setName(automation?.name ?? name); return; }
-    try { const saved = await api.updateAutomationSafely(automationId, automation.revision, { name: name.trim() }); setAutomation(saved); setName(saved.name); }
-    catch (caught) { setError(messageOf(caught)); }
+    const trimmed = name.trim();
+    if (!automation || !trimmed || trimmed === automation.name) { setName(automation?.name ?? name); return; }
+    try { const saved = await api.updateAutomationSafely(automationId, automation.revision, { name: trimmed }); setAutomation(saved); setName(saved.name); }
+    catch (caught) { setError(messageOf(caught)); setName(automation.name); }
   }
 
   async function startUnderstanding() {
     if (!sourceId || busy) return; setBusy(true); setError(null);
-    try { const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true }); await refreshAutomation(); }
+    try { const staged = await api.stageRun(sourceId, false, blueprint, automationId); setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null); setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true }); await refreshAutomation(); }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
@@ -178,7 +175,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
   // #166 second path: `runMode` carries the person's choice to approve every
   // stage. `manual` declares every stage a checkpoint, so the run stops after
   // each one for a human decision instead of the agent deciding the gate.
-  async function runAcceptedWorkflow(runMode: "fully_auto" | "manual" = "fully_auto", targetColumn: string | null = null, checkpointStages: string[] = []) {
+  async function runAcceptedWorkflow(runMode: "fully_auto" | "manual" = "fully_auto", targetColumn: string | null = null, checkpointStages: string[] = [], problemKind: "predict_column" | "flag_anomalies" | null = null) {
     if (!runId || !workspace || !blueprint || busy) return; setBusy(true); setError(null);
     // #244/#198: the guided run used to pass nothing but the run mode, so a
     // chosen target never reached the pipeline. Carry the picker's column into
@@ -188,7 +185,10 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     // (DocumentTableReview) -- those are exactly as trainable as an uploaded
     // file, so their presence should lift this refusal the same way an
     // uploaded structured table would.
-    try { if (!profile?.tables.length && !workspace.promoted_tables?.length) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; } if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: runMode, ...(targetColumn ? { target_column: targetColumn } : {}), ...(checkpointStages.length ? { supervision: { checkpoint_stages: checkpointStages } } : {}) }); setRunStatus("running"); } }
+    // #241: `problemKind` is a quick-pick, not a hint -- it makes
+    // problem_discovery build the ProblemDefinition straight from it, with no
+    // planner conversation, for the common shapes a person can just name.
+    try { if (!profile?.tables.length && !workspace.promoted_tables?.length) { setError(t("This accepted plan is document/report analysis only; no ML run is implied.")); return; } if (blueprint.components.some((component) => component.enabled && component.branch_id)) { await api.startAutomationBranches(runId); setRunStatus("branches_running"); } else { await api.startStaged(runId, { run_mode: runMode, ...(targetColumn ? { target_column: targetColumn } : {}), ...(checkpointStages.length ? { supervision: { checkpoint_stages: checkpointStages } } : {}), ...(problemKind ? { problem_selection: { kind: problemKind, target_column: targetColumn } } : {}) }); setRunStatus("running"); } }
     catch (caught) { setError(messageOf(caught)); } finally { setBusy(false); }
   }
 
@@ -209,7 +209,7 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
         await api.answer(runId, { decision: "retry", instructions: [] });
         setRunStatus("resuming");
       } else {
-        const staged = await api.stageRun(sourceId, reuseCache, blueprint, automationId);
+        const staged = await api.stageRun(sourceId, false, blueprint, automationId);
         setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null);
         setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true });
         await refreshAutomation();
@@ -230,6 +230,48 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
       setRunId(staged.run_id); setRunStatus(staged.status); setWorkspace(null);
       setParams({ ...automationParams(projectId, automationId, origin), run: staged.run_id }, { replace: true });
       await refreshAutomation();
+    } catch (caught) { setError(messageOf(caught)); }
+    finally { setBusy(false); }
+  }
+
+  // #443: Execution history could describe a past run but never open one. The
+  // detail panel's action row held Pause and Retry, so a *completed* run --
+  // the common case -- rendered an empty row and offered nothing at all, while
+  // its own footer told the reader to "select a completed node in the Editor"
+  // and gave no way to point the Editor at the run being described. Clicking a
+  // row moved a local highlight and no more.
+  //
+  // The workspace's active run is `runId` here, so switching it is these two
+  // fetches plus the state they fill. It cannot be left to the mount effect
+  // that already makes them: that effect is keyed on
+  // `[automationId, sourceId, automation?.automation_id]` and does not re-run
+  // when the run param changes, so writing the URL alone would change the link
+  // and nothing on screen. Every field is set from the resolved responses in
+  // one pass rather than cleared first, so the graph never flashes empty
+  // between the run being left and the one being opened.
+  async function openExecution(targetRunId: string) {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const [progress, saved] = await Promise.all([
+        api.runProgress(targetRunId).catch(() => null),
+        api.stagingWorkspace(targetRunId).catch(() => null),
+      ]);
+      const chosen = executions.find((item) => item.run_id === targetRunId);
+      setRunId(targetRunId);
+      setRunStatus(String(progress?.status ?? chosen?.status ?? ""));
+      setPendingQuestion((progress?.pending_question as GateDecision | null) ?? null);
+      setWorkspace(saved);
+      setBlueprint(saved?.pipeline_blueprint ?? automation?.pipeline_blueprint ?? null);
+      setAdvancedGraph(false);
+      // A failure recorded on the run being opened, and only that one -- the
+      // banner otherwise keeps showing the error of the run just left.
+      setError(runErrorText(progress?.error) || null);
+      setActiveView("editor");
+      // #68's contract, written the same way `applyWorkspace` writes it, so an
+      // external `?view=runs&run=<id>` link and this button agree on which run
+      // the workspace is showing.
+      setParams({ ...automationParams(projectId, automationId, origin), run: targetRunId }, { replace: true });
     } catch (caught) { setError(messageOf(caught)); }
     finally { setBusy(false); }
   }
@@ -256,29 +298,68 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     if (contents && !views.includes(activeView)) setActiveView("editor");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contents]);
+  // #97: the Planner is consultable while the pipeline runs and while a gate
+  // waits on a human, not only during staging.
+  // #378: the Planner opener and its panel used to live inside GuidedPipeline,
+  // which AutomationWorkspace only mounts for two of its five lifecycle states.
+  // So during input selection, source routing and understanding there was no
+  // way to open the Planner at all -- exactly when a person has questions about
+  // their files. PlannerPanel already copes: it accepts a null runId and
+  // re-titles itself "Ask about this data" when it has only a source.
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  // Until the plan is accepted, what the reader is deciding is the plan, so the
+  // staging prompts stand (#97).
+  const plannerPrompts = lifecycle === "guided_pipeline"
+    ? [t("What columns are in this data?"), t("Rank the best target columns and ML problems."), t("Which relationships matter for prediction?")]
+    : [t("What are these files?"), t("Which relationships are measured?"), t("Are the PDFs contextual evidence?"), t("Stop after EDA so I can inspect it.")];
+  // Re-running needs a recorded execution to re-run, and cannot start a second
+  // one on top of a live run. Disabled rather than hidden, so the control stays
+  // in one predictable place and its state explains itself.
+  const canRerun = Boolean(runId) && !busy && !isRunActive(runStatus);
+
   const switchView = (view: WorkspaceView) => { setActiveView(view); setParams({ ...automationParams(projectId, automationId, origin), ...(runId ? { run: runId } : {}), ...(view !== "editor" ? { view } : {}) }, { replace: true }); };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-surface-sunken">
-      <header className="relative flex h-[58px] shrink-0 items-center border-b border-line bg-surface px-4">
+      <header className="relative flex h-[3.625rem] shrink-0 items-center border-b border-line bg-surface px-4">
         <button type="button" className="btn-ghost mr-2 !px-2 text-xs" onClick={() => setParams(projectReturnParams(projectId, origin))}>← {t("Project overview")}</button>
         <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Automation name")} title={name} className={cx("truncate rounded-lg border border-line bg-surface-sunken px-3 py-1.5 text-sm font-semibold text-ink outline-none", NAME_FIELD_WIDTH)} />
+        {/* #378: an automation-level action -- a new execution recorded in
+            Execution history (#247) -- so it belongs beside the automation's
+            name rather than in one canvas's toolbar pill, where it existed only
+            after the plan was accepted and vanished again during every run. */}
+        <button type="button" aria-label={t("Re-run this automation")} title={t("Re-run this automation")} className="ml-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-soft transition hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40" onClick={() => void rerunAutomation()} disabled={!canRerun}><Reload /></button>
         <div className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">{views.map((view) => <button key={view} type="button" onClick={() => switchView(view)} className={cx("rounded-md px-4 py-1.5 text-xs font-medium", activeView === view ? "bg-surface text-ink shadow-sm" : "text-ink-mute")}>{viewLabel(view)}</button>)}</div>
         {/* #157/#165: uploaded data is managed by the project. The contradictory
             top-right global source picker and upload button are intentionally gone. */}
-        <div className="ml-auto"><LanguagePicker /></div>
+        {/* #286: the shared top bar is suppressed for every page inside a
+            project, so this contextual header is the only place notifications
+            can live here. Composed in rather than duplicated: it is the same
+            component the shell renders everywhere else. */}
+        <div className="ml-auto flex items-center gap-1"><LanguagePicker /><Notifications /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       {/* A stage gate that escalated to a human: shown here, above the run, so
           it is reachable regardless of tab -- the run cannot resume until it is
           answered (#81). */}
       {runId && pendingQuestion?.human_prompt && <div className="mx-4 mt-3 shrink-0"><ApprovalCard key={`${pendingQuestion.stage_id}:${pendingQuestion.attempt}`} runId={runId} decision={pendingQuestion} onAnswered={onGateAnswered} /></div>}
-      <main className="min-h-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} reuseCache={reuseCache} onReuseCache={setReuseCache} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onRetry={() => void retryRun()} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, checkpointStages) => void runAcceptedWorkflow(runMode, target, checkpointStages)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onRerun={() => void rerunAutomation()} onAdvanced={() => setAdvancedGraph(true)} onOpenExecutions={() => switchView("executions")} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      {/* #378: the Planner docks beside whatever the workspace is showing, for
+          every lifecycle state, rather than only beside the guided canvas. */}
+      <div className="flex min-h-0 flex-1">
+      <main className="min-h-0 min-w-0 flex-1">{activeView === "executions" ? <ExecutionHistory executions={executions} busy={busy} selectedRunId={runId ?? params.get("run")} onOpen={(id) => void openExecution(id)} onPause={(id) => void api.pauseRun(id).then(() => refreshAutomation()).catch((caught) => setError(messageOf(caught)))} onRetry={() => void retryRun()} onDelete={(id) => void deleteExecution(id)} /> : activeView === "data" || activeView === "models" || activeView === "reports" ? <ProjectContentsPanel view={activeView} contents={contents} loading={busy} onChanged={() => void refreshAutomation()} /> : <>{lifecycle === "empty" && automation && <AutomationInputSelector projectId={projectId} automation={automation} onSelected={(saved) => { setAutomation(saved); setSourceId(saved.source_id ?? ""); void refreshAutomation(); }} onProjectData={() => setParams({ project: projectId, view: "data" })} />}{lifecycle === "source" && !profile && <div className="grid h-full place-items-center"><Spinner label={t("Inspecting and routing selected files…")} /></div>}{lifecycle === "source" && profile && <SourceSummary profile={profile} onStart={() => void startUnderstanding()} busy={busy} />}{lifecycle === "understanding" && profile && <UnderstandingProgress profile={profile} runId={runId} workspace={workspace} onWorkspaceUpdated={applyWorkspace} />}{(lifecycle === "proposal" || lifecycle === "guided_pipeline") && profile && workspace && runId && <GuidedPipeline runId={runId} profile={profile} workspace={workspace} accepted={lifecycle === "guided_pipeline"} runStatus={runStatus} busy={busy} onAccept={() => void acceptPlan()} onWorkspaceUpdated={applyWorkspace} onRun={(runMode, target, checkpointStages, problemKind) => void runAcceptedWorkflow(runMode, target, checkpointStages, problemKind)} onPause={() => void pauseAcceptedWorkflow()} onRetry={() => void retryRun()} onOpenPlanner={() => setPlannerOpen(true)} onAdvanced={() => setAdvancedGraph(true)} />}{lifecycle === "workflow" && blueprint && <PipelineBuilder runId={runId} sourceId={sourceId} baseArtifactId={workspace?.artifact_id ?? null} blueprint={blueprint} layout={workspace?.pipeline_layout ?? automation?.pipeline_layout} componentOutputs={workspace?.component_outputs ?? []} onChange={(next) => setBlueprint(next)} onSaved={(next) => applyWorkspace(next)} onExitAdvanced={() => setAdvancedGraph(false)} />}</>}</main>
+      {plannerOpen && <div className="min-h-0 w-[min(390px,94vw)] shrink-0"><DockedPanel><PlannerPanel runId={runId} sourceId={sourceId || profile?.source_id || null} open onToggle={() => setPlannerOpen(false)} onWorkspaceUpdated={applyWorkspace} starterPrompts={plannerPrompts} /></DockedPanel></div>}
+      </div>
+      {/* One opener, one place on screen, whatever the workspace is doing. The
+          other tabs are project-contents lists rather than this automation's
+          work, so it keeps to the editor. */}
+      {activeView === "editor" && <div className="fixed bottom-6 left-1/2 z-30 -translate-x-1/2">
+        <button type="button" className="btn-primary text-xs shadow-pop" aria-expanded={plannerOpen} onClick={() => setPlannerOpen((open) => !open)}>{t("Chat with Planner")}</button>
+      </div>}
     </div>
   );
 }
 
-function ExecutionHistory({ executions, busy, selectedRunId, onPause, onRetry, onDelete }: { executions: RunSummary[]; busy: boolean; selectedRunId: string | null; onPause: (runId: string) => void; onRetry: (runId: string) => void; onDelete: (runId: string) => void }) {
+function ExecutionHistory({ executions, busy, selectedRunId, onOpen, onPause, onRetry, onDelete }: { executions: RunSummary[]; busy: boolean; selectedRunId: string | null; onOpen: (runId: string) => void; onPause: (runId: string) => void; onRetry: (runId: string) => void; onDelete: (runId: string) => void }) {
   const [selected, setSelected] = useState<RunSummary | null>(() => preferredExecution(executions, selectedRunId));
   // #68: honour the run named in the deep-link URL over executions[0]. The list
   // loads asynchronously, so the URL run may only appear on a later render;
@@ -292,10 +373,30 @@ function ExecutionHistory({ executions, busy, selectedRunId, onPause, onRetry, o
   }, [executions, selectedRunId, selected]);
   const active = selected && isRunActive(selected.status);
   const retryable = selected && ["failed", "interrupted", "aborted", "awaiting_human"].includes(selected.status);
-  return <div className="h-full overflow-y-auto bg-surface-sunken p-6"><div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-[1fr_1.4fr]"><section><h2 className="text-sm font-semibold text-ink">{t("Execution history")}</h2><div className="mt-3 space-y-2">{executions.map((item, index) => <div key={item.run_id} className={cx("flex items-center gap-1 rounded-xl border bg-surface pr-2", selected?.run_id === item.run_id ? "border-brand-400 ring-2 ring-brand-100" : "border-line")}><button type="button" onClick={() => setSelected(item)} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"><span className="text-xs font-semibold text-ink">#{executions.length - index}</span><Badge tone={item.status === "completed" ? "ok" : item.status === "failed" ? "stop" : "brand"}>{t(item.status)}</Badge><span className="ml-auto text-[10px] text-ink-faint">{item.last_activity ? new Date(item.last_activity).toLocaleString() : "—"}</span></button>{!isRunActive(item.status) && <button type="button" aria-label={t("Delete execution")} title={t("Delete execution")} disabled={busy} onClick={() => onDelete(item.run_id)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button>}</div>)}{!executions.length && <Empty title={t("Never executed")} hint={t("Accepted workflow runs will appear here without changing the saved editor graph.")} />}</div></section>{selected && <section className="rounded-xl border border-line bg-surface p-5 shadow-card"><p className="text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Selected execution")}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><ExecutionFact label={t("Status")} value={t(selected.status)} /><ExecutionFact label={t("Artifacts")} value={selected.artifact_count ?? 0} /><ExecutionFact label={t("Completed stages")} value={selected.stages?.length ?? 0} /><ExecutionFact label={t("Last activity")} value={selected.last_activity ? new Date(selected.last_activity).toLocaleString() : "—"} /></div><div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">{active && <button type="button" className="btn-ghost text-xs" disabled={busy} onClick={() => onPause(selected.run_id)}>{t("Pause after current stage")}</button>}{retryable && <button type="button" className="btn-primary text-xs" disabled={busy} onClick={() => onRetry(selected.run_id)}>{t(selected.status === "awaiting_human" ? "Retry current component" : "Retry run")}</button>}</div><p className="mt-4 text-xs text-ink-mute">{t("Select a completed node in the Editor to inspect its readable artifacts and evidence.")}</p></section>}</div></div>;
+  return <div className="h-full overflow-y-auto bg-surface-sunken p-6"><div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-[1fr_1.4fr]"><section><h2 className="text-sm font-semibold text-ink">{t("Execution history")}</h2><div className="mt-3 space-y-2">{executions.map((item, index) => <div key={item.run_id} className={cx("flex items-center gap-1 rounded-xl border bg-surface pr-2", selected?.run_id === item.run_id ? "border-brand-400 ring-2 ring-brand-100" : "border-line")}><button type="button" onClick={() => setSelected(item)} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left"><span className="text-xs font-semibold text-ink">#{executions.length - index}</span><Badge tone={item.status === "completed" ? "ok" : item.status === "failed" ? "stop" : "brand"}>{t(item.status)}</Badge><span className="ml-auto text-3xs text-ink-faint">{item.last_activity ? new Date(item.last_activity).toLocaleString() : "—"}</span></button>{/* #443: the row click selects, as it always did -- reading a run's
+                facts and switching the whole workspace to it are different
+                intentions, and one click cannot mean both. This is the second
+                one, beside Delete, so the list is not a dead end either. */}
+                <button type="button" aria-label={t("Open this execution in the Editor")} title={t("Open this execution in the Editor")} disabled={busy} onClick={() => onOpen(item.run_id)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-brand-50 hover:text-brand-700"><OpenIcon /></button>
+                {!isRunActive(item.status) && <button type="button" aria-label={t("Delete execution")} title={t("Delete execution")} disabled={busy} onClick={() => onDelete(item.run_id)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button>}</div>)}{!executions.length && <Empty title={t("Never executed")} hint={t("Accepted workflow runs will appear here without changing the saved editor graph.")} />}</div></section>{selected && <section className="rounded-xl border border-line bg-surface p-5 shadow-card"><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Selected execution")}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><ExecutionFact label={t("Status")} value={t(selected.status)} /><ExecutionFact label={t("Artifacts")} value={selected.artifact_count ?? 0} /><ExecutionFact label={t("Completed stages")} value={selected.stages?.length ?? 0} /><ExecutionFact label={t("Last activity")} value={selected.last_activity ? new Date(selected.last_activity).toLocaleString() : "—"} /></div><div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">{/* #443: the action every run has, listed first and styled as the
+              primary one. It is the only one a completed run has at all, and
+              on a failed run it is also the safer first move -- "Retry run"
+              stages a new execution, so it is a decision to take after looking
+              at this one rather than instead of it. */}
+              <button type="button" className="btn-primary text-xs" disabled={busy} onClick={() => onOpen(selected.run_id)}>{t("Open in the Editor")}</button>{active && <button type="button" className="btn-ghost text-xs" disabled={busy} onClick={() => onPause(selected.run_id)}>{t("Pause after current stage")}</button>}{retryable && <button type="button" className="btn-ghost text-xs" disabled={busy} onClick={() => onRetry(selected.run_id)}>{t(selected.status === "awaiting_human" ? "Retry current component" : "Retry run")}</button>}</div><p className="mt-4 text-xs text-ink-mute">{t("Open this execution to draw its graph, artifacts and evidence in the Editor.")}</p></section>}</div></div>;
 }
 
-function ExecutionFact({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-[10px] text-ink-faint">{label}</p><p className="mt-1 text-sm font-semibold text-ink">{value}</p></div>; }
+function ExecutionFact({ label, value }: { label: string; value: string | number }) { return <div className="rounded-lg bg-surface-sunken px-3 py-2"><p className="text-3xs text-ink-faint">{label}</p><p className="mt-1 text-sm font-semibold text-ink">{value}</p></div>; }
+
+function OpenIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M11.5 4.5h4v4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M15.5 4.5L9 11" strokeLinecap="round" />
+      <path d="M14 12.25v2.25c0 .69-.56 1.25-1.25 1.25h-7c-.69 0-1.25-.56-1.25-1.25v-7c0-.69.56-1.25 1.25-1.25H8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
 
 function TrashIcon() {
   return (

@@ -44,15 +44,15 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
       <aside
         className={cx(
           "flex shrink-0 flex-col border-r border-line bg-surface transition-[width] duration-200",
-          collapsed ? "w-[68px]" : "w-[232px]",
+          collapsed ? "w-[4.25rem]" : "w-[14.5rem]",
         )}
       >
-        <div className="flex h-[60px] items-center gap-2.5 border-b border-line px-4">
+        <div className="flex h-[3.75rem] items-center gap-2.5 border-b border-line px-4">
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-600 text-white">
             <LogoIcon />
           </div>
           {!collapsed && (
-            <span className="truncate text-[15px] font-semibold tracking-tight">
+            <span className="truncate text-sm font-semibold tracking-tight">
               {t("Agentic Data Science")}
             </span>
           )}
@@ -96,7 +96,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {!isAutomationEditor && <header className="flex h-[60px] shrink-0 items-center gap-4 border-b border-line bg-surface px-6">
+        {!isAutomationEditor && <header className="flex h-[3.75rem] shrink-0 items-center gap-4 border-b border-line bg-surface px-6">
           {topBar ?? <Breadcrumb path={location.pathname} />}
           <div className="ml-auto flex items-center gap-1">
             <LanguagePicker />
@@ -111,7 +111,7 @@ export function Shell({ children, topBar }: { children: ReactNode; topBar?: Reac
 
 function Breadcrumb({ path }: { path: string }) {
   const label = NAV.find((n) => (n.end ? path === n.to : path.startsWith(n.to)))?.label ?? "Home";
-  return <h1 className="text-[15px] font-semibold text-ink">{t(label)}</h1>;
+  return <h1 className="text-sm font-semibold text-ink">{t(label)}</h1>;
 }
 
 function ProfileCard({ collapsed }: { collapsed: boolean }) {
@@ -126,7 +126,7 @@ function ProfileCard({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="relative border-t border-line p-2.5">
       {open && !collapsed && (
-        <div className="absolute bottom-[68px] left-2.5 right-2.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop">
+        <div className="absolute bottom-[4.25rem] left-2.5 right-2.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop">
           <p className="truncate px-3 py-2 text-xs text-ink-mute">{username ?? t("Local session")}</p>
           {["Account", "Preferences"].map((item) => <button key={item} type="button" disabled title={t("Not available yet")} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-faint disabled:cursor-not-allowed">{t(item)}</button>)}
           <button onClick={() => void signOut()} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-soft hover:bg-surface-sunken">{t("Sign out")}</button>
@@ -160,7 +160,7 @@ function ProfileCard({ collapsed }: { collapsed: boolean }) {
 
 /* --- icons: inline so the app has no external asset or font dependency ----- */
 const S = { fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-const box = "h-[18px] w-[18px] shrink-0";
+const box = "h-[1.125rem] w-[1.125rem] shrink-0";
 
 function LogoIcon() { return <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" {...S} strokeWidth={2}><path d="M4 17 9 9l4 5 3-4 4 7" /><circle cx="9" cy="9" r="1.6" /></svg>; }
 function HomeIcon() { return <svg viewBox="0 0 24 24" className={box} {...S}><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" /></svg>; }
@@ -178,7 +178,7 @@ export function LanguagePicker() {
           key={l.code}
           onClick={() => l.code !== active && setLanguage(l.code)}
           className={cx(
-            "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+            "rounded-md px-2 py-1 text-2xs font-medium transition-colors",
             l.code === active ? "bg-brand-600 text-white" : "text-ink-mute hover:bg-surface-sunken",
           )}
         >

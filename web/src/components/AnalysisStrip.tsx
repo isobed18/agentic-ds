@@ -87,32 +87,32 @@ export function AnalysisStrip({ panels }: { panels: AnalysisPanel[] }) {
                 onClick={() => setSelected(panel.id)}
                 aria-pressed={isActive}
                 className={cx(
-                  "group relative w-[212px] shrink-0 snap-start rounded-xl border bg-surface p-3 text-left transition-all",
+                  "group relative w-[13.25rem] shrink-0 snap-start rounded-xl border bg-surface p-3 text-left transition-all",
                   isActive
                     ? "border-brand-500 ring-2 ring-brand-100"
                     : "border-line hover:border-ink-faint",
                 )}
               >
                 <div className="mb-1.5 flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-semibold leading-tight text-ink">
+                  <span className="text-2xs font-semibold leading-tight text-ink">
                     {panel.title}
                   </span>
                   {isActive && (
-                    <span className="grid h-4 w-4 shrink-0 place-items-center rounded bg-brand-500 text-[10px] font-bold text-white">
+                    <span className="grid h-4 w-4 shrink-0 place-items-center rounded bg-brand-500 text-3xs font-bold text-white">
                       ✓
                     </span>
                   )}
                 </div>
                 <Badge tone={meta.tone}>{meta.label}</Badge>
                 {panel.origin === "agent_authored" && (
-                  <span className="ml-1 text-[9px] font-semibold uppercase tracking-wide text-brand-700">
+                  <span className="ml-1 text-4xs font-semibold uppercase tracking-wide text-brand-700">
                     {t("Agent-authored")}
                   </span>
                 )}
-                <div className="my-2 h-[76px] w-full text-ink">
+                <div className="my-2 h-[4.75rem] w-full text-ink">
                   <Chart spec={panel.chart} compact />
                 </div>
-                <p className="truncate text-[11px] text-ink-mute" title={panel.caption}>
+                <p className="truncate text-2xs text-ink-mute" title={panel.caption}>
                   {panel.caption}
                 </p>
               </button>
@@ -166,7 +166,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
         {panel.origin === "agent_authored" && <Badge tone="brand">{t("Agent-authored")}</Badge>}
         <button
           onClick={() => setOpen((o) => !o)}
-          className="btn-ghost ml-auto !py-1 text-[11px]"
+          className="btn-ghost ml-auto !py-1 text-2xs"
         >
           {open ? t("Collapse") : t("Expand")}
         </button>
@@ -180,11 +180,11 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
       {open && (
         <div className="mt-3 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
           <div className="min-w-0 text-ink">
-            <div className="min-h-[220px] w-full">
+            <div className="min-h-[13.75rem] w-full">
               <Chart spec={panel.chart} />
             </div>
             {panel.chart.x_label && (
-              <p className="mt-1 text-center text-[11px] text-ink-faint">{panel.chart.x_label}</p>
+              <p className="mt-1 text-center text-2xs text-ink-faint">{panel.chart.x_label}</p>
             )}
           </div>
 
@@ -198,7 +198,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
                   <h4 className="text-xs font-semibold text-brand-800">{t("Proposed interpretation")}</h4>
                   <Badge tone="brand">{item.epistemic_state ?? "proposed"}</Badge>
                   {item.confidence && (
-                    <span className="text-[10px] text-brand-700">
+                    <span className="text-3xs text-brand-700">
                       {t("model self-assessment: {confidence}", { confidence: item.confidence })}
                     </span>
                   )}
@@ -239,7 +239,7 @@ function ExpandedPanel({ panel }: { panel: AnalysisPanel }) {
             {panel.table && panel.table.rows.length > 0 && (
               <div>
                 <h4 className="mb-1.5 text-xs font-semibold text-ink">{t("Summary statistics")}</h4>
-                <div className="max-h-[260px] overflow-y-auto rounded-lg border border-line">
+                <div className="max-h-[16.25rem] overflow-y-auto rounded-lg border border-line">
                   <DataTable columns={panel.table.columns} rows={panel.table.rows} />
                 </div>
               </div>

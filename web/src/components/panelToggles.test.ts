@@ -14,11 +14,14 @@ import { describe, expect, it } from "vitest";
 
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
 import BUILDER_SOURCE from "./PipelineBuilder.tsx?raw";
+// #378 moved the automation-wide planner opener onto the page, so that one is
+// read from there now. It is the same opener with the same contract.
+import AUTOMATION_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 
 /** The openers named in #188, each with the state its panel reads. */
 const OPENERS = [
   { source: GUIDED_SOURCE, where: "GuidedPipeline: Review plan", label: 'Review plan' },
-  { source: GUIDED_SOURCE, where: "GuidedPipeline: Chat with Planner", label: 'Chat with Planner' },
+  { source: AUTOMATION_SOURCE, where: "AutomationWorkspace: Chat with Planner", label: 'Chat with Planner' },
   { source: BUILDER_SOURCE, where: "PipelineBuilder: Add component", label: 'Add component' },
   { source: BUILDER_SOURCE, where: "PipelineBuilder: Planner", label: 'Planner' },
 ];
@@ -56,7 +59,7 @@ describe("side-panel openers toggle (#188)", () => {
 
   it("leaves the × close paths alone", () => {
     // The panels' own dismissal is what still worked; it must keep working.
-    expect(GUIDED_SOURCE).toContain("setPlannerOpen(false)");
+    expect(AUTOMATION_SOURCE).toContain("setPlannerOpen(false)");
     expect(BUILDER_SOURCE).toContain("setPlannerOpen(false)");
   });
 });

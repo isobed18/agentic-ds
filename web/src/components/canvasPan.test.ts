@@ -58,7 +58,7 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
   it("excludes the whole guided run toolbar from the pan gesture", () => {
     // #197 moved the run control from the bottom edge to top-centre; it stays
     // marked data-no-pan so a drag on it never pans the canvas underneath.
-    const opens = GUIDED_SOURCE.indexOf('<div data-no-pan className="fixed top-[70px]');
+    const opens = GUIDED_SOURCE.indexOf('<div data-no-pan className="fixed top-[4.375rem]');
     expect(opens, "the guided run toolbar is no longer marked data-no-pan").toBeGreaterThan(-1);
 
     // Everything up to the toolbar's own closing tag, at its indentation.
@@ -78,5 +78,8 @@ describe("controls inside a canvas keep their own presses (#189)", () => {
     // #244/#198: the run mode now travels alongside the chosen target column
     // and the specific stages picked as checkpoints.
     expect(GUIDED_SOURCE).toContain("GROUPS.filter((group) => checkpointGroups.has(group.id)).flatMap((group) => group.stages)");
+    // #241: and the chosen problem kind, so a duplicate of this same invariant
+    // in GuidedPipeline.test.ts and here both name the four-argument call.
+    expect(GUIDED_SOURCE).toContain('targetColumn || null, stages, problemKind === "ask_planner" ? null : problemKind)');
   });
 });

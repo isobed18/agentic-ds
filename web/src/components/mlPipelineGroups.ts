@@ -23,22 +23,39 @@ export const GROUPS: Array<{ id: string; title: string; description: string; sta
     description: "Choose the prediction goal and confirm that the available data can support it.",
     stages: ["problem_discovery"],
   },
-  // `eda` and `leakage_audit` are the ids the established workflow declares.
-  // This group previously named `exploratory_analysis` (an artifact type) and
-  // `lineage_audit` (an id nothing produces), so both stages ran but were
-  // silently dropped from this group's status, inspection, and artifact count.
+  // `validation_strategy`, `eda` and `leakage_audit` used to share one "Analyze
+  // and validate" node. They are three genuinely different things -- choosing
+  // how to validate, looking at the data, and checking for leakage -- and
+  // folding them into one node meant none of them, EDA least of all, had a name
+  // anyone could find on the canvas (#212). One node each now; splitting does
+  // not change what runs, only what the canvas shows for it.
   // tests/test_guided_pipeline_groups.py holds every id here to the spec.
   {
-    id: "analysis",
-    title: "Analyze and validate",
-    description: "Measure patterns, choose validation, and check for leakage before training.",
-    stages: ["validation_strategy", "eda", "leakage_audit"],
+    id: "validation_strategy",
+    title: "Choose validation",
+    description: "Decide how training and holdout data are separated to keep evaluation honest.",
+    stages: ["validation_strategy"],
+  },
+  {
+    id: "eda",
+    title: "Exploratory analysis",
+    description: "Measure distributions, missingness, and relationships before training.",
+    stages: ["eda"],
+  },
+  {
+    id: "leakage_audit",
+    title: "Leakage audit",
+    description: "Check candidate features for information that would make results unrealistically good.",
+    stages: ["leakage_audit"],
   },
   {
     id: "features",
     title: "Build and split",
     description: "Create model-ready features and divide the data without contaminating evaluation.",
-    stages: ["feature_pipeline", "splitting"],
+    // `rl_feature_engineering` runs after the split on purpose -- it sends
+    // training rows only, so the external search cannot see the holdout -- but
+    // it belongs to this group because what it produces is features.
+    stages: ["feature_pipeline", "splitting", "rl_feature_engineering"],
   },
   {
     id: "model",

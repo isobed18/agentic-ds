@@ -7,13 +7,22 @@
  * legible: the Data view names the other projects bound to the same input.
  */
 import { useState } from "react";
-import { api, type AutomationContents, type ModelSummary, type ReportSummary } from "../lib/api";
+import {
+  api,
+  type AutomationContents,
+  type ModelSummary,
+  type ReportSummary,
+} from "../lib/api";
 import type { WorkspaceView } from "./automationWorkspaceState";
-import { Badge, Empty, Spinner } from "./ui";
+import { Badge, Empty, Spinner, cx } from "./ui";
+import { useOverlayDismiss } from "./overlayDismiss";
 import { t } from "../lib/i18n";
 
 const fmt = (n: number) => n.toLocaleString();
-const num = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : "—");
+// Widened to accept null: an enhanced model's holdout score is absent until it
+// has one, and `Number.isFinite(null)` is false but `null.toFixed` is a crash.
+const num = (n: number | null | undefined, d = 2) =>
+  typeof n === "number" && Number.isFinite(n) ? n.toFixed(d) : "—";
 
 export function ProjectContentsPanel({
   view,
@@ -41,7 +50,7 @@ export function ProjectContentsPanel({
 function DataView({ contents }: { contents: AutomationContents | null }) {
   const data = contents?.data ?? [];
   if (!data.length) return <Empty title={t("No data selected")} hint={t("Choose project files from the automation graph to create its private snapshot.")} />;
-  return <section><h2 className="text-lg font-semibold text-ink">{t("Selected automation data")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Only these project files belong to this automation.")}</p><div className="mt-4 space-y-2">{data.map((file) => <article key={`${file.source_id}:${file.path}`} className="card flex items-center gap-3 px-4 py-3"><span aria-hidden="true">▤</span><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.path}</p><p className="truncate font-mono text-[10px] text-ink-faint">{file.source_id}</p></div></article>)}</div></section>;
+  return <section><h2 className="text-lg font-semibold text-ink">{t("Selected automation data")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Only these project files belong to this automation.")}</p><div className="mt-4 space-y-2">{data.map((file) => <article key={`${file.source_id}:${file.path}`} className="card flex items-center gap-3 px-4 py-3"><span aria-hidden="true">▤</span><div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{file.path}</p><p className="truncate font-mono text-3xs text-ink-faint">{file.source_id}</p></div></article>)}</div></section>;
 }
 
 function ModelsView({ contents, onChanged }: { contents: AutomationContents | null; onChanged: () => void }) {
@@ -75,33 +84,85 @@ function ModelsView({ contents, onChanged }: { contents: AutomationContents | nu
                 </button>
               </div>
             </div>
-            <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
-              <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
-              <Pair label={t("CV mean")} value={num(model.cv_mean)} />
-              <Pair label={t("CV std")} value={num(model.cv_std)} />
-              <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
-            </dl>
+            {model.enhanced ? <ModelComparison model={model} /> : (
+              <dl className="grid grid-cols-2 gap-2 border-t border-line-soft pt-2.5">
+                <Pair label={`Holdout ${model.metric}`} value={num(model.holdout_score)} />
+                <Pair label={t("CV mean")} value={num(model.cv_mean)} />
+                <Pair label={t("CV std")} value={num(model.cv_std)} />
+                <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
+              </dl>
+            )}
+            {model.enhanced && (
+              <dl className="mt-2 grid grid-cols-3 gap-2">
+                <Pair label={t("CV mean")} value={num(model.cv_mean)} />
+                <Pair label={t("CV std")} value={num(model.cv_std)} />
+                <Pair label={t("Training rows")} value={fmt(model.training_rows)} />
+              </dl>
+            )}
             <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-line-soft pt-2">
-              <p className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-ink-faint">
+              <p className="min-w-0 flex-1 truncate font-mono text-3xs text-ink-faint">
                 run {model.run_id} · {model.candidate_count} candidates
               </p>
-              {/* #166: a completed run leaves a saved model that must be
-                  downloadable. Only a saved model has a joblib blob behind it. */}
-              {model.saved && (
-                <a
-                  href={`/api/models/${model.artifact_id}/download`}
-                  className="btn-ghost !py-1 text-xs"
-                  download
-                >
-                  {t("Download model")}
-                </a>
-              )}
+              {/* #166: a single-model run keeps its download in the footer.
+                  Paired runs put each download in its labelled comparison
+                  column, so the file cannot be mistaken for its counterpart. */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {!model.enhanced && model.saved && (
+                  <a
+                    href={`/api/models/${model.artifact_id}/download`}
+                    className="btn-ghost !py-1 text-xs"
+                    download
+                  >
+                    {t("Download original")}
+                  </a>
+                )}
+              </div>
             </div>
           </article>
         ))}
       </div>
       {deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
     </>
+  );
+}
+
+/** The original and RL-enhanced results, compared inside one run card.
+ *
+ * The delta arrives already oriented so positive means better, whichever way the
+ * metric runs. It is toned on that sign rather than always reading as a win: an
+ * enhanced model that scored worse should look like it did, because the run
+ * still offers it for download and a person choosing between the two needs to
+ * see which one actually won.
+ */
+export function ModelComparison({ model }: { model: ModelSummary }) {
+  const enhanced = model.enhanced;
+  if (!enhanced) return null;
+  const delta = enhanced.score_delta;
+  const better = typeof delta === "number" && delta > 0;
+  return (
+    <section
+      aria-label={t("Original and RL-enhanced model comparison")}
+      className="mt-2.5 grid grid-cols-2 overflow-hidden rounded-xl border border-line"
+    >
+      <div data-model-variant="original" className="min-w-0 bg-surface-sunken p-3">
+        <p className="text-3xs font-semibold uppercase tracking-wide text-ink-mute">{t("Original model")}</p>
+        <p className="mt-2 text-3xs text-ink-faint">{t("Holdout {metric}", { metric: model.metric })}</p>
+        <p className="text-lg font-semibold tabular-nums text-ink">{num(model.holdout_score)}</p>
+        <p className="mt-1 truncate text-3xs text-ink-faint" title={model.estimator}>{model.estimator}</p>
+        {model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-2 inline-flex !py-1 text-3xs" download>{t("Download original")}</a>}
+      </div>
+      <div data-model-variant="rl-enhanced" className={cx("min-w-0 border-l border-line p-3", better ? "bg-ok-50/70" : "bg-warn-50/60")}>
+        <div className="flex items-start justify-between gap-1.5">
+          <p className="text-3xs font-semibold uppercase tracking-wide text-ink-mute">{t("RL-enhanced model")}</p>
+          {typeof delta === "number" && <Badge tone={better ? "ok" : "warn"}>{`${delta > 0 ? "+" : ""}${delta.toFixed(3)}`}</Badge>}
+        </div>
+        <p className="mt-2 text-3xs text-ink-faint">{t("Holdout {metric}", { metric: model.metric })}</p>
+        <p className="text-lg font-semibold tabular-nums text-ink">{num(enhanced.holdout_score)}</p>
+        <p className="mt-1 truncate text-3xs text-ink-faint" title={enhanced.estimator}>{enhanced.estimator}</p>
+        <p className="mt-1 text-3xs text-ink-soft">{t("With {count} engineered feature(s)", { count: enhanced.generated_feature_count })}</p>
+        {enhanced.saved && <a href={`/api/models/${enhanced.artifact_id}/download`} className="btn-ghost mt-2 inline-flex !py-1 text-3xs" download>{t("Download RL-enhanced")}</a>}
+      </div>
+    </section>
   );
 }
 
@@ -126,7 +187,7 @@ function ReportsView({ contents, onChanged }: { contents: AutomationContents | n
           <article key={report.artifact_id} className="card flex items-center gap-3 px-4 py-3">
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-medium">{String(report.title ?? report.preview ?? "Evaluation report")}</h3>
-              <p className="font-mono text-[11px] text-ink-faint">run {report.run_id}</p>
+              <p className="font-mono text-2xs text-ink-faint">run {report.run_id}</p>
             </div>
             <a href={`/api/reports/${report.artifact_id}/download`} className="btn-ghost !py-1.5 text-xs" download>
               {t("Download")}
@@ -145,7 +206,7 @@ function ReportsView({ contents, onChanged }: { contents: AutomationContents | n
 function Pair({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-wide text-ink-faint">{label}</dt>
+      <dt className="text-3xs uppercase tracking-wide text-ink-faint">{label}</dt>
       <dd className="text-sm font-semibold text-ink">{value}</dd>
     </div>
   );
@@ -157,9 +218,11 @@ function Pair({ label, value }: { label: string; value: string }) {
  * unlike an automation/project delete which also names what else is affected.
  */
 function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  // Dismissing a confirmation is a cancel, never a confirm (#387).
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>

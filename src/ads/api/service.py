@@ -9,6 +9,7 @@ inspectable after the server restarts.
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -33,6 +34,7 @@ from ads.api.panels import (
     exploratory_panel,
     leakage_panels,
     model_experiment_panel,
+    rl_feature_panels,
     schema_graph,
     source_panels,
     training_panels,
@@ -56,7 +58,8 @@ from ads.automation import (
     instantiate_component,
 )
 from ads.contracts.automation_definition import AutomationInputFile
-from ads.contracts.base import ArtifactType
+from ads.contracts.base import ArtifactType, is_diagnostic_artifact
+from ads.contracts.datacard import DataCard
 from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
     DocumentExtraction,
@@ -78,6 +81,8 @@ from ads.contracts.staging import (
     PipelineBlueprint,
     PipelineLayout,
     PipelineOutputReference,
+    PlannerOverrideProposal,
+    PromotedDocumentTable,
     RelationshipExplanation,
     RuntimeConfigurationPlan,
     StagingMessage,
@@ -86,8 +91,10 @@ from ads.contracts.staging import (
     StagingWorkspace,
 )
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
+from ads.discovery.support import compute_support, supervised_task_type_for
 from ads.documents import (
     PDF_SUFFIXES,
+    CandidateNotPromotable,
     DocumentExtractionError,
     create_document_table_review,
     document_extraction_prompt_context,
@@ -101,6 +108,7 @@ from ads.intake import (
     TooManyTablesForPairwiseDetection,
     detect_relationships,
     load_directory_with_failures,
+    profile_table,
     profile_tables,
 )
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
@@ -145,6 +153,7 @@ from ads.pipeline import (
 )
 from ads.pipeline.stages import (
     CANDIDATE_LIMIT_KEY,
+    QUICK_PROBLEM_KEY,
     RUN_LANGUAGE_KEY,
     STAGE_DIRECTIVES_KEY,
     VALIDATION_FOLDS_KEY,
@@ -159,7 +168,9 @@ from ads.staging import (
     document_engine_catalog,
     validate_executable_blueprint,
 )
-from ads.store import ArtifactNotFoundError, ArtifactStore
+from ads.store import ArtifactNotFoundError, ArtifactRef, ArtifactStore
+from ads.tools.activity import FEED as tool_activity_feed
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 # Content-based file detection is optional. When its dependency is unavailable,
 # the source profile is still produced without detection measurements.
@@ -168,9 +179,20 @@ try:
 except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
     _file_inventory = None
 
+#: Where a rejected request's developer-facing detail goes. What the reader is
+#: told and what an operator needs to debug it are two different texts, and the
+#: second one used to be sent as the first (#425).
+_log = logging.getLogger(__name__)
+
 # Map the content detector's flow vocabulary to the extension-based `route`
 # vocabulary. This is used only to expose disagreements (see source_profile).
 _DETECTED_FLOW_TO_ROUTE = {"tablo": "structured", "belge": "documents"}
+#: Run states that mean more work is still coming, and a live view is worth
+#: polling for (#411). `interrupted` is excluded for the same reason the web
+#: side excludes it: its whole purpose is to end a poll that would never stop.
+_ACTIVE_RUN_STATUSES = frozenset(
+    {"queued", "running", "resuming", "staging", "branches_running"}
+)
 
 def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
     """Bir dosyanin akisini ICERIGINDEN olc; uzantiya hic bakma.
@@ -327,10 +349,157 @@ def _measure_file_detection(
     }
 
 
+def _translated(text: str, language: str, **params: Any) -> str:
+    """Render one catalogue key without changing the request's language."""
+    with i18n.using(language):
+        return i18n.t(text, **params)
+
+
+def _file_profile_insights(
+    source_files: list[dict[str, Any]],
+    tables: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach one bounded, row-free explanation to every routed file.
+
+    These sentences use only DataCard measurements already safe for agent
+    context: table/row counts, candidate key names, issue counts and measured
+    relationship participation. Source values never enter the payload.
+    """
+
+    tables_by_file: dict[str, list[dict[str, Any]]] = {}
+    for table in tables:
+        tables_by_file.setdefault(str(table.get("source_file") or ""), []).append(table)
+    documents_by_name = {str(item.get("name") or ""): item for item in documents}
+    related_tables = {
+        str(relationship.get(side) or "")
+        for relationship in relationships
+        for side in ("from_table", "to_table")
+    }
+
+    enriched: list[dict[str, Any]] = []
+    for source_file in source_files:
+        item = dict(source_file)
+        name = str(item.get("name") or "")
+        file_tables = tables_by_file.get(name, [])
+        route = str(item.get("route") or "unsupported")
+
+        if route == "structured" and file_tables:
+            table_count = len(file_tables)
+            row_count = sum(int(table.get("rows") or 0) for table in file_tables)
+            issue_count = sum(len(table.get("issues") or []) for table in file_tables)
+            key_labels: list[str] = []
+            for table in file_tables:
+                for columns in table.get("candidate_keys") or []:
+                    joined = "+".join(str(column) for column in columns)
+                    if joined:
+                        key_labels.append(
+                            joined if table_count == 1 else f"{table.get('name')}.{joined}"
+                        )
+
+            if table_count > 1:
+                role_key = "multi-table source"
+            elif any(str(table.get("name") or "") in related_tables for table in file_tables):
+                role_key = "joinable table"
+            elif key_labels:
+                role_key = "keyed table"
+            else:
+                role_key = "analysis table"
+
+            shown_keys = key_labels[:2]
+            remaining_keys = len(key_labels) - len(shown_keys)
+            suffix = f" +{remaining_keys}" if remaining_keys else ""
+            key_template = (
+                "key candidate: {keys}" if len(key_labels) == 1 else "key candidates: {keys}"
+            )
+            insight: dict[str, str] = {}
+            role: dict[str, str] = {}
+            for language in ("en", "tr"):
+                role[language] = _translated(role_key, language)
+                keys = (
+                    _translated(
+                        key_template,
+                        language,
+                        keys=f"{', '.join(shown_keys)}{suffix}",
+                    )
+                    if shown_keys
+                    else _translated("no key candidate", language)
+                )
+                quality = (
+                    _translated("no quality notes", language)
+                    if issue_count == 0
+                    else _translated("{count} quality notes", language, count=issue_count)
+                )
+                insight[language] = _translated(
+                    "{tables} {table_unit} · {rows} {row_unit} · {role} · {keys} · {quality}",
+                    language,
+                    tables=table_count,
+                    table_unit=_translated(
+                        "table" if table_count == 1 else "tables", language
+                    ),
+                    rows=f"{row_count:,}",
+                    row_unit=_translated("row" if row_count == 1 else "rows", language),
+                    role=role[language],
+                    keys=keys,
+                    quality=quality,
+                )
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": row_count,
+                    "tables": table_count,
+                    "candidate_keys": key_labels,
+                    "quality_issues": issue_count,
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        elif route == "documents" and name in documents_by_name:
+            document = documents_by_name[name]
+            pages = int(document.get("pages") or 0)
+            ready = document.get("understanding_status") == "text_ready"
+            role = {
+                language: _translated("document context", language)
+                for language in ("en", "tr")
+            }
+            insight = {
+                language: _translated(
+                    "{pages} {page_unit} · {role} · {readiness}",
+                    language,
+                    pages=pages,
+                    page_unit=_translated("page" if pages == 1 else "pages", language),
+                    role=role[language],
+                    readiness=_translated(
+                        "text layer ready" if ready else "OCR or vision needed", language
+                    ),
+                )
+                for language in ("en", "tr")
+            }
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": 0,
+                    "tables": 0,
+                    "candidate_keys": [],
+                    "quality_issues": len(document.get("issues") or []),
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        else:
+            reason = item.get("reason")
+            if isinstance(reason, dict) and reason.get("en") and reason.get("tr"):
+                item["origin"] = "measured"
+                item["insight"] = {"en": str(reason["en"]), "tr": str(reason["tr"])}
+        enriched.append(item)
+    return enriched
+
+
 _UPLOAD_ID = re.compile(r"^upload:([0-9a-f]{12})$")
 _AUTOMATION_INPUT_ID = re.compile(r"^automation-input:([0-9a-f]{12})$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
-_PROFILE_CACHE_SCHEMA_VERSION = 1
+_PROFILE_CACHE_SCHEMA_VERSION = 2
 _UPLOAD_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".xls", ".parquet", ".pq", ".pdf"}
 # Windows' classic MAX_PATH. A host can lift it with LongPathsEnabled, but that
 # is a per-machine opt-in outside this application's control, so the budget is
@@ -355,10 +524,18 @@ _PIPELINE_STAGES = {
     "leakage_audit",
     "feature_pipeline",
     "splitting",
+    "rl_feature_engineering",
     "training",
     "evaluation",
     "report",
 }
+
+
+def _signed(value: Any) -> str:
+    """A metric change with its sign kept, so "no change" cannot read as "+0.00"."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return "—"
+    return f"{value:+.3f}"
 
 # Agent calls outside the executable workflow reserve stable virtual stage
 # ordinals so they share the same run-level derivation without colliding with
@@ -763,6 +940,13 @@ class ControlPlane:
                     "elapsed_seconds": self._elapsed(own),
                     "started_at": own[0]["started_at"] if own else None,
                     "ended_at": own[-1]["ended_at"] if own else None,
+                    # A short, already-translated line the canvas card shows
+                    # under its description, with the tone it should read in.
+                    # Composed here rather than in the browser for the same
+                    # reason panel severity is: what counts as a warning is a
+                    # judgment about the run, and the two sides disagreeing
+                    # about it is worse than either being slightly wrong.
+                    "note": self._stage_note(stage["id"], run_id),
                 }
             )
         return {
@@ -776,6 +960,41 @@ class ControlPlane:
             ],
             "run_id": run_id,
             "run_status": run_status,
+        }
+
+    def _stage_note(self, stage_id: str, run_id: str | None) -> dict[str, str] | None:
+        """One translated line for a stage's canvas card, or None for most stages.
+
+        Only the external feature search has one so far: it is the one stage
+        whose result a person needs on the card itself, because "the API was
+        unreachable" is otherwise invisible until someone opens the panel.
+        """
+        if stage_id != "rl_feature_engineering" or run_id is None:
+            return None
+        try:
+            ref = self.store.latest(run_id, ArtifactType.RL_FEATURE_REPORT)
+        except (KeyError, ValueError):
+            return None
+        if ref is None:
+            return None
+        payload = self.artifact_payload(ref.artifact_id)
+        status = str(payload.get("status") or "")
+        if status == "unavailable":
+            return {
+                "text": i18n.t("Feature engineering service unreachable; step skipped"),
+                "tone": "warn",
+            }
+        if status != "applicable":
+            return {"text": i18n.t("Feature engineering does not apply here"), "tone": "neutral"}
+        return {
+            "text": i18n.t(
+                "+{added} features, −{removed} · {metric} {delta}",
+                added=len(payload.get("generated_features") or []),
+                removed=len(payload.get("removed_features") or []),
+                metric=payload.get("primary_metric") or "",
+                delta=_signed(payload.get("api_score_improvement")),
+            ),
+            "tone": "neutral",
         }
 
     @staticmethod
@@ -1583,6 +1802,8 @@ class ControlPlane:
             "Valid stages are intake, schema_discovery, integration, problem_discovery, "
             "validation_strategy, eda, leakage_audit, splitting, training, evaluation, report. "
             "Rules such as approval preferences or retry limits belong in rules_to_remember. "
+            "Every enforceable change you return is a proposal until the human confirms it in "
+            "the UI. Describe it as proposed, never as already applied. "
             "When the human asks for something an agent should do differently at a "
             "specific stage -- a model family to prefer, a metric to report, a column "
             "to leave alone -- put it in stage_directives keyed by that stage id. It "
@@ -1770,15 +1991,35 @@ class ControlPlane:
                             name="graph_patch",
                         )
                         result["graph_patch_artifact_id"] = patch_ref.artifact_id
-                    result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
+                    if updated_blueprint.revision > workspace.pipeline_blueprint.revision:
+                        result["pipeline_blueprint"] = updated_blueprint.model_dump(mode="json")
                 except PlannerGraphEditRejected as exc:
                     result["graph_edit_rejected"] = str(exc)
-        # Applied here rather than returned for the UI to apply, so the planner
-        # route and the direct route end in the same place. A directive the user
-        # never sees applied is the failure mode worth avoiding: they asked the
-        # planner, the planner agreed, and nothing reached the agent.
+        proposed_blueprint = (
+            PipelineBlueprint.model_validate(result["pipeline_blueprint"])
+            if isinstance(result.get("pipeline_blueprint"), dict)
+            else None
+        )
+        pending_override = PlannerOverrideProposal(
+            configuration_patch=dict(result["configuration_patch"]),
+            stage_directives={
+                stage: list(lines) for stage, lines in result["stage_directives"].items()
+            },
+            checkpoint_stages=list(result["checkpoint_stages"]),
+            auto_proceed_stages=list(result["auto_proceed_stages"]),
+            max_retries_by_stage=dict(result["max_retries_by_stage"]),
+            pipeline_blueprint=proposed_blueprint,
+        )
+        if not pending_override.has_changes:
+            pending_override = None
+        else:
+            result["override_proposal"] = pending_override.model_dump(mode="json")
+
+        # Directives and supervision change execution, so chat may only stage
+        # them. The explicit apply route below is the sole place they reach the
+        # runtime or accepted plan (#328).
         applied: dict[str, list[str]] = {}
-        if run_id and result["stage_directives"]:
+        if run_id and pending_override is None and result["stage_directives"]:
             for stage, lines in result["stage_directives"].items():
                 for line in lines:
                     try:
@@ -1796,6 +2037,8 @@ class ControlPlane:
                 self._runtime_runs[run_id],
                 planner_result=result,
                 user_message=message.strip(),
+                pending_override=pending_override,
+                preserve_effects=True,
             )
         return result
 
@@ -1835,11 +2078,23 @@ class ControlPlane:
             if item.component_id not in branch_component_ids
         ]
         projected_outputs.extend(branch_outputs)
+        # #430: the deferral is re-checked here too, not only where a snapshot
+        # is written. The client polls this every 2.2s, so a precondition that
+        # resolves lifts the block on the next read -- no timer and no event
+        # needed, which is what "nothing re-evaluates it" was missing. The
+        # snapshot itself stays the immutable record; this is a projection over
+        # it, like `component_outputs` above.
+        projected_plan = self._reconsidered_plan(run_id, workspace.recommended_plan)
         return {
             "artifact_id": ref.artifact_id,
             "run_id": run_id,
             "promoted_tables": self._promoted_document_table_summaries(run_id),
-            **workspace.model_dump(mode="json", exclude={"component_outputs"}),
+            **workspace.model_dump(
+                mode="json", exclude={"component_outputs", "recommended_plan"}
+            ),
+            "recommended_plan": (
+                projected_plan.model_dump(mode="json") if projected_plan else None
+            ),
             "component_outputs": [item.model_dump(mode="json") for item in projected_outputs],
         }
 
@@ -1867,6 +2122,116 @@ class ControlPlane:
                 }
             )
         return summaries
+
+    def apply_planner_override(self, run_id: str, proposal_id: str) -> dict[str, Any]:
+        """Apply exactly one validated Planner proposal after a human click."""
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.pending_override is None:
+            raise ValueError("there is no pending Planner override")
+        pending = previous.pending_override
+        if pending.proposal_id != proposal_id:
+            raise ValueError("the Planner override changed; review the latest proposal")
+        old_plan = previous.recommended_plan or RuntimeConfigurationPlan(
+            pipeline_recommendation="create_pipeline"
+        )
+        configuration = dict(old_plan.configuration)
+        configuration.update(pending.configuration_patch)
+        if previous.recommended_plan is None:
+            for artifact_id in previous.schema_artifact_ids:
+                try:
+                    integration_plan = self.store.load(artifact_id, IntegrationPlan)
+                except Exception:
+                    continue
+                configuration.setdefault("base_table", integration_plan.base_table)
+                configuration.setdefault("base_grain", integration_plan.base_grain)
+                break
+            configuration.setdefault("candidate_limit", 2)
+            configuration.setdefault("n_folds", 5)
+        directives = {stage: list(lines) for stage, lines in old_plan.stage_directives.items()}
+        for stage, lines in pending.stage_directives.items():
+            directives[stage] = [*directives.get(stage, []), *lines]
+        checkpoints = set(old_plan.checkpoint_stages)
+        checkpoints.update(pending.checkpoint_stages)
+        checkpoints.difference_update(pending.auto_proceed_stages)
+        auto_proceed = set(old_plan.auto_proceed_stages)
+        auto_proceed.update(pending.auto_proceed_stages)
+        auto_proceed.difference_update(pending.checkpoint_stages)
+        retries = dict(old_plan.max_retries_by_stage)
+        retries.update(pending.max_retries_by_stage)
+        plan = old_plan.model_copy(
+            update={
+                "configuration": configuration,
+                "stage_directives": directives,
+                "checkpoint_stages": sorted(checkpoints),
+                "auto_proceed_stages": sorted(auto_proceed),
+                "max_retries_by_stage": retries,
+            }
+        )
+        blueprint = pending.pipeline_blueprint or previous.pipeline_blueprint
+        if blueprint is None:
+            raise ValueError("the proposed workflow has no materializable blueprint")
+        blueprint.validate_connections()
+
+        for stage, lines in pending.stage_directives.items():
+            for instruction in lines:
+                self.direct_stage(run_id, stage, instruction)
+
+        saved = previous.model_copy(
+            update={
+                "recommended_plan": plan,
+                "pipeline_blueprint": blueprint,
+                "pending_override": None,
+                "component_outputs": self._staging_component_outputs(
+                    blueprint,
+                    intake_ids=previous.intake_artifact_ids,
+                    schema_ids=previous.schema_artifact_ids,
+                    document_ids=[
+                        artifact_id
+                        for output in previous.component_outputs
+                        if output.component_id == "understand-documents"
+                        for artifact_id in output.artifact_ids
+                    ],
+                    document_summary=(
+                        previous.document_extractions[-1]
+                        if previous.document_extractions
+                        else None
+                    ),
+                    reports_ready=bool(previous.reports),
+                    report_artifact_ids=self._staging_report_artifact_ids(run_id),
+                    plan_ready=True,
+                    plan_accepted=self._plan_is_accepted(plan),
+                ),
+            }
+        )
+        ref = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="planner-override",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, ref.artifact_id)
+        return self.staging_workspace(run_id)
+
+    def discard_planner_override(self, run_id: str, proposal_id: str) -> dict[str, Any]:
+        """Discard a proposal without changing the accepted plan or runtime."""
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.pending_override is None:
+            raise ValueError("there is no pending Planner override")
+        if previous.pending_override.proposal_id != proposal_id:
+            raise ValueError("the Planner override changed; review the latest proposal")
+        saved = previous.model_copy(update={"pending_override": None})
+        ref = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="planner-override-discard",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, ref.artifact_id)
+        return self.staging_workspace(run_id)
 
     def _branch_component_outputs(
         self, parent_run_id: str, workspace: StagingWorkspace
@@ -2073,7 +2438,7 @@ class ControlPlane:
         """Persist a human-edited component graph as a new immutable snapshot."""
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status not in {"staging", "staged"}:
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         latest_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
         if latest_ref is None:
             raise ValueError("the staging workspace is not ready")
@@ -2171,6 +2536,206 @@ class ControlPlane:
     def _plan_is_accepted(plan: RuntimeConfigurationPlan | None) -> bool:
         return bool(plan and (plan.status == "accepted" or plan.accepted))
 
+    def _planned_base_table(self, run_id: str) -> str:
+        """The table schema discovery chose as the ABT base, if it ran."""
+        for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN):
+            try:
+                return self.store.load(reference.artifact_id, IntegrationPlan).base_table
+            except Exception:
+                continue
+        return ""
+
+    def deferred_plan_targets(self, run_id: str) -> list[dict[str, Any]]:
+        """The columns a person may name as the target, with what is known.
+
+        #429: `is_usable_target` already marks the plausible ones -- `y` is in
+        that list for the reported file -- and the panel had no way to show
+        them. Read off the base table's profile so the names match what the
+        pipeline will actually see, snake-cased and all.
+        """
+        workspace = self._latest_staging_workspace(run_id)
+        if workspace is None:
+            raise KeyError(run_id)
+        base_table = ""
+        if workspace.recommended_plan:
+            base_table = str(workspace.recommended_plan.configuration.get("base_table") or "")
+        profile = self.source_profile(workspace.source_id)
+        tables = [item for item in profile["tables"] if item.get("columns")]
+        if not tables:
+            return []
+        table = next((item for item in tables if item["name"] == base_table), tables[0])
+        return [
+            {
+                "name": column["name"],
+                "table": table["name"],
+                "semantic_type": column.get("semantic_type"),
+                "candidate_target": bool(column.get("candidate_target")),
+                "null_rate": column.get("null_rate"),
+                "unique_rate": column.get("unique_rate"),
+            }
+            for column in table["columns"]
+        ]
+
+    def measured_target_support(self, run_id: str, target_column: str, task_type: str | None):
+        """What the data says about one proposed target, measured now.
+
+        #429: `compute_support` is the product's own answer to "can this
+        framing work", and at the point a deferral is shown nothing had ever
+        asked it about the column a person would name. On the reported
+        `bank.csv` it returns viable with no blocking reasons at all, so the
+        deferral was standing in front of a target the product could already
+        prove was fine.
+
+        Measured against the base table as intake profiled and loaded it. The
+        integrated ABT does not exist yet at staging time -- integration is an
+        ML stage -- and for the single-table case they are the same rows.
+        """
+        workspace = self._latest_staging_workspace(run_id)
+        base_table = ""
+        if workspace and workspace.recommended_plan:
+            base_table = str(workspace.recommended_plan.configuration.get("base_table") or "")
+        if not base_table:
+            base_table = self._planned_base_table(run_id)
+
+        source_id = workspace.source_id if workspace else ""
+        runtime = self._runtime_runs.get(run_id)
+        source_id = source_id or (runtime.source_id if runtime else "")
+        if not source_id:
+            raise ValueError("this run does not record its source")
+        loaded, _unreadable = load_directory_with_failures(self.source_path(source_id))
+        if not loaded:
+            raise ValueError("the source has no readable table to measure against")
+        table = next((item for item in loaded if item.name == base_table), loaded[0])
+        card = profile_table(table)
+        column = card.column(target_column)
+        if column is None:
+            raise ValueError(
+                f"target_column {target_column!r} is not a column of {card.table_name!r}"
+            )
+        chosen = (
+            TaskType(str(task_type))
+            if task_type
+            else supervised_task_type_for(column)
+        )
+        if chosen is TaskType.ANOMALY_DETECTION:
+            raise ValueError("anomaly detection does not predict a column")
+        support = compute_support(
+            card, table.frame, target_column=target_column, task_type=chosen
+        )
+        return card, table, chosen, support
+
+    def override_deferred_plan(
+        self,
+        run_id: str,
+        *,
+        base_artifact_id: str,
+        target_column: str,
+        task_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Answer a deferral by naming the target, if the data supports it.
+
+        #429: the panel rendered the badge, the decision summary and the Agent
+        rationale, then nothing -- no way to perform the named review, no way
+        to name the target, no way to proceed. The review it named is not
+        something this product can be asked to do; the only human review
+        implemented is the PDF table review, which does not apply to a single
+        CSV. And a deferred plan is persisted with an empty configuration, so
+        accepting one as-is would yield no `base_table`, `base_grain`,
+        `candidate_limit` or `n_folds`. Naming the target is what supplies all
+        of that, which is why it is the override rather than a bare "proceed".
+
+        The measurement decides. An unviable column comes back with the
+        blocking reasons for *that* column and the plan is left alone -- a real
+        answer instead of a block with no stated cause. The plan stays
+        `proposed` when it is lifted: unblocking and accepting are two
+        decisions and the person still makes the second one.
+        """
+        latest_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        if latest_ref is None:
+            raise ValueError("the staging workspace is not ready")
+        if latest_ref.artifact_id != base_artifact_id:
+            raise StagingWorkspaceConflict(
+                "the staging workspace changed; review the latest proposal"
+            )
+        previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
+        plan = previous.recommended_plan
+        if plan is None:
+            raise ValueError("the Planner has not proposed a workflow")
+        if plan.pipeline_recommendation == "create_pipeline":
+            raise ValueError("this plan already proposes a pipeline; there is nothing to override")
+        if plan.status != "proposed":
+            raise ValueError("this plan has already been decided")
+        column = str(target_column).strip()
+        if not column:
+            raise ValueError("target_column is required")
+
+        card, _table, chosen, support = self.measured_target_support(run_id, column, task_type)
+        if not support.is_viable:
+            # The honest answer, and the one the reader can act on: the
+            # measured reasons this column cannot carry this task.
+            return {
+                "run_id": run_id,
+                "artifact_id": latest_ref.artifact_id,
+                "viable": False,
+                "target_column": column,
+                "task_type": chosen.value,
+                "blocking_reasons": list(support.blocking_reasons),
+                "warnings": list(support.warnings),
+            }
+
+        configuration = {
+            **plan.configuration,
+            "base_table": card.table_name,
+            "target_column": column,
+            "task_type": chosen.value,
+            # A named target is a constraint, not a hint for the agent to rank
+            # first: `problem_discovery` builds this candidate directly and
+            # measures it (#241), which is the same thing just measured above.
+            "problem_selection": {"kind": "predict_column", "target_column": column},
+        }
+        primary_key = next(iter(card.candidate_primary_keys), None)
+        if primary_key and "base_grain" not in configuration:
+            configuration["base_grain"] = list(primary_key)
+        # A deferred plan is persisted with an empty configuration, so these
+        # are what make the lifted one runnable at all (#429).
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        overridden = plan.model_copy(
+            update={
+                "pipeline_recommendation": "create_pipeline",
+                "configuration": configuration,
+                "human_override": self._localized(
+                    f"A person named {column!r} as the target, overriding the Planner's "
+                    f"deferral. Measured support: viable, {support.n_rows} rows, "
+                    f"{support.n_usable_features} usable features.",
+                    f"Bir kişi hedef olarak {column!r} sütununu belirledi ve planlayıcının "
+                    f"ertelemesini geçersiz kıldı. Ölçülen destek: uygulanabilir, "
+                    f"{support.n_rows} satır, {support.n_usable_features} kullanılabilir "
+                    f"öznitelik.",
+                ),
+            }
+        )
+        saved = previous.model_copy(update={"recommended_plan": overridden})
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="plan-override",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
+        return {
+            "run_id": run_id,
+            "artifact_id": reference.artifact_id,
+            "viable": True,
+            "target_column": column,
+            "task_type": chosen.value,
+            "blocking_reasons": [],
+            "warnings": list(support.warnings),
+            **saved.model_dump(mode="json"),
+        }
+
     def accept_staging_plan(
         self,
         run_id: str,
@@ -2191,7 +2756,13 @@ class ControlPlane:
         if previous.pipeline_blueprint is None:
             raise ValueError("the proposed workflow has no materializable blueprint")
         validate_executable_blueprint(previous.pipeline_blueprint)
-        accepted_plan = previous.recommended_plan.model_copy(
+        # #430: accept what the reader was shown. `staging_workspace` projects a
+        # deferral whose precondition has resolved as runnable, so freezing the
+        # stored snapshot verbatim would accept a `defer_pipeline` with an empty
+        # configuration -- an accepted plan that cannot start.
+        proposed_plan = self._reconsidered_plan(run_id, previous.recommended_plan)
+        assert proposed_plan is not None
+        accepted_plan = proposed_plan.model_copy(
             update={
                 "status": "accepted",
                 "accepted": True,
@@ -2361,6 +2932,13 @@ class ControlPlane:
             run_id=run_id,
             stage_exec_id="document-table-review",
         )
+        # #316 reopened: the review artifact was written and no reader ever
+        # acted on it. `_document_tables_await_review` flipped to False the
+        # moment this landed, and nothing asked it again -- the deferral was
+        # baked into the persisted workspace snapshot and only a planner turn
+        # recomputed it. Recording the human decision the gate is waiting on
+        # has to be sufficient to lift the gate; that is what the gate is for.
+        self._lift_document_table_gate(run_id)
         return {"artifact_id": reference.artifact_id, **review.summary()}
 
     def promote_document_tables(self, run_id: str, review_artifact_id: str) -> dict[str, Any]:
@@ -2374,6 +2952,13 @@ class ControlPlane:
             run_id=run_id,
             review=review,
         )
+        # #361: promotion wrote table assets and left every reader describing
+        # the state before it. The plan panel reads the staging workspace and
+        # the source profile, and the profile is a walk of the uploaded files --
+        # a promoted table is not a file, so nothing there could ever change.
+        # Record the promotion on the workspace, which the client already
+        # re-reads on this callback.
+        self._record_promoted_document_tables(run_id, review, promoted)
         return {
             "review_artifact_id": review_artifact_id,
             "table_assets": [
@@ -2387,6 +2972,159 @@ class ControlPlane:
                 for asset, reference in promoted
             ],
         }
+
+    def _lift_document_table_gate(self, run_id: str) -> None:
+        """Re-resolve a deferral once the table review it waited on is recorded.
+
+        #316: `_resolved_pipeline_recommendation` clamps `create_pipeline` to
+        `defer_pipeline` while candidates sit unreviewed, and it is called from
+        exactly one place -- inside `_persist_staging_workspace`'s
+        `if planner_result is not None:` branch. Everywhere else the plan is
+        carried forward verbatim, so the clamp outlived the condition that
+        applied it: promoting the tables left the plan node red and saying
+        "Blocked", and reloading changed nothing.
+
+        The documented escape did not reliably work either. "Ask the Planner to
+        reconsider" re-enters the recompute, but a turn that names no
+        recommendation falls back to `previous.pipeline_recommendation` --
+        which is the deferral. A conversational reply re-persisted the block.
+
+        Only the clamp is undone. A `no_pipeline`, an accepted plan, or a
+        deferral on a run that never had table candidates is somebody's
+        decision and is left alone.
+        """
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.recommended_plan is None:
+            return
+        plan = previous.recommended_plan
+        if plan.pipeline_recommendation != "defer_pipeline" or plan.status != "proposed":
+            return
+        if self._document_tables_await_review(run_id):
+            return
+        if not self._run_had_table_candidates(run_id):
+            # Nothing here clamped this plan, so nothing here may release it.
+            return
+        configuration = dict(plan.configuration)
+        for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN):
+            try:
+                integration_plan = self.store.load(reference.artifact_id, IntegrationPlan)
+            except Exception:
+                continue
+            configuration.setdefault("base_table", integration_plan.base_table)
+            configuration.setdefault("base_grain", integration_plan.base_grain)
+            break
+        # A deferred plan is persisted with an empty configuration, so a lift
+        # without these produces a plan that unblocks and then cannot start.
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        lifted = plan.model_copy(
+            update={
+                "pipeline_recommendation": "create_pipeline",
+                # #430 added this field after this lift was written: leaving it
+                # would persist a runnable plan that still names a precondition,
+                # which `_reconsidered_plan` clears when it resolves the same
+                # deferral -- the two paths must agree on what "lifted" means.
+                "deferred_on": "",
+                "configuration": configuration,
+            }
+        )
+        saved = previous.model_copy(
+            update={
+                "recommended_plan": lifted,
+                # The proposal node reads its status from here, so leaving it
+                # would keep the graph saying "blocked" beside a plan that is
+                # not (#361 fixed the same staleness for the promoted count).
+                "component_outputs": self._staging_component_outputs(
+                    previous.pipeline_blueprint,
+                    intake_ids=previous.intake_artifact_ids,
+                    schema_ids=previous.schema_artifact_ids,
+                    document_ids=[
+                        artifact_id
+                        for output in previous.component_outputs
+                        if output.component_id == "understand-documents"
+                        for artifact_id in output.artifact_ids
+                    ],
+                    document_summary=(
+                        previous.document_extractions[-1]
+                        if previous.document_extractions
+                        else None
+                    ),
+                    reports_ready=bool(previous.reports),
+                    report_artifact_ids=self._staging_report_artifact_ids(run_id),
+                    plan_ready=True,
+                    plan_accepted=False,
+                )
+                if previous.pipeline_blueprint is not None
+                else previous.component_outputs,
+            }
+        )
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="document-table-review",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
+
+    def _run_had_table_candidates(self, run_id: str) -> bool:
+        """Whether this run ever extracted a table candidate to review."""
+        reference = self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        if reference is None:
+            return False
+        try:
+            extraction = self.store.load(reference.artifact_id, DocumentExtraction)
+        except Exception:
+            return False
+        return any(document.tables for document in extraction.documents)
+
+    def _record_promoted_document_tables(
+        self,
+        run_id: str,
+        review: DocumentTableReview,
+        promoted: list[tuple[TableAsset, ArtifactRef]],
+    ) -> None:
+        """Write the promotion onto the staging workspace so readers can see it.
+
+        ``promote_reviewed_document_tables`` walks ``review.decisions`` in order
+        and skips everything that is not accepted, so zipping the accepted
+        decisions against its result pairs each asset with the candidate whose
+        provenance it already verified.
+        """
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None:
+            return
+        accepted = [item for item in review.decisions if item.decision == "accepted"]
+        already = {item.candidate_id for item in previous.promoted_document_tables}
+        additions = [
+            PromotedDocumentTable(
+                candidate_id=decision.candidate_id,
+                artifact_id=reference.artifact_id,
+                source_file=decision.source_file,
+                page_number=decision.page_number,
+                row_count=asset.row_count,
+                column_count=asset.column_count,
+            )
+            for decision, (asset, reference) in zip(accepted, promoted, strict=True)
+            if decision.candidate_id not in already
+        ]
+        if not additions:
+            return
+        saved = previous.model_copy(
+            update={
+                "promoted_document_tables": [*previous.promoted_document_tables, *additions],
+            }
+        )
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="document-table-promotion",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
 
     def _measured_relationship_explanations(self, source_id: str) -> list[RelationshipExplanation]:
         explanations: list[RelationshipExplanation] = []
@@ -2429,6 +3167,106 @@ class ControlPlane:
             )
         return explanations
 
+    def _document_tables_await_review(self, run_id: str) -> bool:
+        """Whether extracted table candidates are still waiting on a human (#316).
+
+        A recorded review settles the question whichever way it went -- rejecting
+        every candidate is a completed decision, not a pending one -- so this
+        asks whether one exists, not whether anything was promoted.
+        """
+        reference = self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        if reference is None:
+            return False
+        try:
+            extraction = self.store.load(reference.artifact_id, DocumentExtraction)
+        except Exception:
+            return False
+        if not any(document.tables for document in extraction.documents):
+            return False
+        return self.store.latest(run_id, ArtifactType.DOCUMENT_TABLE_REVIEW) is None
+
+    def _fill_pipeline_plan_configuration(
+        self, configuration: dict[str, Any], schema_artifact_ids: Sequence[str]
+    ) -> dict[str, Any]:
+        """The defaults a runnable plan needs, taken from what the run measured.
+
+        Extracted so a deferral lifted after the fact (#430) produces the same
+        runnable configuration a `create_pipeline` turn would have, rather than
+        an accepted plan with nothing in it.
+        """
+        for artifact_id in schema_artifact_ids:
+            try:
+                integration_plan = self.store.load(artifact_id, IntegrationPlan)
+            except Exception:
+                continue
+            configuration.setdefault("base_table", integration_plan.base_table)
+            configuration.setdefault("base_grain", integration_plan.base_grain)
+            # The target-column picker only ever showed the base table's own
+            # raw columns, so a column that only exists after the plan joins
+            # or aggregates other tables in (e.g. "avg_rating" from an
+            # AggregationStep over "ratings", when the base table is
+            # "links") was never clickable here -- even though problem
+            # discovery reasons over the same plan and can select it fine.
+            # The IntegrationTrial already measured the ABT's real,
+            # deterministic result columns; that is authoritative over
+            # trying to re-derive them from table names, which do not exist
+            # for an agent-invented aggregation output.
+            if integration_plan.trial_artifact_id:
+                try:
+                    trial = self.store.load(integration_plan.trial_artifact_id, IntegrationTrial)
+                    configuration.setdefault("available_columns", trial.result_columns)
+                except Exception:
+                    pass
+            break
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        return configuration
+
+    def _reconsidered_plan(
+        self, run_id: str, plan: RuntimeConfigurationPlan | None
+    ) -> RuntimeConfigurationPlan | None:
+        """Re-check a deferral's precondition against the run as it is now.
+
+        #430: the recommendation only ever changed on a planner turn, and on
+        such a turn a reply that named none inherited the previous one. So a
+        `defer_pipeline` sustained itself: no timer, no re-check, no event, and
+        reloading, re-opening or waiting changed nothing. This runs wherever a
+        plan is read or carried, so the precondition resolving is enough --
+        which is also the reopen path #316 never had.
+
+        A plan a person has already acted on is left exactly as it is; their
+        decision is not something to recompute.
+        """
+        if plan is None or plan.pipeline_recommendation != "defer_pipeline":
+            return plan
+        if plan.status != "proposed":
+            return plan
+        recommendation, deferred_on = _resolved_deferral(
+            plan.deferred_on, self._document_tables_await_review(run_id)
+        )
+        if (recommendation, deferred_on) == (plan.pipeline_recommendation, plan.deferred_on):
+            return plan
+        configuration = self._fill_pipeline_plan_configuration(
+            dict(plan.configuration), self._schema_artifact_ids(run_id)
+        )
+        return plan.model_copy(
+            update={
+                "pipeline_recommendation": recommendation,
+                "deferred_on": deferred_on,
+                "configuration": configuration,
+                "checkpoint_stages": sorted(
+                    set(plan.checkpoint_stages) | set(_REFUSED_DEFERRAL_CHECKPOINTS)
+                ),
+            }
+        )
+
+    def _schema_artifact_ids(self, run_id: str) -> list[str]:
+        """Ids of the run's schema-discovery outputs, newest last."""
+        return [
+            reference.artifact_id
+            for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN)
+        ]
+
     def _persist_staging_workspace(
         self,
         runtime: _RuntimeRun,
@@ -2436,9 +3274,14 @@ class ControlPlane:
         planner_result: dict[str, Any] | None = None,
         user_message: str | None = None,
         planner_error: str | None = None,
+        pending_override: PlannerOverrideProposal | None = None,
+        preserve_effects: bool = False,
     ) -> StagingWorkspace:
         """Append an immutable snapshot of staging evidence, chat, and plan."""
         previous = self._latest_staging_workspace(runtime.run_id)
+        pending = previous.pending_override if previous else None
+        if pending_override is not None:
+            pending = pending_override
         intake_ids = [
             artifact_id
             for attempt in runtime.state.attempts
@@ -2459,7 +3302,13 @@ class ControlPlane:
         reports = list(previous.reports) if previous else []
         report_artifact_ids = self._staging_report_artifact_ids(runtime.run_id)
         history = list(previous.chat_history) if previous else []
-        plan = previous.recommended_plan if previous else None
+        # #430: a deferral carried forward verbatim is what made the state
+        # absorbing -- nothing re-evaluated it, so `defer_pipeline` sustained
+        # itself through every later snapshot. Re-check its stated precondition
+        # here as well as on a planner turn.
+        plan = (
+            self._reconsidered_plan(runtime.run_id, previous.recommended_plan) if previous else None
+        )
         model = previous.planner_model if previous else None
         profile = self.source_profile(runtime.source_id)
         document_ref = self.store.latest(runtime.run_id, ArtifactType.DOCUMENT_EXTRACTION)
@@ -2616,51 +3465,31 @@ class ControlPlane:
                 plan_configuration.pop("validation_strategy", None)
             if plan_configuration.get("task_type") not in {item.value for item in TaskType}:
                 plan_configuration.pop("task_type", None)
-            pipeline_recommendation = str(
-                planner_result.get("pipeline_recommendation") or "create_pipeline"
+            requested_recommendation = planner_result.get("pipeline_recommendation")
+            pipeline_recommendation, deferred_on = _resolved_pipeline_recommendation(
+                requested_recommendation,
+                plan,
+                self._document_tables_await_review(runtime.run_id),
             )
-            if pipeline_recommendation not in {
-                "create_pipeline",
-                "defer_pipeline",
-                "no_pipeline",
-            }:
-                pipeline_recommendation = "defer_pipeline"
+            # #430: the planner asked to defer and the product has no
+            # outstanding decision to point at, so the block was refused. It
+            # still wanted the review it named, and the reviews this pipeline
+            # performs are its own stages -- so the run stops at one for a
+            # person instead of not starting at all.
+            refused_deferral = (
+                requested_recommendation == "defer_pipeline"
+                and pipeline_recommendation == "create_pipeline"
+            )
             if pipeline_recommendation == "create_pipeline":
-                for artifact_id in schema_ids:
-                    try:
-                        integration_plan = self.store.load(artifact_id, IntegrationPlan)
-                    except Exception:
-                        continue
-                    plan_configuration.setdefault("base_table", integration_plan.base_table)
-                    plan_configuration.setdefault("base_grain", integration_plan.base_grain)
-                    # The target-column picker only ever showed the base
-                    # table's own raw columns, so a column that only exists
-                    # after the plan joins or aggregates other tables in
-                    # (e.g. "avg_rating" from an AggregationStep over
-                    # "ratings", when the base table is "links") was never
-                    # clickable here -- even though problem discovery reasons
-                    # over the same plan and can select it fine. The
-                    # IntegrationTrial already measured the ABT's real,
-                    # deterministic result columns; that is authoritative
-                    # over trying to re-derive them from table names, which
-                    # do not exist for an agent-invented aggregation output.
-                    if integration_plan.trial_artifact_id:
-                        try:
-                            trial = self.store.load(
-                                integration_plan.trial_artifact_id, IntegrationTrial
-                            )
-                            plan_configuration.setdefault(
-                                "available_columns", trial.result_columns
-                            )
-                        except Exception:
-                            pass
-                    break
-                plan_configuration.setdefault("candidate_limit", 2)
-                plan_configuration.setdefault("n_folds", 5)
+                self._fill_pipeline_plan_configuration(plan_configuration, schema_ids)
             else:
                 plan_configuration = {}
+            checkpoints = list(planner_result.get("checkpoint_stages") or [])
+            if refused_deferral:
+                checkpoints = sorted(set(checkpoints) | set(_REFUSED_DEFERRAL_CHECKPOINTS))
             plan = RuntimeConfigurationPlan(
                 pipeline_recommendation=pipeline_recommendation,
+                deferred_on=deferred_on,
                 decision_summary=(
                     self._localized(
                         (planner_result.get("decision_summary") or {}).get("en"),
@@ -2674,7 +3503,7 @@ class ControlPlane:
                     key: list(value)
                     for key, value in (planner_result.get("stage_directives") or {}).items()
                 },
-                checkpoint_stages=list(planner_result.get("checkpoint_stages") or []),
+                checkpoint_stages=checkpoints,
                 auto_proceed_stages=list(planner_result.get("auto_proceed_stages") or []),
                 max_retries_by_stage=dict(planner_result.get("max_retries_by_stage") or {}),
                 rationale=[
@@ -2705,6 +3534,11 @@ class ControlPlane:
                 )
             )
 
+        if preserve_effects:
+            plan = previous.recommended_plan if previous else None
+            if previous and previous.pipeline_blueprint is not None:
+                blueprint = previous.pipeline_blueprint
+
         workspace = StagingWorkspace(
             source_id=runtime.source_id,
             source_fingerprint=self._source_fingerprint(runtime.source_id),
@@ -2728,6 +3562,7 @@ class ControlPlane:
             ),
             document_extractions=document_summaries,
             recommended_plan=plan,
+            pending_override=pending,
             chat_history=history,
             planner_model=model,
             planner_error=planner_error,
@@ -3063,6 +3898,34 @@ class ControlPlane:
         if not usable:
             if isinstance(llm, OllamaClient):
                 llm.close()
+            # #365: this used to be a bare `return`. The caller then marked the
+            # run `staged` and emitted `staging_analysis_ready`, so the run
+            # reported success while carrying no plan -- and the canvas, which
+            # has only "pending" and "failed" for the proposal node, drew it as
+            # still working. The file was accepted, nothing went red, and the
+            # flow never advanced. Say what happened instead; the status is
+            # left alone, because the understanding that did run is real and a
+            # deployment with no planner configured is a configuration fact
+            # rather than a failed run.
+            with self._lock:
+                runtime.events.append(
+                    {
+                        "event": "staging_analysis_skipped",
+                        "at": _now(),
+                        "reason": {
+                            "en": (
+                                "No planner model is available, so no plan could be proposed "
+                                "for these files. Understanding itself completed."
+                            ),
+                            "tr": (
+                                "Kullanilabilir bir planlayici model yok, bu yuzden bu dosyalar "
+                                "icin plan onerilemedi. Veri anlama asamasi tamamlandi."
+                            ),
+                        },
+                    }
+                )
+                runtime.updated_at = _now()
+            self._persist_runtime(runtime)
             return
         profile = self.source_profile(runtime.source_id)
         safe_tables = [
@@ -3106,10 +3969,20 @@ class ControlPlane:
             },
             default=str,
         )
+        reply_language = i18n.normalise(str(runtime.configuration.get("language") or ""))
+        reply_instruction = (
+            "Write reply only in Turkish."
+            if reply_language == "tr"
+            else "Write reply only in English."
+        )
         system = (
             "Create the automatic pre-pipeline data-understanding synthesis. Return two or three "
-            "short bilingual report artifacts and a bounded runtime rationale. Use English "
-            "for reply. Artifacts remain bilingual: use English and Turkish in artifact fields. "
+            "short bilingual report artifacts and a bounded runtime rationale. "
+            f"{reply_instruction} Artifacts remain bilingual: use English and Turkish in "
+            "artifact fields. "
+            # #406: this synthesis is where "belge külliyatı" was reported. The
+            # same correction the agent prompts carry.
+            f"{TURKISH_PROSE_INSTRUCTION} "
             "Explain each modality "
             "and cross-source relationships. Measured/extracted evidence must be verbally "
             "distinct from interpretation. Cite document evidence with file name and page. "
@@ -3118,10 +3991,15 @@ class ControlPlane:
             "Do not invent columns, relationships, files, metrics, or completed actions. Explain "
             "high-value measured relationships inside report findings. Choose exactly one neutral "
             "pipeline_decision: create_pipeline when the evidence supports an executable ML "
-            "objective and suitable inputs; defer_pipeline when a named review or missing fact "
-            "must resolve viability; no_pipeline when the understood source does not warrant an "
-            "ML workflow. Evaluate all three options and state the evidence-based reason. Keep "
-            "every field concise."
+            "objective and suitable inputs; defer_pipeline ONLY when a human decision this "
+            "product can perform is outstanding -- today that means extracted PDF table "
+            "candidates that nobody has reviewed yet. The audits the ML pipeline performs are "
+            "its own stages (leakage_audit, validation_strategy, eda), so wanting one of those "
+            "is a reason to RUN the pipeline and stop at that stage, not to defer it: a "
+            "deferral waiting on a pipeline stage blocks the pipeline that contains the audit "
+            "it is waiting for, and nothing can then resolve it. no_pipeline when the "
+            "understood source does not warrant an ML workflow at all. Evaluate all three "
+            "options and state the evidence-based reason. Keep every field concise."
         )
         try:
             response = None
@@ -3550,12 +4428,33 @@ class ControlPlane:
                 )
         return sources
 
+    def require_source_view(self, source_id: str, *, viewer: str | None) -> None:
+        """Hide a private source from callers that do not own or share it.
+
+        Unowned built-in sources retain their historical shared behaviour. A
+        denied source answers like an unknown id so the endpoint does not also
+        disclose that another account's private source exists.
+        """
+        ownership = self._ownership()
+        if not may_view(
+            viewer=viewer,
+            owner=ownership.owner_of(source_id),
+            visibility=ownership.visibility_of(source_id),
+            teams=self._teams(),
+        ):
+            raise KeyError(source_id)
+
     #: Cap on `page_size` so a caller cannot ask the server to profile an
     #: unbounded slice in one request and undo the reason pagination exists.
     _DATASET_PAGE_MAX = 100
 
     def dataset_catalog(
-        self, *, search: str | None = None, page: int = 1, page_size: int = 25
+        self,
+        *,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+        viewer: str | None = None,
     ) -> dict[str, Any]:
         """Paginated, searchable row-free summaries backing /datasets.
 
@@ -3568,7 +4467,7 @@ class ControlPlane:
         """
         page_size = max(1, min(page_size, self._DATASET_PAGE_MAX))
         page = max(1, page)
-        sources = self.data_sources()
+        sources = self.data_sources(viewer=viewer)
         needle = (search or "").strip().casefold()
         if needle:
             sources = [
@@ -3634,6 +4533,11 @@ class ControlPlane:
                         }
                         for document in documents
                     ],
+                    # The project Data tab lists physical files, not only the
+                    # source-level totals above. Preserve each file's bounded,
+                    # row-free profile explanation so that view and Intake
+                    # describe the same evidence (#329).
+                    "file_summaries": [dict(file) for file in profile["source_files"]],
                     "privacy": profile["privacy"],
                 }
             )
@@ -4190,6 +5094,44 @@ class ControlPlane:
                     f"olculdu. {kanit}"
                 ).strip(),
             }
+        # Karantinadaki tablolar profile HIC girmez. Route'u degistirip tabloyu
+        # birakmak, agent'a hala `pdf_1_4` adli bir kolon gostermek demekti;
+        # asil zarar oradaydi.
+        profile_table_payloads = [
+            {
+                "name": card.table_name,
+                "source_file": (
+                    Path(card.source_uri).resolve().relative_to(source_root).as_posix()
+                    if source_root in Path(card.source_uri).resolve().parents
+                    else Path(card.source_uri).name
+                ),
+                "sheet_name": card.sheet_name,
+                "format": card.source_format,
+                "rows": card.n_rows,
+                "columns_count": card.n_columns,
+                "candidate_keys": card.candidate_primary_keys,
+                "issues": [issue.code for issue in card.issues],
+                "columns": [
+                    {
+                        "name": column.name,
+                        "dtype": column.dtype,
+                        "semantic_type": column.semantic_type.value,
+                        "sensitivity": column.sensitivity.value,
+                        "null_rate": column.null_rate,
+                        "unique_rate": column.unique_rate,
+                        "is_unique": column.is_unique,
+                        "candidate_target": column.is_usable_target,
+                    }
+                    for column in card.columns
+                ],
+            }
+            for card in cards
+            if card.table_name not in karantina
+        ]
+        profile_documents = [document.public_summary() for document in documents]
+        source_files = _file_profile_insights(
+            source_files, profile_table_payloads, profile_documents, relationships
+        )
         profile: dict[str, Any] = {
             "source_id": source_id,
             "source_files": source_files,
@@ -4198,41 +5140,8 @@ class ControlPlane:
             # So a caller can tell "none found" apart from "not measured".
             "relationships_measured": relationships_measured,
             "relationships_note": relationships_note,
-            "documents": [document.public_summary() for document in documents],
-            # Karantinadaki tablolar profile HIC girmez. Route'u degistirip
-            # tabloyu birakmak, agent'a hala `pdf_1_4` adli bir kolon gostermek
-            # demekti; asil zarar oradaydi.
-            "tables": [
-                {
-                    "name": card.table_name,
-                    "source_file": (
-                        Path(card.source_uri).resolve().relative_to(source_root).as_posix()
-                        if source_root in Path(card.source_uri).resolve().parents
-                        else Path(card.source_uri).name
-                    ),
-                    "sheet_name": card.sheet_name,
-                    "format": card.source_format,
-                    "rows": card.n_rows,
-                    "columns_count": card.n_columns,
-                    "candidate_keys": card.candidate_primary_keys,
-                    "issues": [issue.code for issue in card.issues],
-                    "columns": [
-                        {
-                            "name": column.name,
-                            "dtype": column.dtype,
-                            "semantic_type": column.semantic_type.value,
-                            "sensitivity": column.sensitivity.value,
-                            "null_rate": column.null_rate,
-                            "unique_rate": column.unique_rate,
-                            "is_unique": column.is_unique,
-                            "candidate_target": column.is_usable_target,
-                        }
-                        for column in card.columns
-                    ],
-                }
-                for card in cards
-                if card.table_name not in karantina
-            ],
+            "documents": profile_documents,
+            "tables": profile_table_payloads,
             "privacy": (
                 "Schema and aggregate statistics only; document metadata may also be shown. "
                 "Source rows, values, and PDF text are omitted from this API response."
@@ -4291,6 +5200,10 @@ class ControlPlane:
         so nothing measured here is measured twice.
         """
         requested_configuration = dict(configuration or {})
+        # The automatic Planner greeting is authored once, before any chat
+        # exists. Capture the request language before work moves to a background
+        # thread; later chat replies follow the user's message and stay verbatim.
+        requested_configuration["language"] = i18n.current()
         supplied_run_seed = requested_configuration.get("run_seed")
         run_seed = (
             _coerce_run_seed(supplied_run_seed)
@@ -4663,7 +5576,7 @@ class ControlPlane:
         """
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status not in {"staging", "staged"}:
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         if "run_seed" in configuration and _coerce_run_seed(configuration["run_seed"]) != int(
             runtime.configuration["run_seed"]
         ):
@@ -4683,7 +5596,7 @@ class ControlPlane:
         """
         runtime = self._runtime_runs.get(run_id)
         if runtime is None or runtime.status != "staged":
-            raise ValueError("this run is not staged")
+            raise _cannot_stage_error(runtime)
         if runtime.resume is None:
             raise ValueError(
                 "this staged run did not survive a restart and cannot be continued; "
@@ -4800,6 +5713,30 @@ class ControlPlane:
         if not 2 <= folds <= 20:
             raise ValueError("n_folds must be between 2 and 20")
         state.blackboard[VALIDATION_FOLDS_KEY] = folds
+        # #241: a problem stated through the quick-pick selector, skipping the
+        # planner conversation. Shape-checked here so a malformed request fails
+        # immediately rather than surfacing as a background run failure; the
+        # column's actual fitness (does it exist, is its shape viable) is
+        # checked deterministically once problem_discovery runs, exactly as it
+        # would be for an agent-proposed candidate.
+        problem_selection = body.get("problem_selection")
+        if problem_selection is not None:
+            if not isinstance(problem_selection, dict):
+                raise ValueError("problem_selection must be an object")
+            kind = problem_selection.get("kind")
+            if kind not in {"predict_column", "flag_anomalies"}:
+                raise ValueError(
+                    "problem_selection.kind must be 'predict_column' or 'flag_anomalies'"
+                )
+            target_column = problem_selection.get("target_column") or None
+            if kind == "predict_column" and not target_column:
+                raise ValueError(
+                    "problem_selection.target_column is required for 'predict_column'"
+                )
+            state.blackboard[QUICK_PROBLEM_KEY] = {
+                "kind": kind,
+                "target_column": str(target_column) if target_column else None,
+            }
         # #200: capture the language now, in the request, so the report the
         # background worker renders later is in the language actually chosen
         # rather than the worker's "tr" ContextVar default.
@@ -4901,12 +5838,27 @@ class ControlPlane:
                 runtime.updated_at = _now()
                 if name == "stage_started":
                     runtime.current_stage = payload.get("stage")
-                if (
-                    name == "gate_decided"
-                    and payload.get("verdict") == "auto_proceed"
-                    and runtime.pause_requested
-                ):
-                    should_pause = True
+                if name == "gate_decided" and runtime.pause_requested:
+                    verdict = payload.get("verdict")
+                    if verdict == "auto_proceed":
+                        should_pause = True
+                    elif verdict in {"escalate", "abort"}:
+                        # The run is stopping here on its own -- for a human
+                        # answer or an abort, not because of the pause -- but a
+                        # stop all the same. Clear the request so it doesn't
+                        # linger and hijack a *later*, unrelated resume (#282):
+                        # left set, it would silently re-pause the run the next
+                        # time it advances, e.g. right after the human answers
+                        # the gate it escalated to.
+                        runtime.pause_requested = False
+                        runtime.events.append(
+                            {
+                                "event": "pause_request_resolved",
+                                "at": _now(),
+                                "stage": payload.get("stage"),
+                                "reason": verdict,
+                            }
+                        )
             self._persist_runtime(runtime)
             if should_pause:
                 raise _RunPauseRequested()
@@ -4952,6 +5904,8 @@ class ControlPlane:
             # the recommendation), so discarding it must remove their index
             # entries as well or the run remains visible in the library.
             self.store.delete_run(run_id)
+            assert self.automation_store is not None
+            self.automation_store.detach_execution(run_id)
 
     def rerun_with_same_seed(self, run_id: str) -> dict[str, Any]:
         """Create a fresh staged run that replays the recorded sampler seed.
@@ -4968,10 +5922,21 @@ class ControlPlane:
         if configuration.get("run_seed") is None:
             raise ValueError("the original run predates recorded run seeds")
         run_seed = _coerce_run_seed(configuration["run_seed"])
-        for key in ("automation_id", "parent_run_id", "branch_label", "rerun_of"):
+        # A rerun is a new execution of the same saved automation. Keep that
+        # ownership link so ``stage_run`` attaches the new id to its execution
+        # history; only branch lineage belongs exclusively to the old run.
+        for key in ("parent_run_id", "branch_label", "rerun_of"):
             configuration.pop(key, None)
         configuration.update({"run_seed": run_seed, "rerun_of": run_id})
-        return self.stage_run(source_id, configuration, reuse_cache=False)
+        staged = self.stage_run(source_id, configuration, reuse_cache=False)
+        automation_id = configuration.get("automation_id")
+        if automation_id:
+            self.attach_automation_execution(
+                str(automation_id),
+                run_id=str(staged["run_id"]),
+                source_id=source_id,
+            )
+        return staged
 
     def start_run(
         self,
@@ -5297,6 +6262,146 @@ class ControlPlane:
 
         return dict(runtime.state.blackboard.get(STAGE_DIRECTIVES_KEY) or {})
 
+    #: The stage a pinned framing re-enters the graph at.
+    PROBLEM_STAGE: Final = "problem_discovery"
+
+    def pin_problem_framing(
+        self,
+        run_id: str,
+        *,
+        kind: str,
+        target_column: str | None,
+        task_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Pin an ML framing and re-run problem discovery on the same run.
+
+        #428: when problem discovery failed there was one action available --
+        "Retry from Intake" -- which starts a whole new run from the beginning
+        with no target guidance, so it fails the same way. Nothing about intake,
+        schema discovery or integration was wrong; the framing was. This
+        re-enters the graph at problem discovery with the person's column pinned
+        as a constraint, keeping every artifact the run already produced.
+
+        Pinned means built and measured directly, not ranked first for an agent
+        that may still propose something else: `_quick_problem_proposal` makes
+        the candidate and `compute_support` decides whether it is viable. If it
+        is not, the answer is the measured blocking reasons for *that column* --
+        which is something a person can act on.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None:
+            raise ValueError("this archived run cannot resume after the server restarted")
+        if runtime.status not in {"failed", "awaiting_human", "interrupted", "aborted"}:
+            raise ValueError("this run is not stopped, so there is nothing to re-frame")
+        if kind not in {"predict_column", "flag_anomalies"}:
+            raise ValueError("kind must be 'predict_column' or 'flag_anomalies'")
+        column = str(target_column).strip() if target_column else ""
+        if kind == "predict_column" and not column:
+            raise ValueError("target_column is required for 'predict_column'")
+        # The ABT card is the run's own record of what the columns are, so a
+        # typo or a stale picker is refused here rather than surfacing as a
+        # second background failure with an "unknown target" critique.
+        card = runtime.state.latest(ArtifactType.DATA_CARD, DataCard)
+        if card is None:
+            raise ValueError("this run has not profiled its data yet")
+        if column and column not in card.column_names:
+            raise ValueError(
+                f"target_column {column!r} is not a column of the analytical base table"
+            )
+        if task_type is not None:
+            try:
+                chosen_task = TaskType(str(task_type))
+            except ValueError:
+                raise ValueError(f"unknown task_type {task_type!r}") from None
+            if kind == "predict_column" and chosen_task is TaskType.ANOMALY_DETECTION:
+                raise ValueError("anomaly detection does not predict a column")
+            task_type = chosen_task.value
+
+        state = runtime.state
+        state.blackboard[QUICK_PROBLEM_KEY] = {
+            "kind": kind,
+            "target_column": column or None,
+            "task_type": task_type,
+            "pinned": True,
+        }
+        # The failed attempt left a machine critique behind, and the stage falls
+        # back to the agent conversation whenever one is present. The pin is the
+        # correction now, so the stale one goes.
+        state.blackboard.pop(f"human_correction::{self.PROBLEM_STAGE}", None)
+
+        mode = runtime.configuration.get("mode", "manual")
+        llm: StructuredLLM | None = None
+        if mode == "agent":
+            llm = self.llm_factory() if self.llm_factory else OllamaClient()
+            spec, registry = build_full_spec(
+                llm,
+                panel_size=int(runtime.configuration.get("agent_panel_size", 1)),
+            )
+        else:
+            spec, registry = build_default_spec(), build_default_registry()
+        supervision = self._normalise_supervision(runtime.configuration.get("supervision") or {})
+        policy = self._policy_for_supervision(supervision)
+        runner = self.workflow_runner or run_workflow
+
+        with self._lock:
+            runtime.events.append(
+                {
+                    "event": "problem_framing_pinned",
+                    "at": _now(),
+                    "stage": self.PROBLEM_STAGE,
+                    "kind": kind,
+                    "target_column": column or None,
+                    "task_type": task_type,
+                }
+            )
+            runtime.error = None
+            runtime.pause_requested = False
+            runtime.status = "resuming"
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+
+        event = self._event_recorder(runtime)
+
+        def execute() -> None:
+            with self._lock:
+                runtime.status = "running"
+                runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=policy,
+                    on_event=event,
+                    start_at=self.PROBLEM_STAGE,
+                )
+                with self._lock:
+                    runtime.status = runtime.outcome.status
+                    runtime.error = runtime.outcome.error
+                    runtime.current_stage = getattr(runtime.outcome, "final_stage", None)
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - present the failure in the UI
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = _run_error_text(exc)
+                    runtime.updated_at = _now()
+            finally:
+                if isinstance(llm, OllamaClient):
+                    llm.close()
+            self._persist_runtime(runtime)
+
+        start_worker(execute, name=f"ads-ui-reframe-{run_id}")
+        return {
+            "run_id": run_id,
+            "status": "resuming",
+            "stage_id": self.PROBLEM_STAGE,
+            "kind": kind,
+            "target_column": column or None,
+            "task_type": task_type,
+        }
+
     def answer_run(
         self, run_id: str, *, decision: str, instructions: list[str] | None = None
     ) -> None:
@@ -5532,7 +6637,45 @@ class ControlPlane:
     #: design and is meant to be resumed after a restart.
     _IN_FLIGHT = frozenset({"queued", "running", "staging"})
 
+    def tool_activity(self, run_id: str, after: int = 0) -> dict[str, Any]:
+        """Tool calls this run has made since `after`, for a live view (#411).
+
+        Tool use only ever surfaced as a count on a finished stage's artifact,
+        which is both after the fact and silent about which tools were called.
+        The broker publishes every decision to an in-process feed as it makes
+        it; this reads it back with a cursor so a panel can poll for what is
+        new instead of re-rendering the whole list.
+
+        `active` is the poller's stop signal: without it a panel watching a run
+        that finished half an hour ago keeps asking forever.
+        """
+        events, dropped = tool_activity_feed.since(run_id, after)
+        try:
+            status = str(self._progress_snapshot(run_id).get("status") or "")
+        except KeyError:
+            status = ""
+        cursor = events[-1].seq if events else after
+        return {
+            "run_id": run_id,
+            "events": [event.as_dict() for event in events],
+            "cursor": cursor,
+            # A reader away long enough for the ring to wrap gets told, rather
+            # than being handed a contiguous list with a silent hole in it.
+            "dropped": dropped,
+            "active": status in _ACTIVE_RUN_STATUSES,
+        }
+
     def progress(self, run_id: str) -> dict[str, Any]:
+        # #305: every progress source carries artifact ids per stage attempt but
+        # not their kinds, so the default view cannot tell a result from an agent
+        # audit. Attach the diagnostic id set here, once, rather than in each
+        # branch -- a copy so an in-memory runtime snapshot is not mutated.
+        return {
+            **self._progress_snapshot(run_id),
+            "diagnostic_artifact_ids": self._diagnostic_artifact_ids(run_id),
+        }
+
+    def _progress_snapshot(self, run_id: str) -> dict[str, Any]:
         runtime = self._runtime_runs.get(run_id)
         if runtime is not None:
             return self._runtime_snapshot(runtime)
@@ -5654,11 +6797,29 @@ class ControlPlane:
                 "stage": ref.stage_exec_id,
                 "created_at": ref.created_at,
                 "summary": ref.summary,
+                # #305: marks the engineering/provenance artifacts the default
+                # view hides, so a client never has to re-derive the closed
+                # diagnostic set the backend already owns.
+                "diagnostic": is_diagnostic_artifact(ref.artifact_type),
                 "presentation": self._artifact_presentation(
                     ref.artifact_type.value, ref.name, ref.summary
                 ),
             }
             for ref in self.store.list(run_id)
+        ]
+
+    def _diagnostic_artifact_ids(self, run_id: str) -> list[str]:
+        """Ids of this run's diagnostic artifacts, for the default-view filter.
+
+        Read from the persisted index rather than the progress snapshot: the
+        snapshot carries artifact ids per stage attempt but not their kinds, and
+        the kind is the only thing that decides whether an artifact is a person's
+        result or an engineering record (#305).
+        """
+        return [
+            ref.artifact_id
+            for ref in self.store.list(run_id)
+            if is_diagnostic_artifact(ref.artifact_type)
         ]
 
     @staticmethod
@@ -5748,6 +6909,30 @@ class ControlPlane:
                 (i18n.t("Metric"), "primary_metric"),
                 (i18n.t("Holdout score"), "winner_holdout_score"),
                 (i18n.t("Training rows"), "training_row_count"),
+            ]
+        elif artifact_type == "rl_feature_report":
+            title = i18n.t("Feature engineering search")
+            description = i18n.t(
+                "Features an external search added or removed, measured on training rows only."
+            )
+            preferred = [
+                (i18n.t("Features added"), "n_generated_features"),
+                (i18n.t("Features removed"), "n_removed_features"),
+                (i18n.t("Features kept"), "n_selected_features"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Improvement"), "api_score_improvement"),
+            ]
+        elif artifact_type == "rl_enhanced_model":
+            title = i18n.t("Model with engineered features")
+            description = i18n.t(
+                "The same candidates refit on engineered features and scored on the same "
+                "untouched holdout."
+            )
+            preferred = [
+                (i18n.t("Winner"), "winner_id"),
+                (i18n.t("Metric"), "primary_metric"),
+                (i18n.t("Holdout score"), "winner_holdout_score"),
+                (i18n.t("Features added"), "n_generated_features"),
             ]
         elif artifact_type == "model_experiment":
             title = str(summary.get("title") or i18n.t("Agent-authored model experiment"))
@@ -6083,6 +7268,46 @@ class ControlPlane:
                 }
                 for item in payload.get("results", [])
             ]
+        elif artifact_type == "rl_feature_report":
+            story["panels"] = rl_feature_panels(payload)
+            status = str(payload.get("status") or "")
+            if status == "applicable":
+                story["suggestion"] = i18n.t(
+                    "Added {added} engineered feature(s) and removed {removed}; "
+                    "{metric} moved by {delta} on training rows.",
+                    added=len(payload.get("generated_features") or []),
+                    removed=len(payload.get("removed_features") or []),
+                    metric=payload.get("primary_metric"),
+                    delta=payload.get("api_score_improvement"),
+                )
+            elif status == "unavailable":
+                story["suggestion"] = i18n.t(
+                    "The feature engineering service was unreachable, so this step was skipped."
+                )
+                # The detail is a transport error, useful to whoever runs the
+                # sidecar and harmless to everyone else. It carries no row data.
+                story["warnings"] = [
+                    text for text in [str(payload.get("detail") or "")] if text
+                ]
+            else:
+                story["suggestion"] = i18n.t(
+                    "This dataset cannot support the external feature search."
+                )
+            story["generated_features"] = [
+                {
+                    "name": item.get("name"),
+                    "expression": item.get("expression"),
+                    "inputs": item.get("inputs", []),
+                }
+                for item in payload.get("generated_features") or []
+            ]
+            story["removed_features"] = payload.get("removed_features", [])
+        elif artifact_type == "rl_enhanced_model":
+            story["panels"] = training_panels(payload)
+            story["suggestion"] = i18n.t(
+                "Refit on {count} engineered feature(s) and scored on the same holdout.",
+                count=len(payload.get("generated_feature_names") or []),
+            )
         elif artifact_type == "model_experiment":
             story["panels"] = [model_experiment_panel(payload, linked_interpretations or [])]
             story["suggestion"] = i18n.t(
@@ -6192,6 +7417,22 @@ class ControlPlane:
             raise KeyError("model_blob_missing")
         return blob_path.read_bytes(), filename
 
+    @staticmethod
+    def _document_table_sample(
+        rows: list[Any], *, max_rows: int = 6, max_columns: int = 10, cell_limit: int = 80
+    ) -> list[list[str]]:
+        """A small, bounded, stringified corner of a candidate table (#303).
+
+        Caps rows and columns so a mis-detected table with thousands of cells
+        cannot bloat the preview, and stringifies every cell so the review UI
+        renders a table it can trust rather than guessing at mixed JSON types.
+        """
+        sample: list[list[str]] = []
+        for row in rows[:max_rows]:
+            cells = row[:max_columns] if isinstance(row, list) else [row]
+            sample.append(["" if cell is None else str(cell)[:cell_limit] for cell in cells])
+        return sample
+
     def artifact_preview(self, artifact_id: str) -> dict[str, Any]:
         """Return a graph-inspector preview without exposing rows or document passages."""
         payload = self.artifact_payload(artifact_id)
@@ -6215,6 +7456,14 @@ class ControlPlane:
                         "title": item.get("title"),
                         "columns": item.get("columns", []),
                         "row_count": len(item.get("rows", [])),
+                        # #303: a person cannot accept or reject a table they
+                        # cannot see. The columns give the headers; a bounded
+                        # sample of rows gives the shape and enough content to
+                        # tell a real table from a mis-detected one, without
+                        # streaming an arbitrarily large extraction to the UI.
+                        # These rows are text a local engine already read off a
+                        # PDF the person uploaded -- not host-measured PII.
+                        "sample_rows": self._document_table_sample(item.get("rows", [])),
                         "review_status": item.get("review_status"),
                     }
                     for item in document.get("tables", [])
@@ -6275,7 +7524,31 @@ class ControlPlane:
             "artifact_type": indexed.value if indexed is not None else "artifact",
             "fields": scalar,
             "collection_sizes": collections,
+            # #304: opening the EDA (or another measured) artifact directly, not
+            # only its stage, should still show the distributions, missingness,
+            # correlation heatmap and relationship charts the backend measured.
+            "panels": self._preview_panels(indexed, payload),
         }
+
+    @staticmethod
+    def _preview_panels(
+        artifact_type: ArtifactType | None, payload: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Analysis charts for the artifacts that measure something (#304).
+
+        The same builders the stage inspector uses, so the artifact dialog and
+        the stage view cannot disagree about what EDA looks like.
+        """
+        builders = {
+            ArtifactType.EDA_REPORT: eda_panels,
+            ArtifactType.VALIDATION_STRATEGY: validation_panels,
+            ArtifactType.LEAKAGE_REPORT: leakage_panels,
+            ArtifactType.EVALUATION_REPORT: evaluation_panels,
+            ArtifactType.RL_FEATURE_REPORT: rl_feature_panels,
+            ArtifactType.RL_ENHANCED_MODEL: training_panels,
+        }
+        builder = builders.get(artifact_type) if artifact_type is not None else None
+        return builder(payload) if builder is not None else []
 
     # ---------------------------------------------------------------- gates
 
@@ -6368,6 +7641,14 @@ class ControlPlane:
                 ]
             )
         latest_story = (primary_outputs or artifacts)[0]["story"] if artifacts else None
+        # #304: EDA and the other measured stages build their analysis charts --
+        # distributions, missingness, a correlation heatmap, target
+        # relationships -- into each output artifact's story, but the guided
+        # stage inspector renders outputs as buttons and only ever showed the
+        # multi-source panels above. Hoist the primary output's panels so the
+        # inspector has the same visual summary the design has always specified.
+        if not stage_panels and latest_story:
+            stage_panels = latest_story.get("panels", [])
         stage_status = self._stage_status(
             attempts[-1] if attempts else None,
             progress.get("current_stage"),
@@ -6456,36 +7737,60 @@ class ControlPlane:
             "deletable": summary.status not in {"queued", "running", "staging"},
         }
 
+    @staticmethod
+    def _winner_metric(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The winning candidate and its primary-metric evaluation."""
+        winner_id = payload.get("winner_id")
+        winner = next(
+            (
+                item
+                for item in payload.get("results", [])
+                if item.get("candidate_id") == winner_id
+            ),
+            {},
+        )
+        metric = next(
+            (
+                item
+                for item in winner.get("metrics", [])
+                if item.get("metric") == payload.get("primary_metric")
+            ),
+            {},
+        )
+        return winner, metric
+
     def _model_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
+        """One row per trained model, with its RL-enhanced counterpart attached.
+
+        Deliberately one row rather than two: a run produces one training
+        outcome, and listing the enhanced variant as its own card would read as
+        two unrelated models rather than two downloads of the same result. The
+        enhanced artifact names the model it belongs to, so the pairing survives
+        a run that trained more than once.
+        """
+        artifacts = self.artifacts(run.run_id)
+        enhanced_by_base: dict[str, dict[str, Any]] = {}
+        for artifact in artifacts:
+            if artifact["type"] != ArtifactType.RL_ENHANCED_MODEL.value:
+                continue
+            payload = self.artifact_payload(artifact["artifact_id"])
+            base_id = str(payload.get("base_model_artifact_id") or "")
+            if base_id:
+                enhanced_by_base[base_id] = {**payload, "artifact_id": artifact["artifact_id"]}
+
         models: list[dict[str, Any]] = []
-        for artifact in self.artifacts(run.run_id):
+        for artifact in artifacts:
             if artifact["type"] != ArtifactType.TRAINED_MODEL.value:
                 continue
             payload = self.artifact_payload(artifact["artifact_id"])
-            winner_id = payload.get("winner_id")
-            winner = next(
-                (
-                    item
-                    for item in payload.get("results", [])
-                    if item.get("candidate_id") == winner_id
-                ),
-                {},
-            )
-            metric = next(
-                (
-                    item
-                    for item in winner.get("metrics", [])
-                    if item.get("metric") == payload.get("primary_metric")
-                ),
-                {},
-            )
+            winner, metric = self._winner_metric(payload)
             models.append(
                 {
                     "artifact_id": artifact["artifact_id"],
                     "run_id": run.run_id,
                     "created_at": artifact["created_at"],
-                    "winner_id": winner_id,
-                    "display_name": winner.get("display_name", winner_id),
+                    "winner_id": payload.get("winner_id"),
+                    "display_name": winner.get("display_name", payload.get("winner_id")),
                     "estimator": winner.get("estimator_class"),
                     "metric": payload.get("primary_metric"),
                     "holdout_score": metric.get("holdout_score"),
@@ -6494,9 +7799,42 @@ class ControlPlane:
                     "saved": bool(payload.get("model_blob")),
                     "candidate_count": len(payload.get("results", [])),
                     "training_rows": payload.get("training_row_count"),
+                    "enhanced": self._enhanced_summary(
+                        enhanced_by_base.get(artifact["artifact_id"]),
+                        base_score=metric.get("holdout_score"),
+                        metric_name=payload.get("primary_metric"),
+                    ),
                 }
             )
         return models
+
+    def _enhanced_summary(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        base_score: float | None,
+        metric_name: Any,
+    ) -> dict[str, Any] | None:
+        """The RL-enhanced counterpart of one model, as the card's second download."""
+        if not payload:
+            return None
+        winner, metric = self._winner_metric(payload)
+        score = metric.get("holdout_score")
+        delta: float | None = None
+        if isinstance(score, int | float) and isinstance(base_score, int | float):
+            # Oriented so a positive number always means "better", whichever way
+            # the metric runs. The card colours on this sign.
+            lower_is_better = str(metric_name) in {"rmse", "mae", "mape"}
+            delta = float(base_score - score) if lower_is_better else float(score - base_score)
+        return {
+            "artifact_id": payload["artifact_id"],
+            "display_name": winner.get("display_name", payload.get("winner_id")),
+            "estimator": winner.get("estimator_class"),
+            "holdout_score": score,
+            "score_delta": delta,
+            "generated_feature_count": len(payload.get("generated_feature_names") or []),
+            "saved": bool(payload.get("model_blob")),
+        }
 
     def _report_summaries(self, run: RunSummary) -> list[dict[str, Any]]:
         reports: list[dict[str, Any]] = []
@@ -6590,17 +7928,40 @@ class ControlPlane:
             snapshot_deleted = snapshot.is_file()
             if snapshot_deleted:
                 snapshot.unlink()
-        return {"run_id": run_id, **deleted, "snapshot": int(snapshot_deleted)}
+            assert self.automation_store is not None
+            automations = self.automation_store.detach_execution(run_id)
+        return {
+            "run_id": run_id,
+            **deleted,
+            "snapshot": int(snapshot_deleted),
+            "automations": automations,
+        }
 
     def delete_model(self, artifact_id: str) -> dict[str, Any]:
-        """Delete one trained-model artifact. The run it came from is untouched."""
+        """Delete one trained-model artifact. The run it came from is untouched.
+
+        The RL-enhanced counterpart goes with it. The two share one card and one
+        delete control, so leaving the enhanced artifact behind would strand a
+        model with no affordance left to remove it.
+        """
         artifact_type = self.store.type_of(artifact_id)
         if artifact_type is None:
             raise KeyError(artifact_id)
         if artifact_type != ArtifactType.TRAINED_MODEL:
             raise ValueError(f"artifact {artifact_id!r} is not a trained model")
         removed = self.store.delete_artifact(artifact_id)
+        for enhanced_id in self._enhanced_model_ids(artifact_id):
+            self.store.delete_artifact(enhanced_id)
         return {"artifact_id": artifact_id, **removed}
+
+    def _enhanced_model_ids(self, base_artifact_id: str) -> list[str]:
+        """Every RL-enhanced artifact that names ``base_artifact_id`` as its base."""
+        found: list[str] = []
+        for ref in self.store.list_all(ArtifactType.RL_ENHANCED_MODEL):
+            payload = self.artifact_payload(ref.artifact_id)
+            if str(payload.get("base_model_artifact_id") or "") == base_artifact_id:
+                found.append(ref.artifact_id)
+        return found
 
     def delete_report(self, artifact_id: str) -> dict[str, Any]:
         """Delete one final-report artifact. The run it came from is untouched."""
@@ -6644,6 +8005,147 @@ def _run_error_text(exc: BaseException) -> dict[str, str]:
         }
     ham = f"{ad}: {exc}"
     return {"en": ham, "tr": ham}
+
+
+def _cannot_stage_error(runtime: _RuntimeRun | None) -> ValueError:
+    """Say why a staged-run action can't proceed, in words the reader can act on.
+
+    Both `/staged` (PATCH) and `/start` (POST) used to raise the same bare
+    ``ValueError("this run is not staged")`` whatever the actual reason was --
+    a run that had finished, failed, aborted, or was waiting on a human answer
+    all landed on the same sentence, untranslated, in the reader's face (#282,
+    same class of issue as #263/#265). The status is already known here, so
+    say what happened instead of repeating the field name back at them.
+    """
+    if runtime is None:
+        return ValueError(i18n.t("This run no longer exists; choose the dataset again."))
+    status = runtime.status
+    if status == "awaiting_human":
+        return ValueError(
+            i18n.t("This run is waiting for your answer to a question, not for a restart.")
+        )
+    if status == "completed":
+        return ValueError(i18n.t("This run already finished and cannot be resumed."))
+    if status == "aborted":
+        return ValueError(i18n.t("This run was aborted and cannot be resumed."))
+    if status == "failed":
+        return ValueError(i18n.t("This run failed and cannot be resumed; start a new run."))
+    if status in {"running", "resuming"}:
+        return ValueError(i18n.t("This run is already in progress."))
+    return ValueError(i18n.t("This run is not staged."))
+
+
+def _promotion_message(exc: CandidateNotPromotable) -> str:
+    """Say why one extracted table cannot be promoted, in the reader's language.
+
+    Precedent and reasoning are `_cannot_stage_error`'s (#263/#265/#282): the
+    promote endpoint answers with the exception text, so a raw
+    ``ValueError("accepted candidate '0001_…:table:2' has no rows")`` reached
+    the reader verbatim -- English whatever their language, and naming an
+    internal identifier they have never seen (#310). The candidate carries its
+    own provenance, so name the table the way the review dialog named it.
+    """
+    name = exc.title or exc.source_file
+    table = (
+        i18n.t("{name} (page {page})", name=name, page=exc.page_number)
+        if exc.page_number
+        else name
+    )
+    if exc.code == "no_rows":
+        return i18n.t(
+            "No rows were extracted from the table “{table}”, so it cannot become data.",
+            table=table,
+        )
+    if exc.code == "no_columns":
+        return i18n.t(
+            "No columns were extracted from the table “{table}”, so it cannot become data.",
+            table=table,
+        )
+    if exc.code == "ragged_rows":
+        return i18n.t(
+            "The rows extracted from the table “{table}” do not all have the same "
+            "number of cells, so it cannot become data.",
+            table=table,
+        )
+    return i18n.t(
+        "The headers extracted from the table “{table}” do not match its rows, "
+        "so it cannot become data.",
+        table=table,
+    )
+
+
+def _resolved_pipeline_recommendation(
+    requested: Any,
+    previous: RuntimeConfigurationPlan | None,
+    tables_await_review: bool,
+) -> tuple[str, str]:
+    """What one planner turn is allowed to say about running a pipeline.
+
+    Returns the recommendation and, for a deferral, the precondition that would
+    lift it -- see `RuntimeConfigurationPlan.deferred_on`.
+
+    #316: this used to be ``str(requested or "create_pipeline")``, so *any* chat
+    turn published a runnable plan and unlocked the ML controls -- a question
+    about the raw files, or a reply whose own text told the reader to review the
+    extracted PDF tables first. A turn that names no recommendation has made no
+    decision, so the workspace keeps the one it already carries and a first turn
+    defers. And promoting an extracted table is a human decision the product
+    refuses to make silently, so a plan that would start ML while candidates sit
+    unreviewed is proposing to skip it, and defers instead however confident the
+    planner was.
+
+    #430: a deferral has to be actionable to be worth having. The reviews the ML
+    pipeline performs are its own stages -- `leakage_audit`, `eda`,
+    `validation_strategy` -- so deferring the pipeline to wait for one blocks
+    the pipeline that contains the audit it is waiting for, and nothing can ever
+    resolve it. A `defer_pipeline` is honoured only where the product can point
+    at the outstanding decision and watch it resolve. Everywhere else the answer
+    is to run the pipeline to the stage that produces the evidence, which is
+    what `_deferral_checkpoints` arranges; the planner's stated reason is kept
+    on `decision_summary` either way, so nothing it said is lost.
+    """
+    valid = {"create_pipeline", "defer_pipeline", "no_pipeline"}
+    recommendation = str(requested or "")
+    if recommendation not in valid:
+        # No decision this turn. Inherit the state, but never re-assert a block
+        # whose precondition has meanwhile resolved -- inheriting it verbatim is
+        # what made the deferral absorbing (#430).
+        if previous is None:
+            return "defer_pipeline", "planner_decision"
+        recommendation = previous.pipeline_recommendation
+        if recommendation == "defer_pipeline":
+            return _resolved_deferral(previous.deferred_on, tables_await_review)
+    if recommendation == "create_pipeline" and tables_await_review:
+        return "defer_pipeline", "document_table_review"
+    if recommendation == "defer_pipeline":
+        return _resolved_deferral("document_table_review", tables_await_review)
+    return recommendation, ""
+
+
+def _resolved_deferral(precondition: str, tables_await_review: bool) -> tuple[str, str]:
+    """Whether a deferral still has something to wait for (#430).
+
+    `planner_decision` is settled only by a turn that states one, so it is
+    carried. `document_table_review` is settled the moment a review is recorded
+    -- rejecting every candidate counts, it is a completed decision. Anything
+    else names no precondition this product can observe, so there is nothing
+    the person could do to lift it and it is not grounds for a block.
+    """
+    if precondition == "planner_decision":
+        return "defer_pipeline", "planner_decision"
+    if tables_await_review:
+        return "defer_pipeline", "document_table_review"
+    return "create_pipeline", ""
+
+
+#: Where a run stops instead of not starting, when a deferral is refused.
+#:
+#: #430: the planner deferred because it wanted a named review, and the review
+#: it named is a stage the pipeline runs. Refusing to start withholds the
+#: evidence; running to the stage and stopping there for a person is the same
+#: review, actually performed. `leakage_audit` is the audit the reported case
+#: asked for and the one whose verdict a human most needs to see.
+_REFUSED_DEFERRAL_CHECKPOINTS: Final = ("leakage_audit",)
 
 
 def _pending_question(runtime: Any) -> dict[str, Any] | None:
@@ -6876,6 +8378,20 @@ def create_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @app.post("/api/runs/{run_id}/planner-overrides/{proposal_id}/apply")
+    def apply_planner_override(run_id: str, proposal_id: str) -> dict[str, Any]:
+        try:
+            return plane.apply_planner_override(run_id, proposal_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/planner-overrides/{proposal_id}/discard")
+    def discard_planner_override(run_id: str, proposal_id: str) -> dict[str, Any]:
+        try:
+            return plane.discard_planner_override(run_id, proposal_id)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.get("/api/automations")
     def automations() -> list[dict[str, Any]]:
         return plane.list_automations()
@@ -7033,6 +8549,20 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown automation") from None
+        except ValidationError as exc:
+            # #425: `str(ValidationError)` is a developer's diagnostic -- the
+            # model name, the field path, the error code and a link to
+            # errors.pydantic.dev -- and `ValidationError` subclasses
+            # `ValueError`, so the handler below used to hand the whole dump to
+            # the reader verbatim, in English, on a Turkish screen. #242
+            # settled that `detail` is the sentence written for a person; the
+            # field paths belong in the log, where they are useful and where
+            # they do not name the internals to whoever is renaming a thing.
+            _log.warning("rejected automation update for %s: %s", automation_id, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=i18n.t("Those settings are not valid, so nothing was changed."),
+            ) from None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -7134,17 +8664,26 @@ def create_app(
 
     @app.get("/api/catalog/datasets")
     def dataset_catalog(
-        search: str | None = None, page: int = 1, page_size: int = 25
+        request: Request,
+        search: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
     ) -> dict[str, Any]:
-        return plane.dataset_catalog(search=search, page=page, page_size=page_size)
+        return plane.dataset_catalog(
+            search=search,
+            page=page,
+            page_size=page_size,
+            viewer=_viewer(request),
+        )
 
     @app.get("/api/hardening")
     def hardening_status() -> dict[str, Any]:
         return plane.hardening_status()
 
     @app.get("/api/data-sources/{source_id}/profile")
-    def source_profile(source_id: str) -> dict[str, Any]:
+    def source_profile(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.source_profile(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None
@@ -7292,8 +8831,9 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.get("/api/data-sources/{source_id}/pipeline-blueprint")
-    def default_staging_pipeline(source_id: str) -> dict[str, Any]:
+    def default_staging_pipeline(source_id: str, request: Request) -> dict[str, Any]:
         try:
+            plane.require_source_view(source_id, viewer=_viewer(request))
             return plane.default_staging_pipeline(source_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown source") from None
@@ -7351,6 +8891,43 @@ def create_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+    @app.get("/api/runs/{run_id}/staging/plan/targets")
+    def deferred_plan_targets(run_id: str) -> dict[str, Any]:
+        """#429: the columns a person can name to answer a deferral.
+
+        `is_usable_target` already marks the plausible ones, and the panel had
+        no way to show them -- so a deferred plan whose target was measurably
+        viable read as a dead end.
+        """
+        try:
+            return {"run_id": run_id, "columns": plane.deferred_plan_targets(run_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown run") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/staging/plan/override")
+    def override_deferred_plan(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """#429: answer a deferral by naming the target, if the data supports it.
+
+        A 200 whose `viable` is false is not an error: it is the measurement's
+        answer about the column, with the blocking reasons for it, and the plan
+        is left exactly as it was.
+        """
+        try:
+            return plane.override_deferred_plan(
+                run_id,
+                base_artifact_id=str(body["base_artifact_id"]),
+                target_column=str(body.get("target_column") or ""),
+                task_type=body.get("task_type") or None,
+            )
+        except StagingWorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=f"missing field {exc}") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.post("/api/runs/{run_id}/staging/plan/accept")
     def accept_staging_plan(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -7405,6 +8982,13 @@ def create_app(
     def promote_document_tables(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
             return plane.promote_document_tables(run_id, str(body.get("review_artifact_id") or ""))
+        except CandidateNotPromotable as exc:
+            # #310: the reader used to get the exception text verbatim -- English
+            # whatever their language, and carrying the internal candidate id.
+            # The code is turned into a sentence here, where the request's
+            # language is bound, and the table is named the way the review
+            # dialog named it.
+            raise HTTPException(status_code=400, detail=_promotion_message(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
@@ -7441,6 +9025,24 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"run_id": run_id, "status": "discarded"}
 
+    @app.post("/api/runs/{run_id}/problem/pin")
+    def pin_problem(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """#428: re-frame a failed problem discovery instead of restarting.
+
+        The failed run keeps its intake, schema discovery and integration --
+        none of which was wrong -- and re-enters the graph at problem discovery
+        with the named framing pinned.
+        """
+        try:
+            return plane.pin_problem_framing(
+                run_id,
+                kind=str(body.get("kind") or "predict_column"),
+                target_column=body.get("target_column"),
+                task_type=body.get("task_type") or None,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
     @app.post("/api/runs/{run_id}/answer")
     def answer_run(run_id: str, body: dict[str, Any]) -> dict[str, str]:
         try:
@@ -7467,6 +9069,13 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}") from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @app.get("/api/runs/{run_id}/tool-activity")
+    def tool_activity(run_id: str, after: int = 0) -> dict[str, Any]:
+        # #411: an unknown run is not an error here. The feed is in-memory and
+        # a panel may ask about a run this process never executed; an empty,
+        # inactive answer stops its polling, where a 404 would make it retry.
+        return plane.tool_activity(run_id, after=max(0, after))
 
     @app.get("/api/runs/{run_id}/progress")
     def progress(run_id: str) -> dict[str, Any]:
@@ -7499,11 +9108,23 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown artifact") from None
 
     @app.get("/api/artifacts/{artifact_id}/preview")
-    def artifact_preview(artifact_id: str) -> dict[str, Any]:
+    def artifact_preview(artifact_id: str, response: Response) -> dict[str, Any]:
         try:
-            return plane.artifact_preview(artifact_id)
+            payload = plane.artifact_preview(artifact_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown artifact") from None
+        # #368: an artifact is immutable by contract -- a stage produces a new
+        # one rather than mutating an existing one, which is what makes fork,
+        # time-travel and audit cheap -- so this body cannot change for a given
+        # id. Saying so lets the browser answer a repeat itself, including
+        # across a full reload, which no in-memory client cache can cover.
+        # `private` because a preview belongs to the signed-in reader's run and
+        # must not sit in a shared proxy. The prose is composed per language,
+        # which `?lang=` puts in the cache key; `Vary` covers a caller that
+        # leaves it off and relies on Accept-Language instead.
+        response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+        response.headers["Vary"] = "Accept-Language"
+        return payload
 
     @app.get("/api/models/{artifact_id}/download")
     def download_model(artifact_id: str) -> Response:

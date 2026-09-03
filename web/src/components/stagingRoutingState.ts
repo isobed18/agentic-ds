@@ -1,6 +1,7 @@
 import type { LocalizedText, SourceProfile, StagingWorkspace } from "../lib/api";
+import { runErrorText } from "./stageFailure";
 
-export type RouteKind = "structured" | "documents" | "unsupported";
+export type RouteKind = "structured" | "documents" | "unsupported" | "needs_review";
 export type ProgressStatus = "complete" | "running" | "pending" | "failed";
 
 export interface RoutedSourceFile {
@@ -8,6 +9,7 @@ export interface RoutedSourceFile {
   format: string;
   route: RouteKind;
   reason?: LocalizedText;
+  insight?: LocalizedText;
   tableNames: string[];
   // What ads.file_detection measured from the file's content. The route above still
   // comes from the extension, so these two can disagree -- and when they do,
@@ -17,6 +19,18 @@ export interface RoutedSourceFile {
   measuredEvidence?: string;
   needsDecisionBecause?: string;
   contradictsExtension?: boolean;
+}
+
+/** Whether a routed file is carrying something a person has to look at (#386).
+ *
+ * The Intake panel collapses each file's explanation by default, and these two
+ * are the reason someone opens the panel at all: a measurement that contradicts
+ * the extension, and a measurement that could not decide. Neither may end up
+ * behind a collapsed card, so a card carrying one starts expanded.
+ */
+export function fileNeedsAttention(file: RoutedSourceFile): boolean {
+  if (file.contradictsExtension === true) return true;
+  return file.measuredDeterministic === false && Boolean(file.needsDecisionBecause);
 }
 
 export interface FilePage {
@@ -86,13 +100,49 @@ export interface StagingRoutingState {
   ocrMode: string;
   documentFiles: DocumentFileProgress[];
   error?: string;
-  attention?: string;
+  // #362: `attention` used to carry the escalated gate's own prose so the
+  // canvas could show it in a yellow banner. The red ApprovalCard already
+  // renders that text with its reason list and its action buttons, so the
+  // banner said the same thing twice and could not answer it. Both are gone;
+  // `schemaBlocked` still drives the node statuses below.
+  /** #365: why understanding ended with nothing to accept, when it did. */
+  outcome?: StagingOutcome;
+}
+
+/**
+ * How understanding ended when it ended without a plan to accept (#365).
+ *
+ * The canvas had exactly two states for the proposal node -- pending and
+ * failed -- so every way of finishing without a proposal rendered as "still
+ * working". A file was accepted, nothing went red, and the flow simply never
+ * advanced; the reader had no way to tell a slow run from one that had already
+ * stopped, and reloading started the same wait again.
+ *
+ * Two of these are ordinary decisions rather than faults. `defer_pipeline` and
+ * `no_pipeline` are answers the planner is explicitly asked to consider, and it
+ * records its reason in `decision_summary` -- which nothing rendered, so the
+ * one sentence explaining the stop was computed and thrown away on every run.
+ *
+ * `no_plan` is the honest catch-all: understanding settled and produced no
+ * proposal at all. Naming it is still strictly better than a pending spinner,
+ * because it is the difference between "wait longer" and "this is finished,
+ * and it did not work".
+ */
+export interface StagingOutcome {
+  kind: "deferred" | "declined" | "no_plan";
+  summary?: LocalizedText;
+  rationale: LocalizedText[];
 }
 
 export interface StagingProgressSnapshot {
   status?: string;
   current_stage?: string | null;
-  error?: string | null;
+  // #365: a run error has been a bilingual `{en, tr}` object since #263/#265,
+  // and this read still narrowed on `typeof === "string"`. Every failure after
+  // that change fell through the check, so the canvas's red "Staging stopped"
+  // banner stopped rendering entirely -- a run died and the screen said
+  // nothing. `runErrorText` reads both shapes.
+  error?: unknown;
   events?: Array<Record<string, unknown>>;
   attempts?: Array<Record<string, unknown>>;
   pending_question?: {
@@ -111,6 +161,7 @@ export function routedFiles(profile: SourceProfile): RoutedSourceFile[] {
       format: file.format,
       route: file.route,
       reason: file.reason,
+      insight: file.insight,
       tableNames: file.table_names ?? [],
       measuredFlow: file.detected_flow,
       measuredDeterministic: file.detection_deterministic,
@@ -182,11 +233,15 @@ export function buildStagingRoutingState(
   const currentStage = String(progress?.current_stage ?? "");
   const needsHuman = runStatus === "awaiting_human";
   const schemaBlocked = currentStage === "schema_discovery" && (needsHuman || runFailed);
-  const humanPrompt = progress?.pending_question?.human_prompt;
-  const attention = needsHuman
-    ? [humanPrompt?.question, humanPrompt?.context_summary].filter(Boolean).join(" ")
-      || "Understanding stopped because a decision is required."
-    : undefined;
+  // #365: "staged" is set by the worker only after the analysis call returns,
+  // so a settled run with no plan has genuinely finished without one -- it is
+  // not a plan that has yet to arrive.
+  const settled = ["staged", "completed"].includes(runStatus);
+  const outcome = stagingOutcome(
+    settled && !runFailed,
+    workspace?.recommended_plan,
+    [...events].reverse().find((event) => event.event === "staging_analysis_skipped")?.reason,
+  );
   const latestExtraction = workspace?.document_extractions?.at(-1);
   const startEvent = [...events].reverse().find((event) => event.event === "document_understanding_started");
   const engine = String(latestExtraction?.engine ?? startEvent?.engine ?? "docling");
@@ -234,11 +289,40 @@ export function buildStagingRoutingState(
     engineVersion: latestExtraction?.engine_version,
     ocrMode,
     documentFiles,
-    error: typeof progress?.error === "string" && progress.error
-      ? progress.error
-      : workspace?.planner_error ?? undefined,
-    attention,
+    error: runErrorText(progress?.error) ?? workspace?.planner_error ?? undefined,
+    outcome,
   };
+}
+
+function stagingOutcome(
+  settled: boolean,
+  plan: StagingWorkspace["recommended_plan"],
+  skippedReason: unknown,
+): StagingOutcome | undefined {
+  if (!settled) return undefined;
+  // #365: the one case the server can explain -- no planner model is
+  // configured, so no plan was ever attempted -- says so rather than leaving
+  // the notice to report an unexplained stop.
+  if (!plan) return { kind: "no_plan", summary: localizedPair(skippedReason), rationale: [] };
+  // An older record predates `pipeline_recommendation` and was always a
+  // proposal, so absence of the field is not a decision to report.
+  const kind = plan.pipeline_recommendation === "defer_pipeline" ? "deferred"
+    : plan.pipeline_recommendation === "no_pipeline" ? "declined"
+    : null;
+  if (!kind) return undefined;
+  return {
+    kind,
+    summary: plan.decision_summary ?? undefined,
+    rationale: plan.rationale ?? [],
+  };
+}
+
+/** A bilingual `{en, tr}` pair a run event recorded, or nothing. */
+function localizedPair(value: unknown): LocalizedText | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const pair = value as { en?: unknown; tr?: unknown };
+  if (typeof pair.en !== "string" || !pair.en) return undefined;
+  return { en: pair.en, tr: typeof pair.tr === "string" && pair.tr ? pair.tr : pair.en };
 }
 
 function documentProgress(

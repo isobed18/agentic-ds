@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { LanguagePicker } from "../components/Shell";
+import { Notifications } from "../components/Notifications";
+// Shared with the automation-scoped models tab so the two views cannot disagree
+// about how an original/RL pair reads.
+import { ModelComparison } from "../components/ProjectContents";
+import { FileInsight } from "../components/FileInsight";
 import { Badge, Empty, Globe, Lock, Metric, NAME_FIELD_WIDTH, Spinner, cx } from "../components/ui";
+import { useOverlayDismiss } from "../components/overlayDismiss";
 import {
   api,
   type AutomationDefinition,
@@ -16,6 +23,24 @@ import {
 import { t } from "../lib/i18n";
 
 export type ProjectView = "overview" | "data" | "automations" | "models" | "reports";
+
+/** The URL a project row points at, which is the same one `onOpen` produces by
+ *  rewriting the search params in place.
+ *
+ *  #405: the rows used to be bare `<button>`s, so there was nothing for the
+ *  browser to act on -- middle-click and ctrl/cmd-click, which open a link in a
+ *  new tab everywhere else, did nothing at all here. */
+export function projectHref(projectId: string) {
+  return `/projects?project=${encodeURIComponent(projectId)}`;
+}
+
+/** True when the browser should be left to handle the click itself: every
+ *  modifier that means "open this somewhere other than here", plus any
+ *  non-primary button. A middle click never reaches onClick (it fires
+ *  auxclick), so the anchor handles that one on its own. */
+function opensElsewhere(event: React.MouseEvent) {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
 
 export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void }) {
   const [projects, setProjects] = useState<ProjectDefinition[]>([]);
@@ -67,11 +92,11 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <article key={project.project_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop">
-                <button type="button" onClick={() => onOpen(project.project_id)} className="block w-full p-5 pr-12 text-left">
+                <Link to={projectHref(project.project_id)} onClick={(event) => { if (opensElsewhere(event)) return; event.preventDefault(); onOpen(project.project_id); }} className="block w-full p-5 pr-12 text-left">
                   <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><span className="flex shrink-0 items-center gap-2"><VisibilityMark visibility={project.visibility} /><Badge tone="neutral">{t("Project")}</Badge></span></div>
                   <div className="mt-5 flex gap-4 text-xs text-ink-mute"><span>{t("{count} data sources", { count: project.source_ids.length })}</span><span>{t("{count} automations", { count: project.automation_ids.length })}</span></div>
-                  <p className="mt-2 text-[10px] text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
-                </button>
+                  <p className="mt-2 text-3xs text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
+                </Link>
                 <button type="button" aria-label={t("Delete project")} title={t("Delete project")} onClick={() => setDeleting(project)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
                   <TrashIcon />
                 </button>
@@ -93,9 +118,11 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
  * readable exactly as automation deletion promises.
  */
 export function ProjectDeleteDialog({ project, busy, onCancel, onConfirm }: { project: ProjectDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  // Dismissing a confirmation is a cancel, never a confirm (#387).
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-project-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: project.name })}</h2>
         <div id="delete-project-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -159,16 +186,20 @@ export function ProjectWorkspace({
   const automations = contents?.automations ?? [];
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-sunken">
-      <header className="relative flex min-h-[64px] shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
+      <header className="relative flex min-h-[4rem] shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
         <button type="button" className="btn-ghost !px-2 text-xs" onClick={onBack}>← {t("Projects")}</button>
         <label className={cx("flex items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 py-1.5", NAME_FIELD_WIDTH)} title={t("Rename project")}>
           <span aria-hidden="true" className="text-ink-faint">✎</span>
           <input value={name} onChange={(event) => setName(event.target.value)} onBlur={() => void persistName()} aria-label={t("Project name")} title={name} className="min-w-0 flex-1 truncate bg-transparent text-sm font-semibold text-ink outline-none" />
         </label>
         <nav aria-label={t("Project sections")} className="absolute left-1/2 flex -translate-x-1/2 rounded-lg bg-surface-sunken p-1">
-          {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3 py-1.5 text-xs font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}
+          {PROJECT_VIEWS.map((item) => <button key={item} type="button" onClick={() => onView(item)} className={cx("rounded-md px-3.5 py-2 text-sm font-medium", view === item ? "bg-surface text-ink shadow-sm" : "text-ink-mute hover:text-ink")}>{projectViewLabel(item)}</button>)}
         </nav>
-        <div className="ml-auto"><LanguagePicker /></div>
+        {/* #286: the shared top bar is suppressed for every page inside a
+            project, so this contextual header is the only place notifications
+            can live here. Composed in rather than duplicated: it is the same
+            component the shell renders everywhere else. */}
+        <div className="ml-auto flex items-center gap-1"><LanguagePicker /><Notifications /></div>
       </header>
       {error && <p className="mx-4 mt-3 shrink-0 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <main className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -189,7 +220,7 @@ function ProjectOverview({ data, automations, contents, project, onView, onVisib
   const reports = contents?.reports.length ?? 0;
   return (
     <div className="space-y-5">
-      <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Project overview")}</p><h1 className="mt-1 text-2xl font-semibold text-ink">{t("Everything in this project, at a glance")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Data comes first. Each automation chooses from it and keeps its own graph and outputs.")}</p></div>
+      <div><p className="text-3xs font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Project overview")}</p><h1 className="mt-1 text-2xl font-semibold text-ink">{t("Everything in this project, at a glance")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Data comes first. Each automation chooses from it and keeps its own graph and outputs.")}</p></div>
       {project && <VisibilityCard project={project} onChanged={onVisibility} />}
       {!data.length && <section className="rounded-2xl border border-brand-200 bg-brand-50 p-6"><h2 className="text-lg font-semibold text-ink">{t("This project needs data")}</h2><p className="mt-1 text-sm text-ink-mute">{t("Upload files or choose data you uploaded before. You do not need an automation first.")}</p><button type="button" className="btn-primary mt-4" onClick={() => onView("data")}>+ {t("Add data")}</button></section>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -355,15 +386,15 @@ function ProjectData({ projectId, data, onChanged }: { projectId: string; data: 
       <input ref={input} type="file" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.parquet,.pdf" className="hidden" onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} />
       {progress && <div className="mt-5 rounded-xl border border-brand-200 bg-brand-50 p-4"><div className="flex justify-between gap-3 text-xs"><span className="truncate">{t("Uploading {name}", { name: progress.name })}{progress.total > 1 ? ` (${progress.index + 1}/${progress.total})` : ""}</span><span>{Math.round(progress.fraction * 100)}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-brand-500" style={{ width: `${Math.round(progress.fraction * 100)}%` }} /></div><button type="button" className="mt-2 text-xs text-stop-700" onClick={() => controller.current?.abort()}>{t("Cancel")}</button></div>}
       <div className="mt-5 flex flex-wrap items-end gap-3 rounded-xl border border-line bg-surface p-4">
-        <div><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Upload new files")}</p><button type="button" className="btn-primary" disabled={uploading} onClick={() => input.current?.click()}>+ {uploading ? t("Uploading…") : t("Upload files")}</button></div>
-        <div className="border-l border-line-soft pl-3"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Ready local dataset")}</p><button type="button" className="btn-ghost" disabled={uploading} title={t("A PDF table plus matching CSV truth.")} onClick={() => void usePdfDemo()}>{uploading ? t("Adding PDF demo…") : t("Use PDF demo")}</button></div>
+        <div><p className="mb-1 text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Upload new files")}</p><button type="button" className="btn-primary" disabled={uploading} onClick={() => input.current?.click()}>+ {uploading ? t("Uploading…") : t("Upload files")}</button></div>
+        <div className="border-l border-line-soft pl-3"><p className="mb-1 text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Ready local dataset")}</p><button type="button" className="btn-ghost" disabled={uploading} title={t("A PDF table plus matching CSV truth.")} onClick={() => void usePdfDemo()}>{uploading ? t("Adding PDF demo…") : t("Use PDF demo")}</button></div>
         <span className="pb-2 text-xs text-ink-faint">{t("or")}</span>
-        <label className="min-w-[260px] flex-1"><span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-ink-faint">{t("Choose previously uploaded data")}</span><select className="field w-full text-sm" value={selectedSource} disabled={uploading} onChange={(event) => setSelectedSource(event.target.value)}><option value="">{t("Choose uploaded data")}</option>{available.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select></label>
+        <label className="min-w-[16.25rem] flex-1"><span className="mb-1 block text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Choose previously uploaded data")}</span><select className="field w-full text-sm" value={selectedSource} disabled={uploading} onChange={(event) => setSelectedSource(event.target.value)}><option value="">{t("Choose uploaded data")}</option>{available.map((source) => <option key={source.source_id} value={source.source_id}>{source.label}{source.files?.length ? ` · ${source.files.length} ${t("files")}` : ""}</option>)}</select></label>
         <button type="button" className="btn-ghost" disabled={!selectedSource || uploading} onClick={() => void addExisting()}>{t("Add to project")}</button>
       </div>
       {error && <p className="mt-3 rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
       <div className="mt-5 grid gap-3 md:grid-cols-2">
-        {data.map((source) => <article key={source.source_id} className="card p-5"><div className="flex items-start justify-between gap-3"><h2 className="text-sm font-semibold text-ink">{source.label}</h2><Metric label={t("Files")} value={String(source.files.length)} /></div><ul className="mt-4 space-y-2">{source.files.map((file) => <li key={file} className="flex items-center gap-2 rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink"><span aria-hidden="true">▤</span><span className="min-w-0 truncate">{file}</span></li>)}</ul></article>)}
+        {data.map((source) => <article key={source.source_id} className="card p-5"><div className="flex items-start justify-between gap-3"><h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={source.label}>{source.label}</h2><Metric label={t("Files")} value={String(source.files.length)} /></div><ul className="mt-4 space-y-2">{source.files.map((file) => { const summary = source.file_summaries?.find((item) => item.name === file); return <li key={file} className="rounded-lg bg-surface-sunken px-3 py-2 text-xs text-ink"><div className="flex items-center gap-2"><span aria-hidden="true">▤</span><span className="min-w-0 truncate">{file}</span></div><FileInsight insight={summary?.insight} /></li>; })}</ul></article>)}
         {!data.length && <div className="md:col-span-2"><Empty title={t("No data in this project")} hint={t("Upload files or choose data you uploaded before.")} /></div>}
       </div>
     </section>
@@ -434,9 +465,10 @@ function TrashIcon() {
  * audited separately and stay readable after the deletion.
  */
 export function AutomationDeleteDialog({ automation, busy, onCancel, onConfirm }: { automation: AutomationDefinition; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" aria-describedby="delete-automation-description">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-automation-title" className="mt-4 text-lg font-semibold text-ink">{t("Delete {name}?", { name: automation.name })}</h2>
         <div id="delete-automation-description" className="mt-2 space-y-2 text-sm leading-relaxed text-ink-mute">
@@ -465,7 +497,32 @@ function ProjectModels({ contents, onChanged }: { contents: ProjectContents | nu
     finally { setDeleteBusy(false); }
   }
   if (!models.length) return <Empty title={t("No models yet")} hint={t("Models from every automation in this project will appear here.")} />;
-  return <section><h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1><p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{models.map((model) => <article key={model.artifact_id} className="card relative p-4 pr-12"><button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button><Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge><h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2><p className="text-xs text-ink-mute">{model.estimator}</p><dl className="mt-3 grid grid-cols-2 gap-2"><div><dt className="text-[10px] text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div><div><dt className="text-[10px] text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div></dl>{model.saved && <a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost mt-3 inline-flex !py-1 text-xs" download>{t("Download model")}</a>}</article>)}</div>{deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}</section>;
+  return (
+    <section>
+      <h1 className="text-xl font-semibold text-ink">{t("Project models")}</h1>
+      <p className="mt-1 text-sm text-ink-mute">{t("Every model is labelled with the automation that produced it.")}</p>
+      {error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {models.map((model) => (
+          <article key={model.artifact_id} className="card relative p-4 pr-12">
+            <button type="button" aria-label={t("Delete model")} title={t("Delete model")} onClick={() => setDeleting(model)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700"><TrashIcon /></button>
+            <Badge tone="brand">{t("From {automation}", { automation: model.automation_name })}</Badge>
+            <h2 className="mt-3 text-sm font-semibold text-ink">{model.display_name}</h2>
+            <p className="text-xs text-ink-mute">{model.estimator}</p>
+            {model.enhanced ? <ModelComparison model={model} /> : (
+              <dl className="mt-3 grid grid-cols-2 gap-2">
+                <div><dt className="text-3xs text-ink-faint">Holdout {model.metric}</dt><dd className="text-sm font-semibold">{model.holdout_score.toFixed(2)}</dd></div>
+                <div><dt className="text-3xs text-ink-faint">{t("Training rows")}</dt><dd className="text-sm font-semibold">{model.training_rows.toLocaleString()}</dd></div>
+              </dl>
+            )}
+            {model.enhanced && <p className="mt-2 text-3xs text-ink-faint">{t("Training rows")}: {model.training_rows.toLocaleString()}</p>}
+            {!model.enhanced && model.saved && <div className="mt-3"><a href={`/api/models/${model.artifact_id}/download`} className="btn-ghost inline-flex !py-1 text-xs" download>{t("Download original")}</a></div>}
+          </article>
+        ))}
+      </div>
+      {deleting && <ArtifactDeleteDialog title={t("Delete {name}?", { name: deleting.display_name })} confirmLabel={t("Delete model")} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />}
+    </section>
+  );
 }
 
 function ProjectReports({ contents, onChanged }: { contents: ProjectContents | null; onChanged: () => void }) {
@@ -490,9 +547,10 @@ function ProjectReports({ contents, onChanged }: { contents: ProjectContents | n
  * unlike the automation/project dialogs which name what else is affected.
  */
 function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }: { title: string; confirmLabel: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const panel = useOverlayDismiss<HTMLDivElement>(onCancel);
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-artifact-title">
-      <div className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
+      <div ref={panel} className="w-full max-w-md rounded-2xl bg-surface p-6 shadow-2xl">
         <div className="grid h-10 w-10 place-items-center rounded-full bg-stop-50 text-stop-700" aria-hidden="true"><TrashIcon /></div>
         <h2 id="delete-artifact-title" className="mt-4 text-lg font-semibold text-ink">{title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-ink-mute">{t("The run that produced it keeps its history; only this saved output is removed.")}</p>
@@ -507,12 +565,29 @@ function ArtifactDeleteDialog({ title, confirmLabel, busy, onCancel, onConfirm }
 
 export function AutomationInputSelector({ projectId, automation, onSelected, onProjectData }: { projectId: string; automation: AutomationDefinition; onSelected: (saved: AutomationDefinition) => void; onProjectData: () => void }) {
   const [data, setData] = useState<ProjectDataSource[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set((automation.selected_files ?? []).map((item) => keyOf(item))));
+  const savedSelection = new Set((automation.selected_files ?? []).map((item) => keyOf(item)));
+  const [selected, setSelected] = useState<Set<string>>(savedSelection);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void api.projectData(projectId).then(setData).catch((caught) => setError(messageOf(caught))).finally(() => setBusy(false)); }, [projectId]);
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true); setError(null);
+    void api.projectData(projectId).then((sources) => {
+      if (cancelled) return;
+      const files = automationInputFiles(sources);
+      setData(sources);
+      // A new automation has no saved subset yet. Starting with every project
+      // file checked makes its primary action immediately usable, while an
+      // existing saved subset remains authoritative (#325).
+      setSelected(defaultAutomationSelection(files, savedSelection));
+    }).catch((caught) => { if (!cancelled) setError(messageOf(caught)); }).finally(() => { if (!cancelled) setBusy(false); });
+    return () => { cancelled = true; };
+    // The IDs are the complete identity of the selector. A refreshed
+    // automation object must not reset choices the person is currently making.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, automation.automation_id]);
   if (busy) return <div className="grid h-full place-items-center"><Spinner label={t("Loading project data…")} /></div>;
-  const files = data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label })));
+  const files = automationInputFiles(data);
   const allSelected = everyFileSelected(files, selected);
   async function save() {
     const selections = files.filter((item) => selected.has(keyOf(item))).map(({ source_id, path }) => ({ source_id, path }));
@@ -522,12 +597,23 @@ export function AutomationInputSelector({ projectId, automation, onSelected, onP
     catch (caught) { setError(messageOf(caught)); setBusy(false); }
   }
   if (!files.length) return <div className="grid h-full place-items-center p-8"><div className="max-w-xl rounded-2xl border border-brand-200 bg-brand-50 p-8 text-center"><Empty title={t("Add project data first")} hint={t("Automations choose files from the project. Uploading never starts inside an automation.")} /><button type="button" className="btn-primary mt-5" onClick={onProjectData}>{t("Go to project data")}</button></div></div>;
-  return <div className="h-full overflow-y-auto p-6"><div className="mx-auto max-w-3xl"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Automation data")}</p><h1 className="mt-1 text-xl font-semibold text-ink">{t("Select project files for this automation")}</h1><p className="mt-1 text-sm text-ink-mute">{t("This automation receives a private snapshot. Adding project data later will not change it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 flex justify-end"><button type="button" className="btn-ghost text-xs" onClick={() => setSelected(allSelected ? new Set() : new Set(files.map(keyOf)))}>{allSelected ? t("Unselect all") : t("Select all")}</button></div><div className="mt-2 space-y-2">{files.map((file) => { const key = keyOf(file); return <label key={key} className="card flex cursor-pointer items-center gap-3 p-4"><input type="checkbox" checked={selected.has(key)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(key); else next.delete(key); return next; })} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-ink">{file.path}</span><span className="block truncate text-xs text-ink-mute">{file.label}</span></span></label>; })}</div><button type="button" className="btn-primary mt-5" disabled={!selected.size || busy} onClick={() => void save()}>{busy ? t("Saving…") : t("Use selected data")}</button></div></div>;
+  return <div className="h-full overflow-y-auto p-6"><div className="mx-auto max-w-3xl"><p className="text-3xs font-semibold uppercase tracking-[0.14em] text-brand-600">{t("Automation data")}</p><h1 className="mt-1 text-xl font-semibold text-ink">{t("Select project files for this automation")}</h1><p className="mt-1 text-sm text-ink-mute">{t("This automation receives a private snapshot. Adding project data later will not change it.")}</p>{error && <p className="mt-3 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}<div className="mt-5 flex justify-end"><button type="button" className="btn-ghost text-xs" onClick={() => setSelected(allSelected ? new Set() : new Set(files.map(keyOf)))}>{allSelected ? t("Unselect all") : t("Select all")}</button></div><div className="mt-2 space-y-2">{files.map((file) => { const key = keyOf(file); return <label key={key} className="card flex cursor-pointer items-center gap-3 p-4"><input type="checkbox" checked={selected.has(key)} onChange={(event) => setSelected((current) => { const next = new Set(current); if (event.target.checked) next.add(key); else next.delete(key); return next; })} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-ink">{file.path}</span><span className="block truncate text-xs text-ink-mute">{file.label}</span></span></label>; })}</div><button type="button" className="btn-primary mt-5" disabled={!selected.size || busy} onClick={() => void save()}>{busy ? t("Saving…") : t("Use selected data")}</button></div></div>;
 }
 
 const PROJECT_VIEWS: ProjectView[] = ["overview", "data", "automations", "models", "reports"];
 function projectViewLabel(view: ProjectView): string { switch (view) { case "data": return t("Data"); case "automations": return t("Automations"); case "models": return t("Models"); case "reports": return t("Reports"); default: return t("Overview"); } }
 function keyOf(file: AutomationInputFile): string { return `${file.source_id}\u0000${file.path}`; }
+type SelectableAutomationInputFile = AutomationInputFile & { label: string };
+function automationInputFiles(data: ProjectDataSource[]): SelectableAutomationInputFile[] { return data.flatMap((source) => source.files.map((path) => ({ source_id: source.source_id, path, label: source.label }))); }
+
+/** Choose the first meaningful input state after project files load.
+ *
+ * A persisted subset is a deliberate choice and wins. With no saved choice,
+ * this is a new automation, so every available project file is selected.
+ */
+export function defaultAutomationSelection(files: AutomationInputFile[], saved: Set<string>): Set<string> {
+  return saved.size ? new Set(saved) : new Set(files.map(keyOf));
+}
 
 /**
  * #184: the select-all toggle's label is derived, not stored. A separate "all

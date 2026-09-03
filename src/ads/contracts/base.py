@@ -38,6 +38,8 @@ class ArtifactType(StrEnum):
     EXPLORATORY_ANALYSIS = "exploratory_analysis"
     FEATURE_SPEC = "feature_spec"
     FEATURE_EXPERIMENT = "feature_experiment"
+    RL_FEATURE_REPORT = "rl_feature_report"
+    RL_ENHANCED_MODEL = "rl_enhanced_model"
     LEAKAGE_REPORT = "leakage_report"
     CANDIDATE_SET = "candidate_set"
     TRAINED_MODEL = "trained_model"
@@ -58,6 +60,39 @@ class ArtifactType(StrEnum):
     NODE_ATTEMPT = "node_attempt"
     CRITIQUE = "critique"
     GATE_DECISION = "gate_decision"
+
+
+# Artifact kinds that exist for provenance and engineering, not for a person
+# deciding what to do next. They are still persisted and still reachable behind
+# an explicit diagnostics affordance (#305) -- the point is only to keep the
+# default artifact view to source/profile summaries, approved tables, EDA
+# visuals, models, reports, and decisions, instead of burying them under an
+# agent audit and a measurement bundle emitted on every single stage attempt.
+DIAGNOSTIC_ARTIFACT_TYPES: frozenset[ArtifactType] = frozenset(
+    {
+        ArtifactType.AGENT_AUDIT,
+        ArtifactType.MEASUREMENT_BUNDLE,
+        ArtifactType.INTEGRATION_TRIAL,
+        ArtifactType.VALIDATION_TRIAL,
+        ArtifactType.FEATURE_EXPERIMENT,
+        ArtifactType.MODEL_EXPERIMENT,
+        ArtifactType.NODE_ATTEMPT,
+        ArtifactType.CRITIQUE,
+        ArtifactType.GRAPH_PATCH,
+    }
+)
+
+
+def is_diagnostic_artifact(artifact_type: ArtifactType | str) -> bool:
+    """Whether an artifact kind is a diagnostic hidden from the default view.
+
+    Accepts the enum or its string value so callers reading a persisted index
+    (where the type is a bare string) do not each have to reconstruct the enum.
+    """
+    try:
+        return ArtifactType(artifact_type) in DIAGNOSTIC_ARTIFACT_TYPES
+    except ValueError:
+        return False
 
 
 class FrozenModel(BaseModel):

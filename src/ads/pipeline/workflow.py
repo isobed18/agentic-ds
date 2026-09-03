@@ -25,6 +25,7 @@ from ads.pipeline.stages import (
     leakage_audit_stage,
     profiling_stage,
     reporting_stage,
+    rl_feature_engineering_stage,
     splitting_stage,
     training_stage,
 )
@@ -35,11 +36,27 @@ _COMPONENTS = {
     "pipeline.profiling": profiling_stage,
     "pipeline.leakage_audit": leakage_audit_stage,
     "pipeline.splitting": splitting_stage,
+    "pipeline.rl_feature_engineering": rl_feature_engineering_stage,
     "pipeline.training": training_stage,
     "pipeline.evaluation": evaluation_stage,
     "pipeline.feature_pipeline": feature_pipeline_stage,
     "pipeline.reporting": reporting_stage,
 }
+
+#: Shared by both specs so the two cannot drift. The stage runs after splitting
+#: on purpose: it sends outer-train rows only, so the external search never sees
+#: the holdout and the enhanced model stays comparable with the primary one.
+_RL_FEATURE_ENGINEERING_DESCRIPTION = (
+    "Search externally for engineered features using training rows only."
+)
+_RL_FEATURE_ENGINEERING_CONSUMES = (
+    ArtifactType.DATA_CARD,
+    ArtifactType.PROBLEM_DEFINITION,
+    ArtifactType.VALIDATION_STRATEGY,
+    ArtifactType.LEAKAGE_REPORT,
+    ArtifactType.FEATURE_SPEC,
+    ArtifactType.SPLIT_MANIFEST,
+)
 
 
 def build_default_registry() -> ComponentRegistry:
@@ -116,6 +133,13 @@ def build_default_spec() -> WorkflowSpec:
             description="Build the configured split and measure its retained support.",
         ),
         StageDefinition(
+            id="rl_feature_engineering",
+            component="pipeline.rl_feature_engineering",
+            consumes=_RL_FEATURE_ENGINEERING_CONSUMES,
+            produces=(ArtifactType.RL_FEATURE_REPORT,),
+            description=_RL_FEATURE_ENGINEERING_DESCRIPTION,
+        ),
+        StageDefinition(
             id="training",
             component="pipeline.training",
             consumes=(
@@ -126,8 +150,9 @@ def build_default_spec() -> WorkflowSpec:
                 ArtifactType.FEATURE_SPEC,
                 ArtifactType.TABLE_ASSET,
                 ArtifactType.SPLIT_MANIFEST,
+                ArtifactType.RL_FEATURE_REPORT,
             ),
-            produces=(ArtifactType.TRAINED_MODEL,),
+            produces=(ArtifactType.TRAINED_MODEL, ArtifactType.RL_ENHANCED_MODEL),
             description="Fit and compare the fixed deterministic model menu.",
         ),
         StageDefinition(
@@ -334,6 +359,13 @@ def build_full_spec_definition() -> WorkflowSpec:
             description="Build the selected split and measure retained support.",
         ),
         StageDefinition(
+            id="rl_feature_engineering",
+            component="pipeline.rl_feature_engineering",
+            consumes=_RL_FEATURE_ENGINEERING_CONSUMES,
+            produces=(ArtifactType.RL_FEATURE_REPORT,),
+            description=_RL_FEATURE_ENGINEERING_DESCRIPTION,
+        ),
+        StageDefinition(
             id="training",
             component="pipeline.training",
             consumes=(
@@ -344,9 +376,11 @@ def build_full_spec_definition() -> WorkflowSpec:
                 ArtifactType.FEATURE_SPEC,
                 ArtifactType.TABLE_ASSET,
                 ArtifactType.SPLIT_MANIFEST,
+                ArtifactType.RL_FEATURE_REPORT,
             ),
             produces=(
                 ArtifactType.TRAINED_MODEL,
+                ArtifactType.RL_ENHANCED_MODEL,
                 ArtifactType.MODEL_EXPERIMENT,
                 ArtifactType.MEASUREMENT_BUNDLE,
                 ArtifactType.COMPREHENSION_BRIEF,

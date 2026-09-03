@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type ArtifactPreview } from "../lib/api";
+import { useShowDiagnostics } from "../lib/diagnostics";
 import { activeLanguage, t } from "../lib/i18n";
 import { keepRevealed, nextToReveal, revealDelay } from "./artifactReveal";
 import { artifactTitle } from "./artifactTitle";
+import { cx } from "./ui";
 
 /** Reveal ids one at a time, in the order they first appeared.
  *
@@ -45,6 +47,17 @@ export function useSequentialReveal(ids: string[], intervalMs = 420): string[] {
  * time when a modal opens. Surfacing the title next to the node means fetching
  * them up front — but only on expand, and only once each, so a collapsed node
  * costs nothing and a poll that re-reports the same ids does not re-fetch.
+ *
+ * #368: "once each" was only true for as long as this component stayed mounted.
+ * `ProjectWorkspace` renders each section as `{view === "data" && <…/>}`, so
+ * switching tabs unmounts the subtree and takes both `requested` and `previews`
+ * with it. Returning re-fetched every expanded artifact. The dedupe now lives
+ * in the module-level cache in `api.ts`, which outlives the unmount; the ref
+ * here still stops this instance from stacking duplicate in-flight calls within
+ * a single render pass. Reading the cache synchronously at render is what
+ * removes the second symptom — a title already fetched this session renders on
+ * the first frame back rather than passing through "Loading…" again while the
+ * cached promise resolves.
  */
 function useArtifactTitles(ids: string[], enabled: boolean): Record<string, string> {
   const [previews, setPreviews] = useState<Record<string, ArtifactPreview>>({});
@@ -76,11 +89,12 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
   const language = activeLanguage();
   const titles: Record<string, string> = {};
   for (const id of ids) {
-    const preview = previews[id];
+    const preview = previews[id] ?? api.cachedArtifactPreview(id);
     titles[id] = preview ? artifactTitle(preview, language, t) : t("Loading…");
   }
   return titles;
 }
+
 
 /** The artifacts a stage produced, behind a single "Artifacts (N)" opener.
  *
@@ -92,40 +106,70 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
  * opening it (#66). The count still ticks up one per poll (`useSequentialReveal`),
  * which is the live-progress signal the old round nodes existed to give.
  */
-export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: string) => void }) {
-  const shown = useSequentialReveal(ids);
+export function ArtifactNodes({ ids, activeId = null, onOpen, diagnosticIds }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void;
+  /** Which of `ids` are diagnostics.
+   *
+   * #424: this used to mark them only, and each caller was left to filter its
+   * own list -- which exactly one of them did. Every artifact list on a canvas
+   * comes through here, so the filter belongs here too: hand this component
+   * the run's diagnostic ids and the node respects the toggle by construction.
+   * Omit it on a list with no run behind it and nothing is hidden or marked,
+   * which is the old behaviour. */
+  diagnosticIds?: ReadonlySet<string>;
+}) {
+  const showDiagnostics = useShowDiagnostics();
+  // #408: "Show diagnostics" changed only which ids this list *would* contain
+  // if somebody expanded it -- on a node that is collapsed by default and may
+  // be off screen -- so pressing it produced no visible change anywhere and
+  // the control read as broken. A list that gains rows opens itself, and
+  // closes again when they go away, unless the viewer has since taken the pill
+  // over by clicking it; their own choice outranks the toolbar's.
+  const visibleIds = useMemo(
+    () => (showDiagnostics || !diagnosticIds ? ids : ids.filter((id) => !diagnosticIds.has(id))),
+    [ids, diagnosticIds, showDiagnostics],
+  );
+  const revealed = showDiagnostics && ids.some((id) => diagnosticIds?.has(id) ?? false);
+  const shown = useSequentialReveal(visibleIds);
   const [open, setOpen] = useState(false);
+  // Whether `open` is the caller's doing or the viewer's. Set while `revealed`
+  // drives it, cleared the moment the pill itself is pressed.
+  const auto = useRef(false);
+  useEffect(() => {
+    if (revealed) { auto.current = true; setOpen(true); }
+    else if (auto.current) { auto.current = false; setOpen(false); }
+  }, [revealed]);
   const titles = useArtifactTitles(shown, open);
-  if (!ids.length) return null;
+  if (!visibleIds.length) return null;
   return (
-    // The column's top is pinned to the node's bottom edge and carries no
-    // height-proportional transform, so the list below can only grow downward.
-    // A translate percentage resolves against the element's *own* height, so
-    // while the column wrapped both the pill and the list, every height change
-    // was split between its two ends: the list grew down by half and the pill
-    // rose by half. Opening the list moved the control out from under the
-    // cursor that clicked it, and each artifact `useSequentialReveal` appends
-    // during a run lifted it again until it overlapped its node (#162).
-    <div className="absolute left-1/2 top-full z-10 flex w-full -translate-x-1/2 flex-col items-center">
+    // This column stays in normal flow. An absolute `top-full` list contributed
+    // no height to the node, so a vertically stacked branch remained under it
+    // and was covered as the collection expanded (#327).
+    <div className="relative z-10 flex w-full flex-col items-center">
       {/* The straddle from #66 moves onto the pill, whose own height never
           changes, so it is a fixed offset rather than a share of the column. */}
       <div className="-translate-y-1/2">
         <button
           type="button"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => { auto.current = false; setOpen((current) => !current); }}
           aria-expanded={open}
-          className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-[10px] font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+          className="pointer-events-auto rounded-full border border-brand-300 bg-surface px-3 py-1 text-3xs font-semibold tabular-nums text-brand-700 shadow-card transition hover:-translate-y-0.5 hover:border-brand-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
         >
           {t("Artifacts ({count})", { count: shown.length })}
         </button>
       </div>
       {open && (
         <ol className="pointer-events-auto mt-2 flex w-full min-w-0 flex-col gap-2" aria-label={t("Artifacts")}>
-          {shown.map((id, index) => (
+          {shown.map((id, index) => {
+            const active = id === activeId;
+            // #408: the rows the toggle just added say so. Without this the
+            // list simply got longer, which is not a visible answer to "what
+            // did that button do".
+            const diagnostic = diagnosticIds?.has(id) ?? false;
+            return (
             <li key={id} className="flex min-w-0 items-center gap-2">
               {/* The numbered circle straddles the dashed line down the list,
                   the way the opener straddles the node edge above it. */}
-              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-brand-300 bg-brand-50 text-[10px] font-semibold tabular-nums text-brand-700">
+              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-brand-300 bg-brand-50 text-3xs font-semibold tabular-nums text-brand-700">
                 {index + 1}
                 {index < shown.length - 1 && (
                   <span
@@ -138,12 +182,15 @@ export function ArtifactNodes({ ids, onOpen }: { ids: string[]; onOpen: (id: str
                 type="button"
                 onClick={() => onOpen(id)}
                 title={titles[id]}
-                className="artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[10px] text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+                aria-current={active ? "true" : undefined}
+                className={cx("artifact-node min-w-0 max-w-[calc(100%-2.25rem)] truncate rounded-lg border bg-surface px-2.5 py-1.5 text-left text-3xs text-ink-soft shadow-card transition hover:border-brand-400 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500", diagnostic ? "border-dashed border-slate-300" : "border-line", active && "ring-2 ring-brand-400")}
               >
+                {diagnostic && <span className="mr-1.5 rounded bg-surface-sunken px-1 py-0.5 text-4xs font-semibold uppercase tracking-wide text-ink-faint">{t("Diagnostic")}</span>}
                 {titles[id]}
               </button>
             </li>
-          ))}
+            );
+          })}
           {shown.length < ids.length && (
             <li aria-hidden="true" className="flex items-center gap-2">
               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-dashed border-line">

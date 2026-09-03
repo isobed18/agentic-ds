@@ -18,9 +18,15 @@ from fastapi.testclient import TestClient
 
 from ads.api.service import ControlPlane, _RunPauseRequested, create_app
 from ads.contracts.base import ArtifactType
+from ads.contracts.datacard import ColumnProfile, DataCard, SemanticType
 from ads.llm import LLMResponse, ModelProfile
 from ads.orchestration.runner import RunOutcome, RunStatus
-from ads.pipeline.stages import CANDIDATE_LIMIT_KEY, STAGE_DIRECTIVES_KEY, VALIDATION_FOLDS_KEY
+from ads.pipeline.stages import (
+    CANDIDATE_LIMIT_KEY,
+    QUICK_PROBLEM_KEY,
+    STAGE_DIRECTIVES_KEY,
+    VALIDATION_FOLDS_KEY,
+)
 from ads.store import ArtifactStore
 
 
@@ -58,9 +64,15 @@ class _Recorder:
 class _PlannerLLM:
     """One local-model call that already contains English and Turkish output."""
 
-    def __init__(self, *, fail_first: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_first: bool = False,
+        reply: str = "The source is ready for a bounded test run.",
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.fail_first = fail_first
+        self.reply = reply
 
     def generate_structured(
         self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
@@ -81,7 +93,7 @@ class _PlannerLLM:
             model=profile.name,
             latency_s=0.01,
             parsed={
-                "reply": "The source is ready for a bounded test run.",
+                "reply": self.reply,
                 "reply_tr": "Kaynak, sınırlı bir test koşusuna hazır.",
                 "reports": [
                     {
@@ -136,6 +148,26 @@ class _PlannerWithTarget(_PlannerLLM):
             model=response.model,
             latency_s=response.latency_s,
             parsed=parsed,
+        )
+
+
+class _InteractiveOverrideLLM:
+    """One chat turn that proposes, but must not apply, an EDA checkpoint."""
+
+    def generate_structured(
+        self, *, system: str, prompt: str, json_schema: dict, profile: ModelProfile
+    ) -> LLMResponse:
+        return LLMResponse(
+            text="",
+            model=profile.name,
+            latency_s=0.01,
+            parsed={
+                "reply": "I propose pausing after EDA for your review.",
+                "configuration_patch": {"target_column": "tutar"},
+                "checkpoint_stages": ["eda"],
+                "stage_directives": {"eda": ["Include missingness plots."]},
+                "max_retries_by_stage": {"eda": 2},
+            },
         )
 
 
@@ -211,6 +243,90 @@ def _settle(client: TestClient, run_id: str, target: str = "staged") -> None:
     raise AssertionError(f"run stayed {status!r} (error: {err!r}), expected {target!r}")
 
 
+class TestPlannerOverrideConfirmation:
+    def test_chat_stages_an_override_until_the_human_applies_it(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        before = client.get(f"/api/runs/{run_id}/staging").json()
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+
+        reply = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        )
+
+        assert reply.status_code == 200, reply.text
+        proposal = reply.json()["override_proposal"]
+        staged = client.get(f"/api/runs/{run_id}/staging").json()
+        assert staged["pending_override"]["proposal_id"] == proposal["proposal_id"]
+        assert staged["recommended_plan"] == before["recommended_plan"]
+        assert client.plane.stage_directives(run_id) == {}  # type: ignore[attr-defined]
+
+        applied = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{proposal['proposal_id']}/apply"
+        )
+
+        assert applied.status_code == 200, applied.text
+        workspace = applied.json()
+        assert workspace["pending_override"] is None
+        assert "eda" in workspace["recommended_plan"]["checkpoint_stages"]
+        assert workspace["recommended_plan"]["configuration"]["target_column"] == "tutar"
+        assert workspace["recommended_plan"]["max_retries_by_stage"]["eda"] == 2
+        assert client.plane.stage_directives(run_id)["eda"] == [  # type: ignore[attr-defined]
+            "Include missingness plots."
+        ]
+
+    def test_cancel_discards_the_pending_override_without_changing_the_plan(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        before = client.get(f"/api/runs/{run_id}/staging").json()["recommended_plan"]
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+        proposal = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        ).json()["override_proposal"]
+
+        discarded = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{proposal['proposal_id']}/discard"
+        )
+
+        assert discarded.status_code == 200, discarded.text
+        assert discarded.json()["pending_override"] is None
+        assert discarded.json()["recommended_plan"] == before
+
+    def test_applying_to_an_accepted_plan_keeps_it_accepted(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        client.plane.llm_factory = lambda: _InteractiveOverrideLLM()  # type: ignore[attr-defined]
+        first = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Wait for me after EDA."},
+        ).json()["override_proposal"]
+        proposed = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{first['proposal_id']}/apply"
+        ).json()
+        accepted = client.post(
+            f"/api/runs/{run_id}/staging/plan/accept",
+            json={"base_artifact_id": proposed["artifact_id"]},
+        )
+        assert accepted.status_code == 200, accepted.text
+
+        second = client.post(
+            "/api/planner/chat",
+            json={"run_id": run_id, "message": "Keep that EDA checkpoint."},
+        ).json()["override_proposal"]
+        applied = client.post(
+            f"/api/runs/{run_id}/planner-overrides/{second['proposal_id']}/apply"
+        )
+
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["recommended_plan"]["status"] == "accepted"
+        assert applied.json()["recommended_plan"]["accepted"] is True
+
+
 class TestStagingRunsTheFirstStages:
     def test_a_run_level_seed_is_derived_and_persisted(
         self, client: TestClient, recorder: _Recorder
@@ -240,6 +356,39 @@ class TestStagingRunsTheFirstStages:
         assert repeated != original
         assert repeated_configuration["run_seed"] == original_seed
         assert repeated_configuration["rerun_of"] == original
+
+    def test_rerun_stays_attached_to_its_automation(self, client: TestClient) -> None:
+        """A rerun is another execution of the same saved automation.
+
+        Dropping ``automation_id`` from the copied configuration staged a
+        standalone run. The URL still showed the automation workspace, but its
+        execution history could never discover the new run.
+        """
+        original = _stage(client)
+        automation = client.plane.create_automation("Retention")  # type: ignore[attr-defined]
+        automation_id = automation["automation_id"]
+        runtime = client.plane._runtime_runs[original]  # noqa: SLF001
+        runtime.configuration["automation_id"] = automation_id
+        client.plane.attach_automation_execution(  # type: ignore[attr-defined]
+            automation_id,
+            run_id=original,
+            source_id=runtime.source_id,
+        )
+        client.plane._persist_runtime(runtime)  # noqa: SLF001
+
+        response = client.post(f"/api/runs/{original}/rerun")
+
+        assert response.status_code == 200, response.text
+        repeated = response.json()["run_id"]
+        _settle(client, repeated)
+        repeated_configuration = client.get(f"/api/runs/{repeated}/progress").json()[
+            "configuration"
+        ]
+        assert repeated_configuration["automation_id"] == automation_id
+        assert client.plane.automation(automation_id)["execution_ids"] == [
+            original,
+            repeated,
+        ]
 
     def test_default_pipeline_is_available_before_a_run_exists(self, client: TestClient) -> None:
         response = client.get("/api/data-sources/demo/pipeline-blueprint")
@@ -326,6 +475,28 @@ class TestStagingRunsTheFirstStages:
         assert document["configured_by"] == "planner"
         assert "Artifacts remain bilingual" in planner.calls[0]["system"]
 
+    def test_only_the_initial_planner_message_uses_the_request_language(
+        self, client: TestClient
+    ) -> None:
+        planner = _PlannerLLM(reply="Kaynak, sınırlı bir test koşusuna hazır.")
+        client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
+
+        staged = client.post(
+            "/api/runs/staged",
+            json={"source_id": "demo"},
+            headers={"Accept-Language": "tr-TR"},
+        )
+        assert staged.status_code == 200, staged.text
+        run_id = staged.json()["run_id"]
+        _settle(client, run_id)
+        workspace = client.get(f"/api/runs/{run_id}/staging").json()
+
+        assert "Write reply only in Turkish" in planner.calls[0]["system"]
+        assert workspace["chat_history"][-1]["content"] == {
+            "en": "Kaynak, sınırlı bir test koşusuna hazır.",
+            "tr": "Kaynak, sınırlı bir test koşusuna hazır.",
+        }
+
     def test_malformed_planner_output_is_retried_once(self, client: TestClient) -> None:
         planner = _PlannerLLM(fail_first=True)
         client.plane.llm_factory = lambda: planner  # type: ignore[attr-defined]
@@ -405,6 +576,46 @@ class TestContinuingKeepsTheWork:
         event("gate_decided", {"stage": "training", "verdict": "retry"})
         with pytest.raises(_RunPauseRequested):
             event("gate_decided", {"stage": "training", "verdict": "auto_proceed"})
+
+    @pytest.mark.parametrize("verdict", ["escalate", "abort"])
+    def test_a_pause_request_is_dropped_when_the_run_stops_for_another_reason(
+        self, client: TestClient, verdict: str
+    ) -> None:
+        """#282: an escalate/abort boundary stops the run on its own, not
+        because of the pause. Leaving `pause_requested` set would silently
+        re-pause the run the next time it advances -- e.g. right after a
+        human answers the gate it escalated to -- even though nobody asked
+        for that stop this time."""
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "running"
+        runtime.pause_requested = True
+        event = client.plane._event_recorder(runtime)  # noqa: SLF001
+
+        event("gate_decided", {"stage": "training", "verdict": verdict})
+
+        assert runtime.pause_requested is False
+        assert runtime.events[-1]["event"] == "pause_request_resolved"
+        assert runtime.events[-1]["reason"] == verdict
+
+        # The next auto-proceed boundary must run through, not pause again.
+        event("gate_decided", {"stage": "evaluation", "verdict": "auto_proceed"})
+
+    def test_resuming_a_run_that_is_not_staged_names_why(self, client: TestClient) -> None:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        runtime.status = "completed"
+
+        response = client.post(f"/api/runs/{run_id}/start?lang=en", json={})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "This run already finished and cannot be resumed."
+
+    def test_resuming_an_unknown_run_names_why(self, client: TestClient) -> None:
+        response = client.post("/api/runs/does-not-exist/start?lang=en", json={})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "This run no longer exists; choose the dataset again."
 
     def test_the_run_id_does_not_change(self, client: TestClient) -> None:
         """It used to be replaced by a freshly started run, which threw away
@@ -600,6 +811,229 @@ class TestContinuingKeepsTheWork:
         refused = client.post(f"/api/runs/{run_id}/start", json={"run_mode": "yolo"})
 
         assert refused.status_code == 400
+
+
+class TestQuickProblemSelection:
+    """#241: a quick-pick selection reaches the run state, skipping the planner
+    conversation. What problem_discovery does with it is covered in
+    tests/test_pipeline_agents.py; here only the shape check and the wiring
+    into `state.blackboard` are in scope."""
+
+    def test_a_valid_selection_reaches_the_run_state(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = _stage(client)
+
+        started = client.post(
+            f"/api/runs/{run_id}/start",
+            json={"problem_selection": {"kind": "predict_column", "target_column": "tutar"}},
+        )
+        assert started.status_code == 200, started.text
+        _settle(client, run_id, target="completed")
+
+        state = recorder.calls[1]["state"]
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "predict_column",
+            "target_column": "tutar",
+        }
+
+    def test_flag_anomalies_needs_no_target_column(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = _stage(client)
+
+        started = client.post(
+            f"/api/runs/{run_id}/start",
+            json={"problem_selection": {"kind": "flag_anomalies"}},
+        )
+        assert started.status_code == 200, started.text
+        _settle(client, run_id, target="completed")
+
+        state = recorder.calls[1]["state"]
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "flag_anomalies",
+            "target_column": None,
+        }
+
+    def test_a_non_object_selection_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": "predict_column"}
+        )
+
+        assert refused.status_code == 400
+
+    def test_an_unknown_kind_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": {"kind": "cluster_rows"}}
+        )
+
+        assert refused.status_code == 400
+
+    def test_predict_column_without_a_target_is_refused(self, client: TestClient) -> None:
+        run_id = _stage(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/start", json={"problem_selection": {"kind": "predict_column"}}
+        )
+
+        assert refused.status_code == 400
+
+
+class TestReframingAFailedProblemDiscovery:
+    """#428: naming the framing instead of restarting the whole run.
+
+    When problem discovery failed, the only action was "Retry from Intake",
+    which starts a fresh run from the beginning with no target guidance -- so
+    it fails the same way. Nothing about intake, schema discovery or
+    integration was wrong; the framing was. What `problem_discovery` then does
+    with the pinned selection is covered in tests/test_pipeline_agents.py.
+    """
+
+    @staticmethod
+    def _failed_with_a_profile(client: TestClient) -> str:
+        run_id = _stage(client)
+        runtime = client.plane._runtime_runs[run_id]  # noqa: SLF001
+        # The recorder stands in for the runner, so nothing profiled anything.
+        # The pin is validated against the run's own ABT card, so give it one.
+        client.plane.store.put(
+            DataCard(
+                table_name="table",
+                source_uri="fixture://table.csv",
+                source_format="csv",
+                n_rows=3,
+                n_columns=2,
+                profiled_rows=3,
+                columns=[
+                    ColumnProfile(
+                        name=name,
+                        dtype="float64",
+                        semantic_type=SemanticType.NUMERIC_CONTINUOUS,
+                        null_count=0,
+                        null_rate=0.0,
+                        n_unique=3,
+                        unique_rate=1.0,
+                    )
+                    for name in ("physician_id", "tutar")
+                ],
+            ),
+            run_id=run_id,
+            stage_exec_id="intake",
+        )
+        runtime.status = "failed"
+        runtime.error = "problem discovery found no viable framing"
+        return run_id
+
+    def test_a_pinned_column_re_enters_the_graph_at_problem_discovery(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        pinned = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+        assert pinned.status_code == 200, pinned.text
+        assert pinned.json()["stage_id"] == "problem_discovery"
+        _settle(client, run_id, target="completed")
+
+        # Re-entered at problem discovery rather than from the top: the
+        # artifacts the run already produced are kept.
+        assert recorder.calls[-1]["start_at"] == "problem_discovery"
+        state = recorder.calls[-1]["state"]
+        assert state.run_id == run_id, "a re-frame must not create a second run"
+        assert state.blackboard[QUICK_PROBLEM_KEY] == {
+            "kind": "predict_column",
+            "target_column": "tutar",
+            "task_type": None,
+            "pinned": True,
+        }
+
+    def test_a_stated_task_type_travels_with_the_pin(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        pinned = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={
+                "kind": "predict_column",
+                "target_column": "tutar",
+                "task_type": "binary_classification",
+            },
+        )
+
+        assert pinned.status_code == 200, pinned.text
+        assert pinned.json()["task_type"] == "binary_classification"
+
+    def test_the_stale_machine_correction_is_cleared(
+        self, client: TestClient, recorder: _Recorder
+    ) -> None:
+        """The failed attempt left a critique behind, and the stage falls back
+        to the agent conversation whenever a correction is present. The pin is
+        the correction now."""
+        run_id = self._failed_with_a_profile(client)
+        state = client.plane._runtime_runs[run_id].state  # noqa: SLF001
+        state.blackboard["human_correction::problem_discovery"] = ["try again"]
+
+        client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+        _settle(client, run_id, target="completed")
+
+        assert "human_correction::problem_discovery" not in state.blackboard
+
+    def test_a_column_the_run_never_profiled_is_refused(self, client: TestClient) -> None:
+        # Refused here rather than surfacing as a second background failure
+        # with an "unknown target" critique the person has to go and read.
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "no_such_column"},
+        )
+
+        assert refused.status_code == 400
+        assert "analytical base table" in refused.json()["detail"]
+
+    def test_predict_column_without_a_column_is_refused(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin", json={"kind": "predict_column"}
+        )
+
+        assert refused.status_code == 400
+
+    def test_anomaly_detection_cannot_claim_a_target(self, client: TestClient) -> None:
+        run_id = self._failed_with_a_profile(client)
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={
+                "kind": "predict_column",
+                "target_column": "tutar",
+                "task_type": "anomaly_detection",
+            },
+        )
+
+        assert refused.status_code == 400
+
+    def test_a_running_run_is_not_re_framed_underneath_itself(
+        self, client: TestClient
+    ) -> None:
+        run_id = _stage(client)
+        client.plane._runtime_runs[run_id].status = "running"  # noqa: SLF001
+
+        refused = client.post(
+            f"/api/runs/{run_id}/problem/pin",
+            json={"kind": "predict_column", "target_column": "tutar"},
+        )
+
+        assert refused.status_code == 400
+        assert "not stopped" in refused.json()["detail"]
 
 
 class TestConfiguringAndDiscarding:

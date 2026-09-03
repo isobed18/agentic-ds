@@ -137,6 +137,33 @@ class AutomationStore:
                 },
             )
 
+    def detach_execution(self, run_id: str) -> int:
+        """Remove a deleted run from every automation that references it.
+
+        Run deletion is global, while the association is stored inside each
+        automation definition. Scanning the small definition catalogue keeps
+        both sides consistent and also handles legacy duplicate ownership.
+        """
+        if not run_id.strip():
+            raise ValueError("run_id must not be empty")
+        detached = 0
+        with self._lock:
+            for current in self.list():
+                execution_ids = tuple(
+                    execution_id
+                    for execution_id in current.execution_ids
+                    if execution_id != run_id
+                )
+                if execution_ids == current.execution_ids:
+                    continue
+                self.update(
+                    current.automation_id,
+                    expected_revision=current.revision,
+                    changes={"execution_ids": execution_ids},
+                )
+                detached += 1
+        return detached
+
     def sync_workspace(
         self,
         automation_id: str,

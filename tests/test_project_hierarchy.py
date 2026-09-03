@@ -214,3 +214,61 @@ def test_deleting_an_executed_automation_keeps_the_bytes_its_runs_read(tmp_path:
 
     assert (snapshot / "0000-customers.csv").read_bytes() == b"customer_id,churned\n1,0\n"
     assert plane.project(project["project_id"])["automation_ids"] == []
+
+
+def test_an_invalid_rename_is_reported_as_a_sentence_not_a_pydantic_dump(
+    tmp_path: Path,
+) -> None:
+    """#425: `detail` is the sentence written for a person (#242).
+
+    `AutomationDefinition.name` is `Field(min_length=1)`, and pydantic's
+    `ValidationError` subclasses `ValueError`, so the route's catch-all handed
+    `str(exc)` straight to the reader: the model name, the field path, the
+    error code and an errors.pydantic.dev link, in English, rendered verbatim
+    on a Turkish screen. The reader gets a sentence in their own language; the
+    field paths stay in the log.
+    """
+    plane = _plane(tmp_path)
+    client = TestClient(create_app(plane=plane))
+    project = client.post("/api/projects", json={"name": "Retention"}).json()
+    automation = client.post(
+        f"/api/projects/{project['project_id']}/automations",
+        json={"name": "Churn model"},
+    ).json()
+
+    rejected = client.put(
+        f"/api/automations/{automation['automation_id']}",
+        json={"expected_revision": automation["revision"], "changes": {"name": ""}},
+        headers={"accept-language": "tr"},
+    )
+
+    assert rejected.status_code == 400
+    detail = rejected.json()["detail"]
+    assert detail == "Bu ayarlar geçerli değil, bu yüzden hiçbir şey değiştirilmedi."
+    for leak in ("AutomationDefinition", "string_too_short", "pydantic.dev"):
+        assert leak not in detail
+
+    # And the automation is untouched, which is what the sentence promises.
+    unchanged = client.get(f"/api/automations/{automation['automation_id']}").json()
+    assert unchanged["name"] == "Churn model"
+    assert unchanged["revision"] == automation["revision"]
+
+
+def test_the_english_reader_gets_the_same_sentence_in_english(tmp_path: Path) -> None:
+    """The message is translated at the edge like every other sentence the
+    backend composes, so it follows the request's language rather than being
+    pinned to the default."""
+    plane = _plane(tmp_path)
+    client = TestClient(create_app(plane=plane))
+    project = client.post("/api/projects", json={"name": "Retention"}).json()
+    automation = client.post(
+        f"/api/projects/{project['project_id']}/automations",
+        json={"name": "Churn model"},
+    ).json()
+
+    rejected = client.put(
+        f"/api/automations/{automation['automation_id']}?lang=en",
+        json={"expected_revision": automation["revision"], "changes": {"name": ""}},
+    )
+
+    assert rejected.json()["detail"] == "Those settings are not valid, so nothing was changed."

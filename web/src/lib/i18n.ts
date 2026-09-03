@@ -36,6 +36,7 @@ const TR: Record<string, string> = {
   "queued": "sırada",
   "running": "çalışıyor",
   "resuming": "devam ediyor",
+  "running branches": "dallar çalışıyor",
   "retrying": "yeniden deniyor",
   "needs approval": "onay bekliyor",
   "failed": "başarısız",
@@ -50,6 +51,7 @@ const TR: Record<string, string> = {
   "Queued": "Sırada",
   "Reading the data": "Veri okunuyor",
   "Resuming": "Devam ediyor",
+  "Running branches": "Dallar çalışıyor",
   "Retrying": "Yeniden deniyor",
   "Needs approval": "Onay bekliyor",
   "Interrupted": "Yarıda kaldı",
@@ -142,15 +144,20 @@ const TR: Record<string, string> = {
   "Intake": "Veri Alma",
   "Prepare ML data": "ML verisini hazırla",
   "Define the objective": "Hedefi tanımla",
-  "Analyze and validate": "Analiz et ve doğrula",
+  "Choose validation": "Doğrulamayı seç",
+  "Leakage audit": "Sızıntı denetimi",
   "Build and split": "Öznitelik üret ve böl",
   "Train and evaluate": "Eğit ve değerlendir",
   "Combine approved tables into one verified modeling dataset.":
     "Onaylanan tabloları doğrulanmış tek bir modelleme veri kümesinde birleştirir.",
   "Choose the prediction goal and confirm that the available data can support it.":
     "Tahmin hedefini seçer ve mevcut verilerin bunu destekleyebildiğini doğrular.",
-  "Measure patterns, choose validation, and check for leakage before training.":
-    "Örüntüleri ölçer, doğrulama yöntemini seçer ve eğitimden önce sızıntıyı denetler.",
+  "Decide how training and holdout data are separated to keep evaluation honest.":
+    "Değerlendirmenin dürüst kalması için eğitim ve holdout verisinin nasıl ayrılacağına karar verir.",
+  "Measure distributions, missingness, and relationships before training.":
+    "Eğitimden önce dağılımları, eksiklikleri ve ilişkileri ölçer.",
+  "Check candidate features for information that would make results unrealistically good.":
+    "Sonuçları gerçek dışı derecede iyi gösterecek bilgiler için aday öznitelikleri denetler.",
   "Create model-ready features and divide the data without contaminating evaluation.":
     "Modele hazır öznitelikler oluşturur ve değerlendirmeyi kirletmeden veriyi böler.",
   "Train candidate models and compare them on held-out data.":
@@ -166,6 +173,7 @@ const TR: Record<string, string> = {
   "Validation Strategy": "Doğrulama Stratejisi",
   "Leakage Audit": "Sızıntı Denetimi",
   "Feature Pipeline": "Öznitelik Hattı",
+  "RL feature engineering": "RL öznitelik mühendisliği",
   "Splitting": "Veri Bölme",
   "Training": "Eğitim",
   "Evaluation": "Değerlendirme",
@@ -189,8 +197,22 @@ const TR: Record<string, string> = {
   "Every stage stops for your approval.": "Her aşama onayınız için durur.",
   "Leave empty to let the agent discover the problem from the data.": "Ajanın problemi veriden keşfetmesi için boş bırakın.",
   "Let the agent decide": "Ajan karar versin",
-  "Choose which column the model should predict, or let problem discovery propose one.":
-    "Modelin tahmin edeceği sütunu seçin ya da problem keşfinin önermesine izin verin.",
+  // #428: one tooltip per mode. The old single string ("choose the column, or
+  // let problem discovery propose one") described both at once and so said
+  // which of the two was happening in neither.
+  "A hint for the agent to rank first, not a decision — it may still propose another framing.": (
+    "Ajanın ilk sıraya koyması için bir ipucu, bir karar değil — yine de başka bir " +
+    "çerçeveleme önerebilir."
+  ),
+  "The model predicts this column. The choice is used as given.": (
+    "Model bu sütunu tahmin eder. Seçim verildiği gibi kullanılır."
+  ),
+  "State the ML problem directly, or ask the planner to propose one.":
+    "ML problemini doğrudan belirtin ya da planlayıcının önermesini isteyin.",
+  "Problem": "Problem",
+  "Ask the planner": "Planlayıcıya sor",
+  "Predict a column": "Bir sütunu tahmin et",
+  "Flag unusual rows": "Alışılmadık satırları işaretle",
   "Agent panel": "Ajan paneli",
   "Running a stage several times independently is what produces the agreement signal the gate uses.": "Bir aşamayı birkaç kez bağımsız çalıştırmak, kapının kullandığı uzlaşma sinyalini üretir.",
   "Let an agent write its own analysis on top of the fixed profile": "Sabit profilin üstüne bir ajan kendi analizini yazsın",
@@ -236,6 +258,57 @@ const TR: Record<string, string> = {
   "The plan declared no base grain.": "Plan temel granülerliği bildirmedi.",
   "The plan did not pass the relationship and fan-out validators.": "Plan, ilişki ve fan-out doğrulayıcılarından geçemedi.",
   "The plan failed a trial execution against the real tables.": "Plan, gerçek tablolar üzerinde denenince başarısız oldu.",
+  // #427: CHECK_TEXT reaches t() through a variable, so the literal scanner
+  // cannot see any of these -- and it held the three schema.* ids only, which
+  // is why a failed problem discovery rendered the server's untranslated
+  // English. `stageFailure.test.ts` pins the whole map against the catalogue
+  // so a newly added check cannot ship in English past a green suite.
+  "The executed table has more than one row per base-grain row, so the join fanned out.": (
+    "Çalıştırılan tabloda temel granülerlik satırı başına birden fazla satır var, " +
+    "yani birleştirme çoğalttı."
+  ),
+  "None of the proposed ML problems is viable against this data.": (
+    "Önerilen ML problemlerinin hiçbiri bu veriyle uygulanabilir değil."
+  ),
+  "A proposed problem named a column the analytical base table does not have, or a task its target's shape contradicts.": (
+    "Önerilen bir problem, analitik temel tabloda olmayan bir sütun adı verdi ya da " +
+    "hedefinin şekliyle çelişen bir görev seçti."
+  ),
+  "The proposed split strategy contradicts the measured signals, or no strategy was produced.": (
+    "Önerilen bölme stratejisi ölçülen sinyallerle çelişiyor ya da hiç strateji üretilmedi."
+  ),
+  "The selected split strategy failed its trial execution.": (
+    "Seçilen bölme stratejisi deneme çalıştırmasında başarısız oldu."
+  ),
+  "The analysis did not report the target's distribution.": (
+    "Analiz, hedefin dağılımını raporlamadı."
+  ),
+  "Some features were left out of the analysis.": "Bazı öznitelikler analizin dışında kaldı.",
+  "Missing values were not quantified for every column analysed.": (
+    "Analiz edilen her sütun için eksik değerler ölçülmedi."
+  ),
+  "Some input columns have no feature route, or more than one.": (
+    "Bazı girdi sütunlarının öznitelik yolu yok ya da birden fazla."
+  ),
+  "Preprocessing statistics were learned outside the training fold, which leaks the evaluation data.": (
+    "Ön işleme istatistikleri eğitim katmanının dışında öğrenildi, bu da " +
+    "değerlendirme verisini sızdırır."
+  ),
+  "The saved model was never verified as fitted.": (
+    "Kaydedilen modelin eğitilmiş olduğu hiç doğrulanmadı."
+  ),
+  "Fitting touched holdout rows, so the reported scores are optimistic.": (
+    "Eğitim, ayrılmış satırlara dokundu; bu yüzden raporlanan skorlar iyimser."
+  ),
+  "Model selection ran without exactly one naive baseline to compare against.": (
+    "Model seçimi, karşılaştırılacak tam bir naif referans modeli olmadan çalıştı."
+  ),
+  "No metric was reported on the untouched holdout.": (
+    "Dokunulmamış ayrılmış küme üzerinde hiçbir metrik raporlanmadı."
+  ),
+  "The comparison has no naive baseline in it.": (
+    "Karşılaştırmada naif bir referans modeli yok."
+  ),
   "artifacts": "artefakt",
   "Zoom level": "Yakınlaştırma düzeyi",
   "Zoom in": "Yakınlaştır",
@@ -269,9 +342,12 @@ const TR: Record<string, string> = {
   "Language": "Dil",
   "Notifications": "Bildirimler",
   "Nothing to report.": "Bildirilecek bir şey yok.",
+  "Clear all": "Tümünü temizle",
   "Waiting for you": "Sizi bekliyor",
   "Run finished": "Koşu tamamlandı",
   "Run stopped with an error": "Koşu hatayla durdu",
+  "Model generated": "Model üretildi",
+  "Report generated": "Rapor üretildi",
 
   // data screen
   "Data understanding": "Veriyi anlama",
@@ -474,6 +550,16 @@ const TR: Record<string, string> = {
   "Continue to the pipeline": "Boruhattına geç",
   "Ask about this data": "Bu veri hakkında sorun",
   "Recommended pipeline overrides": "Önerilen boru hattı ayarları",
+  "Proposed pipeline override": "Önerilen boru hattı override’ı",
+  "Awaiting your approval": "Onayınız bekleniyor",
+  "Apply override": "Override’ı uygula",
+  "Applying…": "Uygulanıyor…",
+  "Override applied": "Override uygulandı",
+  "Override discarded": "Override iptal edildi",
+  "Human approval": "İnsan onayı",
+  "Auto proceed": "Otomatik devam",
+  "{count} retries": "{count} yeniden deneme",
+  "Pipeline graph revision {revision}": "Boru hattı grafiği revizyon {revision}",
   "The planner's pipeline change was not applied": "Planlayıcının boru hattı değişikliği uygulanmadı",
   "Dismiss": "Kapat",
   "recommended, not applied": "öneri, uygulanmadı",
@@ -519,9 +605,7 @@ const TR: Record<string, string> = {
   "tables": "tablo",
   "candidate key": "aday anahtar",
   "candidate keys": "aday anahtar",
-  "Exploratory analysis": "Keşifsel analiz",
   "Ask the Planner to reconsider": "Planner'a yeniden değerlendirmesini söyle",
-  "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir pipeline çalışmaz. Geçersiz kılma yeri Planner'dır: eksik olanı söylersen bir pipeline önerebilir.",
   "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.": "{stage} aşaması hiçbir şey üretmedi, onaylanacak bir çıktı yok. Yeniden çalışması için geri gönder ya da koşumu durdur.",
   "Approve and continue": "Onayla ve devam et",
   "Accept this stage's output as-is and proceed to the next stage.": "Bu aşamanın çıktısını olduğu gibi kabul et ve sonraki aşamaya geç.",
@@ -535,6 +619,10 @@ const TR: Record<string, string> = {
   "Stage {stage} is a required checkpoint. Review the output and choose how to proceed.": "{stage} aşaması zorunlu bir kontrol noktası. Çıktıyı incele ve nasıl devam edeceğini seç.",
   "Stage {stage} stopped because a problem was detected. Your decision is needed.": "{stage} aşaması bir sorun saptandığı için durdu. Senin kararın gerekiyor.",
   "Measured from content": "İçerikten ölçüldü",
+  // #386: the Intake panel collapses each file's explanation by default, so
+  // the disclosure needs a name of its own.
+  "Show file details": "Dosya ayrıntılarını göster",
+  "Hide file details": "Dosya ayrıntılarını gizle",
   "Extension and measurement disagree": "Uzantı ile ölçüm çelişiyor",
   "Needs a decision": "Karar gerekiyor",
   "Structured tree": "Ağaç yapı",
@@ -590,6 +678,13 @@ const TR: Record<string, string> = {
   "Resize node width": "Düğüm genişliğini yeniden boyutlandır",
   "Resize node height": "Düğüm yüksekliğini yeniden boyutlandır",
   "Resize node": "Düğümü yeniden boyutlandır",
+  // #407: the same drag on the docked inspector, whose width used to be fixed.
+  "Resize panel": "Paneli yeniden boyutlandır",
+  // #441: and on the gate approval card, whose height was whatever its content
+  // happened to be -- which on a leakage gate was most of the viewport.
+  "Resize the approval card": "Onay kartını yeniden boyutlandır",
+  "Drag to set the height; double-click to fit the content.":
+    "Yüksekliği ayarlamak için sürükleyin; içeriğe sığdırmak için çift tıklayın.",
   "attempt": "deneme",
   "This stage has not run yet": "Bu aşama henüz çalışmadı",
   "No output recorded": "Kaydedilmiş çıktı yok",
@@ -618,6 +713,7 @@ const TR: Record<string, string> = {
   "Send to the agent": "Agent'a gönder",
   "Applies the next time this stage runs.": "Bu aşama bir sonraki çalıştığında uygulanır.",
   "Personal data": "Kişisel veri",
+  "Review personal data": "Kişisel verileri gözden geçir",
   "Check what was marked personal": "Kişisel işaretlenenleri gözden geçirin",
   "Columns marked personal are kept out of the model. The classifier is a heuristic and gets both directions wrong — correct it here before the run builds on it.":
     "Kişisel işaretlenen sütunlar modele girmez. Sınıflandırıcı bir sezgiseldir ve iki yönde de yanılır — koşu bunun üstüne inşa etmeden önce buradan düzeltin.",
@@ -653,6 +749,20 @@ const TR: Record<string, string> = {
   "Assistant": "Asistan",
   "You": "Siz",
   "Planner is thinking…": "Planlayıcı düşünüyor…",
+  // #411: the live tool lines in the transcript. Tool use used to surface only
+  // as a count on a finished stage's artifact, never as it happened.
+  "{agent} used the {tool} tool": "{agent} {tool} aracını kullandı",
+  "{agent} was not allowed to use the {tool} tool": "{agent} {tool} aracını kullanma izni almadı",
+  "{agent}'s {tool} tool call failed": "{agent} {tool} aracını çağırdı ama başarısız oldu",
+  "Analysis agent": "Analiz agent'ı",
+  "Feature agent": "Öznitelik agent'ı",
+  "Leakage agent": "Sızıntı agent'ı",
+  "Model agent": "Model agent'ı",
+  "Problem agent": "Problem agent'ı",
+  "Schema agent": "Şema agent'ı",
+  "Personal-data agent": "Kişisel veri agent'ı",
+  "Validation agent": "Doğrulama agent'ı",
+  "Interpretation agent": "Yorumlama agent'ı",
   "Ask the planner anything…": "Planlayıcıya bir şey sorun…",
   "Send": "Gönder",
   "Planner uses workspace rules and context from this workflow.":
@@ -784,7 +894,12 @@ const TR: Record<string, string> = {
   "Completed stages": "Tamamlanan aşamalar",
   "Complete": "Tamamlandı",
   "Last activity": "Son etkinlik",
-  "Select a completed node in the Editor to inspect its readable artifacts and evidence.": "Okunabilir artifact'ları ve kanıtları incelemek için Düzenleyici'de tamamlanmış bir düğüm seçin.",
+  // #443: the panel used to end by telling the reader to select a node in the
+  // Editor while offering no way to point the Editor at the run it described.
+  // It has one now, so the sentence names it instead.
+  "Open in the Editor": "Düzenleyici'de aç",
+  "Open this execution in the Editor": "Bu çalışmayı Düzenleyici'de aç",
+  "Open this execution to draw its graph, artifacts and evidence in the Editor.": "Grafiğini, artifact'larını ve kanıtlarını Düzenleyici'de görmek için bu çalışmayı açın.",
   "Uploaded data": "Yüklenen veri",
   "Uploaded files": "Yüklenen dosyalar",
   "{count} files": "{count} dosya",
@@ -799,8 +914,6 @@ const TR: Record<string, string> = {
   "Structured data": "Yapısal veri",
   "Structured files": "Yapısal dosyalar",
   "Needs review": "İnceleme gerekiyor",
-  "Understanding needs review": "Veri anlayışı inceleme gerektiriyor",
-  "Start a new understanding run": "Yeni bir veri anlama çalışması başlat",
   "Explain why": "Nedenini açıkla",
   "Inspect": "İncele",
   "Profile": "Profille",
@@ -815,15 +928,53 @@ const TR: Record<string, string> = {
   "Proposed plan": "Önerilen plan",
   "Review extracted tables": "Çıkarılan tabloları incele",
   "Review {count} extracted tables": "{count} çıkarılan tabloyu incele",
-  "Accepted tables become training data and are treated exactly like an uploaded file. Anything left unaccepted stays out.": "Kabul edilen tablolar eğitim verisi olur ve yüklenmiş bir dosyayla tamamen aynı şekilde işlenir. Kabul edilmeyen her şey dışarıda kalır.",
   "Promote {count} accepted": "{count} kabul edileni veriye al",
   "Promoting…": "Veriye alınıyor…",
-  "Recorded as a decision either way.": "Her iki durumda da karar olarak kaydedilir.",
+  // #360: the review is a checkbox list -- checked accepts, unchecked rejects.
+  "Accept all {count} tables": "{count} tablonun tümünü kabul et",
+  "Unchecked tables are recorded as rejected.":
+    "İşaretlenmemiş tablolar reddedilmiş olarak kaydedilir.",
+  // #403: declining every candidate is a real outcome, not an unfinished
+  // dialog -- promoted tables never enter the ML training table anyway.
+  "Nothing here is required — the structured files can run on their own.":
+    "Burada zorunlu bir şey yok — yapılandırılmış dosyalar tek başına çalışabilir.",
+  // #316: declining now records the rejection, so it has a working state.
+  "Recording…": "Kaydediliyor…",
+  "Continue without these tables": "Bu tablolar olmadan devam et",
+  "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
+  // #361: how a promoted table is named in the ML inputs list.
+  "{file} · page {page}": "{file} · sayfa {page}",
+  "No preview was extracted for this candidate.": "Bu aday için önizleme çıkarılamadı.",
+  "No data extracted — cannot be accepted": "Veri çıkarılamadı — kabul edilemez",
+  "Showing the first {shown} of {total} rows.": "{total} satırdan ilk {shown} tanesi gösteriliyor.",
   "Stays out": "Dışarıda kalır",
   "{count} tables promoted": "{count} tablo veriye alındı",
-  "Nothing was accepted, so nothing entered the pipeline.": "Hiçbir şey kabul edilmedi, bu yüzden hatta hiçbir şey girmedi.",
-  "They now behave like any other uploaded table.": "Artık yüklenmiş herhangi bir tablo gibi davranırlar.",
   "This extraction produced no table candidates.": "Bu çıkarım hiç tablo adayı üretmedi.",
+  // #390: promotion writes a durable, provenance-carrying TableAsset and
+  // nothing loads it back -- the ML run resumes after schema_discovery, so
+  // intake never re-runs and `load_table_asset` has no production caller. The
+  // copy said accepted tables "become training data"; it says what happens now.
+  "Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.":
+    "Kabul edilen tablolar, geldikleri belge ve sayfa ile birlikte incelenmiş tablo olarak kaydedilir. Kabul edilmeyenler dışarıda kalır.",
+  "Promotion does not add them to the ML training table for this run; that is built from the uploaded files.":
+    "Veriye alma, bu koşunun ML eğitim tablosuna onları eklemez; o tablo yüklenen dosyalardan kurulur.",
+  "Nothing was accepted, so nothing was saved.": "Hiçbir şey kabul edilmedi, bu yüzden hiçbir şey kaydedilmedi.",
+  "They are recorded with their provenance and listed in the Documents panel.":
+    "Kaynak bilgileriyle birlikte kaydedilir ve Belgeler panelinde listelenir.",
+  "Saved as reviewed tables with their provenance. They do not join the ML training table for this run.":
+    "Kaynak bilgileriyle birlikte incelenmiş tablo olarak kaydedildi. Bu koşunun ML eğitim tablosuna katılmazlar.",
+  "Extracted tables are candidates until they are reviewed.": "Çıkarılan tablolar incelenene kadar adaydır.",
+  "Review each extracted table before it is trusted as structured data.":
+    "Yapısal veri olarak güvenilmeden önce her çıkarılan tabloyu inceleyin.",
+  "Promoted from documents": "Belgelerden veriye alındı",
+  // #389: a promotion that leaves no trace reads as a promotion that did not
+  // take, so the candidates it settled say so and the workspace keeps the list.
+  "Already promoted": "Zaten veriye alındı",
+  "Already promoted — this cannot be undone here":
+    "Zaten veriye alındı — buradan geri alınamaz",
+  "Every table here has already been promoted.":
+    "Buradaki her tablo zaten veriye alındı.",
+  "{count} tables promoted into data": "{count} tablo veriye alındı",
   "Fixed ML pipeline": "Sabit ML hattı",
   "Preparing the plan…": "Plan hazırlanıyor…",
   "This pipeline is fixed. Staging is deciding which data feeds it.": "Bu hat sabittir. Hazırlık aşaması hangi verinin ona besleneceğine karar veriyor.",
@@ -848,7 +999,6 @@ const TR: Record<string, string> = {
   "Failed": "Başarısız",
   "{pages} pages · {tables} tables · {figures} figures": "{pages} sayfa · {tables} tablo · {figures} şekil",
   "Candidate — not trusted structured data": "Aday — güvenilir yapısal veri değil",
-  "Review and promote each extracted table before it can enter training data.": "Eğitim verisine girmeden önce çıkarılan her tabloyu inceleyip terfi ettirin.",
   "Open produced artifacts": "Üretilen artifact'ları aç",
   "Extracted document artifacts": "Çıkarılan belge artifact'ları",
   "table candidates": "tablo adayı",
@@ -895,7 +1045,6 @@ const TR: Record<string, string> = {
   "Candidate document tables": "Aday belge tabloları",
   "Measured relationships": "Ölçülen ilişkiler",
   "Measured / extracted facts": "Ölçülen / çıkarılan gerçekler",
-  "Document extraction": "Belge çıkarımı",
   "{tables} candidate tables · {figures} figures/charts": "{tables} aday tablo · {figures} şekil/grafik",
   "Open extracted content and provenance": "Çıkarılan içeriği ve veri kökenini aç",
   "{coverage}% measured coverage · {cardinality}": "%{coverage} ölçülen kapsama · {cardinality}",
@@ -920,6 +1069,35 @@ const TR: Record<string, string> = {
   "Model {target}": "{target} modelle",
   "Analyze and explain the available evidence": "Mevcut kanıtı analiz et ve açıkla",
   "Review the future steps before they become executable components.": "Gelecek adımları çalıştırılabilir bileşenlere dönüşmeden önce inceleyin.",
+  // #429: answering a deferred plan from the panel that reports it, instead of
+  // a dead end whose closing line pointed at a chat box.
+  "Name the target yourself": "Hedefi kendiniz belirleyin",
+  "The Planner is waiting on evidence it cannot ask this product for. Naming the target measures it directly and proceeds if the data supports it.": (
+    "Planlayıcı, bu üründen isteyemeyeceği bir kanıtı bekliyor. Hedefi belirlemek onu " +
+    "doğrudan ölçer ve veri destekliyorsa devam eder."
+  ),
+  "You can still aim this at a column. The data is measured before anything runs, and an unsuitable column comes back with the reasons.": (
+    "Bunu yine de bir sütuna yöneltebilirsiniz. Veri, hiçbir şey çalışmadan önce ölçülür " +
+    "ve uygun olmayan bir sütun gerekçeleriyle birlikte geri döner."
+  ),
+  "Measure and continue": "Ölç ve devam et",
+  "Measuring…": "Ölçülüyor…",
+  "★ marks the {count} columns already measured as plausible targets.": (
+    "★ işareti, makul hedef olarak zaten ölçülmüş {count} sütunu gösterir."
+  ),
+  "{column} cannot carry this task": "{column} bu görevi taşıyamaz",
+  "Pick another column, or state the task type explicitly.": (
+    "Başka bir sütun seçin ya da görev tipini açıkça belirtin."
+  ),
+  "The Planner can also be asked to reconsider: tell it what it is missing and it can propose a pipeline itself.": (
+    "Planlayıcıdan yeniden değerlendirmesi de istenebilir: neyin eksik olduğunu söylerseniz " +
+    "işlem hattını kendisi önerebilir."
+  ),
+  "Human override": "İnsan geçersiz kılması",
+  "From the column's shape": "Sütunun şeklinden",
+  "Regression": "Regresyon",
+  "Binary classification": "İkili sınıflandırma",
+  "Multiclass classification": "Çok sınıflı sınıflandırma",
   "Agent rationale": "Ajan gerekçesi",
   "Accepting…": "Kabul ediliyor…",
   "Accept plan": "Planı kabul et",
@@ -936,8 +1114,6 @@ const TR: Record<string, string> = {
   "Add data": "Veri ekle",
   "Add data to begin": "Başlamak için veri ekleyin",
   "Drop files to add them as one source": "Dosyaları tek kaynak olarak eklemek için bırakın",
-  "Reuse matching understanding": "Eşleşen veri anlayışını yeniden kullan",
-  "Optional. Turn this off to rerun Intake and Schema Discovery for the same files.": "İsteğe bağlı. Aynı dosyalar için Intake ve Schema Discovery'yi yeniden çalıştırmak üzere kapatın.",
   "Choose uploaded data": "Yüklenmiş veri seç",
   "Upload new files here or choose a reusable source from the data selector above.": "Buraya yeni dosyalar yükleyin veya yukarıdaki veri seçiciden tekrar kullanılabilir bir kaynak seçin.",
   "Data library": "Veri kütüphanesi",
@@ -946,7 +1122,6 @@ const TR: Record<string, string> = {
   "Delete execution": "Çalıştırmayı sil",
   "Delete this execution and all of its artifacts?": "Bu çalıştırma ve tüm artifact'leri silinsin mi?",
   "Understanding summary": "Veri anlama özeti",
-  "Extracted tables are candidates and cannot enter ML until reviewed.": "Çıkarılan tablolar adaydır ve incelenmeden ML'e giremez.",
   "Understanding completed without a reported warning.": "Veri anlama bildirilen bir uyarı olmadan tamamlandı.",
   "Agent reports": "Ajan raporları",
   "Local session": "Yerel oturum",
@@ -960,6 +1135,17 @@ const TR: Record<string, string> = {
   "Press Run above to start": "Başlatmak için yukarıdaki Çalıştır'a basın",
   "Not started yet": "Henüz başlamadı",
   "This stage runs once the plan is accepted.": "Bu aşama, plan kabul edildikten sonra çalışır.",
+  "Why it failed": "Neden başarısız oldu",
+  // #428: naming the framing a failed problem discovery could not find, from
+  // the failure box itself, instead of restarting the whole run from Intake.
+  "Name the problem yourself": "Problemi kendiniz adlandırın",
+  "This re-runs problem discovery on this run with your choice pinned. Intake, schema discovery and integration are kept.": (
+    "Bu, seçiminiz sabitlenmiş olarak problem keşfini bu çalıştırmada yeniden çalıştırır. " +
+    "Alım, şema keşfi ve entegrasyon korunur."
+  ),
+  "Re-run problem discovery": "Problem keşfini yeniden çalıştır",
+  "This stage failed": "Bu aşama başarısız oldu",
+  "No error was recorded for it.": "Bunun için bir hata kaydedilmedi.",
   "Accepted ML plan": "Kabul edilen ML planı",
   "Base ML pipeline": "Temel ML boru hattı",
   "What will run": "Ne çalışacak",
@@ -1030,10 +1216,19 @@ const TR: Record<string, string> = {
   "Sensitive": "Kişisel veri",
   "Download": "İndir",
   "Download model": "Modeli indir",
+  // RL feature engineering (#354 follow-up). "RL" stays untranslated: it is the
+  // name of the technique, and the reason there are two models on one card.
+  "Download original": "Özgün modeli indir",
+  "Download RL-enhanced": "RL ile geliştirilmiş modeli indir",
+  "Original model": "Özgün model",
+  "Original and RL-enhanced model comparison": "Özgün ve RL ile geliştirilmiş model karşılaştırması",
+  "RL feature report": "RL öznitelik raporu",
+  "RL-enhanced model": "RL ile geliştirilmiş model",
+  "With {count} engineered feature(s)": "{count} üretilmiş öznitelik ile",
+  "Holdout {metric}": "Ayrık küme {metric}",
   "Approve at every stage": "Her aşamada onayla",
   "The agent decides each gate on its own signals unless you take that over.":
     "Siz devralmadıkça her kapıya ajan kendi sinyalleriyle karar verir.",
-  "Human approval": "İnsan onayı",
   "Stop and ask a human after any of these stages, even though the rest stays fully automatic.":
     "Diğerleri tamamen otomatik kalsa bile, bu aşamalardan herhangi birinden sonra durup bir insana sor.",
   "Loading…": "Yükleniyor…",
@@ -1151,6 +1346,7 @@ const TR: Record<string, string> = {
   "Upload files or choose data you uploaded before.":
     "Dosya yükleyin veya daha önce yüklediğiniz veriyi seçin.",
   "Files": "Dosyalar",
+  "File insight": "Dosya içgörüsü",
   "or": "veya",
   "Each automation has its own data selection, graph, runs, models, and reports.":
     "Her otomasyonun kendi veri seçimi, grafiği, çalıştırmaları, modelleri ve raporları vardır.",
@@ -1167,7 +1363,6 @@ const TR: Record<string, string> = {
   "Every report is labelled with the automation that produced it.":
     "Her rapor, onu üreten otomasyonla etiketlenir.",
   "From {automation}": "{automation} otomasyonundan",
-  "Evaluation report": "Değerlendirme raporu",
   "Automation data": "Otomasyon verisi",
   "Loading project data…": "Proje verisi yükleniyor…",
   "Add project data first": "Önce proje verisi ekleyin",
@@ -1231,6 +1426,20 @@ const TR: Record<string, string> = {
   "Planner synthesis failed": "Planlayıcı sentezi başarısız oldu",
   "Blocked — no plan was created": "Engellendi — plan oluşturulmadı",
   "Inspect failure": "Hatayı incele",
+  // #365: understanding that ends with nothing to accept says so, instead of
+  // leaving the proposal node pending forever with no message anywhere.
+  "Understanding finished without a plan": "Veri anlama, plan üretmeden tamamlandı",
+  "No ML pipeline is proposed for this source": "Bu kaynak için ML hattı önerilmiyor",
+  "A review is needed before a plan can be proposed":
+    "Plan önerilebilmesi için önce bir inceleme gerekiyor",
+  "The run reached the end of understanding and produced no proposal, and it recorded no reason. Nothing further will happen on its own.":
+    "Çalışma, veri anlama aşamasının sonuna ulaştı ve hiçbir öneri üretmedi; bir sebep de kaydetmedi. Kendiliğinden başka bir şey olmayacak.",
+  "Files understood: {files}": "Anlaşılan dosyalar: {files}",
+  "Inspect understanding": "Veri anlayışını incele",
+  // #409: opens the Proposed-plan panel, which holds the whole decision summary
+  // and rationale the banner can only show the first few lines of.
+  "See the full reason": "Gerekçenin tamamını gör",
+  "+{count} more reasons": "+{count} gerekçe daha",
 
   // Guided pipeline
   "Data understood": "Veri anlaşıldı",
@@ -1269,8 +1478,56 @@ const TR: Record<string, string> = {
   "Artifact recorded": "Artifact kaydedildi",
   "Fields": "Alanlar",
   "Collection counts": "Koleksiyon sayıları",
+  // Turkish takes no plural after a numeral: "42 sütun", not "42 sütunlar".
+  // "öğe" stays the fallback for collections that really do hold opaque items.
   "{count} items": "{count} öğe",
+  "{count} columns": "{count} sütun",
+  "{count} rows": "{count} satır",
+  "{count} tables": "{count} tablo",
+  "{count} documents": "{count} belge",
+  "{count} pages": "{count} sayfa",
+  "{count} warnings": "{count} uyarı",
+  "{count} findings": "{count} bulgu",
+  "{count} candidates": "{count} aday",
+  "{count} metrics": "{count} metrik",
+  // #366: every kind in the closed `ArtifactType` vocabulary, because the label
+  // reaches t() through a variable (see `artifactTypeLabel.ts`) and the literal
+  // scanner that guards this catalogue cannot see a single one of them. 29 of
+  // them sat in English on a Turkish screen until someone read the cards.
+  // "integration" is settled as "birleştirme" by the backend catalogue
+  // (`src/ads/api/i18n.py`, "Veri birleştirme planı"), so the card and the
+  // server-composed panel prose name the same artifact the same way.
   "Data card": "Veri kartı",
+  "Integration plan": "Birleştirme planı",
+  "Integration trial": "Birleştirme planı denemesi",
+  "Problem candidates": "Aday problemler",
+  "Problem definition": "Problem tanımı",
+  "Validation strategy": "Doğrulama stratejisi",
+  "Validation trial": "Doğrulama planı denemesi",
+  "EDA report": "EDA raporu",
+  "Exploratory analysis": "Keşifsel analiz",
+  "Feature spec": "Öznitelik tanımı",
+  "Feature experiment": "Öznitelik denemesi",
+  "Leakage report": "Sızıntı raporu",
+  "Candidate set": "Aday kümesi",
+  "Trained model": "Eğitilmiş model",
+  "Model experiment": "Model denemesi",
+  "Evaluation report": "Değerlendirme raporu",
+  "Final report": "Nihai rapor",
+  "Agent audit": "Ajan denetimi",
+  "Measurement bundle": "Ölçüm paketi",
+  "Comprehension brief": "Kavrayış özeti",
+  "Staging workspace": "Hazırlık çalışma alanı",
+  "Staging report": "Hazırlık raporu",
+  "Document extraction": "Belge çıkarımı",
+  "Document table review": "Belge tablosu incelemesi",
+  "Automation execution plan": "Otomasyon çalıştırma planı",
+  "Graph patch": "Grafik yaması",
+  "Table asset": "Tablo varlığı",
+  "Split manifest": "Bölme bildirimi",
+  "Node attempt": "Düğüm denemesi",
+  "Critique": "Eleştiri",
+  "Gate decision": "Kapı kararı",
   "Open artifact": "Artifact'ı aç",
   "No artifacts produced yet.": "Henüz artifact üretilmedi.",
 
@@ -1303,6 +1560,14 @@ const TR: Record<string, string> = {
 
   // Advanced / Experimental graph editor
   "Advanced editor · Experimental": "Gelişmiş düzenleyici · Deneysel",
+  // #305: the diagnostics affordance on the run toolbar. #423 replaced the
+  // button whose label flipped between "göster" and "gizle" with a checkbox,
+  // so one fixed label carries the count in both states.
+  "Diagnostics ({count})": "Tanılama ({count})",
+  "Engineering records — agent audits and measurement bundles — kept out of the run view by default.": "Mühendislik kayıtları — ajan denetimleri ve ölçüm paketleri — varsayılan olarak çalıştırma görünümünün dışında tutulur.",
+  // #408: marks the rows the toggle above just added, so a longer list is a
+  // visible answer to what the button did rather than an unexplained change.
+  "Diagnostic": "Tanılama",
   "Workflow": "İş akışı",
   "Accepted data science workflow": "Kabul edilen veri bilimi iş akışı",
   "Preparing workflow…": "İş akışı hazırlanıyor…",
