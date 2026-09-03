@@ -356,6 +356,39 @@ class TestStagingRunsTheFirstStages:
         assert repeated_configuration["run_seed"] == original_seed
         assert repeated_configuration["rerun_of"] == original
 
+    def test_rerun_stays_attached_to_its_automation(self, client: TestClient) -> None:
+        """A rerun is another execution of the same saved automation.
+
+        Dropping ``automation_id`` from the copied configuration staged a
+        standalone run. The URL still showed the automation workspace, but its
+        execution history could never discover the new run.
+        """
+        original = _stage(client)
+        automation = client.plane.create_automation("Retention")  # type: ignore[attr-defined]
+        automation_id = automation["automation_id"]
+        runtime = client.plane._runtime_runs[original]  # noqa: SLF001
+        runtime.configuration["automation_id"] = automation_id
+        client.plane.attach_automation_execution(  # type: ignore[attr-defined]
+            automation_id,
+            run_id=original,
+            source_id=runtime.source_id,
+        )
+        client.plane._persist_runtime(runtime)  # noqa: SLF001
+
+        response = client.post(f"/api/runs/{original}/rerun")
+
+        assert response.status_code == 200, response.text
+        repeated = response.json()["run_id"]
+        _settle(client, repeated)
+        repeated_configuration = client.get(f"/api/runs/{repeated}/progress").json()[
+            "configuration"
+        ]
+        assert repeated_configuration["automation_id"] == automation_id
+        assert client.plane.automation(automation_id)["execution_ids"] == [
+            original,
+            repeated,
+        ]
+
     def test_default_pipeline_is_available_before_a_run_exists(self, client: TestClient) -> None:
         response = client.get("/api/data-sources/demo/pipeline-blueprint")
 

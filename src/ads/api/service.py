@@ -5447,10 +5447,21 @@ class ControlPlane:
         if configuration.get("run_seed") is None:
             raise ValueError("the original run predates recorded run seeds")
         run_seed = _coerce_run_seed(configuration["run_seed"])
-        for key in ("automation_id", "parent_run_id", "branch_label", "rerun_of"):
+        # A rerun is a new execution of the same saved automation. Keep that
+        # ownership link so ``stage_run`` attaches the new id to its execution
+        # history; only branch lineage belongs exclusively to the old run.
+        for key in ("parent_run_id", "branch_label", "rerun_of"):
             configuration.pop(key, None)
         configuration.update({"run_seed": run_seed, "rerun_of": run_id})
-        return self.stage_run(source_id, configuration, reuse_cache=False)
+        staged = self.stage_run(source_id, configuration, reuse_cache=False)
+        automation_id = configuration.get("automation_id")
+        if automation_id:
+            self.attach_automation_execution(
+                str(automation_id),
+                run_id=str(staged["run_id"]),
+                source_id=source_id,
+            )
+        return staged
 
     def start_run(
         self,
