@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { LanguagePicker } from "../components/Shell";
 import { Notifications } from "../components/Notifications";
 // Shared with the automation-scoped models tab so the two views cannot disagree
@@ -22,6 +23,24 @@ import {
 import { t } from "../lib/i18n";
 
 export type ProjectView = "overview" | "data" | "automations" | "models" | "reports";
+
+/** The URL a project row points at, which is the same one `onOpen` produces by
+ *  rewriting the search params in place.
+ *
+ *  #405: the rows used to be bare `<button>`s, so there was nothing for the
+ *  browser to act on -- middle-click and ctrl/cmd-click, which open a link in a
+ *  new tab everywhere else, did nothing at all here. */
+export function projectHref(projectId: string) {
+  return `/projects?project=${encodeURIComponent(projectId)}`;
+}
+
+/** True when the browser should be left to handle the click itself: every
+ *  modifier that means "open this somewhere other than here", plus any
+ *  non-primary button. A middle click never reaches onClick (it fires
+ *  auxclick), so the anchor handles that one on its own. */
+function opensElsewhere(event: React.MouseEvent) {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
 
 export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void }) {
   const [projects, setProjects] = useState<ProjectDefinition[]>([]);
@@ -73,11 +92,11 @@ export function ProjectLibrary({ onOpen }: { onOpen: (projectId: string) => void
           <div className="mt-7 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <article key={project.project_id} className="relative rounded-xl border border-line bg-surface shadow-card transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-pop">
-                <button type="button" onClick={() => onOpen(project.project_id)} className="block w-full p-5 pr-12 text-left">
+                <Link to={projectHref(project.project_id)} onClick={(event) => { if (opensElsewhere(event)) return; event.preventDefault(); onOpen(project.project_id); }} className="block w-full p-5 pr-12 text-left">
                   <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold text-ink">{project.name}</h2><span className="flex shrink-0 items-center gap-2"><VisibilityMark visibility={project.visibility} /><Badge tone="neutral">{t("Project")}</Badge></span></div>
                   <div className="mt-5 flex gap-4 text-xs text-ink-mute"><span>{t("{count} data sources", { count: project.source_ids.length })}</span><span>{t("{count} automations", { count: project.automation_ids.length })}</span></div>
                   <p className="mt-2 text-3xs text-ink-faint">{new Date(project.updated_at).toLocaleString()}</p>
-                </button>
+                </Link>
                 <button type="button" aria-label={t("Delete project")} title={t("Delete project")} onClick={() => setDeleting(project)} className="absolute right-2.5 top-2.5 grid h-8 w-8 place-items-center rounded-lg text-ink-faint transition hover:bg-stop-50 hover:text-stop-700">
                   <TrashIcon />
                 </button>
