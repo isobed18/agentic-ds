@@ -812,6 +812,10 @@ export interface StagingWorkspace {
     status: "proposed" | "accepted" | "rejected" | "superseded";
     mode: "fully_auto";
     pipeline_recommendation?: "create_pipeline" | "defer_pipeline" | "no_pipeline";
+    /** #430: what would lift a deferral. A deferral used to say only that it
+     *  existed, and nothing re-evaluated it, so the state sustained itself.
+     *  Empty on any other recommendation. */
+    deferred_on?: "" | "document_table_review" | "planner_decision";
     decision_summary?: LocalizedText | null;
     configuration: Record<string, unknown>;
     stage_directives: Record<string, string[]>;
