@@ -94,9 +94,7 @@ def test_each_structured_file_carries_a_row_free_profile_insight(tmp_path: Path)
         writer.write(handle)
 
     profile = plane.source_profile("demo")
-    file_summary = next(
-        item for item in profile["source_files"] if item["name"] == "table.csv"
-    )
+    file_summary = next(item for item in profile["source_files"] if item["name"] == "table.csv")
     document_summary = next(
         item for item in profile["source_files"] if item["name"] == "context.pdf"
     )
@@ -239,14 +237,10 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
     document_node["settings"]["engine"] = "text_layer"
     document_node["settings"]["ocr"] = "never"
     plane.llm_factory = lambda: object()
-    staged = plane.stage_run(
-        uploaded["source_id"], {"pipeline_blueprint": blueprint}
-    )
+    staged = plane.stage_run(uploaded["source_id"], {"pipeline_blueprint": blueprint})
     workspace = plane.staging_workspace(staged["run_id"])
     enabled = {
-        item["id"]
-        for item in workspace["pipeline_blueprint"]["components"]
-        if item["enabled"]
+        item["id"] for item in workspace["pipeline_blueprint"]["components"] if item["enabled"]
     }
     assert staged["status"] == "staging"
     assert "understand-documents" in enabled
@@ -441,9 +435,7 @@ def test_identical_document_content_reuses_extraction_across_uploads(
         node["settings"]["ocr"] = "never"
         staged = plane.stage_run(uploaded["source_id"], {"pipeline_blueprint": blueprint})
         deadline = time.time() + 10
-        while (
-            plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline
-        ):
+        while plane.progress(staged["run_id"])["status"] == "staging" and time.time() < deadline:
             time.sleep(0.02)
         return plane.progress(staged["run_id"])
 

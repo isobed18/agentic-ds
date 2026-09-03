@@ -359,6 +359,28 @@ def _translated(text: str, language: str, **params: Any) -> str:
         return i18n.t(text, **params)
 
 
+#: Enough of a note to measure it; a source file is never read further than
+#: this, and no line of it ever enters the payload.
+_PROSE_SCAN_LIMIT = 256_000
+
+
+def _prose_line_count(path: Path) -> int | None:
+    """How many non-empty lines of prose a file holds, or None if it is not text.
+
+    A `.txt` that fails the delimited loader is usually a note written for a
+    person -- the e-commerce benchmark ships `operations_note.txt` beside its
+    CSVs. Routing it to `needs_review` stopped it killing the source, but the
+    only account of it was the parser's own complaint. Counting its lines is
+    the smallest honest measurement that lets the file be described as what it
+    is; the text itself is never returned.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="strict")[:_PROSE_SCAN_LIMIT]
+    except (OSError, UnicodeDecodeError):
+        return None
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
 def _file_profile_insights(
     source_files: list[dict[str, Any]],
     tables: list[dict[str, Any]],
@@ -487,6 +509,37 @@ def _file_profile_insights(
                     "tables": 0,
                     "candidate_keys": [],
                     "quality_issues": len(document.get("issues") or []),
+                    "schema_role": role,
+                    "insight": insight,
+                }
+            )
+        elif isinstance(item.get("prose_lines"), int):
+            # A note that is not a table is still evidence. Saying only that
+            # the delimited loader failed described the parser, not the file,
+            # and left a person with nothing to review -- the file appeared in
+            # the list solely as an error. Describe it as the context it is.
+            lines = int(item["prose_lines"])
+            role = {
+                language: _translated("document context", language)
+                for language in ("en", "tr")
+            }
+            insight = {
+                language: _translated(
+                    "{lines} {line_unit} of prose · {role} · kept as context, not trained on",
+                    language,
+                    lines=lines,
+                    line_unit=_translated("line" if lines == 1 else "lines", language),
+                    role=role[language],
+                )
+                for language in ("en", "tr")
+            }
+            item.update(
+                {
+                    "origin": "measured",
+                    "rows": 0,
+                    "tables": 0,
+                    "candidate_keys": [],
+                    "quality_issues": 0,
                     "schema_role": role,
                     "insight": insight,
                 }
@@ -5174,6 +5227,7 @@ class ControlPlane:
                     if suffix
                     else "Bu dosya türü için kayıtlı bir hazırlama bağdaştırıcısı yok."
                 )
+            prose_lines: int | None = None
             if name in unreadable:
                 # It has a supported extension and still could not be read --
                 # most often prose in a .txt, which the delimited loader is
@@ -5182,15 +5236,17 @@ class ControlPlane:
                 route = "needs_review"
                 reason_en = f"Could not be read as tabular data: {unreadable[name]}"
                 reason_tr = f"Tablo verisi olarak okunamadı: {unreadable[name]}"
-            source_files.append(
-                {
-                    "name": name,
-                    "format": suffix.lstrip(".") or "unknown",
-                    "route": route,
-                    "reason": {"en": reason_en, "tr": reason_tr},
-                    "table_names": tables_by_file.get(name, []),
-                }
-            )
+                prose_lines = _prose_line_count(path)
+            entry = {
+                "name": name,
+                "format": suffix.lstrip(".") or "unknown",
+                "route": route,
+                "reason": {"en": reason_en, "tr": reason_tr},
+                "table_names": tables_by_file.get(name, []),
+            }
+            if prose_lines is not None:
+                entry["prose_lines"] = prose_lines
+            source_files.append(entry)
         detection_summary = _measure_file_detection(
             source_root, source_files, detection_env, detection_error
         )
@@ -5254,6 +5310,18 @@ class ControlPlane:
             if card.table_name not in karantina
         ]
         profile_documents = [document.public_summary() for document in documents]
+        # A file reaches `needs_review` two ways -- the delimited loader failed
+        # on it, or the measured content disagreed with the extension -- and on
+        # the e-commerce benchmark `operations_note.txt` takes the second. Both
+        # end with a person being shown a file and told only what went wrong
+        # with it. Measure any of them that is readable text so the insight can
+        # describe the file instead of the detection.
+        for satir in source_files:
+            if satir.get("route") != "needs_review" or "prose_lines" in satir:
+                continue
+            lines = _prose_line_count(source_root / satir["name"])
+            if lines:
+                satir["prose_lines"] = lines
         source_files = _file_profile_insights(
             source_files, profile_table_payloads, profile_documents, relationships
         )

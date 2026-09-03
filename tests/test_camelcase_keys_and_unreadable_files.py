@@ -101,9 +101,7 @@ def test_relationships_are_found_between_integer_keys(camel_corpus: Path) -> Non
     found = detect_relationships(cards, {table.name: table.frame for table in tables})
 
     assert found, "an integer join at 100% overlap must be measurable"
-    edge = next(
-        r for r in found if {r.from_table, r.to_table} == {"ratings", "movies"}
-    )
+    edge = next(r for r in found if {r.from_table, r.to_table} == {"ratings", "movies"})
     assert edge.from_columns == ("movie_id",) or list(edge.from_columns) == ["movie_id"]
     assert edge.overlap_rate == pytest.approx(1.0)
 
@@ -154,3 +152,89 @@ def test_the_whole_source_no_longer_fails_because_of_one_file(tmp_path: Path) ->
     reason = next(f["reason"] for f in profile["source_files"] if f["name"] == "readme.txt")
     assert reason, "a file that needs review has to say why"
     assert any(t["name"] == "clean" for t in profile["tables"])
+
+
+def test_a_prose_note_says_what_it_is_not_just_that_parsing_failed(
+    tmp_path: Path,
+) -> None:
+    """A note beside the CSVs is context, and must read as context.
+
+    Routing it to `needs_review` stopped it being dropped, but the only thing
+    it then said was the delimited loader's own failure -- "Could not be read
+    as tabular data: <pandas error>". On the e-commerce benchmark that is the
+    entire account a person gets of `operations_note.txt`: a parser complaint
+    about a file that was never a table, offering nothing to review and no
+    reason the file is in the folder.
+
+    Prose is measurable without reading values out of it. Saying how much
+    prose there is, and that it is kept as context rather than trained on,
+    is the difference between a dead end and a file a person can act on.
+    """
+    source = tmp_path / "data" / "shop"
+    source.mkdir(parents=True)
+    pd.DataFrame({"id": [1, 2], "value": ["a", "b"]}).to_csv(source / "orders.csv", index=False)
+    (source / "operations_note.txt").write_text(
+        "Operations note\n"
+        "===============\n"
+        "\n"
+        "Refunds are recorded against the original order, not a new one.\n"
+        "Tickets opened by the support team carry an internal prefix.\n",
+        encoding="utf-8",
+    )
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profile = plane.source_profile("shop")
+
+    note = next(item for item in profile["source_files"] if item["name"] == "operations_note.txt")
+    assert note["route"] == "needs_review"
+
+    insight = note["insight"]
+    for language in ("en", "tr"):
+        assert insight[language], f"the note has no {language} insight"
+        assert "Could not be read as tabular data" not in insight[language], (
+            "a parser complaint is not an insight about the file"
+        )
+    # Measured, not guessed: the note has 4 non-empty lines (the blank one
+    # between the heading and the body is not prose).
+    assert "4" in insight["en"], f"line count missing from insight: {insight['en']!r}"
+    assert insight["en"] != insight["tr"], "the insight must be translated"
+    # It must read as context to keep, not as a failure.
+    assert "context" in insight["en"].lower()
+    assert note["schema_role"]["en"]
+
+
+def test_a_note_quarantined_by_content_detection_is_described_too(tmp_path: Path) -> None:
+    """The other road to `needs_review`, and the one real data takes.
+
+    A file lands in `needs_review` either because the delimited loader raised
+    on it, or because measured content disagreed with the extension. The
+    e-commerce benchmark's `operations_note.txt` takes the second: it parses
+    as a single column, and detection measures it as a document. Only the
+    first road was described, so the benchmark file -- the one a person
+    actually looks at -- still showed a detection complaint and nothing about
+    itself.
+    """
+    source = tmp_path / "data" / "shop"
+    source.mkdir(parents=True)
+    pd.DataFrame({"id": [1, 2], "value": ["a", "b"]}).to_csv(source / "orders.csv", index=False)
+    (source / "operations_note.txt").write_text(
+        "OPERATIONS NOTE - Q4\n"
+        "Refunds are recorded against the original order.\n"
+        "Support tickets use an internal prefix.\n",
+        encoding="utf-8",
+    )
+
+    plane = ControlPlane(
+        store=ArtifactStore(tmp_path / "artifacts"), source_roots=(tmp_path / "data",)
+    )
+    profile = plane.source_profile("shop")
+
+    note = next(item for item in profile["source_files"] if item["name"] == "operations_note.txt")
+    assert note["route"] == "needs_review"
+    # Whichever road it took, it must describe the file.
+    assert "prose" in note["insight"]["en"]
+    assert "3" in note["insight"]["en"]
+    # The detection finding is not lost -- it stays as the reason.
+    assert note["reason"]["en"] and note["reason"]["tr"]

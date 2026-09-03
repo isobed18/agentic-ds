@@ -109,6 +109,11 @@ _TR: dict[str, str] = {
     "tables": "tablo",
     "page": "sayfa",
     "pages": "sayfa",
+    "line": "satır",
+    "lines": "satır",
+    "{lines} {line_unit} of prose · {role} · kept as context, not trained on": (
+        "{lines} {line_unit} düz metin · {role} · bağlam olarak tutulur, eğitime girmez"
+    ),
     "multi-table source": "çok tablolu kaynak",
     "joinable table": "birleştirilebilir tablo",
     "keyed table": "anahtarlı tablo",
