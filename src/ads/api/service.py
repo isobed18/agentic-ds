@@ -2906,6 +2906,13 @@ class ControlPlane:
             run_id=run_id,
             stage_exec_id="document-table-review",
         )
+        # #316 reopened: the review artifact was written and no reader ever
+        # acted on it. `_document_tables_await_review` flipped to False the
+        # moment this landed, and nothing asked it again -- the deferral was
+        # baked into the persisted workspace snapshot and only a planner turn
+        # recomputed it. Recording the human decision the gate is waiting on
+        # has to be sufficient to lift the gate; that is what the gate is for.
+        self._lift_document_table_gate(run_id)
         return {"artifact_id": reference.artifact_id, **review.summary()}
 
     def promote_document_tables(self, run_id: str, review_artifact_id: str) -> dict[str, Any]:
@@ -2939,6 +2946,112 @@ class ControlPlane:
                 for asset, reference in promoted
             ],
         }
+
+    def _lift_document_table_gate(self, run_id: str) -> None:
+        """Re-resolve a deferral once the table review it waited on is recorded.
+
+        #316: `_resolved_pipeline_recommendation` clamps `create_pipeline` to
+        `defer_pipeline` while candidates sit unreviewed, and it is called from
+        exactly one place -- inside `_persist_staging_workspace`'s
+        `if planner_result is not None:` branch. Everywhere else the plan is
+        carried forward verbatim, so the clamp outlived the condition that
+        applied it: promoting the tables left the plan node red and saying
+        "Blocked", and reloading changed nothing.
+
+        The documented escape did not reliably work either. "Ask the Planner to
+        reconsider" re-enters the recompute, but a turn that names no
+        recommendation falls back to `previous.pipeline_recommendation` --
+        which is the deferral. A conversational reply re-persisted the block.
+
+        Only the clamp is undone. A `no_pipeline`, an accepted plan, or a
+        deferral on a run that never had table candidates is somebody's
+        decision and is left alone.
+        """
+        previous = self._latest_staging_workspace(run_id)
+        if previous is None or previous.recommended_plan is None:
+            return
+        plan = previous.recommended_plan
+        if plan.pipeline_recommendation != "defer_pipeline" or plan.status != "proposed":
+            return
+        if self._document_tables_await_review(run_id):
+            return
+        if not self._run_had_table_candidates(run_id):
+            # Nothing here clamped this plan, so nothing here may release it.
+            return
+        configuration = dict(plan.configuration)
+        for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN):
+            try:
+                integration_plan = self.store.load(reference.artifact_id, IntegrationPlan)
+            except Exception:
+                continue
+            configuration.setdefault("base_table", integration_plan.base_table)
+            configuration.setdefault("base_grain", integration_plan.base_grain)
+            break
+        # A deferred plan is persisted with an empty configuration, so a lift
+        # without these produces a plan that unblocks and then cannot start.
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        lifted = plan.model_copy(
+            update={
+                "pipeline_recommendation": "create_pipeline",
+                # #430 added this field after this lift was written: leaving it
+                # would persist a runnable plan that still names a precondition,
+                # which `_reconsidered_plan` clears when it resolves the same
+                # deferral -- the two paths must agree on what "lifted" means.
+                "deferred_on": "",
+                "configuration": configuration,
+            }
+        )
+        saved = previous.model_copy(
+            update={
+                "recommended_plan": lifted,
+                # The proposal node reads its status from here, so leaving it
+                # would keep the graph saying "blocked" beside a plan that is
+                # not (#361 fixed the same staleness for the promoted count).
+                "component_outputs": self._staging_component_outputs(
+                    previous.pipeline_blueprint,
+                    intake_ids=previous.intake_artifact_ids,
+                    schema_ids=previous.schema_artifact_ids,
+                    document_ids=[
+                        artifact_id
+                        for output in previous.component_outputs
+                        if output.component_id == "understand-documents"
+                        for artifact_id in output.artifact_ids
+                    ],
+                    document_summary=(
+                        previous.document_extractions[-1]
+                        if previous.document_extractions
+                        else None
+                    ),
+                    reports_ready=bool(previous.reports),
+                    report_artifact_ids=self._staging_report_artifact_ids(run_id),
+                    plan_ready=True,
+                    plan_accepted=False,
+                )
+                if previous.pipeline_blueprint is not None
+                else previous.component_outputs,
+            }
+        )
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="document-table-review",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
+
+    def _run_had_table_candidates(self, run_id: str) -> bool:
+        """Whether this run ever extracted a table candidate to review."""
+        reference = self.store.latest(run_id, ArtifactType.DOCUMENT_EXTRACTION)
+        if reference is None:
+            return False
+        try:
+            extraction = self.store.load(reference.artifact_id, DocumentExtraction)
+        except Exception:
+            return False
+        return any(document.tables for document in extraction.documents)
 
     def _record_promoted_document_tables(
         self,

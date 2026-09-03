@@ -361,3 +361,127 @@ class TestTheReadPathShowsTheCurrentAnswer:
             run_id=run_id,
             stage_exec_id="staging",
         )
+
+
+class TestRecordingTheDecisionLiftsTheGate:
+    """#316 reopened: the gate closes correctly and nothing reopens it.
+
+    `_resolved_pipeline_recommendation` clamps `create_pipeline` to
+    `defer_pipeline` while candidates sit unreviewed, and it is called from one
+    place -- inside `_persist_staging_workspace`'s `if planner_result is not
+    None:` branch. Everywhere else the plan is carried forward verbatim, so the
+    clamp outlived the condition that applied it: promoting the tables left the
+    plan node red and saying "Blocked", and reloading changed nothing.
+
+    The invariant: recording the human decision the gate is waiting on must be
+    sufficient to lift the gate.
+    """
+
+    @staticmethod
+    def _deferred_run(plane: ControlPlane, run_id: str = "run-doc") -> None:
+        plane.store.put(
+            _extraction(with_tables=True), run_id=run_id, stage_exec_id="document-extraction"
+        )
+        plane.store.put(
+            StagingWorkspace(
+                source_id="upload:documents",
+                source_fingerprint="sha256:documents",
+                recommended_plan=_plan("defer_pipeline"),
+            ),
+            run_id=run_id,
+            stage_exec_id="staging",
+        )
+
+    def test_the_gate_holds_until_the_review_is_recorded(self, plane: ControlPlane) -> None:
+        self._deferred_run(plane)
+
+        plan = plane.staging_workspace("run-doc")["recommended_plan"]
+        assert plan["pipeline_recommendation"] == "defer_pipeline"
+
+    def test_accepting_a_candidate_lifts_it(self, plane: ControlPlane) -> None:
+        self._deferred_run(plane)
+
+        plane.review_document_tables("run-doc", {"report:table:1": "accepted"})
+
+        plan = plane.staging_workspace("run-doc")["recommended_plan"]
+        assert plan["pipeline_recommendation"] == "create_pipeline"
+
+    def test_rejecting_every_candidate_lifts_it_too(self, plane: ControlPlane) -> None:
+        # A rejection is a completed decision, which is what
+        # `_document_tables_await_review`'s own docstring says -- and it is the
+        # outcome "Continue without these tables" is for.
+        self._deferred_run(plane)
+
+        plane.review_document_tables("run-doc", {"report:table:1": "rejected"})
+
+        plan = plane.staging_workspace("run-doc")["recommended_plan"]
+        assert plan["pipeline_recommendation"] == "create_pipeline"
+
+    def test_the_lifted_plan_can_actually_start(self, plane: ControlPlane) -> None:
+        # A deferred plan is persisted with an empty configuration, so a lift
+        # without these unblocks a plan that then cannot run.
+        self._deferred_run(plane)
+
+        plane.review_document_tables("run-doc", {"report:table:1": "rejected"})
+
+        configuration = plane.staging_workspace("run-doc")["recommended_plan"]["configuration"]
+        assert configuration["candidate_limit"] == 2
+        assert configuration["n_folds"] == 5
+
+    def test_the_lift_survives_the_promotion_written_after_it(
+        self, plane: ControlPlane
+    ) -> None:
+        # `_record_promoted_document_tables` copies the previous snapshot
+        # forward, so the order of the two writes matters.
+        self._deferred_run(plane)
+        review = plane.review_document_tables("run-doc", {"report:table:1": "accepted"})
+
+        plane.promote_document_tables("run-doc", review["artifact_id"])
+
+        workspace = plane.staging_workspace("run-doc")
+        assert workspace["recommended_plan"]["pipeline_recommendation"] == "create_pipeline"
+        assert len(workspace["promoted_document_tables"]) == 1
+
+    def test_a_declined_source_is_left_alone(self, plane: ControlPlane) -> None:
+        # `no_pipeline` is a decision about the data, not a clamp this gate
+        # applied, so this must not overturn it.
+        plane.store.put(
+            _extraction(with_tables=True), run_id="run-none", stage_exec_id="document-extraction"
+        )
+        plane.store.put(
+            StagingWorkspace(
+                source_id="upload:documents",
+                source_fingerprint="sha256:documents",
+                recommended_plan=_plan("no_pipeline"),
+            ),
+            run_id="run-none",
+            stage_exec_id="staging",
+        )
+
+        plane.review_document_tables("run-none", {"report:table:1": "rejected"})
+
+        plan = plane.staging_workspace("run-none")["recommended_plan"]
+        assert plan["pipeline_recommendation"] == "no_pipeline"
+
+    def test_a_plan_a_person_accepted_is_left_alone(self, plane: ControlPlane) -> None:
+        plane.store.put(
+            _extraction(with_tables=True), run_id="run-acc", stage_exec_id="document-extraction"
+        )
+        plane.store.put(
+            StagingWorkspace(
+                source_id="upload:documents",
+                source_fingerprint="sha256:documents",
+                recommended_plan=RuntimeConfigurationPlan(
+                    pipeline_recommendation="defer_pipeline",
+                    status="accepted",
+                    accepted=True,
+                ),
+            ),
+            run_id="run-acc",
+            stage_exec_id="staging",
+        )
+
+        plane.review_document_tables("run-acc", {"report:table:1": "rejected"})
+
+        plan = plane.staging_workspace("run-acc")["recommended_plan"]
+        assert plan["pipeline_recommendation"] == "defer_pipeline"

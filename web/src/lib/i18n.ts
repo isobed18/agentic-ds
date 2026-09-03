@@ -928,6 +928,8 @@ const TR: Record<string, string> = {
   // dialog -- promoted tables never enter the ML training table anyway.
   "Nothing here is required — the structured files can run on their own.":
     "Burada zorunlu bir şey yok — yapılandırılmış dosyalar tek başına çalışabilir.",
+  // #316: declining now records the rejection, so it has a working state.
+  "Recording…": "Kaydediliyor…",
   "Continue without these tables": "Bu tablolar olmadan devam et",
   "{rows} rows × {columns} columns": "{rows} satır × {columns} sütun",
   // #361: how a promoted table is named in the ML inputs list.
