@@ -4682,7 +4682,20 @@ class ControlPlane:
         spent their attention reading and re-ran both against the same files.
         """
         runtime = self._runtime_runs.get(run_id)
-        if runtime is None or runtime.status != "staged":
+        if runtime is None:
+            # `progress()` falls back to the on-disk snapshot when a run is not
+            # resident and will truthfully report `staged` here -- the runtime
+            # holding the live objects needed to resume (spec/registry/llm) is
+            # gone, but the persisted state is not. Naming that, rather than
+            # the generic "not staged", is what tells the person the fix is to
+            # restage rather than that something is broken with staging itself.
+            if (self._run_state_root / f"{run_id}.json").exists():
+                raise ValueError(
+                    "this staged run did not survive a restart and cannot be continued; "
+                    "choose the dataset again"
+                )
+            raise ValueError("this run is not staged")
+        if runtime.status != "staged":
             raise ValueError("this run is not staged")
         if runtime.resume is None:
             raise ValueError(
