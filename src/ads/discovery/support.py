@@ -142,6 +142,27 @@ def _check_task_target_compatibility(
     return reasons
 
 
+#: Why an unsupervised framing cannot be accepted, however good its data is.
+#:
+#: #466: "Flag unusual rows" was selectable in two pickers, buildable by
+#: `_quick_problem_proposal`, and proposable by the agent -- and then fatal in
+#: `feature_pipeline_stage`, which raises on a null target. It is not one
+#: missing branch: `default_candidates` has no unsupervised menu either, and
+#: `training_stage` raises on the same condition, so nothing downstream of the
+#: feature spec could run without a target column. The two stages that *were*
+#: written to handle a null target -- `splitting_stage` and
+#: `rl_feature_engineering_stage` -- both sit after `feature_pipeline`, so
+#: neither branch had ever executed.
+#:
+#: Stated as a measured blocking reason rather than removed from the contract:
+#: `TaskType.ANOMALY_DETECTION` and `Metric.SILHOUETTE` stay legal, so the day a
+#: candidate menu exists this line is what comes out.
+UNSUPPORTED_UNSUPERVISED_FRAMING = (
+    "unsupported_framing: anomaly detection has no executable pipeline in this product -- "
+    "feature preparation and training both require a target column."
+)
+
+
 def compute_support(
     card: DataCard,
     frame: pd.DataFrame,
@@ -164,6 +185,14 @@ def compute_support(
             blocking.append(f"insufficient_rows: {n_rows} rows, need at least {MIN_ROWS}.")
         if n_features == 0:
             blocking.append("no_usable_features: every column is an identifier or constant.")
+        # #466: the data can support it; the pipeline cannot run it. Measured
+        # here because this is the one place every path that proposes a problem
+        # already asks -- the agent's own candidates, the quick-pick selector
+        # and a manually pinned framing all go through `attach_support` -- and
+        # because a blocking reason is refused at problem discovery, with the
+        # reason rendered beside the others (#435), instead of four stages later
+        # as a bare ValueError that reads like something a person can fix.
+        blocking.append(UNSUPPORTED_UNSUPERVISED_FRAMING)
         return ProblemSupport(
             n_rows=n_rows,
             target_null_rate=0.0,

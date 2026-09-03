@@ -837,23 +837,29 @@ class TestQuickProblemSelection:
             "target_column": "tutar",
         }
 
-    def test_flag_anomalies_needs_no_target_column(
+    def test_flag_anomalies_is_refused_rather_than_started(
         self, client: TestClient, recorder: _Recorder
     ) -> None:
+        # #466: this used to assert the run started and the selection reached
+        # the blackboard. It did -- and then died in `feature_pipeline_stage`,
+        # which raises on a null target, after intake, integration, EDA and the
+        # leakage audit had all run. `default_candidates` has no unsupervised
+        # menu and `training_stage` raises on the same condition, so nothing
+        # downstream could have run it either. The selection is refused by the
+        # request that names it, before a stage is spent arriving at the same
+        # answer.
         run_id = _stage(client)
 
         started = client.post(
             f"/api/runs/{run_id}/start",
             json={"problem_selection": {"kind": "flag_anomalies"}},
         )
-        assert started.status_code == 200, started.text
-        _settle(client, run_id, target="completed")
 
-        state = recorder.calls[1]["state"]
-        assert state.blackboard[QUICK_PROBLEM_KEY] == {
-            "kind": "flag_anomalies",
-            "target_column": None,
-        }
+        assert started.status_code == 400, started.text
+        assert "no executable pipeline" in started.text
+        # Only the staging call `_stage` made; no ML run was ever entered.
+        assert len(recorder.calls) == 1
+        assert recorder.calls[0]["stop_after"] == "schema_discovery"
 
     def test_a_non_object_selection_is_refused(self, client: TestClient) -> None:
         run_id = _stage(client)

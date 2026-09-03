@@ -31,7 +31,12 @@ from ads.contracts import (
     TaskType,
 )
 from ads.contracts.datacard import MAX_TARGET_CLASSES
-from ads.discovery import MIN_MINORITY_COUNT, compute_support, usable_feature_columns
+from ads.discovery import (
+    MIN_MINORITY_COUNT,
+    UNSUPPORTED_UNSUPERVISED_FRAMING,
+    compute_support,
+    usable_feature_columns,
+)
 from ads.intake import LoadedTable, profile_table
 
 
@@ -348,11 +353,32 @@ class TestWarnings:
 
 class TestUnsupervised:
     def test_anomaly_detection_needs_no_target(self, abt: pd.DataFrame) -> None:
+        # The measurement itself is unchanged: no target is required, no class
+        # count is computed, and the row/feature checks are what decide whether
+        # the *data* could support it.
         support = compute_support(
             _card(abt), abt, target_column=None, task_type=TaskType.ANOMALY_DETECTION
         )
-        assert support.is_viable
         assert support.n_classes is None
+        assert not any(
+            reason.startswith(("unknown_target", "insufficient_rows", "no_usable_features"))
+            for reason in support.blocking_reasons
+        )
+
+    def test_anomaly_detection_is_still_refused_because_nothing_can_run_it(
+        self, abt: pd.DataFrame
+    ) -> None:
+        # #466: this used to assert `is_viable`, and it was true of the data and
+        # false of the product -- `feature_pipeline_stage` and `training_stage`
+        # both raise on a null target, and `default_candidates` has no
+        # unsupervised menu. Accepting the framing here is what let it be
+        # planned and then fail four stages in.
+        support = compute_support(
+            _card(abt), abt, target_column=None, task_type=TaskType.ANOMALY_DETECTION
+        )
+
+        assert support.is_viable is False
+        assert UNSUPPORTED_UNSUPERVISED_FRAMING in support.blocking_reasons
 
 
 def _proposal(**overrides) -> ProblemDiscoveryProposal:
