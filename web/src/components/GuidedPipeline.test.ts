@@ -291,13 +291,23 @@ describe("diagnostics are hidden from the default artifact chips (#305)", () => 
 
   it("offers the toggle only when there is a diagnostic to reveal", () => {
     expect(SOURCE).toContain("diagnosticCount > 0 &&");
-    expect(SOURCE).toContain('t("Hide diagnostics")');
-    expect(SOURCE).toContain('t("Show diagnostics ({count})", { count: diagnosticCount })');
+    expect(SOURCE).toContain('t("Diagnostics ({count})", { count: diagnosticCount })');
+  });
+
+  // #423: a button that renamed itself left the state readable only by pressing
+  // it, resized the toolbar under the pointer, and dropped the count in the
+  // "hide" state. The state belongs in a checkbox, and the label -- count and
+  // all -- stays put across both states.
+  it("carries the diagnostics state in a checkbox, not in the label", () => {
+    expect(SOURCE).not.toContain('t("Hide diagnostics")');
+    expect(SOURCE).not.toContain('t("Show diagnostics ({count})"');
+    expect(SOURCE).toContain('<input type="checkbox" checked={showDiagnostics} onChange={(event) => setShowDiagnostics(event.target.checked)}');
   });
 
   it("translates the diagnostics toggle", () => {
-    expect(CATALOGUE).toContain('"Hide diagnostics": "Tanılamayı gizle"');
-    expect(CATALOGUE).toContain('"Show diagnostics ({count})": "Tanılamayı göster ({count})"');
+    expect(CATALOGUE).toContain('"Diagnostics ({count})": "Tanılama ({count})"');
+    expect(CATALOGUE).not.toContain('"Hide diagnostics"');
+    expect(CATALOGUE).not.toContain('"Show diagnostics ({count})"');
   });
 
   it("says which rows are the diagnostics", () => {

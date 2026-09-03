@@ -353,7 +353,18 @@ export function GuidedPipeline({ runId, profile, workspace, accepted, runStatus,
           {!accepted && profile.tables.length > 0 && <button type="button" className="btn-ghost inline-flex items-center gap-1.5 text-xs" aria-expanded={sensitivitySelected} onClick={() => setSelected((current) => (current === "sensitivity" ? null : "sensitivity"))}>{t("Review personal data")}{personalColumns > 0 && <Badge tone="warn">{personalColumns}</Badge>}</button>}
           {/* #305: only offered when there is something to reveal, so the normal
               run has no developer affordance cluttering its toolbar at all. */}
-          {diagnosticCount > 0 && <button type="button" className="btn-ghost text-xs" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics(!showDiagnostics)}>{showDiagnostics ? t("Hide diagnostics") : t("Show diagnostics ({count})", { count: diagnosticCount })}</button>}
+          {/* #423: this used to be a ghost button whose label swapped between
+              "show" and "hide", so the control read as ambiguous -- the text
+              could be the current state or the action -- it resized the
+              toolbar under the pointer on every press, and the count vanished
+              in one of the two states. It is a view preference, not an action,
+              so it takes the same labelled-checkbox shape as "Approve at every
+              stage": a fixed label carrying the count, with the state in the
+              switch rather than in the wording. */}
+          {diagnosticCount > 0 && <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-surface px-3.5 py-2 text-xs font-medium text-ink-soft transition-colors hover:bg-surface-sunken" title={t("Engineering records — agent audits and measurement bundles — kept out of the run view by default.")}>
+            <input type="checkbox" checked={showDiagnostics} onChange={(event) => setShowDiagnostics(event.target.checked)} className="h-3.5 w-3.5" />
+            {t("Diagnostics ({count})", { count: diagnosticCount })}
+          </label>}
           <button type="button" className="btn-ghost text-xs" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>
         </div>
       </div>
