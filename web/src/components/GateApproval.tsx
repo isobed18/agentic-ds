@@ -8,9 +8,10 @@ import { t } from "../lib/i18n";
  * here so the live AutomationWorkspace can surface it without pulling in the
  * whole deprecated StageWorkspace module.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, type GateDecision } from "../lib/api";
 import { reasonLabel } from "../lib/status";
+import { GateResizeHandle, useGateCardHeight } from "./gateResize";
 import { Badge, cx } from "./ui";
 
 /**
@@ -108,6 +109,11 @@ export function ApprovalCard({
   // dropped -- the human is confirming a mechanical fix, not starting from
   // a blank slate.
   const [dropColumns, setDropColumns] = useState<Set<string>>(() => new Set(suspectColumns));
+  // #441: the card sized itself and the canvas got whatever was left. The
+  // height is the viewer's now; null still means "as tall as the content", so
+  // nothing about a short gate changes until someone drags this one.
+  const cardRef = useRef<HTMLElement>(null);
+  const gateHeight = useGateCardHeight();
 
   function toggleDropColumn(column: string) {
     setDropColumns((prev) => {
@@ -148,7 +154,15 @@ export function ApprovalCard({
   }
 
   return (
-    <section className="card mb-4 border-l-4 border-l-stop-500 px-4 py-4">
+    <section
+      ref={cardRef}
+      className="card relative mb-4 flex min-h-0 flex-col border-l-4 border-l-stop-500"
+      style={gateHeight.height === null ? undefined : { height: gateHeight.height }}
+    >
+      {/* The padding moved off the card and onto this scroller so that once a
+          height is set the content scrolls inside the card instead of being
+          clipped by it -- and so the scrollbar sits on the card's own edge. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       <div className="mb-1 flex items-center gap-2">
         <Badge tone={sent ? "ok" : "stop"}>
           {sent ? t("Answer sent") : t("Approval required")}
@@ -264,6 +278,8 @@ export function ApprovalCard({
         />
       )}
       {error && <p className="mt-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
+      </div>
+      <GateResizeHandle cardRef={cardRef} {...gateHeight} />
     </section>
   );
 }

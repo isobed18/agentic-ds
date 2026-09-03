@@ -680,6 +680,11 @@ const TR: Record<string, string> = {
   "Resize node": "Düğümü yeniden boyutlandır",
   // #407: the same drag on the docked inspector, whose width used to be fixed.
   "Resize panel": "Paneli yeniden boyutlandır",
+  // #441: and on the gate approval card, whose height was whatever its content
+  // happened to be -- which on a leakage gate was most of the viewport.
+  "Resize the approval card": "Onay kartını yeniden boyutlandır",
+  "Drag to set the height; double-click to fit the content.":
+    "Yüksekliği ayarlamak için sürükleyin; içeriğe sığdırmak için çift tıklayın.",
   "attempt": "deneme",
   "This stage has not run yet": "Bu aşama henüz çalışmadı",
   "No output recorded": "Kaydedilmiş çıktı yok",
@@ -889,7 +894,12 @@ const TR: Record<string, string> = {
   "Completed stages": "Tamamlanan aşamalar",
   "Complete": "Tamamlandı",
   "Last activity": "Son etkinlik",
-  "Select a completed node in the Editor to inspect its readable artifacts and evidence.": "Okunabilir artifact'ları ve kanıtları incelemek için Düzenleyici'de tamamlanmış bir düğüm seçin.",
+  // #443: the panel used to end by telling the reader to select a node in the
+  // Editor while offering no way to point the Editor at the run it described.
+  // It has one now, so the sentence names it instead.
+  "Open in the Editor": "Düzenleyici'de aç",
+  "Open this execution in the Editor": "Bu çalışmayı Düzenleyici'de aç",
+  "Open this execution to draw its graph, artifacts and evidence in the Editor.": "Grafiğini, artifact'larını ve kanıtlarını Düzenleyici'de görmek için bu çalışmayı açın.",
   "Uploaded data": "Yüklenen veri",
   "Uploaded files": "Yüklenen dosyalar",
   "{count} files": "{count} dosya",
