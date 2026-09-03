@@ -53,7 +53,7 @@ from ads.agents.validation_strategy import (
 )
 from ads.contracts.agents import AgentAudit, AgentMemberAudit
 from ads.contracts.base import ArtifactType
-from ads.contracts.datacard import ColumnProfile, DataCard, SemanticType
+from ads.contracts.datacard import DataCard, SemanticType
 from ads.contracts.gates import QualitySignals
 from ads.contracts.integration import IntegrationPlan, IntegrationPlanProposal, IntegrationTrial
 from ads.contracts.problem import (
@@ -68,7 +68,7 @@ from ads.contracts.validation import (
     ValidationStrategy,
     ValidationStrategyProposal,
 )
-from ads.discovery.support import MAX_CLASSES
+from ads.discovery.support import supervised_task_type_for
 from ads.intake import detect_primary_keys, detect_relationships
 from ads.llm import StructuredLLM
 from ads.orchestration import RunState, StageResult
@@ -594,26 +594,10 @@ _QUICK_METRIC_BY_TASK: dict[TaskType, Metric] = {
 }
 
 
-def _infer_supervised_task_type(profile: ColumnProfile) -> TaskType:
-    """Read a task type off a target column's own measured shape (#241).
-
-    Same rule the ProblemDiscoveryAgent's system prompt states for the LLM to
-    follow: 2 distinct values is binary, 3+ is multiclass, continuous numeric is
-    regression. Falls back to regression for a shape that fits none of those --
-    ``compute_support`` then raises the mismatch as a named blocking reason on
-    the candidate rather than this function raising and failing the stage, so
-    the human sees why instead of the run just breaking.
-    """
-    if profile.semantic_type in (SemanticType.NUMERIC_CONTINUOUS, SemanticType.NUMERIC_DISCRETE):
-        return TaskType.REGRESSION
-    if profile.semantic_type is SemanticType.BOOLEAN:
-        return TaskType.BINARY_CLASSIFICATION
-    if profile.semantic_type is SemanticType.CATEGORICAL:
-        if profile.n_unique == 2:
-            return TaskType.BINARY_CLASSIFICATION
-        if 3 <= profile.n_unique <= MAX_CLASSES:
-            return TaskType.MULTICLASS_CLASSIFICATION
-    return TaskType.REGRESSION
+#: #429 moved the rule itself to `ads.discovery.support`, beside the
+#: measurement that has to agree with it. Kept as a name here because this
+#: module's readers know it by this one.
+_infer_supervised_task_type = supervised_task_type_for
 
 
 def _quick_problem_proposal(selection: dict[str, Any], card: DataCard) -> ProblemCandidateProposal:

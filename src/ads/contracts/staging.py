@@ -339,6 +339,17 @@ class RuntimeConfigurationPlan(FrozenModel):
     auto_proceed_stages: list[str] = Field(default_factory=list)
     max_retries_by_stage: dict[str, int] = Field(default_factory=dict)
     rationale: list[LocalizedText] = Field(default_factory=list)
+    #: The record of a person overriding a deferral by naming the target
+    #: themselves, with what the measurement said about their choice.
+    #:
+    #: #429: the panel's closing line promised "the override is the Planner",
+    #: but the Planner is a chat box, not an override control -- so a deferred
+    #: plan whose target was measurably viable had no way forward at all. An
+    #: override is a human decision about someone else's recommendation, so it
+    #: is kept beside the recommendation rather than replacing it: the
+    #: planner's `decision_summary` still says what it wanted, and this says
+    #: what the person did instead and on what evidence.
+    human_override: LocalizedText | None = None
     # Retained for old artifacts/API clients while ``status`` becomes authoritative.
     accepted: bool = False
     accepted_at: datetime | None = None

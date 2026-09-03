@@ -606,7 +606,6 @@ const TR: Record<string, string> = {
   "candidate key": "aday anahtar",
   "candidate keys": "aday anahtar",
   "Ask the Planner to reconsider": "Planner'a yeniden değerlendirmesini söyle",
-  "No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.": "Bir insan bu öneriyi açıkça geçersiz kılmadıkça hiçbir pipeline çalışmaz. Geçersiz kılma yeri Planner'dır: eksik olanı söylersen bir pipeline önerebilir.",
   "Stage {stage} produced nothing, so there is no output to approve. Send it back for rework, or stop the run.": "{stage} aşaması hiçbir şey üretmedi, onaylanacak bir çıktı yok. Yeniden çalışması için geri gönder ya da koşumu durdur.",
   "Approve and continue": "Onayla ve devam et",
   "Accept this stage's output as-is and proceed to the next stage.": "Bu aşamanın çıktısını olduğu gibi kabul et ve sonraki aşamaya geç.",
@@ -1058,6 +1057,35 @@ const TR: Record<string, string> = {
   "Model {target}": "{target} modelle",
   "Analyze and explain the available evidence": "Mevcut kanıtı analiz et ve açıkla",
   "Review the future steps before they become executable components.": "Gelecek adımları çalıştırılabilir bileşenlere dönüşmeden önce inceleyin.",
+  // #429: answering a deferred plan from the panel that reports it, instead of
+  // a dead end whose closing line pointed at a chat box.
+  "Name the target yourself": "Hedefi kendiniz belirleyin",
+  "The Planner is waiting on evidence it cannot ask this product for. Naming the target measures it directly and proceeds if the data supports it.": (
+    "Planlayıcı, bu üründen isteyemeyeceği bir kanıtı bekliyor. Hedefi belirlemek onu " +
+    "doğrudan ölçer ve veri destekliyorsa devam eder."
+  ),
+  "You can still aim this at a column. The data is measured before anything runs, and an unsuitable column comes back with the reasons.": (
+    "Bunu yine de bir sütuna yöneltebilirsiniz. Veri, hiçbir şey çalışmadan önce ölçülür " +
+    "ve uygun olmayan bir sütun gerekçeleriyle birlikte geri döner."
+  ),
+  "Measure and continue": "Ölç ve devam et",
+  "Measuring…": "Ölçülüyor…",
+  "★ marks the {count} columns already measured as plausible targets.": (
+    "★ işareti, makul hedef olarak zaten ölçülmüş {count} sütunu gösterir."
+  ),
+  "{column} cannot carry this task": "{column} bu görevi taşıyamaz",
+  "Pick another column, or state the task type explicitly.": (
+    "Başka bir sütun seçin ya da görev tipini açıkça belirtin."
+  ),
+  "The Planner can also be asked to reconsider: tell it what it is missing and it can propose a pipeline itself.": (
+    "Planlayıcıdan yeniden değerlendirmesi de istenebilir: neyin eksik olduğunu söylerseniz " +
+    "işlem hattını kendisi önerebilir."
+  ),
+  "Human override": "İnsan geçersiz kılması",
+  "From the column's shape": "Sütunun şeklinden",
+  "Regression": "Regresyon",
+  "Binary classification": "İkili sınıflandırma",
+  "Multiclass classification": "Çok sınıflı sınıflandırma",
   "Agent rationale": "Ajan gerekçesi",
   "Accepting…": "Kabul ediliyor…",
   "Accept plan": "Planı kabul et",
@@ -1104,10 +1132,6 @@ const TR: Record<string, string> = {
     "Alım, şema keşfi ve entegrasyon korunur."
   ),
   "Re-run problem discovery": "Problem keşfini yeniden çalıştır",
-  "From the column's shape": "Sütunun şeklinden",
-  "Regression": "Regresyon",
-  "Binary classification": "İkili sınıflandırma",
-  "Multiclass classification": "Çok sınıflı sınıflandırma",
   "This stage failed": "Bu aşama başarısız oldu",
   "No error was recorded for it.": "Bunun için bir hata kaydedilmedi.",
   "Accepted ML plan": "Kabul edilen ML planı",

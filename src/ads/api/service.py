@@ -91,6 +91,7 @@ from ads.contracts.staging import (
     StagingWorkspace,
 )
 from ads.contracts.validation import SplitStrategy, ValidationStrategy
+from ads.discovery.support import compute_support, supervised_task_type_for
 from ads.documents import (
     PDF_SUFFIXES,
     CandidateNotPromotable,
@@ -107,6 +108,7 @@ from ads.intake import (
     TooManyTablesForPairwiseDetection,
     detect_relationships,
     load_directory_with_failures,
+    profile_table,
     profile_tables,
 )
 from ads.intake.loaders import CSV_SUFFIXES, EXCEL_SUFFIXES, PARQUET_SUFFIXES
@@ -2507,6 +2509,206 @@ class ControlPlane:
     @staticmethod
     def _plan_is_accepted(plan: RuntimeConfigurationPlan | None) -> bool:
         return bool(plan and (plan.status == "accepted" or plan.accepted))
+
+    def _planned_base_table(self, run_id: str) -> str:
+        """The table schema discovery chose as the ABT base, if it ran."""
+        for reference in self.store.list(run_id, artifact_type=ArtifactType.INTEGRATION_PLAN):
+            try:
+                return self.store.load(reference.artifact_id, IntegrationPlan).base_table
+            except Exception:
+                continue
+        return ""
+
+    def deferred_plan_targets(self, run_id: str) -> list[dict[str, Any]]:
+        """The columns a person may name as the target, with what is known.
+
+        #429: `is_usable_target` already marks the plausible ones -- `y` is in
+        that list for the reported file -- and the panel had no way to show
+        them. Read off the base table's profile so the names match what the
+        pipeline will actually see, snake-cased and all.
+        """
+        workspace = self._latest_staging_workspace(run_id)
+        if workspace is None:
+            raise KeyError(run_id)
+        base_table = ""
+        if workspace.recommended_plan:
+            base_table = str(workspace.recommended_plan.configuration.get("base_table") or "")
+        profile = self.source_profile(workspace.source_id)
+        tables = [item for item in profile["tables"] if item.get("columns")]
+        if not tables:
+            return []
+        table = next((item for item in tables if item["name"] == base_table), tables[0])
+        return [
+            {
+                "name": column["name"],
+                "table": table["name"],
+                "semantic_type": column.get("semantic_type"),
+                "candidate_target": bool(column.get("candidate_target")),
+                "null_rate": column.get("null_rate"),
+                "unique_rate": column.get("unique_rate"),
+            }
+            for column in table["columns"]
+        ]
+
+    def measured_target_support(self, run_id: str, target_column: str, task_type: str | None):
+        """What the data says about one proposed target, measured now.
+
+        #429: `compute_support` is the product's own answer to "can this
+        framing work", and at the point a deferral is shown nothing had ever
+        asked it about the column a person would name. On the reported
+        `bank.csv` it returns viable with no blocking reasons at all, so the
+        deferral was standing in front of a target the product could already
+        prove was fine.
+
+        Measured against the base table as intake profiled and loaded it. The
+        integrated ABT does not exist yet at staging time -- integration is an
+        ML stage -- and for the single-table case they are the same rows.
+        """
+        workspace = self._latest_staging_workspace(run_id)
+        base_table = ""
+        if workspace and workspace.recommended_plan:
+            base_table = str(workspace.recommended_plan.configuration.get("base_table") or "")
+        if not base_table:
+            base_table = self._planned_base_table(run_id)
+
+        source_id = workspace.source_id if workspace else ""
+        runtime = self._runtime_runs.get(run_id)
+        source_id = source_id or (runtime.source_id if runtime else "")
+        if not source_id:
+            raise ValueError("this run does not record its source")
+        loaded, _unreadable = load_directory_with_failures(self.source_path(source_id))
+        if not loaded:
+            raise ValueError("the source has no readable table to measure against")
+        table = next((item for item in loaded if item.name == base_table), loaded[0])
+        card = profile_table(table)
+        column = card.column(target_column)
+        if column is None:
+            raise ValueError(
+                f"target_column {target_column!r} is not a column of {card.table_name!r}"
+            )
+        chosen = (
+            TaskType(str(task_type))
+            if task_type
+            else supervised_task_type_for(column)
+        )
+        if chosen is TaskType.ANOMALY_DETECTION:
+            raise ValueError("anomaly detection does not predict a column")
+        support = compute_support(
+            card, table.frame, target_column=target_column, task_type=chosen
+        )
+        return card, table, chosen, support
+
+    def override_deferred_plan(
+        self,
+        run_id: str,
+        *,
+        base_artifact_id: str,
+        target_column: str,
+        task_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Answer a deferral by naming the target, if the data supports it.
+
+        #429: the panel rendered the badge, the decision summary and the Agent
+        rationale, then nothing -- no way to perform the named review, no way
+        to name the target, no way to proceed. The review it named is not
+        something this product can be asked to do; the only human review
+        implemented is the PDF table review, which does not apply to a single
+        CSV. And a deferred plan is persisted with an empty configuration, so
+        accepting one as-is would yield no `base_table`, `base_grain`,
+        `candidate_limit` or `n_folds`. Naming the target is what supplies all
+        of that, which is why it is the override rather than a bare "proceed".
+
+        The measurement decides. An unviable column comes back with the
+        blocking reasons for *that* column and the plan is left alone -- a real
+        answer instead of a block with no stated cause. The plan stays
+        `proposed` when it is lifted: unblocking and accepting are two
+        decisions and the person still makes the second one.
+        """
+        latest_ref = self.store.latest(run_id, ArtifactType.STAGING_WORKSPACE)
+        if latest_ref is None:
+            raise ValueError("the staging workspace is not ready")
+        if latest_ref.artifact_id != base_artifact_id:
+            raise StagingWorkspaceConflict(
+                "the staging workspace changed; review the latest proposal"
+            )
+        previous = self.store.load(latest_ref.artifact_id, StagingWorkspace)
+        plan = previous.recommended_plan
+        if plan is None:
+            raise ValueError("the Planner has not proposed a workflow")
+        if plan.pipeline_recommendation == "create_pipeline":
+            raise ValueError("this plan already proposes a pipeline; there is nothing to override")
+        if plan.status != "proposed":
+            raise ValueError("this plan has already been decided")
+        column = str(target_column).strip()
+        if not column:
+            raise ValueError("target_column is required")
+
+        card, _table, chosen, support = self.measured_target_support(run_id, column, task_type)
+        if not support.is_viable:
+            # The honest answer, and the one the reader can act on: the
+            # measured reasons this column cannot carry this task.
+            return {
+                "run_id": run_id,
+                "artifact_id": latest_ref.artifact_id,
+                "viable": False,
+                "target_column": column,
+                "task_type": chosen.value,
+                "blocking_reasons": list(support.blocking_reasons),
+                "warnings": list(support.warnings),
+            }
+
+        configuration = {
+            **plan.configuration,
+            "base_table": card.table_name,
+            "target_column": column,
+            "task_type": chosen.value,
+            # A named target is a constraint, not a hint for the agent to rank
+            # first: `problem_discovery` builds this candidate directly and
+            # measures it (#241), which is the same thing just measured above.
+            "problem_selection": {"kind": "predict_column", "target_column": column},
+        }
+        primary_key = next(iter(card.candidate_primary_keys), None)
+        if primary_key and "base_grain" not in configuration:
+            configuration["base_grain"] = list(primary_key)
+        # A deferred plan is persisted with an empty configuration, so these
+        # are what make the lifted one runnable at all (#429).
+        configuration.setdefault("candidate_limit", 2)
+        configuration.setdefault("n_folds", 5)
+        overridden = plan.model_copy(
+            update={
+                "pipeline_recommendation": "create_pipeline",
+                "configuration": configuration,
+                "human_override": self._localized(
+                    f"A person named {column!r} as the target, overriding the Planner's "
+                    f"deferral. Measured support: viable, {support.n_rows} rows, "
+                    f"{support.n_usable_features} usable features.",
+                    f"Bir kişi hedef olarak {column!r} sütununu belirledi ve planlayıcının "
+                    f"ertelemesini geçersiz kıldı. Ölçülen destek: uygulanabilir, "
+                    f"{support.n_rows} satır, {support.n_usable_features} kullanılabilir "
+                    f"öznitelik.",
+                ),
+            }
+        )
+        saved = previous.model_copy(update={"recommended_plan": overridden})
+        reference = self.store.put(
+            saved,
+            run_id=run_id,
+            stage_exec_id="plan-override",
+            name="data_understanding",
+        )
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is not None:
+            self._sync_automation_workspace(runtime, saved, reference.artifact_id)
+        return {
+            "run_id": run_id,
+            "artifact_id": reference.artifact_id,
+            "viable": True,
+            "target_column": column,
+            "task_type": chosen.value,
+            "blocking_reasons": [],
+            "warnings": list(support.warnings),
+            **saved.model_dump(mode="json"),
+        }
 
     def accept_staging_plan(
         self,
@@ -8532,6 +8734,43 @@ def create_app(
         except StagingWorkspaceConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.get("/api/runs/{run_id}/staging/plan/targets")
+    def deferred_plan_targets(run_id: str) -> dict[str, Any]:
+        """#429: the columns a person can name to answer a deferral.
+
+        `is_usable_target` already marks the plausible ones, and the panel had
+        no way to show them -- so a deferred plan whose target was measurably
+        viable read as a dead end.
+        """
+        try:
+            return {"run_id": run_id, "columns": plane.deferred_plan_targets(run_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown run") from None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    @app.post("/api/runs/{run_id}/staging/plan/override")
+    def override_deferred_plan(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """#429: answer a deferral by naming the target, if the data supports it.
+
+        A 200 whose `viable` is false is not an error: it is the measurement's
+        answer about the column, with the blocking reasons for it, and the plan
+        is left exactly as it was.
+        """
+        try:
+            return plane.override_deferred_plan(
+                run_id,
+                base_artifact_id=str(body["base_artifact_id"]),
+                target_column=str(body.get("target_column") or ""),
+                task_type=body.get("task_type") or None,
+            )
+        except StagingWorkspaceConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=f"missing field {exc}") from None
+        except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/runs/{run_id}/staging/plan/accept")
