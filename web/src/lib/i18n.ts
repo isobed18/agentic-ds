@@ -620,6 +620,8 @@ const TR: Record<string, string> = {
   "Resize node width": "Düğüm genişliğini yeniden boyutlandır",
   "Resize node height": "Düğüm yüksekliğini yeniden boyutlandır",
   "Resize node": "Düğümü yeniden boyutlandır",
+  // #407: the same drag on the docked inspector, whose width used to be fixed.
+  "Resize panel": "Paneli yeniden boyutlandır",
   "attempt": "deneme",
   "This stage has not run yet": "Bu aşama henüz çalışmadı",
   "No output recorded": "Kaydedilmiş çıktı yok",
