@@ -47,7 +47,11 @@ import { FileInsight } from "./FileInsight";
  * `accepted` exists because the node stays on the canvas once the plan is
  * accepted (#214) -- before that the whole screen was replaced, so the node
  * never had to describe a plan it had already handed on. */
-export type ProposalStatus = "pending" | "ready" | "accepted" | "blocked";
+/** #462: `working` is the state the node had no way to be in. A promotion
+ *  re-enters the graph on a background worker, and until it finishes the plan
+ *  on the workspace is the one from before -- so the node either claimed a
+ *  finished proposal or reported the deferral the promotion was answering. */
+export type ProposalStatus = "pending" | "ready" | "accepted" | "blocked" | "working";
 
 export type CanvasSelection = "source" | "discovery" | "structured" | "documents" | "synthesis" | "proposal" | null;
 
@@ -103,7 +107,7 @@ export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles
 // #362: `onRetry` went with the yellow banner -- it was that banner's only
 // caller, and a run stopped at a gate is answered on the ApprovalCard (which
 // offers "Stop the run" among its options) rather than restarted from here.
-export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUpdated }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
+export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUpdated, onPromoted }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void; onPromoted?: () => void }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
   const diagnosticIds = useMemo(() => diagnosticIdsOf(progress), [progress]);
@@ -118,9 +122,20 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
   const extraction = workspace?.document_extractions?.at(-1);
   const tableCandidates = extraction?.table_candidates ?? 0;
   const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0);
-  // The parent polls the staging workspace while understanding is live, so the
-  // counts behind this notice catch up on their own; nothing to refetch here.
-  const afterPromotion = () => undefined;
+  // #462: this was `() => undefined`, on the stated assumption that "the
+  // parent polls the staging workspace while understanding is live". It does
+  // not -- that poll is gated on `isRunActive`, and by the time this notice is
+  // on screen the run is `staged` or `awaiting_human`, neither of which is
+  // active. So the one notice whose whole purpose is to send a person to the
+  // review dialog was the one that refreshed nothing at all afterwards. The
+  // parent re-reads the run, which is what restarts the poll; falling back to
+  // the workspace alone keeps a caller that supplies neither working.
+  const afterPromotion = () => {
+    if (onPromoted) { onPromoted(); return; }
+    if (runId && onWorkspaceUpdated) {
+      void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined);
+    }
+  };
   // #384: the notice is a fixed banner pinned over the top of the viewport with
   // no way to get rid of it. Dismissal is local UI state and nothing else -- it
   // does not touch the run or the routing outcome, and a reload shows it again.
@@ -152,10 +167,10 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
         secondaryLabel={canReviewTables && explainsDecision ? t("See the full reason") : undefined}
         onSecondary={() => setSelection("proposal")} />}
       {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} onClose={() => setReviewing(false)} onPromoted={afterPromotion} />}
-      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
+      {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} onPromoted={afterPromotion} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
-      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} />
+      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.replanning ? "working" : routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} />
     </CanvasSurface>
   );
 }
@@ -330,11 +345,15 @@ export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArt
       </div>
       <MergeConnector branches={branches.length} status={routing.synthesis} />
       <PhaseNode title={t("Synthesize")} subtitle={t("Bring findings together")} status={routing.synthesis} onClick={() => onSelect("synthesis")} artifactIds={reportIds} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onOpenArtifact={onOpenArtifact} compact />
-      <GraphEdge status={proposal === "ready" || proposal === "accepted" ? "complete" : proposal === "blocked" ? "failed" : "pending"} />
-      <button type="button" onClick={() => onSelect("proposal")} className={cx("w-[11.875rem] rounded-2xl border-2 p-4 text-left shadow-card transition hover:-translate-y-0.5", proposal === "accepted" ? "border-ok-300 bg-ok-50/70 hover:border-ok-400" : proposal === "ready" ? "border-brand-300 bg-brand-50/80 hover:border-brand-500" : proposal === "blocked" ? "border-stop-300 bg-stop-50" : "border-dashed border-line bg-surface/80")}>
+      <GraphEdge status={proposal === "ready" || proposal === "accepted" ? "complete" : proposal === "blocked" ? "failed" : proposal === "working" ? "running" : "pending"} />
+      <button type="button" onClick={() => onSelect("proposal")} className={cx("w-[11.875rem] rounded-2xl border-2 p-4 text-left shadow-card transition hover:-translate-y-0.5", proposal === "accepted" ? "border-ok-300 bg-ok-50/70 hover:border-ok-400" : proposal === "ready" ? "border-brand-300 bg-brand-50/80 hover:border-brand-500" : proposal === "blocked" ? "border-stop-300 bg-stop-50" : proposal === "working" ? "border-brand-400 bg-brand-50/60 ring-4 ring-brand-50" : "border-dashed border-line bg-surface/80")}>
         <p className="text-3xs font-semibold uppercase tracking-[0.12em] text-brand-600">{t(proposal === "accepted" ? "Accepted" : "Proposed")}</p>
         <p className="mt-2 text-sm font-semibold text-ink">{t("Proposed plan")}</p>
-        <p className="mt-1 text-3xs text-ink-mute">{proposal === "accepted" ? t("The pipeline below runs this plan") : proposal === "ready" ? t("Ready for review") : proposal === "blocked" ? t("Blocked — no plan was created") : t("Created after synthesis")}</p>
+        {/* #462: the node used to keep describing the plan from before a
+            promotion for as long as the re-authoring ran -- and, after a
+            deferral, to say it was blocked while the very thing unblocking it
+            was in flight. */}
+        <p className="mt-1 text-3xs text-ink-mute">{proposal === "accepted" ? t("The pipeline below runs this plan") : proposal === "ready" ? t("Ready for review") : proposal === "blocked" ? t("Blocked — no plan was created") : proposal === "working" ? t("Re-authoring after the promoted tables…") : t("Created after synthesis")}</p>
       </button>
       {trailing ?? (proposal !== "blocked" && <><GraphEdge status="pending" /><ProposedPipelinePreview /></>)}
     </div>
@@ -352,7 +371,7 @@ export function BranchNode({ title, files, steps, artifactIds, activeArtifactId,
   </button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
 }
 
-export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId, onWorkspaceUpdated }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
+export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId, onWorkspaceUpdated, onPromoted }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void; onPromoted?: () => void }) {
   const titles: Record<Exclude<CanvasSelection, null>, string> = {
     source: t("Uploaded files"), discovery: t("Intake and source routing"), structured: t("Structured data"), documents: t("Understand documents"), synthesis: t("Cross-source synthesis"), proposal: t("Proposed plan"),
   };
@@ -360,13 +379,13 @@ export function RoutingInspector({ selection, profile, workspace, routing, onClo
     {selection === "source" && <SourceOverview profile={profile} />}
     {selection === "discovery" && <RoutingDetails files={routing.files} />}
     {selection === "structured" && <StructuredDetails profile={profile} workspace={workspace} routing={routing} />}
-    {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
+    {selection === "documents" && <DocumentDetails workspace={workspace} routing={routing} onOpenArtifact={onOpenArtifact} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} onPromoted={onPromoted} />}
     {selection === "synthesis" && (workspace?.planner_error ? <div className="rounded-xl border border-stop-200 bg-stop-50 p-4"><p className="text-xs font-semibold text-stop-700">{t("Planner synthesis failed")}</p><p className="mt-2 break-words text-2xs leading-relaxed text-stop-700">{workspace.planner_error}</p></div> : workspace ? <UnderstandingResults profile={profile} workspace={workspace} onOpenArtifact={onOpenArtifact} /> : <ProgressList steps={[...routing.structured, ...routing.documents]} />)}
     {/* #385: gated on the plan existing, not on the caller happening to offer
         an advanced editor. "Plan not ready yet" now means what it says --
         synthesis has not produced a recommendation -- rather than standing in
         for a decision the Planner has already made and explained. */}
-    {selection === "proposal" && (workspace?.recommended_plan ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
+    {selection === "proposal" && (workspace?.recommended_plan ? <PlanProposal profile={profile} workspace={workspace} onAccept={onAccept} onAdvanced={onAdvanced} onOpenPlanner={onOpenPlanner} busy={busy} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} onPromoted={onPromoted} /> : <Empty title={t("Plan not ready yet")} hint={t("The proposal appears after structured and document findings are synthesized.")} />)}
   </Inspector>;
 }
 
@@ -488,7 +507,7 @@ function StructuredDetails({ profile, workspace, routing }: { profile: SourcePro
   return <div className="space-y-5"><ProgressList steps={routing.structured} /><EvidenceSection title={t("Measured source facts")} tone="measured"><RoutingDetails files={files} /><div className="mt-3 grid grid-cols-2 gap-2"><Metric label={t("Tables")} value={profile.tables.length} /><Metric label={t("Structured rows")} value={profile.tables.reduce((sum, table) => sum + table.rows, 0).toLocaleString()} /></div></EvidenceSection>{workspace && <EvidenceSection title={t("Measured relationships")} tone="measured"><MeasuredSchema profile={profile} /><RelationshipList workspace={workspace} /></EvidenceSection>}</div>;
 }
 
-function DocumentDetails({ workspace, routing, onOpenArtifact, runId, onWorkspaceUpdated }: { workspace: StagingWorkspace | null; routing: StagingRoutingState; onOpenArtifact: (id: string) => void; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
+function DocumentDetails({ workspace, routing, onOpenArtifact, runId, onWorkspaceUpdated, onPromoted }: { workspace: StagingWorkspace | null; routing: StagingRoutingState; onOpenArtifact: (id: string) => void; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void; onPromoted?: () => void }) {
   const extraction = workspace?.document_extractions?.at(-1);
   const [reviewing, setReviewing] = useState(false);
   // #76 follow-up: promoting accepted candidates used to end at the dialog's
@@ -499,7 +518,13 @@ function DocumentDetails({ workspace, routing, onOpenArtifact, runId, onWorkspac
   // a person reaches this dialog from the accepted-plan screen. Re-fetch the
   // workspace the promotion actually changed and hand it to the caller so the
   // whole canvas (and the agent's next synthesis) sees the promoted tables.
+  // #462: this re-read the workspace once, the moment the promote call
+  // returned -- while the replan worker was still re-profiling -- so it stored
+  // the pre-promotion snapshot and never looked again. The parent's callback
+  // re-reads the run instead, which restarts the poll that carries the canvas
+  // to the re-authored plan.
   async function handlePromoted() {
+    if (onPromoted) { onPromoted(); return; }
     if (!runId) return;
     try { onWorkspaceUpdated?.(await api.stagingWorkspace(runId)); }
     catch { /* the dialog already reported success; a stale canvas is not worth a new error banner */ }
@@ -622,7 +647,7 @@ export function SourceOverview({ profile, onRemoveFile, onAddFiles, busy = false
  *  handlers, so a run the Planner had declined showed "Plan not ready yet"
  *  beside a node reading "Blocked — no plan was created". The explanation is
  *  what the panel is for; only the actions depend on having somewhere to go. */
-function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy, runId, onWorkspaceUpdated }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
+function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner, busy, runId, onWorkspaceUpdated, onPromoted }: { profile: SourceProfile; workspace: StagingWorkspace; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void; onPromoted?: () => void }) {
   // #402: the "Context only" section below says extracted tables stay
   // review-only until a human promotes them, and used to offer no way to be
   // that human -- the only Review button was on the Documents node, a canvas
@@ -637,7 +662,11 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const promotedIds = useMemo(() => promotedTables.map((table) => table.candidate_id), [promotedTables]);
   // Promoting rewrites the workspace behind this panel, so re-read it rather
   // than leaving the count describing the state before the promotion.
+  // #462: one immediate read races the replan worker, which is still
+  // re-profiling when the promote call returns. The parent's callback re-reads
+  // the run, and the poll that restarts brings this panel the re-authored plan.
   function reloadWorkspace() {
+    if (onPromoted) { onPromoted(); return; }
     if (!runId || !onWorkspaceUpdated) return;
     void api.stagingWorkspace(runId).then(onWorkspaceUpdated).catch(() => undefined);
   }

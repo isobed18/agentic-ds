@@ -1440,7 +1440,10 @@ const TR: Record<string, string> = {
     "{count} planlı inceleme kontrol noktasıyla çalışır.",
   "Staging stopped": "Hazırlık durdu",
   "Planner synthesis failed": "Planlayıcı sentezi başarısız oldu",
-  "Blocked — no plan was created": "Engellendi — plan oluşturulmadı",
+// #462: the plan node had no working state, so a promotion re-authoring the
+  // plan on a background worker left it describing the state before it.
+  "Re-authoring after the promoted tables…": "Veriye alınan tablolardan sonra plan yeniden kurgulanıyor…",
+    "Blocked — no plan was created": "Engellendi — plan oluşturulmadı",
   "Inspect failure": "Hatayı incele",
   // #365: understanding that ends with nothing to accept says so, instead of
   // leaving the proposal node pending forever with no message anywhere.
