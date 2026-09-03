@@ -119,3 +119,30 @@ describe("reaching notifications from inside a project (#286)", () => {
     expect(SHELL_SOURCE).toContain("{!isAutomationEditor && <header");
   });
 });
+
+describe("clearing the automation name is a cancelled edit (#425)", () => {
+  it("sends nothing for an empty field and puts the saved name back", () => {
+    // `"" !== automation.name`, so the old guard fell through and PUT
+    // `{ name: "" }`. That fails `min_length=1` on the contract, so the reader
+    // got a stringified pydantic error and the box was left blank -- hiding
+    // the automation's real name until a reload, while every further click
+    // away fired the same failing request again.
+    expect(AUTOMATION_SOURCE).toContain("const trimmed = name.trim();");
+    expect(AUTOMATION_SOURCE).toContain(
+      "if (!automation || !trimmed || trimmed === automation.name) { setName(automation?.name ?? name); return; }",
+    );
+  });
+
+  it("restores the saved name when the server rejects a rename", () => {
+    // The catch used to leave `name` as typed, so the header kept showing a
+    // name the automation does not have.
+    expect(AUTOMATION_SOURCE).toContain("catch (caught) { setError(messageOf(caught)); setName(automation.name); }");
+  });
+
+  it("matches the sibling screen, which already had both guards", () => {
+    // `ProjectWorkspace.persistName` is the same function; this bug was the
+    // two pieces it has and this one did not.
+    expect(PROJECT_SOURCE).toContain("if (!project || !trimmed || trimmed === project.name)");
+    expect(PROJECT_SOURCE).toContain("setError(messageOf(caught)); setName(project.name);");
+  });
+});

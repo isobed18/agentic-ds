@@ -83,6 +83,12 @@ _TR: dict[str, str] = {
     "Split strategy": "Bölme stratejisi",
     "Feature pipeline": "Öznitelik hattı",
     # --- recurring sentences
+    # #425: what a person is told when a request violates a contract. The
+    # pydantic dump that used to be sent instead named the model, the field
+    # path and an errors.pydantic.dev link, all in English.
+    "Those settings are not valid, so nothing was changed.": (
+        "Bu ayarlar geçerli değil, bu yüzden hiçbir şey değiştirilmedi."
+    ),
     "Aggregates data from the holdout period": "Holdout dönemindeki veriyi de topluyor",
     "Candidate comparison and the diagnostics that say whether to trust it.": (
         "Aday karşılaştırması ve sonuca güvenilip güvenilmeyeceğini söyleyen tanılar."

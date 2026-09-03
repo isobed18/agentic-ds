@@ -144,10 +144,20 @@ function AutomationEditor({ projectId, automationId }: { projectId: string; auto
     void refreshAutomation().catch((caught) => setError(messageOf(caught)));
   }
 
+  // #425: an empty field is a cancelled edit, not a rename to "". Blurring it
+  // used to PUT `{ name: "" }`, which fails `min_length=1` on the contract, so
+  // the reader got a stringified pydantic error -- field path, error code and
+  // an errors.pydantic.dev link, in English, on a Turkish screen -- and the
+  // box stayed blank, hiding the automation's real name until a reload while
+  // every further click away fired the same failing request again. Restoring on
+  // failure covers the renames that do reach the server and are rejected
+  // there, for the same reason: the name on screen should never be one the
+  // automation does not have. `ProjectWorkspace.persistName` has both guards.
   async function persistName() {
-    if (!automation || name.trim() === automation.name) { setName(automation?.name ?? name); return; }
-    try { const saved = await api.updateAutomationSafely(automationId, automation.revision, { name: name.trim() }); setAutomation(saved); setName(saved.name); }
-    catch (caught) { setError(messageOf(caught)); }
+    const trimmed = name.trim();
+    if (!automation || !trimmed || trimmed === automation.name) { setName(automation?.name ?? name); return; }
+    try { const saved = await api.updateAutomationSafely(automationId, automation.revision, { name: trimmed }); setAutomation(saved); setName(saved.name); }
+    catch (caught) { setError(messageOf(caught)); setName(automation.name); }
   }
 
   async function startUnderstanding() {
