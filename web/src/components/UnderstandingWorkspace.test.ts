@@ -10,6 +10,7 @@ import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
 import AUTOMATION_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
+import CATALOGUE from "../lib/i18n.ts?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 import { t } from "../lib/i18n";
 
@@ -396,11 +397,48 @@ describe("the outcome notice's action (#388)", () => {
     // action a person needs on this notice. The label and the target now match
     // the Documents panel's own entry point into the same dialog.
     expect(WORKSPACE_SOURCE).toContain("const canReviewTables = Boolean(runId && extraction?.artifact_id && tableCandidates > 0)");
-    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : t("Inspect understanding")');
-    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? setReviewing(true) : setSelection("synthesis")');
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? t("Review {count} extracted tables", { count: tableCandidates }) : explainsDecision ? t("See the full reason") : t("Inspect understanding")');
+    expect(WORKSPACE_SOURCE).toContain('canReviewTables ? setReviewing(true) : explainsDecision ? setSelection("proposal") : setSelection("synthesis")');
     // The notice renders for declined / deferred / no_plan alike, so the label
     // is a prop rather than a literal inside OutcomeNotice.
     expect(WORKSPACE_SOURCE).toContain("onClick={onInspect}>{actionLabel}</button>");
+  });
+});
+
+describe("a deferred or declined decision can be read in full (#409)", () => {
+  it("sends the notice's action to the panel that explains the decision", () => {
+    // The banner shows `decision_summary` plus four rationale bullets and
+    // nothing else. `PlanProposal`'s non-create branch already renders the
+    // unsliced summary, the whole rationale list, and "Ask the Planner to
+    // reconsider" -- and the action routed past it to the synthesis node.
+    expect(WORKSPACE_SOURCE).toContain(
+      'const explainsDecision = outcome?.kind === "deferred" || outcome?.kind === "declined"',
+    );
+    expect(WORKSPACE_SOURCE).toContain('explainsDecision ? setSelection("proposal")');
+    // `no_plan` keeps the synthesis target: there is no plan record behind it
+    // to open, which is exactly what that outcome means.
+    expect(WORKSPACE_SOURCE).toContain(': setSelection("synthesis")');
+  });
+
+  it("keeps the table review as the primary action and the reason beside it", () => {
+    // #388 gave the primary action to the table review when there are
+    // candidates to choose. That still holds; the reason gets its own link
+    // rather than displacing it.
+    expect(WORKSPACE_SOURCE).toContain(
+      'secondaryLabel={canReviewTables && explainsDecision ? t("See the full reason") : undefined}',
+    );
+    expect(WORKSPACE_SOURCE).toContain("{secondaryLabel && onSecondary && <button");
+  });
+
+  it("says when the rationale list is truncated", () => {
+    // Four of nine reasons used to look like the whole account.
+    expect(WORKSPACE_SOURCE).toContain("outcome.rationale.length > 4 &&");
+    expect(WORKSPACE_SOURCE).toContain('t("+{count} more reasons", { count: outcome.rationale.length - 4 })');
+  });
+
+  it("translates both new strings", () => {
+    expect(CATALOGUE).toContain('"See the full reason": "Gerekçenin tamamını gör"');
+    expect(CATALOGUE).toContain('"+{count} more reasons": "+{count} gerekçe daha"');
   });
 });
 
