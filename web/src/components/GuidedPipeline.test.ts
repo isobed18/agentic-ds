@@ -240,7 +240,7 @@ describe("target-column picker (#244/#198)", () => {
     // Defaulting to the plan's target means an unchanged picker is a no-op; a
     // changed one aims the run. The value travels with the run mode into onRun.
     expect(SOURCE).toContain('useState<string>(String(planConfig.target_column ?? ""))');
-    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])');
   });
 
   it("says which of the two modes the picker is in", () => {
@@ -266,7 +266,7 @@ describe("quick problem selector (#241)", () => {
   });
 
   it("passes the picked kind to onRun instead of always going through the planner", () => {
-    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind)');
+    expect(SOURCE).toContain('onRun(approveEachStage ? "manual" : "fully_auto", targetColumn || null, problemKind === "ask_planner" ? null : problemKind, [...checkpointSet])');
   });
 
   it("requires a target column before Run is enabled for a predict-column pick", () => {

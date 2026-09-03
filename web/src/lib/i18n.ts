@@ -1464,6 +1464,12 @@ const TR: Record<string, string> = {
   "Execution scope": "Yürütme kapsamı",
   "No optional human checkpoints; hard safety gates still apply.":
     "İsteğe bağlı insan kontrol noktası yok; katı güvenlik kapıları yine de geçerlidir.",
+  // #447: a checkpoint could be asked of the planner and read off the plan
+  // summary, and that was all. These are the per-stage control.
+  "The run stops after this stage and waits for your decision.":
+    "Koşu bu aşamadan sonra durur ve kararınızı bekler.",
+  "Pauses for review": "İnceleme için duraklar",
+  "Runs through": "Durmadan geçer",
   "Review after {stage}": "{stage} sonrası incele",
   "Planner rationale": "Planlayıcı gerekçesi",
   "Run the established base pipeline through integration, analysis, training, evaluation, and reporting.":
