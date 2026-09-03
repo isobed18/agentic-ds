@@ -275,8 +275,78 @@ def test_pdf_only_upload_is_available_for_staging_but_not_structured_pipeline(
     assert {item["name"]: item["route"] for item in profile["source_files"]} == {
         "brief.pdf": "documents"
     }
-    with pytest.raises(ValueError, match="cannot be continued"):
-        plane.start_staged_run(staged["run_id"])
+    # Being routed to documents rather than to the structured pipeline is not
+    # the same as being unrunnable: once a table is promoted out of the PDF the
+    # run has training data, so it must be startable. That it starts at intake
+    # is proved by the test below.
+
+
+def test_a_document_only_run_can_be_started_and_begins_at_intake(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A PDF-only run refused to start at all, blaming a restart that never was.
+
+    The structured path builds a `resume` tuple (spec, registry, state, llm)
+    when it stages; the document-only branch never did. `start_staged_run`
+    reads `runtime.resume is None` as "this did not survive a restart", so a
+    PDF-only run -- the exact shape produced by uploading a single PDF and
+    promoting a table out of it (#445) -- reported a restart failure on a
+    process that had never restarted, and could never be run.
+
+    Starting it must also begin at the pipeline's entry stage. Such a run
+    stopped after *document understanding*, not after schema discovery, so
+    resuming past `STAGE_UNTIL` the way a structured run does would skip
+    intake -- and intake is where the promoted PDF tables are read.
+    """
+    plane = _plane(tmp_path)
+    pdf_path = tmp_path / "brief.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=400)
+    writer.add_metadata({"/Title": "Local briefing"})
+    with pdf_path.open("wb") as stream:
+        writer.write(stream)
+
+    uploaded = plane.upload("brief.pdf", pdf_path.read_bytes())
+    blueprint = plane.default_staging_pipeline(uploaded["source_id"])
+    document_node = next(
+        item for item in blueprint["components"] if item["id"] == "understand-documents"
+    )
+    document_node["settings"]["engine"] = "text_layer"
+    document_node["settings"]["ocr"] = "never"
+
+    # A stand-in structured LLM: enough for `build_full_spec` to wire a real
+    # pipeline spec, without reaching a model.
+    class _Model:
+        def complete(self, *args, **kwargs):  # pragma: no cover - never called
+            raise AssertionError("the run must not reach the model in this test")
+
+    plane.llm_factory = lambda: _Model()
+    staged = plane.stage_run(uploaded["source_id"], {"pipeline_blueprint": blueprint})
+    run_id = staged["run_id"]
+    deadline = time.time() + 10
+    while plane.progress(run_id)["status"] == "staging" and time.time() < deadline:
+        time.sleep(0.02)
+    assert plane.progress(run_id)["status"] == "staged"
+
+    started_at: dict[str, object] = {}
+
+    def fake_run(spec, registry, state, **kwargs):
+        started_at["start_at"] = kwargs.get("start_at")
+        started_at["entry"] = spec.entry
+        return SimpleNamespace(status="completed", error=None, final_stage="reporting")
+
+    plane.workflow_runner = fake_run
+
+    plane.start_staged_run(run_id)
+
+    deadline = time.time() + 10
+    while "start_at" not in started_at and time.time() < deadline:
+        time.sleep(0.02)
+
+    assert started_at["start_at"] == started_at["entry"], (
+        "a document-only run must begin at intake, where promoted PDF tables "
+        f"are read; it began at {started_at.get('start_at')!r}"
+    )
 
 
 def test_starting_a_staged_run_after_a_restart_names_the_real_cause(

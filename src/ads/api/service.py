@@ -5363,6 +5363,39 @@ class ControlPlane:
                 current_stage="document_understanding",
             )
             self._record_source_discovery(runtime, profile)
+            # A document-only run is still a real run, and once a person has
+            # promoted an extracted table it has training data (#445). It never
+            # got the `resume` tuple the structured path builds, though, so
+            # `/start` always refused it with "did not survive a restart" --
+            # a message about a restart that had not happened, for a run that
+            # had never been startable. Build the same pipeline state here so
+            # the promoted tables can reach intake.
+            try:
+                document_llm: StructuredLLM | None = (
+                    self.llm_factory() if self.llm_factory else OllamaClient()
+                )
+            except Exception:  # noqa: BLE001 - staging must survive a missing model
+                document_llm = None
+            if document_llm is not None:
+                try:
+                    document_spec, document_registry = build_full_spec(document_llm, panel_size=1)
+                    sandbox_root = self.store.root.parent / "sandbox" / run_id
+                    (sandbox_root / "data").mkdir(parents=True, exist_ok=True)
+                    (sandbox_root / "artifacts").mkdir(parents=True, exist_ok=True)
+                    configure_full_pipeline_state(
+                        state,
+                        source_path=source_path,
+                        execution_backend=SandboxManager(
+                            SandboxConfig(
+                                data_dir=sandbox_root / "data",
+                                artifacts_dir=sandbox_root / "artifacts",
+                            )
+                        ),
+                        agent_runtime_policy=DEFAULT_AGENT_RUNTIME_POLICY,
+                    )
+                    runtime.resume = (document_spec, document_registry, state, document_llm)
+                except Exception:  # noqa: BLE001 - staging must survive a missing model
+                    runtime.resume = None
             with self._lock:
                 self._runtime_runs[run_id] = runtime
             self._persist_runtime(runtime)
@@ -5911,6 +5944,13 @@ class ControlPlane:
         runner = self.workflow_runner or run_workflow
         resume_from = prior_pause or self.STAGE_UNTIL
         resume_at = spec.next_stage(resume_from, EdgeCondition.ON_PROCEED)
+        # A document-only run stopped after *document understanding*, not after
+        # schema discovery: intake never ran, so resuming past it would leave
+        # the blackboard with no tables at all and the promoted PDF tables --
+        # the only training data such a run has -- unread. Start at the top so
+        # intake profiles them (`load_promoted_document_tables`, #445).
+        if not prior_pause and bool(runtime.configuration.get("document_only")):
+            resume_at = spec.entry
 
         def execute() -> None:
             try:
