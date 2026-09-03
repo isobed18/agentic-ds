@@ -6,11 +6,16 @@
  * so the standing constraints are visible without scrolling.
  */
 import { useEffect, useRef, useState } from "react";
-import { api, type PlannerOverrideProposal } from "../lib/api";
+import { api, type PlannerOverrideProposal, type ToolActivityEvent } from "../lib/api";
 import { t } from "../lib/i18n";
+import { mergeToolActivity, toolActivityLine } from "./toolActivity";
 import { Badge, Spinner, cx } from "./ui";
 
-interface Message { role: "assistant" | "user"; text: string; at: string }
+/** #411: "tool" is not a chat role -- nobody said it and there is nothing to
+ *  reply to. It is an interstitial status line, kept in the same list so it
+ *  lands in the transcript in the order it happened rather than in a second
+ *  column beside it, and rendered as light italic text rather than a bubble. */
+interface Message { role: "assistant" | "user" | "tool"; text: string; at: string }
 interface ProblemRecommendation {
   rank: number;
   problem_title: string;
@@ -79,11 +84,15 @@ export function PlannerPanel({
       try {
         const workspace = await api.stagingWorkspace(runId);
         if (cancelled) return;
-        setMessages(workspace.chat_history.map((item) => ({
+        // #411: the saved transcript replaces the chat turns, but the live
+        // tool lines are not in it and are not the server's to return. They
+        // are kept, after the history, because that is when they happened.
+        const saved: Message[] = workspace.chat_history.map((item) => ({
           role: (item.role === "planner" ? "assistant" : "user") as Message["role"],
           text: item.content.en,
           at: t("saved"),
-        })));
+        }));
+        setMessages((current) => [...saved, ...current.filter((item) => item.role === "tool")]);
         const pending = workspace.pending_override ?? null;
         setPendingOverride(pending);
         setRecommendations(overrideItems(pending));
@@ -94,6 +103,58 @@ export function PlannerPanel({
       }
     };
     void loadWorkspace();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [runId]);
+
+  /** #411: a live line each time an agent uses a tool.
+   *
+   * Tool use only ever reached the screen after the fact, as a "Tool calls: 7"
+   * fact on a finished stage's artifact -- never while it was happening, and
+   * never naming the tool. The broker publishes every call to an in-process
+   * feed as it makes it; this reads what is new since the last cursor and
+   * appends it to the transcript.
+   *
+   * Polling rather than streaming: the run already reports itself by polling,
+   * the feed is an in-memory read, and a dropped connection on a long-lived
+   * stream is a reconnection problem this does not need to have. `active` in
+   * the answer is the stop signal, so a finished run's panel goes quiet
+   * instead of asking forever.
+   */
+  useEffect(() => {
+    if (!runId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // The cursor advances only after the events behind it are on screen, so a
+    // failed request repeats a range rather than skipping it; `shown` is what
+    // makes that repeat harmless.
+    let cursor = 0;
+    let shown: ToolActivityEvent[] = [];
+    const poll = async () => {
+      let keepGoing = true;
+      try {
+        const feed = await api.toolActivity(runId, cursor);
+        if (cancelled) return;
+        const { events, added } = mergeToolActivity(shown, feed.events);
+        shown = events;
+        if (added.length > 0) {
+          const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          setMessages((current) => [
+            ...current,
+            ...added.map((event) => ({ role: "tool" as const, text: toolActivityLine(event), at })),
+          ]);
+        }
+        cursor = feed.cursor;
+        keepGoing = feed.active;
+      } catch {
+        // A blip is not a reason to stop narrating a run that is still going.
+        keepGoing = true;
+      }
+      if (!cancelled && keepGoing) timer = setTimeout(() => { void poll(); }, 2000);
+    };
+    void poll();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
@@ -291,7 +352,11 @@ export function PlannerPanel({
         )}
 
         <div className="space-y-2.5">
-          {messages.map((m, i) => (
+          {messages.map((m, i) => (m.role === "tool" ? (
+            // No speaker line and no bubble: this is the run narrating itself,
+            // not a turn in the conversation.
+            <p key={i} className="px-1 text-3xs italic leading-relaxed text-ink-faint">{m.text}</p>
+          ) : (
             <div key={i} className={cx("flex flex-col gap-0.5", m.role === "user" && "items-end")}>
               <span className="text-3xs text-ink-faint">
                 {m.role === "assistant" ? t("Assistant") : t("You")} · {m.at}
@@ -303,7 +368,7 @@ export function PlannerPanel({
                 {m.text}
               </p>
             </div>
-          ))}
+          )))}
           {busy && <Spinner label={t("Planner is thinking…")} />}
           {error && <p className="rounded-lg bg-stop-50 px-3 py-2 text-xs text-stop-700">{t("Something went wrong: {detail}", { detail: error })}</p>}
           <div ref={endRef} />
