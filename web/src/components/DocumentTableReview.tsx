@@ -72,6 +72,7 @@ export function DocumentTableReview({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promoted, setPromoted] = useState<number | null>(null);
+  const [replan, setReplan] = useState<string | null>(null);
   // Already promoted in an earlier round, and not undoable from here (#389).
   const alreadyPromoted = useMemo(() => new Set(promotedCandidateIds ?? []), [promotedCandidateIds]);
   const panel = useOverlayDismiss<HTMLDivElement>(onClose);
@@ -158,6 +159,10 @@ export function DocumentTableReview({
       const review = await api.reviewDocumentTables(runId, inputs);
       const result = await api.promoteDocumentTables(runId, review.artifact_id);
       setPromoted(result.table_assets.length);
+      // #445: the promotion changes the ABT, so it changes the plan. The one
+      // case the server will not re-author is an already-accepted plan, and
+      // this dialog is where the person is looking when that is decided.
+      setReplan(result.replan ?? null);
       onPromoted();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -207,15 +212,14 @@ export function DocumentTableReview({
             <p className="text-3xs font-semibold uppercase tracking-wide text-warn-700">{t("Human decision")}</p>
             <h3 className="mt-1 text-lg font-semibold text-ink">{t("Review extracted tables")}</h3>
             <p className="mt-1 text-xs leading-relaxed text-ink-mute">{t("Accepted tables are saved as reviewed tables, with the document and page they came from. Anything left unaccepted stays out.")}</p>
-            {/* #390: this used to say accepted tables "become training data and
-                are treated exactly like an uploaded file". They are not. The ML
-                run resumes at the stage after schema_discovery, so intake never
-                re-runs, no promoted TableAsset is ever loaded back --
-                `load_table_asset` has no production caller -- and the
-                integration plan was authored before the table existed, so it
-                could not reference it either. Saying so is the honest half of
-                the fix; wiring it is tracked separately. */}
-            <p className="mt-1 text-2xs leading-relaxed text-warn-700">{t("Promotion does not add them to the ML training table for this run; that is built from the uploaded files.")}</p>
+            {/* #390 corrected this from "treated exactly like an uploaded
+                file" (never true) to "not added to the ML training table"
+                (true at the time, because nothing read a promoted asset back).
+                #445 wired it, so both are wrong now. What actually happens:
+                intake reads the promoted assets, so their rows are profiled and
+                joined -- and because the plan was authored before the table
+                existed, it is re-authored rather than patched. */}
+            <p className="mt-1 text-2xs leading-relaxed text-warn-700">{t("Accepted tables join the ML training data for this run, alongside the uploaded files. The plan is re-authored afterwards, because the one you see now was written before these rows existed.")}</p>
           </div>
           <button type="button" className="btn-ghost !px-2 !py-1" aria-label={t("Close")} onClick={onClose}>×</button>
         </div>
@@ -227,6 +231,8 @@ export function DocumentTableReview({
           <div className="mt-5 rounded-xl border border-ok-200 bg-ok-50 px-4 py-4">
             <p className="text-sm font-semibold text-ok-700">{t("{count} tables promoted", { count: promoted })}</p>
             <p className="mt-1 text-2xs text-ink-mute">{promoted === 0 ? t("Nothing was accepted, so nothing was saved.") : t("They are recorded with their provenance and listed in the Documents panel.")}</p>
+            {promoted > 0 && replan === "replanning" && <p className="mt-1 text-2xs text-ink-mute">{t("The plan is being re-authored so it describes the data that now includes these rows.")}</p>}
+            {promoted > 0 && replan === "plan_accepted" && <p className="mt-1 text-2xs font-medium text-warn-700">{t("These rows are not part of the plan that was already accepted. Re-open the plan to include them.")}</p>}
             <button type="button" className="btn-primary mt-4 w-full justify-center text-xs" onClick={onClose}>{t("Close")}</button>
           </div>
         ) : (

@@ -88,26 +88,23 @@ def persist_table_asset(
 def load_table_asset(store: ArtifactStore, artifact_id: str) -> tuple[TableAsset, pd.DataFrame]:
     """Verify the content-addressed blob before returning a fresh DataFrame.
 
-    #390 measured that this has no production caller, and traced why a promoted
-    document table therefore never reaches the analytical base table:
+    #390 measured that this had no production caller, and traced why a promoted
+    document table therefore never reached the analytical base table: intake
+    built its source frames from ``load_directory`` over the uploaded directory
+    alone, the guided run resumed at the stage after ``schema_discovery`` so
+    intake never ran again, and the ``IntegrationPlan`` was authored before the
+    promoted table existed. #390 corrected the review dialog's copy and left the
+    wiring to be tracked separately.
 
-    * ``intake_stage`` builds the source frames from ``load_directory`` over the
-      uploaded directory alone, and ``integration_stage`` joins whatever intake
-      left on the blackboard. Neither looks in the artifact store for a
-      ``TableAsset``.
-    * The guided run continues the *staging* run rather than starting a new one,
-      but it resumes at the stage after ``schema_discovery``
-      (``ControlPlane.STAGE_UNTIL``), so intake does not run again after a
-      person promotes anything.
-    * Even if it did, the ``IntegrationPlan`` was authored by schema discovery
-      before the promoted table existed, so it could not reference it.
+    #445 is that wiring, and all three moved together:
+    ``ads.documents.promotion.load_promoted_document_tables`` calls this from
+    ``intake_stage``; promotion re-enters the graph at ``intake``; and the plan
+    is re-authored rather than patched, because a plan written before the table
+    existed cannot be made to reference it.
 
-    So promotion is durable and consequential -- it writes this asset with full
-    provenance, records the human decision, and settles the review gate that can
-    defer a pipeline -- but it does not add training rows. The review dialog said
-    it did; that copy is corrected. Wiring promoted assets into the ABT means
-    re-opening schema discovery after a promotion, which is a design change
-    rather than a missing call, and is deliberately not attempted here.
+    The verification below is why a promoted table can be trusted as a source at
+    all -- the caller drops an asset whose blob fails it rather than mixing rows
+    that disagree with their own fingerprint into training data.
     """
     asset = store.load(artifact_id, TableAsset)
     path = store.blob_dir(artifact_id) / asset.blob.filename

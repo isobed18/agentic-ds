@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from ads.api import ControlPlane
+from ads.contracts import BUILTIN_PROFILES
 from ads.contracts.base import ArtifactType
 from ads.contracts.dataflow import TableAsset
 from ads.contracts.documents import (
@@ -11,7 +14,15 @@ from ads.contracts.documents import (
     ExtractedTableCandidate,
 )
 from ads.contracts.staging import StagingWorkspace
-from ads.dataflow import load_table_asset
+from ads.dataflow import load_table_asset, persist_table_asset
+from ads.documents.promotion import PROMOTED_SOURCE_FORMAT, load_promoted_document_tables
+from ads.orchestration import RunState
+from ads.pipeline.stages import (
+    SOURCE_CARDS_KEY,
+    SOURCE_FRAMES_KEY,
+    SOURCE_PATH_KEY,
+    intake_stage,
+)
 from ads.store import ArtifactStore
 
 
@@ -261,26 +272,35 @@ def test_promotion_without_a_workspace_still_succeeds(tmp_path: Path) -> None:
     assert len(promoted["table_assets"]) == 1
 
 
-def test_promoted_tables_do_not_reach_the_abt_and_the_ui_does_not_claim_they_do():
-    """#390: the promise the review dialog used to make, measured.
+def test_promoted_tables_reach_the_abt_and_the_ui_says_what_happens():
+    """#445: the three things that had to move together, and did.
 
-    Promotion writes a real ``TableAsset``; nothing loads it back. Rather than
-    pin the gap itself -- a test that passes only while the product is wrong --
-    this pins the two facts a future wiring change has to move together: intake
-    builds its frames from the uploaded directory, and the interface no longer
-    tells anyone that accepted tables become training data.
+    This replaces the pin #390 left behind. That test asserted the gap rather
+    than the fix -- intake reads only the uploaded directory, the run resumes
+    past intake, and the copy no longer claims otherwise -- and said in its own
+    docstring that it existed so a future wiring change would move them all at
+    once. This is that change, so the assertions turn over with it.
     """
     stages = Path("src/ads/pipeline/stages.py").read_text(encoding="utf-8")
-    intake = stages[stages.index("def intake_stage("):stages.index("def integration_stage(")]
-    # Intake reads the uploaded directory and nothing else.
+    intake = stages[stages.index("def intake_stage(") : stages.index("def integration_stage(")]
+    # 1. Intake reads the promoted assets as well as the uploaded directory.
     assert "load_directory(source_path)" in intake
-    assert "TableAsset" not in intake
-    assert "load_table_asset" not in intake
+    assert "load_promoted_document_tables(state.store, state.run_id)" in intake
+    assert "loaded = [*loaded, *promoted]" in intake
 
-    # And the ML run resumes past intake, so it could not pick one up anyway.
+    # 2. Promotion re-enters the graph at intake, so intake runs again with them.
     service = Path("src/ads/api/service.py").read_text(encoding="utf-8")
-    assert 'STAGE_UNTIL = "schema_discovery"' in service
-    assert "resume_from = prior_pause or self.STAGE_UNTIL" in service
+    replan = service[
+        service.index("def _replan_after_promotion(") : service.index(
+            "def _measured_relationship_explanations("
+        )
+    ]
+    assert 'start_at="intake"' in replan
+    assert "stop_after=self.STAGE_UNTIL" in replan
+    # 3. And the plan is re-authored, because it was written before the table.
+    assert "self._generate_staging_analysis(runtime)" in replan
+    # An accepted plan is not rewritten underneath the decisions made against it.
+    assert 'return "plan_accepted"' in replan
 
     # The claims that measured false are gone from the rendered copy. Matched as
     # whole strings so the comments explaining *why* they went do not count.
@@ -289,6 +309,9 @@ def test_promoted_tables_do_not_reach_the_abt_and_the_ui_does_not_claim_they_do(
         "They now behave like any other uploaded table.",
         "Extracted tables are candidates and cannot enter ML until reviewed.",
         "Review and promote each extracted table before it can enter training data.",
+        # #390's correction, true only while the wiring was missing.
+        "Promotion does not add them to the ML training table for this run",
+        "They do not join the ML training table for this run.",
     )
     for path in (
         "web/src/components/DocumentTableReview.tsx",
@@ -300,6 +323,156 @@ def test_promoted_tables_do_not_reach_the_abt_and_the_ui_does_not_claim_they_do(
         for claim in retired:
             assert claim not in text, f"{path} still says {claim!r}"
 
-    # And what replaced them says what promotion actually does.
+    # And what replaced them says what promotion actually does, including the
+    # re-authoring -- which is the part a reader would otherwise be surprised by.
     dialog = Path("web/src/components/DocumentTableReview.tsx").read_text(encoding="utf-8")
-    assert "Promotion does not add them to the ML training table for this run" in dialog
+    assert "Accepted tables join the ML training data for this run" in dialog
+    assert "The plan is re-authored afterwards" in dialog
+
+
+class TestPromotedTablesEnterIntake:
+    """#445: the read side, measured rather than pinned by source shape.
+
+    `load_table_asset` had no production caller. Promotion wrote a
+    Parquet-backed asset with verified provenance, recorded the human decision
+    and settled the review gate -- and the rows went nowhere.
+    """
+
+    @staticmethod
+    def _promoted(store: ArtifactStore, plane: ControlPlane) -> None:
+        store.put(_extraction(), run_id="run-doc", stage_exec_id="document-extraction")
+        review = plane.review_document_tables("run-doc", {"report:table:1": "accepted"})
+        plane.promote_document_tables("run-doc", review["artifact_id"])
+
+    def test_a_promoted_asset_comes_back_as_a_table_intake_can_profile(
+        self, tmp_path: Path
+    ) -> None:
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        self._promoted(store, plane)
+
+        tables = load_promoted_document_tables(store, "run-doc")
+
+        assert len(tables) == 1
+        assert list(tables[0].frame.columns) == ["year", "revenue"]
+        assert len(tables[0].frame) == 2
+
+    def test_the_rows_stay_distinguishable_from_uploaded_ones(self, tmp_path: Path) -> None:
+        # The product's whole stance on extracted tables is that they are not
+        # the same as a file someone uploaded. Joining them must not flatten
+        # that into "just another table": the page they came from rides along,
+        # and the format says where they came from.
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        self._promoted(store, plane)
+
+        table = load_promoted_document_tables(store, "run-doc")[0]
+
+        assert table.source_format == PROMOTED_SOURCE_FORMAT
+        assert table.source_uri == "report.pdf#page=1"
+        # And the name is one a plan can join on, not the raw candidate id.
+        assert table.name == "doc_report_table_1"
+
+    def test_the_integrated_abt_is_not_mistaken_for_a_promoted_table(self, tmp_path: Path) -> None:
+        # `integration_stage` writes a `TableAsset` too. Selecting on the
+        # artifact type alone would feed the previous run's ABT back into
+        # intake as a source table.
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        self._promoted(store, plane)
+        persist_table_asset(
+            store,
+            pd.DataFrame({"a": [1, 2]}),
+            run_id="run-doc",
+            producer_component_id="integrate-data",
+            name="integrated_table",
+        )
+
+        tables = load_promoted_document_tables(store, "run-doc")
+
+        assert [table.name for table in tables] == ["doc_report_table_1"]
+
+    def test_a_corrupted_blob_is_left_out_rather_than_mixed_into_training_data(
+        self, tmp_path: Path
+    ) -> None:
+        # `load_table_asset` verifies the content-addressed blob. A failure
+        # there must not become an exception that kills intake, nor rows that
+        # silently disagree with their own fingerprint.
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        self._promoted(store, plane)
+        reference = store.latest("run-doc", ArtifactType.TABLE_ASSET)
+        assert reference is not None
+        asset = store.load(reference.artifact_id, TableAsset)
+        (store.blob_dir(reference.artifact_id) / asset.blob.filename).write_bytes(b"not parquet")
+
+        assert load_promoted_document_tables(store, "run-doc") == []
+
+    def test_intake_puts_them_on_the_blackboard_beside_the_uploaded_tables(
+        self, tmp_path: Path
+    ) -> None:
+        # The end of the read side: `integration_stage` joins whatever intake
+        # left on the blackboard, so this is the moment the rows become
+        # joinable at all.
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        self._promoted(store, plane)
+        uploads = tmp_path / "csvs"
+        uploads.mkdir()
+        pd.DataFrame({"year": [2024], "spend": [3.0]}).to_csv(uploads / "budget.csv", index=False)
+        state = RunState(run_id="run-doc", store=store, profile=BUILTIN_PROFILES["full_auto"])
+        state.blackboard[SOURCE_PATH_KEY] = uploads
+
+        intake_stage(state)
+
+        frames = state.blackboard[SOURCE_FRAMES_KEY]
+        assert set(frames) == {"budget", "doc_report_table_1"}
+        cards = {card.table_name: card for card in state.blackboard[SOURCE_CARDS_KEY]}
+        assert cards["doc_report_table_1"].source_format == PROMOTED_SOURCE_FORMAT
+        assert cards["doc_report_table_1"].n_rows == 2
+
+
+class TestThePromotionRecordSurvives:
+    def test_a_later_snapshot_does_not_erase_the_promotion(self) -> None:
+        # `_persist_staging_workspace` rebuilds the snapshot from scratch and
+        # this field was not among the ones carried over, so every planner turn
+        # after a promotion dropped it -- and the review dialog offered the same
+        # candidates again. The re-plan ends in exactly that call, so this had
+        # to hold before a promotion could trigger one.
+        service = Path("src/ads/api/service.py").read_text(encoding="utf-8")
+        persist = service[
+            service.index("def _persist_staging_workspace(") : service.index(
+                "def _staging_component_outputs("
+            )
+        ]
+        assert (
+            "promoted_document_tables=(list(previous.promoted_document_tables) if previous else [])"
+            in persist
+        )
+
+
+class TestPromotionAnswersWithWhatItDidToThePlan:
+    def test_an_archived_run_says_so_instead_of_pretending(self, tmp_path: Path) -> None:
+        # No runtime means the spec, registry and blackboard did not survive the
+        # restart, so the graph cannot be re-entered. The promotion is still
+        # real; the re-plan is reported as not done rather than silently skipped.
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        store.put(_extraction(), run_id="run-doc", stage_exec_id="document-extraction")
+        review = plane.review_document_tables("run-doc", {"report:table:1": "accepted"})
+
+        promoted = plane.promote_document_tables("run-doc", review["artifact_id"])
+
+        assert promoted["replan"] == "unavailable"
+        assert len(promoted["table_assets"]) == 1
+
+    def test_promoting_nothing_asks_for_nothing(self, tmp_path: Path) -> None:
+        store = ArtifactStore(tmp_path / "artifacts")
+        plane = ControlPlane(store=store, source_roots=(), upload_root=tmp_path / "uploads")
+        store.put(_extraction(), run_id="run-doc", stage_exec_id="document-extraction")
+        review = plane.review_document_tables("run-doc", {"report:table:1": "rejected"})
+
+        promoted = plane.promote_document_tables("run-doc", review["artifact_id"])
+
+        assert promoted["replan"] == "nothing_promoted"
+        assert promoted["table_assets"] == []

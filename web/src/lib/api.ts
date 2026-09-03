@@ -1068,6 +1068,18 @@ export type DocumentTableReviewResult = {
 
 export type DocumentTablePromotionResult = {
   review_artifact_id: string;
+  /**
+   * What the promotion did to the plan (#445). Promoted rows now reach the ABT,
+   * which means the plan authored before they existed is out of date the moment
+   * they are promoted -- so the run re-enters at intake, re-profiles with the
+   * promoted tables included, and re-authors the recommendation.
+   *
+   * `plan_accepted` is the one case that is not re-authored: a problem
+   * definition or validation strategy approved against the old ABT stays
+   * approved, and changing the data underneath them is a decision a person has
+   * to see rather than a quiet rewrite.
+   */
+  replan?: "replanning" | "plan_accepted" | "run_active" | "unavailable" | "nothing_promoted";
   table_assets: Array<{
     artifact_id: string;
     rows: number;

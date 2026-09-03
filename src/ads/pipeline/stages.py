@@ -47,8 +47,9 @@ from ads.contracts.validation import (
     ValidationTrial,
     validation_strategy_fingerprint,
 )
-from ads.dataflow import load_table_asset, persist_table_asset
+from ads.dataflow import persist_table_asset
 from ads.discovery import audit_leakage
+from ads.documents.promotion import load_promoted_document_tables
 from ads.ds_toolkit import build_preprocessor
 from ads.eda import profile_for_eda
 from ads.intake import LoadedTable, load_directory, profile_table, profile_tables
@@ -199,35 +200,6 @@ def _frame(state: RunState, key: str) -> pd.DataFrame:
     return value
 
 
-def _promoted_document_tables(state: RunState) -> list[LoadedTable]:
-    """Human-reviewed PDF table candidates already promoted for this run.
-
-    A promoted candidate is a `TableAsset` in the run's own artifact store
-    (`promote_reviewed_document_tables`, tagged `stage_exec_id=
-    "document-table-promotion"`) -- promotion never touches the uploaded
-    source directory, because a source with execution history is immutable
-    (#111: mutating it would silently change what every other run reading the
-    same source sees). Intake is where every table a run trains on is
-    assembled from disk, so it is where these have to be merged in instead;
-    nothing downstream needs to know a table came from a PDF rather than a
-    file next to it.
-    """
-    promoted: list[LoadedTable] = []
-    for ref in state.store.list(state.run_id, artifact_type=ArtifactType.TABLE_ASSET):
-        if ref.stage_exec_id != "document-table-promotion":
-            continue
-        _, frame = load_table_asset(state.store, ref.artifact_id)
-        promoted.append(
-            LoadedTable(
-                name=ref.name or ref.artifact_id,
-                frame=frame,
-                source_uri=f"artifact://{ref.artifact_id}",
-                source_format="promoted-document-table",
-            )
-        )
-    return promoted
-
-
 def intake_stage(state: RunState, correction: list[str] | None = None) -> StageResult:
     """Load/profile source files and persist any pre-approved run decisions."""
     del correction
@@ -235,7 +207,22 @@ def intake_stage(state: RunState, correction: list[str] | None = None) -> StageR
     if not isinstance(source_path, Path):
         raise ValueError(f"RunState.blackboard[{SOURCE_PATH_KEY!r}] must contain a Path.")
     loaded = load_directory(source_path)
-    loaded.extend(_promoted_document_tables(state))
+    # #445: the uploaded directory was all intake ever read, so a promoted PDF
+    # table -- a durable `TableAsset` with verified provenance and a recorded
+    # human decision -- changed no training data. `load_table_asset` had no
+    # production caller at all. Promoted tables are appended after the uploaded
+    # ones so an upload can never be shadowed by a document table of the same
+    # name, and they arrive carrying `source_format="document_table"` and their
+    # `file#page=N` uri, so rows extracted from a PDF stay distinguishable from
+    # uploaded rows in the DataCard, in the digest an agent reads, and in the
+    # plan that joins them.
+    promoted = load_promoted_document_tables(state.store, state.run_id)
+    taken = {table.name for table in loaded}
+    for table in promoted:
+        while table.name in taken:
+            table.name = f"{table.name}_x"
+        taken.add(table.name)
+    loaded = [*loaded, *promoted]
     cards = profile_tables(loaded)
     state.blackboard[LOADED_TABLES_KEY] = loaded
     state.blackboard[SOURCE_FRAMES_KEY] = {table.name: table.frame for table in loaded}

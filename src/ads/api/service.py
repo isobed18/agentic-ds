@@ -2959,8 +2959,11 @@ class ControlPlane:
         # Record the promotion on the workspace, which the client already
         # re-reads on this callback.
         self._record_promoted_document_tables(run_id, review, promoted)
+        # #445: promotion has to change the plan, not just the record of it.
+        replan = self._replan_after_promotion(run_id) if promoted else "nothing_promoted"
         return {
             "review_artifact_id": review_artifact_id,
+            "replan": replan,
             "table_assets": [
                 {
                     "artifact_id": reference.artifact_id,
@@ -3125,6 +3128,111 @@ class ControlPlane:
         runtime = self._runtime_runs.get(run_id)
         if runtime is not None:
             self._sync_automation_workspace(runtime, saved, reference.artifact_id)
+
+    def _replan_after_promotion(self, run_id: str) -> str:
+        """Re-profile, re-join and re-author the plan so it describes the new ABT.
+
+        #445: promoted rows only reach the analytical base table if three things
+        move together, and this is the third. `intake_stage` now reads the
+        promoted assets, but the guided run continues the *staging* run and
+        resumes at `STAGE_UNTIL`, so intake does not run again by itself; and
+        the `IntegrationPlan` was authored by schema discovery before the
+        promoted table existed, so it cannot be patched to reference it -- it
+        has to be re-authored. Re-entering at `intake` does all three: the
+        promoted tables are profiled into DataCards, schema discovery measures
+        their relationships and writes a plan that can join them, and
+        `_generate_staging_analysis` re-authors the recommendation the panel
+        shows.
+
+        Returns what happened, because the promote endpoint's answer is the one
+        place the person is looking when this is decided.
+
+        The one thing it will not do is re-author under an accepted plan. A
+        problem definition or validation strategy approved against the old ABT
+        stays approved; changing the data underneath them is a decision someone
+        has to see, so the answer says the promotion is not in the accepted plan
+        rather than quietly making it so.
+        """
+        runtime = self._runtime_runs.get(run_id)
+        if runtime is None or runtime.resume is None:
+            # An archived run cannot re-enter its graph: the spec, registry and
+            # blackboard did not survive the restart.
+            return "unavailable"
+        workspace = self._latest_staging_workspace(run_id)
+        plan = workspace.recommended_plan if workspace else None
+        if self._plan_is_accepted(plan):
+            with self._lock:
+                runtime.events.append(
+                    {
+                        "event": "promotion_needs_replan",
+                        "at": _now(),
+                        "reason": {
+                            "en": (
+                                "These rows are not part of the plan that was already accepted. "
+                                "Re-open the plan to include them."
+                            ),
+                            "tr": (
+                                "Bu satirlar, daha once kabul edilen planin parcasi degil. "
+                                "Dahil etmek icin plani yeniden acin."
+                            ),
+                        },
+                    }
+                )
+                runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+            return "plan_accepted"
+        if runtime.status not in {"staging", "staged", "failed"}:
+            # A run that is executing its pipeline is past the point where the
+            # plan can be re-authored under it.
+            return "run_active"
+
+        spec, registry, state, _llm = runtime.resume
+        runner = self.workflow_runner or run_workflow
+        event = self._event_recorder(runtime)
+        with self._lock:
+            runtime.status = "staging"
+            runtime.error = None
+            runtime.events.append(
+                {"event": "promotion_replan_started", "at": _now(), "stage": "intake"}
+            )
+            runtime.updated_at = _now()
+        self._persist_runtime(runtime)
+
+        def execute() -> None:
+            try:
+                runtime.outcome = runner(
+                    spec,
+                    registry,
+                    state,
+                    rubrics=build_pipeline_rubrics(),
+                    policy=GatePolicy.load(),
+                    on_event=event,
+                    start_at="intake",
+                    stop_after=self.STAGE_UNTIL,
+                )
+                self._generate_staging_analysis(runtime)
+                with self._lock:
+                    runtime.status = "staged"
+                    runtime.current_stage = None
+                    runtime.events.append({"event": "promotion_replan_ready", "at": _now()})
+                    runtime.updated_at = _now()
+            except Exception as exc:  # noqa: BLE001 - surfaced in the UI, not swallowed
+                with self._lock:
+                    runtime.status = "failed"
+                    runtime.error = _run_error_text(exc)
+                    runtime.current_stage = None
+                    runtime.events.append(
+                        {
+                            "event": "promotion_replan_failed",
+                            "at": _now(),
+                            "error": runtime.error,
+                        }
+                    )
+                    runtime.updated_at = _now()
+            self._persist_runtime(runtime)
+
+        start_worker(execute, name=f"ads-repromote-{run_id}")
+        return "replanning"
 
     def _measured_relationship_explanations(self, source_id: str) -> list[RelationshipExplanation]:
         explanations: list[RelationshipExplanation] = []
@@ -3561,6 +3669,13 @@ class ControlPlane:
                 plan_accepted=self._plan_is_accepted(plan),
             ),
             document_extractions=document_summaries,
+            # #445: this snapshot is rebuilt from scratch, and this field was
+            # not among the ones carried over -- so every planner turn after a
+            # promotion erased the promotion from the workspace, and the review
+            # dialog offered the same candidates again. It has to survive here
+            # before a re-plan can be triggered by one, because the re-plan
+            # ends in exactly this call.
+            promoted_document_tables=(list(previous.promoted_document_tables) if previous else []),
             recommended_plan=plan,
             pending_override=pending,
             chat_history=history,
