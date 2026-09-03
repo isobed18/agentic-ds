@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type ArtifactPreview } from "../lib/api";
+import { useShowDiagnostics } from "../lib/diagnostics";
 import { activeLanguage, t } from "../lib/i18n";
 import { keepRevealed, nextToReveal, revealDelay } from "./artifactReveal";
 import { artifactTitle } from "./artifactTitle";
@@ -105,21 +106,30 @@ function useArtifactTitles(ids: string[], enabled: boolean): Record<string, stri
  * opening it (#66). The count still ticks up one per poll (`useSequentialReveal`),
  * which is the live-progress signal the old round nodes existed to give.
  */
-export function ArtifactNodes({ ids, activeId = null, onOpen, revealed = false, diagnosticIds }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void;
-  /** #408: the caller has just made these ids visible and wants them seen.
+export function ArtifactNodes({ ids, activeId = null, onOpen, diagnosticIds }: { ids: string[]; activeId?: string | null; onOpen: (id: string) => void;
+  /** Which of `ids` are diagnostics.
    *
-   * "Show diagnostics" changed only which ids this list *would* contain if
-   * somebody expanded it -- on a node that is collapsed by default and may be
-   * off screen -- so pressing it produced no visible change anywhere and the
-   * button read as broken. A list opens when this turns on, and closes again
-   * when it turns off, unless the viewer has since taken the pill over by
-   * clicking it; their own choice outranks the toolbar's. */
-  revealed?: boolean;
-  /** Which of `ids` are diagnostics, so the rows that just appeared say why
-   *  they are there rather than silently lengthening the list. */
+   * #424: this used to mark them only, and each caller was left to filter its
+   * own list -- which exactly one of them did. Every artifact list on a canvas
+   * comes through here, so the filter belongs here too: hand this component
+   * the run's diagnostic ids and the node respects the toggle by construction.
+   * Omit it on a list with no run behind it and nothing is hidden or marked,
+   * which is the old behaviour. */
   diagnosticIds?: ReadonlySet<string>;
 }) {
-  const shown = useSequentialReveal(ids);
+  const showDiagnostics = useShowDiagnostics();
+  // #408: "Show diagnostics" changed only which ids this list *would* contain
+  // if somebody expanded it -- on a node that is collapsed by default and may
+  // be off screen -- so pressing it produced no visible change anywhere and
+  // the control read as broken. A list that gains rows opens itself, and
+  // closes again when they go away, unless the viewer has since taken the pill
+  // over by clicking it; their own choice outranks the toolbar's.
+  const visibleIds = useMemo(
+    () => (showDiagnostics || !diagnosticIds ? ids : ids.filter((id) => !diagnosticIds.has(id))),
+    [ids, diagnosticIds, showDiagnostics],
+  );
+  const revealed = showDiagnostics && ids.some((id) => diagnosticIds?.has(id) ?? false);
+  const shown = useSequentialReveal(visibleIds);
   const [open, setOpen] = useState(false);
   // Whether `open` is the caller's doing or the viewer's. Set while `revealed`
   // drives it, cleared the moment the pill itself is pressed.
@@ -129,7 +139,7 @@ export function ArtifactNodes({ ids, activeId = null, onOpen, revealed = false, 
     else if (auto.current) { auto.current = false; setOpen(false); }
   }, [revealed]);
   const titles = useArtifactTitles(shown, open);
-  if (!ids.length) return null;
+  if (!visibleIds.length) return null;
   return (
     // This column stays in normal flow. An absolute `top-full` list contributed
     // no height to the node, so a vertically stacked branch remained under it

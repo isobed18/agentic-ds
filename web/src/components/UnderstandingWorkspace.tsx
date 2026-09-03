@@ -7,6 +7,7 @@ import {
   type SourceProfile,
   type StagingWorkspace,
 } from "../lib/api";
+import { diagnosticIdsOf } from "../lib/diagnostics";
 import { activeLanguage, localizedList, t } from "../lib/i18n";
 import { isRunActive } from "../lib/status";
 import { NodeStatusHeader, StatusMark } from "./NodeStatus";
@@ -101,6 +102,7 @@ export function SourceSummary({ profile, onStart, busy, onRemoveFile, onAddFiles
 export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUpdated }: { profile: SourceProfile; runId: string | null; workspace?: StagingWorkspace | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
   const progress = useRunProgress(runId);
   const routing = useMemo(() => buildStagingRoutingState(profile, progress, workspace ?? null), [profile, progress, workspace]);
+  const diagnosticIds = useMemo(() => diagnosticIdsOf(progress), [progress]);
   const [selection, setSelection] = useState<CanvasSelection>(null);
   const [preview, setPreview] = useState<ArtifactPreview | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -149,7 +151,7 @@ export function UnderstandingProgress({ profile, runId, workspace, onWorkspaceUp
       {selection && <RoutingInspector selection={selection} profile={profile} workspace={workspace ?? null} routing={routing} onClose={() => setSelection(null)} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} runId={runId} onWorkspaceUpdated={onWorkspaceUpdated} />}
       {preview && <ArtifactDialog preview={preview} onClose={() => setPreview(null)} />}
     </>}>
-      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} activeArtifactId={preview?.artifact_id ?? null} />
+      <RoutingGraph routing={routing} workspace={workspace ?? null} onSelect={setSelection} proposal={routing.outcome || routing.proposal === "failed" ? "blocked" : "pending"} onOpenArtifact={(id) => { void api.artifactPreview(id).then(setPreview); }} activeArtifactId={preview?.artifact_id ?? null} diagnosticIds={diagnosticIds} />
     </CanvasSurface>
   );
 }
@@ -288,7 +290,12 @@ function ProposedPipelinePreview() {
  * flex row, so the edge out of "Proposed plan" is a real edge rather than a
  * boundary between two components.
  */
-export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact, activeArtifactId = null, trailing }: { routing: StagingRoutingState; workspace: StagingWorkspace | null; onSelect: (selection: CanvasSelection) => void; proposal: ProposalStatus; onOpenArtifact: (id: string) => void; activeArtifactId?: string | null; trailing?: React.ReactNode }) {
+export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArtifact, activeArtifactId = null, diagnosticIds, trailing }: { routing: StagingRoutingState; workspace: StagingWorkspace | null; onSelect: (selection: CanvasSelection) => void; proposal: ProposalStatus; onOpenArtifact: (id: string) => void; activeArtifactId?: string | null;
+  /** #424: the staging half of the graph had no diagnostics control and no
+   *  filter -- its pills listed engineering records unconditionally, unmarked,
+   *  with no way to hide them. It is the same run and the same closed set as
+   *  the ML half, so it reads the same preference through `ArtifactNodes`. */
+  diagnosticIds?: ReadonlySet<string>; trailing?: React.ReactNode }) {
   const branches = [
     routing.structured.length ? { id: "structured" as const, title: t("Structured data"), files: routing.files.filter((file) => file.route === "structured"), steps: routing.structured } : null,
     routing.documents.length ? { id: "documents" as const, title: t("Documents"), files: routing.files.filter((file) => file.route === "documents"), steps: routing.documents } : null,
@@ -308,13 +315,13 @@ export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArt
     <div className="flex min-w-[89.375rem] items-center justify-center gap-5 px-6 py-10">
       <PhaseNode title={t("Uploaded files")} subtitle={t("{count} files", { count: routing.files.length })} status="complete" onClick={() => onSelect("source")} footer={t("Inputs")} compact />
       <GraphEdge status="complete" />
-      <PhaseNode title={t("Intake")} subtitle={t("Discover, classify, and route")} status={routing.discovery} onClick={() => onSelect("discovery")} artifactIds={measuredIds} activeArtifactId={activeArtifactId} onOpenArtifact={onOpenArtifact} compact />
+      <PhaseNode title={t("Intake")} subtitle={t("Discover, classify, and route")} status={routing.discovery} onClick={() => onSelect("discovery")} artifactIds={measuredIds} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onOpenArtifact={onOpenArtifact} compact />
       <ForkConnector branches={branches.length} status={branchStatus} />
       <div className="flex flex-col gap-4">
-        {branches.map((branch) => <BranchNode key={branch.id} title={branch.title} files={branch.files} steps={branch.steps} artifactIds={branch.id === "structured" ? [...measuredIds, ...outputIds(["structured-brief"])] : branch.id === "documents" ? [...documentIds, ...outputIds(["document-brief"])] : []} activeArtifactId={activeArtifactId} onClick={() => onSelect(branch.id)} onOpenArtifact={onOpenArtifact} />)}
+        {branches.map((branch) => <BranchNode key={branch.id} title={branch.title} files={branch.files} steps={branch.steps} artifactIds={branch.id === "structured" ? [...measuredIds, ...outputIds(["structured-brief"])] : branch.id === "documents" ? [...documentIds, ...outputIds(["document-brief"])] : []} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onClick={() => onSelect(branch.id)} onOpenArtifact={onOpenArtifact} />)}
       </div>
       <MergeConnector branches={branches.length} status={routing.synthesis} />
-      <PhaseNode title={t("Synthesize")} subtitle={t("Bring findings together")} status={routing.synthesis} onClick={() => onSelect("synthesis")} artifactIds={reportIds} activeArtifactId={activeArtifactId} onOpenArtifact={onOpenArtifact} compact />
+      <PhaseNode title={t("Synthesize")} subtitle={t("Bring findings together")} status={routing.synthesis} onClick={() => onSelect("synthesis")} artifactIds={reportIds} activeArtifactId={activeArtifactId} diagnosticIds={diagnosticIds} onOpenArtifact={onOpenArtifact} compact />
       <GraphEdge status={proposal === "ready" || proposal === "accepted" ? "complete" : proposal === "blocked" ? "failed" : "pending"} />
       <button type="button" onClick={() => onSelect("proposal")} className={cx("w-[11.875rem] rounded-2xl border-2 p-4 text-left shadow-card transition hover:-translate-y-0.5", proposal === "accepted" ? "border-ok-300 bg-ok-50/70 hover:border-ok-400" : proposal === "ready" ? "border-brand-300 bg-brand-50/80 hover:border-brand-500" : proposal === "blocked" ? "border-stop-300 bg-stop-50" : "border-dashed border-line bg-surface/80")}>
         <p className="text-3xs font-semibold uppercase tracking-[0.12em] text-brand-600">{t(proposal === "accepted" ? "Accepted" : "Proposed")}</p>
@@ -326,7 +333,7 @@ export function RoutingGraph({ routing, workspace, onSelect, proposal, onOpenArt
   );
 }
 
-export function BranchNode({ title, files, steps, artifactIds, activeArtifactId, onClick, onOpenArtifact }: { title: string; files: RoutedSourceFile[]; steps: RoutingSubstep[]; artifactIds: string[]; activeArtifactId?: string | null; onClick: () => void; onOpenArtifact: (id: string) => void }) {
+export function BranchNode({ title, files, steps, artifactIds, activeArtifactId, diagnosticIds, onClick, onOpenArtifact }: { title: string; files: RoutedSourceFile[]; steps: RoutingSubstep[]; artifactIds: string[]; activeArtifactId?: string | null; diagnosticIds?: ReadonlySet<string>; onClick: () => void; onOpenArtifact: (id: string) => void }) {
   const status: ProgressStatus = steps.some((step) => step.status === "failed") ? "failed" : steps.some((step) => step.status === "running") ? "running" : steps.every((step) => step.status === "complete") ? "complete" : "pending";
   const secondary = steps.find((step) => step.detail)?.detail;
   return <ResizableNode className="relative" defaultWidth={290}>{(width) => { const shown = visibleFileChips(files.map((file) => file.name), width); return <><button type="button" onClick={onClick} className={cx("h-full w-full overflow-hidden rounded-2xl border bg-surface p-4 text-left shadow-card transition hover:-translate-y-0.5 hover:border-brand-300", status === "running" && "border-brand-400 ring-4 ring-brand-50", status === "failed" && "border-stop-300")}>
@@ -334,7 +341,7 @@ export function BranchNode({ title, files, steps, artifactIds, activeArtifactId,
     <div className="mt-3 flex flex-wrap gap-1">{files.slice(0, shown).map((file) => <span key={file.name} title={file.name} className="max-w-[7.5rem] truncate rounded-md bg-surface-sunken px-2 py-1 text-4xs font-medium text-ink-mute">{file.name}</span>)}{files.length > shown && <span className="rounded-md bg-surface-sunken px-2 py-1 text-4xs text-ink-faint">+{files.length - shown}</span>}</div>
     {secondary && <p className="mt-2 text-4xs font-medium text-ink-mute">{t(secondary)}</p>}
     <ol className="mt-3 grid grid-cols-[auto_auto] justify-between gap-x-3 gap-y-1.5">{steps.map((step) => <li key={step.id} className={cx("min-w-0 text-3xs", step.status === "running" ? "font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "text-stop-700" : "text-ink-faint")}><span className="mr-1">{step.status === "complete" ? "✓" : step.status === "running" ? "●" : step.status === "failed" ? "!" : "○"}</span>{t(step.label)}</li>)}</ol>
-  </button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
+  </button><ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact} /></>; }}</ResizableNode>;
 }
 
 export function RoutingInspector({ selection, profile, workspace, routing, onClose, onOpenArtifact, onAccept, onAdvanced, onOpenPlanner, busy = false, runId, onWorkspaceUpdated }: { selection: Exclude<CanvasSelection, null>; profile: SourceProfile; workspace: StagingWorkspace | null; routing: StagingRoutingState; onClose: () => void; onOpenArtifact: (id: string) => void; onAccept?: () => void; onAdvanced?: () => void; onOpenPlanner?: () => void; busy?: boolean; runId?: string | null; onWorkspaceUpdated?: (workspace: StagingWorkspace) => void }) {
@@ -773,7 +780,7 @@ function ZoomControl({ label, disabled, onClick, children }: { label: string; di
 function GraphEdge({ status }: { status: ProgressStatus }) { return <div className={cx("relative h-px w-10 shrink-0", status === "complete" ? "bg-ok-300" : status === "failed" ? "bg-stop-300" : "bg-slate-300")}><span className="absolute -right-1 -top-[3px] h-2 w-2 rotate-45 border-r border-t border-slate-400" />{status === "running" && <span className="absolute inset-y-[-1px] left-0 w-5 animate-pulse rounded-full bg-brand-400 motion-reduce:animate-none" />}</div>; }
 function ForkConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 ${height / 2} H20 M20 ${height / 2} V8 M20 ${height / 2} V${height - 8} M20 8 H48 M20 ${height - 8} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : "#cbd5e1"} strokeWidth="1.5" /></svg>; }
 function MergeConnector({ branches, status }: { branches: number; status: ProgressStatus }) { const height = Math.max(40, (branches - 1) * 178); return <svg aria-hidden="true" className="w-12 shrink-0" style={{ height }} viewBox={`0 0 48 ${height}`} preserveAspectRatio="none"><path d={`M0 8 H28 M0 ${height - 8} H28 M28 8 V${height - 8} M28 ${height / 2} H48`} fill="none" stroke={status === "complete" ? "#86c99a" : status === "running" ? "#4f7cff" : "#cbd5e1"} strokeWidth="1.5" /><path d={`M43 ${height / 2 - 4} L48 ${height / 2} L43 ${height / 2 + 4}`} fill="none" stroke="#94a3b8" strokeWidth="1.5" /></svg>; }
-function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], activeArtifactId, onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; activeArtifactId?: string | null; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><NodeStatusHeader status={status} /><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 text-2xs text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 truncate text-3xs font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "h-full w-full p-4" : "h-full w-full p-5", "overflow-hidden rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <ResizableNode className="relative shrink-0" defaultWidth={compact ? 190 : 230}>{card}<ArtifactNodes ids={artifactIds} activeId={activeArtifactId} onOpen={onOpenArtifact ?? (() => {})} /></ResizableNode>; }
+function PhaseNode({ title, subtitle, footer, status, onClick, artifactIds = [], activeArtifactId, diagnosticIds, onOpenArtifact, compact = false }: { title: string; subtitle: string; footer?: string; status: ProgressStatus; onClick?: () => void; artifactIds?: string[]; activeArtifactId?: string | null; diagnosticIds?: ReadonlySet<string>; onOpenArtifact?: (id: string) => void; compact?: boolean }) { const content = <><NodeStatusHeader status={status} /><p className="mt-3 truncate text-sm font-semibold text-ink">{title}</p><p className="mt-1 line-clamp-2 text-2xs text-ink-mute">{subtitle}</p>{footer && <p className="mt-3 truncate text-3xs font-medium text-brand-700">{footer}</p>}</>; const className = cx(compact ? "h-full w-full p-4" : "h-full w-full p-5", "overflow-hidden rounded-2xl border bg-surface text-left shadow-card transition", status === "running" ? "border-brand-400 ring-4 ring-brand-50" : status === "failed" ? "border-stop-300" : "border-line", onClick && "hover:-translate-y-0.5 hover:border-brand-300"); const card = onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>; return <ResizableNode className="relative shrink-0" defaultWidth={compact ? 190 : 230}>{card}<ArtifactNodes ids={artifactIds} activeId={activeArtifactId} diagnosticIds={diagnosticIds} onOpen={onOpenArtifact ?? (() => {})} /></ResizableNode>; }
 export function Inspector({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: React.ReactNode }) {
   // #387: the docked panel is an <aside> beside the canvas rather than a
   // backdrop overlay, so there is nothing to click *through* -- clicking the

@@ -25,6 +25,7 @@ from ads.contracts.eda import (
     TargetDistribution,
     TargetRelationship,
 )
+from ads.contracts.evidence import MeasurementBundle
 from ads.contracts.gates import DecisionOption, GateDecision, GateVerdict, HumanPrompt
 from ads.contracts.staging import StagingWorkspace
 from ads.documents.pdf import PdfDocument, PdfPage
@@ -1200,3 +1201,39 @@ def test_a_refused_graph_edit_costs_the_edit_and_not_the_answer(
     assert "plan-validation" in rejected
     assert "integrated_table" in rejected
     assert "pipeline_connections" in rejected
+
+
+def test_stage_detail_outputs_carry_the_diagnostic_flag(tmp_path: Path) -> None:
+    """#424: the stage inspector needs the same closed set the chips filter on.
+
+    `StageEvidence` rendered `detail["outputs"]` straight from this endpoint,
+    so the panel that opens from a node listed the engineering records that
+    node's own chips had just hidden -- the same run, two artifact lists, one
+    click apart. The flag is already on the artifact index; assert it survives
+    into the stage payload so the client filters on the backend's answer rather
+    than re-deriving which kinds count as diagnostics.
+    """
+    plane = _plane(tmp_path)
+    plane.store.put(
+        ProblemDefinition(
+            task_type=TaskType.REGRESSION,
+            target_column="churned",
+            primary_metric=Metric.RMSE,
+            title="Forecast customer churn score",
+            description="Prioritise retention outreach using pre-outcome evidence.",
+            confirmed_by="auto",
+        ),
+        run_id="flagged-run",
+        stage_exec_id="problem_discovery",
+    )
+    plane.store.put(
+        MeasurementBundle(scope="problem_discovery"),
+        run_id="flagged-run",
+        stage_exec_id="problem_discovery",
+    )
+
+    outputs = plane.stage_detail("flagged-run", "problem_discovery")["outputs"]
+    by_type = {item["type"]: item["diagnostic"] for item in outputs}
+
+    assert by_type["problem_definition"] is False
+    assert by_type["measurement_bundle"] is True
