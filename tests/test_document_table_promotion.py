@@ -73,7 +73,7 @@ def test_promoting_a_table_with_duplicate_headers_does_not_crash(tmp_path: Path)
         extraction_artifact_id=extraction_ref.artifact_id,
         decisions={"table-1": "accepted"},
     )
-    review_ref = store.put(review, run_id=run_id, stage_exec_id="document-table-review")
+    store.put(review, run_id=run_id, stage_exec_id="document-table-review")
 
     promoted = promote_reviewed_document_tables(store, run_id=run_id, review=review)
 
@@ -81,7 +81,9 @@ def test_promoting_a_table_with_duplicate_headers_does_not_crash(tmp_path: Path)
     asset, reference = promoted[0]
     assert asset.row_count == 2
     column_names = [column.name for column in asset.columns]
-    assert len(column_names) == len(set(column_names)), f"duplicate columns survived: {column_names}"
+    assert len(column_names) == len(set(column_names)), (
+        f"duplicate columns survived: {column_names}"
+    )
     # The blank header and the two duplicate "MPG(e) Combined." headers must
     # both have been renamed to something distinct, the same way CSV intake
     # would, not silently dropped.
