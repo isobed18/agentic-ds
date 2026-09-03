@@ -165,6 +165,7 @@ from ads.staging import (
     validate_executable_blueprint,
 )
 from ads.store import ArtifactNotFoundError, ArtifactRef, ArtifactStore
+from ads.tools.activity import FEED as tool_activity_feed
 
 # Content-based file detection is optional. When its dependency is unavailable,
 # the source profile is still produced without detection measurements.
@@ -176,6 +177,12 @@ except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
 # Map the content detector's flow vocabulary to the extension-based `route`
 # vocabulary. This is used only to expose disagreements (see source_profile).
 _DETECTED_FLOW_TO_ROUTE = {"tablo": "structured", "belge": "documents"}
+#: Run states that mean more work is still coming, and a live view is worth
+#: polling for (#411). `interrupted` is excluded for the same reason the web
+#: side excludes it: its whole purpose is to end a poll that would never stop.
+_ACTIVE_RUN_STATUSES = frozenset(
+    {"queued", "running", "resuming", "staging", "branches_running"}
+)
 
 def _detect_flow_from_content(filename: str, content: bytes) -> str | None:
     """Bir dosyanin akisini ICERIGINDEN olc; uzantiya hic bakma.
@@ -6011,6 +6018,34 @@ class ControlPlane:
     #: design and is meant to be resumed after a restart.
     _IN_FLIGHT = frozenset({"queued", "running", "staging"})
 
+    def tool_activity(self, run_id: str, after: int = 0) -> dict[str, Any]:
+        """Tool calls this run has made since `after`, for a live view (#411).
+
+        Tool use only ever surfaced as a count on a finished stage's artifact,
+        which is both after the fact and silent about which tools were called.
+        The broker publishes every decision to an in-process feed as it makes
+        it; this reads it back with a cursor so a panel can poll for what is
+        new instead of re-rendering the whole list.
+
+        `active` is the poller's stop signal: without it a panel watching a run
+        that finished half an hour ago keeps asking forever.
+        """
+        events, dropped = tool_activity_feed.since(run_id, after)
+        try:
+            status = str(self._progress_snapshot(run_id).get("status") or "")
+        except KeyError:
+            status = ""
+        cursor = events[-1].seq if events else after
+        return {
+            "run_id": run_id,
+            "events": [event.as_dict() for event in events],
+            "cursor": cursor,
+            # A reader away long enough for the ring to wrap gets told, rather
+            # than being handed a contiguous list with a silent hole in it.
+            "dropped": dropped,
+            "active": status in _ACTIVE_RUN_STATUSES,
+        }
+
     def progress(self, run_id: str) -> dict[str, Any]:
         # #305: every progress source carries artifact ids per stage attempt but
         # not their kinds, so the default view cannot tell a result from an agent
@@ -8299,6 +8334,13 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown run {run_id!r}") from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    @app.get("/api/runs/{run_id}/tool-activity")
+    def tool_activity(run_id: str, after: int = 0) -> dict[str, Any]:
+        # #411: an unknown run is not an error here. The feed is in-memory and
+        # a panel may ask about a run this process never executed; an empty,
+        # inactive answer stops its polling, where a 404 would make it retry.
+        return plane.tool_activity(run_id, after=max(0, after))
 
     @app.get("/api/runs/{run_id}/progress")
     def progress(run_id: str) -> dict[str, Any]:

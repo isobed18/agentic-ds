@@ -684,6 +684,20 @@ const TR: Record<string, string> = {
   "Assistant": "Asistan",
   "You": "Siz",
   "Planner is thinking…": "Planlayıcı düşünüyor…",
+  // #411: the live tool lines in the transcript. Tool use used to surface only
+  // as a count on a finished stage's artifact, never as it happened.
+  "{agent} used the {tool} tool": "{agent} {tool} aracını kullandı",
+  "{agent} was not allowed to use the {tool} tool": "{agent} {tool} aracını kullanma izni almadı",
+  "{agent}'s {tool} tool call failed": "{agent} {tool} aracını çağırdı ama başarısız oldu",
+  "Analysis agent": "Analiz agent'ı",
+  "Feature agent": "Öznitelik agent'ı",
+  "Leakage agent": "Sızıntı agent'ı",
+  "Model agent": "Model agent'ı",
+  "Problem agent": "Problem agent'ı",
+  "Schema agent": "Şema agent'ı",
+  "Personal-data agent": "Kişisel veri agent'ı",
+  "Validation agent": "Doğrulama agent'ı",
+  "Interpretation agent": "Yorumlama agent'ı",
   "Ask the planner anything…": "Planlayıcıya bir şey sorun…",
   "Send": "Gönder",
   "Planner uses workspace rules and context from this workflow.":

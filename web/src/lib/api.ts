@@ -710,6 +710,30 @@ export interface RunProgressSnapshot {
   [key: string]: unknown;
 }
 
+/** One tool call an agent made, as the run was making it (#411). */
+export interface ToolActivityEvent {
+  seq: number;
+  /** The agent spec's own id, e.g. "eda_investigator". */
+  agent: string;
+  /** The registry's tool id, e.g. "profile_table". */
+  tool: string;
+  /** The broker's own vocabulary: "allowed", "denied", or "failed". */
+  decision: string;
+  at: string;
+  detail?: string | null;
+}
+
+export interface ToolActivitySnapshot {
+  run_id: string;
+  events: ToolActivityEvent[];
+  /** Pass back as `after` on the next poll. */
+  cursor: number;
+  /** The feed is a bounded ring; true when it wrapped past the last cursor. */
+  dropped: boolean;
+  /** False once the run is finished — the signal to stop polling. */
+  active: boolean;
+}
+
 export interface ArtifactPreview {
   artifact_id: string;
   artifact_type: string;
@@ -1163,6 +1187,17 @@ export const api = {
     request<AutomationContents>(`/api/automations/${encodeURIComponent(id)}/contents`),
   run: (id: string) => request<Record<string, unknown>>(`/api/runs/${id}`),
   runProgress: (id: string) => request<RunProgressSnapshot>(`/api/runs/${id}/progress`),
+  /**
+   * Tool calls a run has made since `after` (#411). Tool use was only ever
+   * visible after the fact, as a count on a finished stage's artifact; this is
+   * the same information while it is happening, and naming the tool.
+   *
+   * `cursor` is what to pass as `after` next time, and `active` is the signal
+   * to stop polling -- an in-memory feed for a run that ended answers forever
+   * otherwise. An unknown run is not an error: it answers empty and inactive.
+   */
+  toolActivity: (id: string, after = 0) =>
+    request<ToolActivitySnapshot>(`/api/runs/${id}/tool-activity?after=${after}`),
   stage: (runId: string, stageId: string) => request<StageDetail>(`/api/runs/${runId}/stages/${stageId}`),
   createRun: (body: RunRequest) => request<RunSummary>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   /**
