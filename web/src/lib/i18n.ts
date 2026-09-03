@@ -204,9 +204,10 @@ const TR: Record<string, string> = {
     "Ajanın ilk sıraya koyması için bir ipucu, bir karar değil — yine de başka bir " +
     "çerçeveleme önerebilir."
   ),
-  "The model predicts this column. The choice is used as given.": (
-    "Model bu sütunu tahmin eder. Seçim verildiği gibi kullanılır."
-  ),
+  // #448: the picker offers every profiled table's columns now, not only the
+  // base table's, so the tooltip has to admit what that costs.
+  "The model predicts this column. The choice is used as given. A column from a table other than the base needs the plan's joins to bring it in.":
+    "Model bu sütunu tahmin eder. Seçim verildiği gibi kullanılır. Temel tablo dışındaki bir tablodan seçilen sütunun gelmesi için planın birleştirmeleri gerekir.",
   "State the ML problem directly, or ask the planner to propose one.":
     "ML problemini doğrudan belirtin ya da planlayıcının önermesini isteyin.",
   "Problem": "Problem",
