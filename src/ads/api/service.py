@@ -9,6 +9,7 @@ inspectable after the server restarts.
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -174,6 +175,11 @@ try:
     from ads.file_detection.router import inventory as _file_inventory
 except ImportError:  # pragma: no cover - ekstranin kurulu olmadigi ortam
     _file_inventory = None
+
+#: Where a rejected request's developer-facing detail goes. What the reader is
+#: told and what an operator needs to debug it are two different texts, and the
+#: second one used to be sent as the first (#425).
+_log = logging.getLogger(__name__)
 
 # Map the content detector's flow vocabulary to the extension-based `route`
 # vocabulary. This is used only to expose disagreements (see source_profile).
@@ -7898,6 +7904,20 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from None
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown automation") from None
+        except ValidationError as exc:
+            # #425: `str(ValidationError)` is a developer's diagnostic -- the
+            # model name, the field path, the error code and a link to
+            # errors.pydantic.dev -- and `ValidationError` subclasses
+            # `ValueError`, so the handler below used to hand the whole dump to
+            # the reader verbatim, in English, on a Turkish screen. #242
+            # settled that `detail` is the sentence written for a person; the
+            # field paths belong in the log, where they are useful and where
+            # they do not name the internals to whoever is renaming a thing.
+            _log.warning("rejected automation update for %s: %s", automation_id, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=i18n.t("Those settings are not valid, so nothing was changed."),
+            ) from None
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
