@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import {
   api,
   type ArtifactPreview,
+  type DeferredPlanOverride as DeferredPlanOverrideResult,
+  type DeferredPlanTarget,
   type LocalizedText,
   type RunProgressSnapshot,
   type SourceProfile,
@@ -607,7 +609,7 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const recommendation = plan.pipeline_recommendation ?? "create_pipeline";
   if (recommendation !== "create_pipeline") {
     const denied = recommendation === "no_pipeline";
-    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-2xs leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onOpenPlanner || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-3xs text-ink-faint">{t("No pipeline will run unless a human explicitly overrides this recommendation. The override is the Planner: tell it what it is missing and it can propose one.")}</p></div>;
+    return <div><Badge tone={denied ? "stop" : "warn"}>{t(denied ? "No ML pipeline recommended" : "Pipeline decision deferred")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{t(denied ? "Understanding complete — stop before ML" : "More evidence is needed before ML")}</h3><p className="mt-2 text-xs leading-relaxed text-ink-mute">{plan.decision_summary ? local(plan.decision_summary) : t("The Planner did not recommend an executable pipeline from the available evidence.")}</p>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-2xs leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onOpenPlanner || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onOpenPlanner && <button type="button" className="btn-primary" onClick={onOpenPlanner}>{t("Ask the Planner to reconsider")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}{runId && workspace.artifact_id && <DeferredPlanOverride runId={runId} baseArtifactId={workspace.artifact_id} denied={denied} onOverridden={onWorkspaceUpdated} />}<p className="mt-3 text-3xs text-ink-faint">{t("The Planner can also be asked to reconsider: tell it what it is missing and it can propose a pipeline itself.")}</p></div>;
   }
   const steps = visibleWorkflowSteps(workspace, activeLanguage());
   const target = String(plan.configuration.target_column ?? "");
@@ -617,7 +619,96 @@ function PlanProposal({ profile, workspace, onAccept, onAdvanced, onOpenPlanner,
   const baseTable = String(plan.configuration.base_table ?? profile.tables[0]?.name ?? "—");
   const scope = plan.checkpoint_stages.length ? t("Runs with {count} planned review checkpoints.", { count: plan.checkpoint_stages.length }) : t("Runs through the final report; hard safety gates still apply.");
   return <div><Badge tone="brand">{t("Proposed — not executable yet")}</Badge><h3 className="mt-3 text-base font-semibold text-ink">{goal}</h3><p className="mt-1 text-xs text-ink-mute">{t("Review what enters ML and where the base pipeline will stop before accepting.")}</p><section className="mt-5 rounded-xl border border-ok-200 bg-ok-50/50 p-3"><p className="text-3xs font-semibold uppercase tracking-wide text-ok-700">{t("Enters ML")}</p><p className="mt-2 text-xs font-semibold text-ink">{baseTable}</p><div className="mt-2 flex flex-wrap gap-1">{structuredFiles.map((file) => <Badge key={file} tone="ok" title={file} truncate>{file}</Badge>)}</div>{!structuredFiles.length && <p className="mt-2 text-3xs text-warn-700">{t("No trusted structured ML input is selected.")}</p>}</section>{documentFiles.length > 0 && <section className="mt-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Context only")}</p><div className="mt-2 flex flex-wrap gap-1">{documentFiles.map((file) => <Badge key={file} title={file} truncate>{file}</Badge>)}</div><p className="mt-2 text-3xs text-ink-mute">{t("Extracted PDF tables stay review-only until a human promotes them.")}</p>{candidateTables > 0 && runId && extraction?.artifact_id && <button type="button" className="btn-primary mt-3 w-full justify-center text-xs" onClick={() => setReviewing(true)}>{t("Review {count} extracted tables", { count: candidateTables })}</button>}{promotedTables.length > 0 && <p className="mt-2 text-3xs text-ok-700">{t("{count} tables promoted into data", { count: promotedTables.length })}</p>}</section>}
-    {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} promotedCandidateIds={promotedIds} onClose={() => setReviewing(false)} onPromoted={reloadWorkspace} />}<section className="mt-5"><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-3xs font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-3xs text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-2xs leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{(onAccept || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-3xs text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
+    {reviewing && runId && extraction?.artifact_id && <DocumentTableReview runId={runId} extractionArtifactId={extraction.artifact_id} promotedCandidateIds={promotedIds} onClose={() => setReviewing(false)} onPromoted={reloadWorkspace} />}<section className="mt-5"><p className="text-3xs font-semibold uppercase tracking-wide text-ink-faint">{t("Recommended continuation")}</p><ol className="mt-3 space-y-2">{steps.map((step, index) => <li key={`${step}:${index}`} className="flex gap-2 text-xs text-ink-soft"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-50 text-3xs font-semibold text-brand-700">{index + 1}</span><span className="pt-0.5">{step}</span></li>)}</ol><p className="mt-3 rounded-lg bg-surface-sunken px-3 py-2 text-3xs text-ink-mute">{scope}</p></section>{plan.rationale.length > 0 && <div className="mt-5 rounded-lg bg-violet-50 px-3 py-3"><p className="text-3xs font-semibold uppercase tracking-wide text-violet-700">{t("Agent rationale")}</p><ul className="mt-2 space-y-1">{plan.rationale.map((reason) => <li key={reason.en} className="text-2xs leading-relaxed text-ink-mute">{local(reason)}</li>)}</ul></div>}{/* #429: why this plan is runnable at all, when the Planner had deferred it. Kept beside the Agent rationale rather than inside it -- an override is a person's decision about the agent's recommendation, not part of it. */}{plan.human_override && <div className="mt-3 rounded-lg border border-brand-200 bg-brand-50/60 px-3 py-3"><p className="text-3xs font-semibold uppercase tracking-wide text-brand-700">{t("Human override")}</p><p className="mt-2 text-2xs leading-relaxed text-ink-mute">{local(plan.human_override)}</p></div>}{(onAccept || onAdvanced) && <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">{onAccept && <button type="button" className="btn-primary" onClick={onAccept} disabled={busy}>{busy ? t("Accepting…") : t("Accept and add base pipeline")}</button>}{onAdvanced && <button type="button" className="btn-ghost" onClick={onAdvanced}>{t("Advanced editor · Experimental")}</button>}</div>}<p className="mt-3 text-3xs text-ink-faint">{t("You can also ask the Planner to revise this proposal.")}</p></div>;
+}
+
+/** Answer a deferral by naming the target yourself.
+ *
+ * #429: the deferred branch above rendered the badge, the decision summary and
+ * the Agent rationale, and then nothing -- no way to perform the review the
+ * Planner named, no way to name the target, no way to proceed. The review it
+ * named is not a thing this product can be asked to do: the only human review
+ * implemented is the PDF table review, which does not apply to a single CSV.
+ * And the panel's own closing line said "the override is the Planner", but the
+ * Planner is a chat box, not an override control.
+ *
+ * The measurement decides, not the button. `compute_support` is the product's
+ * own answer to "can this framing work", and on the reported `bank.csv` it
+ * comes back viable with no blocking reasons at all -- so this asks it about
+ * the named column and proceeds on that answer. An unviable column comes back
+ * with the measured reasons for *that* column, which is a real answer instead
+ * of a block with no stated cause.
+ *
+ * Naming the target is the override rather than a bare "proceed anyway"
+ * because a deferred plan is persisted with an empty configuration: accepting
+ * one as-is yields no base table, grain, candidate limit or folds. The picker
+ * is what supplies them.
+ */
+function DeferredPlanOverride({ runId, baseArtifactId, denied, onOverridden }: { runId: string; baseArtifactId: string; denied: boolean; onOverridden?: (workspace: StagingWorkspace) => void }) {
+  const [columns, setColumns] = useState<DeferredPlanTarget[] | null>(null);
+  const [target, setTarget] = useState("");
+  const [taskType, setTaskType] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState<DeferredPlanOverrideResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.deferredPlanTargets(runId)
+      .then((result) => { if (!cancelled) setColumns(result.columns); })
+      // No list is not a broken panel: the section simply cannot offer a
+      // picker, and the Planner route above still stands.
+      .catch(() => { if (!cancelled) setColumns([]); });
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  // Default to a column the product's own pre-filter already calls plausible.
+  useEffect(() => {
+    if (target || !columns?.length) return;
+    setTarget((columns.find((column) => column.candidate_target) ?? columns[0]).name);
+  }, [columns, target]);
+
+  async function proceed() {
+    setBusy(true); setError(null); setBlocked(null);
+    try {
+      const result = await api.overrideDeferredPlan(runId, { base_artifact_id: baseArtifactId, target_column: target, task_type: taskType || null });
+      if (!result.viable) { setBlocked(result); return; }
+      // The workspace moved, so the screen has to re-read it -- that is what
+      // lifts the lifecycle out of `understanding` and mounts the run controls.
+      onOverridden?.(await api.stagingWorkspace(runId));
+    } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+    finally { setBusy(false); }
+  }
+
+  if (!columns?.length) return null;
+  const usable = columns.filter((column) => column.candidate_target);
+  return <section className="mt-5 rounded-xl border border-brand-200 bg-brand-50/50 p-3">
+    <p className="text-3xs font-semibold uppercase tracking-wide text-brand-700">{t("Name the target yourself")}</p>
+    <p className="mt-2 text-2xs leading-relaxed text-ink-mute">{t(denied ? "You can still aim this at a column. The data is measured before anything runs, and an unsuitable column comes back with the reasons." : "The Planner is waiting on evidence it cannot ask this product for. Naming the target measures it directly and proceeds if the data supports it.")}</p>
+    <div className="mt-3 flex flex-wrap items-end gap-2">
+      <label className="flex flex-col gap-1 text-3xs font-medium text-ink-soft">{t("Target")}
+        <select value={target} onChange={(event) => setTarget(event.target.value)} className="max-w-[11.25rem] rounded-lg border border-line bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          {columns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.candidate_target ? " ★" : ""}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1 text-3xs font-medium text-ink-soft">{t("Task type")}
+        <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="rounded-lg border border-line bg-surface px-2 py-1.5 text-2xs font-medium text-ink outline-none">
+          <option value="">{t("From the column's shape")}</option>
+          <option value="regression">{t("Regression")}</option>
+          <option value="binary_classification">{t("Binary classification")}</option>
+          <option value="multiclass_classification">{t("Multiclass classification")}</option>
+        </select>
+      </label>
+      <button type="button" className="btn-primary text-xs" disabled={busy || !target} onClick={() => void proceed()}>{busy ? t("Measuring…") : t("Measure and continue")}</button>
+    </div>
+    <p className="mt-2 text-3xs text-ink-faint">{t("★ marks the {count} columns already measured as plausible targets.", { count: usable.length })}</p>
+    {blocked && <div className="mt-3 rounded-lg border border-stop-200 bg-stop-50 px-3 py-2">
+      <p className="text-3xs font-semibold text-stop-700">{t("{column} cannot carry this task", { column: blocked.target_column })}</p>
+      <ul className="mt-1 space-y-0.5">{blocked.blocking_reasons.map((reason) => <li key={reason} className="break-words font-mono text-3xs leading-snug text-stop-800">{reason}</li>)}</ul>
+      <p className="mt-1 text-3xs text-stop-700">{t("Pick another column, or state the task type explicitly.")}</p>
+    </div>}
+    {error && <p className="mt-3 text-3xs text-stop-700">{error}</p>}
+  </section>;
 }
 
 function ProgressList({ steps }: { steps: RoutingSubstep[] }) { return <ol className="space-y-2">{steps.map((step) => <li key={`${step.id}:${step.label}`} className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", step.status === "running" ? "bg-brand-50 font-semibold text-brand-700" : step.status === "complete" ? "text-ok-700" : step.status === "failed" ? "bg-stop-50 text-stop-700" : "text-ink-faint")}><StatusMark status={step.status} /><span><span>{t(step.label)}</span>{step.detail && <span className="mt-0.5 block text-3xs font-normal text-ink-mute">{t(step.detail)}</span>}</span></li>)}</ol>; }

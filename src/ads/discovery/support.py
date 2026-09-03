@@ -66,6 +66,34 @@ def usable_feature_columns(
     ]
 
 
+def supervised_task_type_for(profile: ColumnProfile) -> TaskType:
+    """Read a task type off a target column's own measured shape.
+
+    The same rule the ProblemDiscoveryAgent's system prompt states for the LLM
+    to follow: 2 distinct values is binary, 3+ is multiclass, continuous
+    numeric is regression. Falls back to regression for a shape that fits none
+    of those -- `compute_support` then raises the mismatch as a named blocking
+    reason on the candidate rather than this function raising and failing the
+    stage, so the human sees why instead of the run just breaking.
+
+    #241 introduced this inside `ads.pipeline.agent_stages`, where the quick
+    picker needed it. #429 needs the identical rule to answer "what task is
+    this column, so I can measure it" from the staging panel, and two copies of
+    a classification rule that must agree with `compute_support` is one copy
+    too many -- so it lives next to `compute_support` and both callers use it.
+    """
+    if profile.semantic_type in (SemanticType.NUMERIC_CONTINUOUS, SemanticType.NUMERIC_DISCRETE):
+        return TaskType.REGRESSION
+    if profile.semantic_type is SemanticType.BOOLEAN:
+        return TaskType.BINARY_CLASSIFICATION
+    if profile.semantic_type is SemanticType.CATEGORICAL:
+        if profile.n_unique == 2:
+            return TaskType.BINARY_CLASSIFICATION
+        if 3 <= profile.n_unique <= MAX_CLASSES:
+            return TaskType.MULTICLASS_CLASSIFICATION
+    return TaskType.REGRESSION
+
+
 def _class_counts(series: pd.Series) -> pd.Series:
     return series.dropna().astype(str).value_counts()
 

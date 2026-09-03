@@ -10,6 +10,7 @@ import WORKSPACE_SOURCE from "./UnderstandingWorkspace.tsx?raw";
 import GUIDED_SOURCE from "./GuidedPipeline.tsx?raw";
 import AUTOMATION_SOURCE from "../pages/AutomationWorkspace.tsx?raw";
 import REVIEW_SOURCE from "./DocumentTableReview.tsx?raw";
+import STATE_SOURCE from "./automationWorkspaceState.ts?raw";
 import CATALOGUE from "../lib/i18n.ts?raw";
 import { CANVAS_BASE_WIDTH } from "./canvasZoom";
 import { t } from "../lib/i18n";
@@ -439,6 +440,64 @@ describe("a deferred or declined decision can be read in full (#409)", () => {
   it("translates both new strings", () => {
     expect(CATALOGUE).toContain('"See the full reason": "Gerekçenin tamamını gör"');
     expect(CATALOGUE).toContain('"+{count} more reasons": "+{count} gerekçe daha"');
+  });
+});
+
+describe("answering a deferred plan from the panel that reports it (#429)", () => {
+  it("puts an actionable section under the Agent rationale", () => {
+    // The deferred branch rendered the badge, the summary, the rationale list
+    // and then nothing: no way to perform the review the Planner named, no
+    // way to name the target, no way to proceed.
+    expect(WORKSPACE_SOURCE).toContain("<DeferredPlanOverride runId={runId} baseArtifactId={workspace.artifact_id}");
+    expect(WORKSPACE_SOURCE).toContain('t("Name the target yourself")');
+    expect(WORKSPACE_SOURCE).toContain('t("Measure and continue")');
+  });
+
+  it("stops promising that the Planner is an override control", () => {
+    // The old closing line said "the override is the Planner", and the
+    // Planner is a chat box. It is still offered -- as what it is.
+    expect(WORKSPACE_SOURCE).not.toContain("The override is the Planner");
+    expect(WORKSPACE_SOURCE).toContain('t("Ask the Planner to reconsider")');
+    expect(CATALOGUE).toContain('"The Planner can also be asked to reconsider');
+  });
+
+  it("offers the columns the product already measured as plausible", () => {
+    // `is_usable_target` marks them, and the panel had no way to show it.
+    expect(WORKSPACE_SOURCE).toContain("setTarget((columns.find((column) => column.candidate_target) ?? columns[0]).name)");
+    expect(WORKSPACE_SOURCE).toContain('column.candidate_target ? " ★" : ""');
+    expect(WORKSPACE_SOURCE).toContain('api.deferredPlanTargets(runId)');
+  });
+
+  it("lets the measurement decide, and shows its reasons when it says no", () => {
+    // `compute_support` is the product's own answer to "can this framing
+    // work". An unviable column comes back with the reasons for that column,
+    // which is a real answer rather than a block with no stated cause.
+    expect(WORKSPACE_SOURCE).toContain("if (!result.viable) { setBlocked(result); return; }");
+    expect(WORKSPACE_SOURCE).toContain("blocked.blocking_reasons.map((reason) =>");
+    expect(WORKSPACE_SOURCE).toContain('t("{column} cannot carry this task", { column: blocked.target_column })');
+  });
+
+  it("re-reads the workspace so the run controls actually appear", () => {
+    // A deferred plan keeps the whole screen in the `understanding` lifecycle,
+    // so `GuidedPipeline` never mounts. Lifting the recommendation is what
+    // moves it to `proposal`, and the screen has to re-read to notice.
+    expect(WORKSPACE_SOURCE).toContain("onOverridden?.(await api.stagingWorkspace(runId))");
+    expect(STATE_SOURCE).toContain('if (plan.pipeline_recommendation === "defer_pipeline"');
+    expect(STATE_SOURCE).toContain('return "proposal"');
+  });
+
+  it("keeps the override on the record beside the recommendation", () => {
+    // An override is a person's decision about the agent's recommendation, so
+    // it is not filed inside the Agent rationale.
+    expect(WORKSPACE_SOURCE).toContain("{plan.human_override && <div");
+    expect(WORKSPACE_SOURCE).toContain('t("Human override")');
+    expect(CATALOGUE).toContain('"Human override": "İnsan geçersiz kılması"');
+  });
+
+  it("translates the new section", () => {
+    expect(CATALOGUE).toContain('"Name the target yourself": "Hedefi kendiniz belirleyin"');
+    expect(CATALOGUE).toContain('"Measure and continue": "Ölç ve devam et"');
+    expect(CATALOGUE).toContain('"Measuring…": "Ölçülüyor…"');
   });
 });
 
