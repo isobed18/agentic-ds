@@ -12,6 +12,7 @@ from ads.contracts.evidence import MeasurementKind, MeasurementRecord, SubjectRe
 from ads.discovery.measurements import measurement_digest
 from ads.llm.client import LARGE
 from ads.skills import render_skills, select_skills
+from ads.turkish_style import TURKISH_PROSE_INSTRUCTION
 
 SYSTEM_PROMPT = """\
 You help a human understand an unfamiliar dataset without seeing source rows.
@@ -41,6 +42,13 @@ Turkish as Turkish rather than as a word-for-word rendering of the English --
 same finding, same number, natural sentence. Keep table and column names exactly
 as they appear; they are identifiers, not words to translate.
 """
+
+# #406: a reader flagged "belge külliyatı" -- the models' literal rendering
+# of "document corpus", and not a phrase Turkish speakers use. Every prompt that
+# asks for `_tr` prose carries the same correction; `house_turkish` cleans up the
+# runs that were written before it.
+SYSTEM_PROMPT += f"\n{TURKISH_PROSE_INSTRUCTION}\n"
+
 
 
 _COMPATIBLE_KINDS = {
