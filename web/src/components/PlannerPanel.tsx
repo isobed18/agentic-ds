@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type PlannerOverrideProposal, type ToolActivityEvent } from "../lib/api";
 import { t } from "../lib/i18n";
+import { stageName } from "./PipelineRail";
 import { mergeToolActivity, toolActivityLine } from "./toolActivity";
 import { Badge, Spinner, cx } from "./ui";
 
@@ -33,14 +34,26 @@ const RULES = [
   "Retry weak analysis once, then escalate",
 ];
 
+/** What a proposal would change, as sentences a reader can check.
+ *
+ * #449: asking the planner for a review checkpoint produced a line reading
+ * "eda → İnsan onayı" among the configuration patches -- an arrow between a raw
+ * stage id and a label, in a list whose other rows are JSON. A person who typed
+ * "eda kısmına human approval koy" was looking for confirmation that the
+ * checkpoint had been understood, and this did not read as one.
+ *
+ * The supervision rows say what will happen and name the stage the way the rest
+ * of the product names it. `configuration_patch` keeps the arrow, because a
+ * key/value patch is what it is.
+ */
 function overrideItems(proposal: PlannerOverrideProposal | null): string[] {
   if (!proposal) return [];
   return [
     ...Object.entries(proposal.configuration_patch).map(([key, value]) => `${key} → ${JSON.stringify(value)}`),
-    ...Object.entries(proposal.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stage.replaceAll("_", " ")} → ${value}`)),
-    ...proposal.checkpoint_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Human approval")}`),
-    ...proposal.auto_proceed_stages.map((stage) => `${stage.replaceAll("_", " ")} → ${t("Auto proceed")}`),
-    ...Object.entries(proposal.max_retries_by_stage).map(([stage, value]) => `${stage.replaceAll("_", " ")} → ${t("{count} retries", { count: value })}`),
+    ...Object.entries(proposal.stage_directives).flatMap(([stage, values]) => values.map((value) => `${stageName(stage)} → ${value}`)),
+    ...proposal.checkpoint_stages.map((stage) => t("Review checkpoint after {stage}", { stage: stageName(stage) })),
+    ...proposal.auto_proceed_stages.map((stage) => t("Proceed automatically after {stage}", { stage: stageName(stage) })),
+    ...Object.entries(proposal.max_retries_by_stage).map(([stage, value]) => t("Retry {stage} up to {count} times", { stage: stageName(stage), count: value })),
     ...(proposal.pipeline_blueprint ? [t("Pipeline graph revision {revision}", { revision: proposal.pipeline_blueprint.revision ?? 1 })] : []),
   ];
 }
@@ -64,6 +77,10 @@ export function PlannerPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  // #449: applying cleared the list and left one transient word, so the panel's
+  // answer to "did it take the checkpoint?" was "Override applied" and nothing
+  // about what was in it. The applied items stay on screen.
+  const [applied, setApplied] = useState<string[]>([]);
   const [pendingOverride, setPendingOverride] = useState<PlannerOverrideProposal | null>(null);
   const [overrideOutcome, setOverrideOutcome] = useState<string | null>(null);
   const [problemRecommendations, setProblemRecommendations] = useState<ProblemRecommendation[]>([]);
@@ -77,7 +94,7 @@ export function PlannerPanel({
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
-    if (!runId) { setMessages([]); setRecommendations([]); setPendingOverride(null); setOverrideOutcome(null); setProblemRecommendations([]); setGraphEditRejected(null); return; }
+    if (!runId) { setMessages([]); setRecommendations([]); setApplied([]); setPendingOverride(null); setOverrideOutcome(null); setProblemRecommendations([]); setGraphEditRejected(null); return; }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const loadWorkspace = async () => {
@@ -181,6 +198,7 @@ export function PlannerPanel({
       const pending = res.override_proposal ?? null;
       setPendingOverride(pending);
       setRecommendations(overrideItems(pending));
+      if (pending) setApplied([]);
       const ranked = Array.isArray(res.problem_recommendations)
         ? res.problem_recommendations
             .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -216,11 +234,13 @@ export function PlannerPanel({
     setBusy(true);
     setError(null);
     try {
+      const settled = overrideItems(pendingOverride);
       const workspace = action === "apply"
         ? await api.applyPlannerOverride(runId, pendingOverride.proposal_id)
         : await api.discardPlannerOverride(runId, pendingOverride.proposal_id);
       setPendingOverride(workspace.pending_override ?? null);
       setRecommendations(overrideItems(workspace.pending_override ?? null));
+      setApplied(action === "apply" ? settled : []);
       setOverrideOutcome(t(action === "apply" ? "Override applied" : "Override discarded"));
       onWorkspaceUpdated?.(workspace);
     } catch (e) {
@@ -297,6 +317,18 @@ export function PlannerPanel({
 
         {overrideOutcome && <p className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2 text-2xs font-semibold text-ok-700" role="status">{overrideOutcome}</p>}
 
+        {/* #449: what the last apply actually put into effect. Without it the
+            only trace of an accepted checkpoint was the word "applied", and the
+            person who asked for one had nothing to check their request
+            against. Superseded by the next proposal, cleared by a discard. */}
+        {!pendingOverride && applied.length > 0 && (
+          <section className="mb-4 rounded-lg border border-ok-200 bg-ok-50 px-3 py-2.5">
+            <p className="mb-2 text-2xs font-semibold text-ok-700">{t("Applied to this run")}</p>
+            <ul className="space-y-1">
+              {applied.map((item) => <li key={item} className="text-3xs leading-relaxed text-ink-soft">· {item}</li>)}
+            </ul>
+          </section>
+        )}
         {pendingOverride && recommendations.length > 0 && (
           <section className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2.5">
             <div className="mb-2 flex items-center gap-2">

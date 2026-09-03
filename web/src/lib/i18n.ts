@@ -560,6 +560,14 @@ const TR: Record<string, string> = {
   "Human approval": "İnsan onayı",
   "Auto proceed": "Otomatik devam",
   "{count} retries": "{count} yeniden deneme",
+  // #449: the planner's proposed supervision changes read as "eda → İnsan
+  // onayı" -- an arrow between a raw stage id and a label, among rows of JSON.
+  // Someone who asked for a checkpoint was looking for confirmation that the
+  // request had been understood, and that did not read as one.
+  "Review checkpoint after {stage}": "{stage} sonrasında inceleme durağı",
+  "Proceed automatically after {stage}": "{stage} sonrasında otomatik devam",
+  "Retry {stage} up to {count} times": "{stage} en fazla {count} kez yeniden denensin",
+  "Applied to this run": "Bu koşuya uygulandı",
   "Pipeline graph revision {revision}": "Boru hattı grafiği revizyon {revision}",
   "The planner's pipeline change was not applied": "Planlayıcının boru hattı değişikliği uygulanmadı",
   "Dismiss": "Kapat",
