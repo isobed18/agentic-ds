@@ -167,3 +167,12 @@ scripts/         CLI entry points
 tests/           pytest suite
 docs/            Architecture and implementation reports
 ```
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE).
+
+The committed frontend bundle redistributes [elkjs](https://github.com/kieler/elkjs)
+under EPL-2.0; [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) records that
+attribution and the licences of every other dependency. No GPL, AGPL or LGPL
+dependency is used.

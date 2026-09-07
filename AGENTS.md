@@ -49,25 +49,14 @@ change. A wrong label is cheap; a lost report is not.
 
 ## Claiming work
 
-gh-tower is installed. Before editing anything:
+This repository was coordinated with [gh-tower](https://github.com/isobed18/gh-tower)
+while it was under active development: an advisory lease said who was touching
+what, so two contributors did not edit the same files. That automation has been
+retired along with the `tower-state` branch it wrote to.
 
-```bash
-gh tower status          # who is touching what, right now
-gh tower claim 42        # take issue #42
-gh tower release 42 "done; tests still missing"
-```
-
-`/claim` as an issue comment does the same thing. It takes an advisory lease
-recorded on the `tower-state` branch.
-
-- **Leases warn, they do not block.** Velocity first. Correctness is enforced
-  where it is cheap, which is CI.
-- **Humans outrank agents.** On a collision, then the older claim wins. If you
-  are the younger claim, rebase, split the work, or take something else.
-- **One lease at a time.** No hold-and-wait, so no deadlock.
-- A stale lease is reclaimed hourly (240-minute TTL), so a claim you forget does
-  not park an issue forever.
-- Check `gh tower status` before you start, not after you have a diff.
+If more than one person picks this up again, say so on the issue before you
+start. Leases were only ever advisory; announcing the work is the part that
+mattered.
 
 ## Before you open a PR
 
@@ -141,7 +130,6 @@ already knew the schema. Fixtures you write will have the same blind spot.
 
 ## Kill switch
 
-If tower misbehaves, set the repository variable `TOWER_ENABLED` to `false`.
 Nothing else depends on it.
 
 ---
